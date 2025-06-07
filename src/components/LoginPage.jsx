@@ -24,7 +24,7 @@ export function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen p-4 font-sans">
+    <div className="flex items-center justify-center min-h-screen p-4">
       <div
         className="w-[420px] p-8 bg-white/60 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20"
         onKeyDown={handleKeyDown}
