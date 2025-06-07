@@ -1,8 +1,6 @@
 // src/components/LoginPage.jsx
 import React, { useState } from 'react';
-// 我們不再需要從 lucide-react 引入 LogIn, User, Shield 等圖示
-// import { LogIn, User, Shield, Loader2 } from 'lucide-react'; 
-import { Loader2 } from 'lucide-react'; // 只保留 Loader2 給按鈕用
+import { Loader2 } from 'lucide-react';
 
 export function LoginPage({ onLogin }) {
   const [userId, setUserId] = useState('');
@@ -31,12 +29,12 @@ export function LoginPage({ onLogin }) {
         className="w-[420px] p-8 bg-white/60 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20"
         onKeyDown={handleKeyDown}
       >
-        {/* 【關鍵修改】將圖示區塊換成您公司的 LOGO */}
         <div className="flex flex-col items-center mb-8">
+          {/* 【已修改】這裡的路徑已經更新為您提供的檔名 */}
           <img 
-            src="/moztech-logo.png" // 直接引用 public 資料夾下的路徑
+            src="/MOZTECH-002.png" 
             alt="MOZTECH Logo" 
-            className="h-24 w-24 mb-4" // 調整 LOGO 大小
+            className="h-24 w-24 mb-4 object-contain" // 增加 object-contain 確保圖片比例正確
           />
           <h1 className="text-3xl font-bold text-gray-800">
             倉儲作業系統
@@ -45,7 +43,6 @@ export function LoginPage({ onLogin }) {
         </div>
 
         <div className="space-y-6">
-          {/* 【關鍵修改】移除輸入框前面的圖示 */}
           <div>
             <label htmlFor="userId" className="text-sm font-medium text-gray-700">員工編號</label>
             <input
