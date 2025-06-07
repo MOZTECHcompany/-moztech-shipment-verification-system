@@ -1,6 +1,6 @@
 // src/components/LoginPage.jsx
 import React, { useState } from 'react';
-import { LogIn, User, Shield } from 'lucide-react'; // 引入更多圖示
+import { LogIn, User, Shield, Loader2 } from 'lucide-react';
 
 export function LoginPage({ onLogin }) {
   const [userId, setUserId] = useState('');
@@ -10,7 +10,6 @@ export function LoginPage({ onLogin }) {
   const handleLoginClick = () => {
     if (userId.trim() && role && !isLoggingIn) {
       setIsLoggingIn(true);
-      // 模擬一個短暫的延遲，讓使用者感覺到正在登入
       setTimeout(() => {
         onLogin(userId, role);
         setIsLoggingIn(false);
@@ -26,13 +25,10 @@ export function LoginPage({ onLogin }) {
 
   return (
     <div className="flex items-center justify-center min-h-screen p-4 font-sans">
-      
-      {/* 玻璃擬態登入卡片 */}
       <div
         className="w-[420px] p-8 bg-white/60 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20"
         onKeyDown={handleKeyDown}
       >
-        {/* 頂部標題 */}
         <div className="flex flex-col items-center mb-8">
           <div className="bg-white/70 p-4 rounded-full mb-4 shadow-inner">
             <LogIn className="h-10 w-10 text-indigo-600" />
@@ -43,9 +39,7 @@ export function LoginPage({ onLogin }) {
           <p className="text-gray-600 mt-2">請登入以開始您的作業流程</p>
         </div>
 
-        {/* 輸入欄位 */}
         <div className="space-y-6">
-          {/* 員工編號輸入框 (帶有圖示) */}
           <div className="relative">
             <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
@@ -58,7 +52,6 @@ export function LoginPage({ onLogin }) {
             />
           </div>
 
-          {/* 選擇身份下拉選單 (帶有圖示) */}
           <div className="relative">
             <Shield className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <select
@@ -74,7 +67,6 @@ export function LoginPage({ onLogin }) {
           </div>
         </div>
 
-        {/* 登入按鈕 (帶有漸層和動畫) */}
         <div className="mt-8">
           <button
             onClick={handleLoginClick}
