@@ -12,14 +12,14 @@ export default function App() {
   const handleLogout = () => { setUser(null); };
 
   return (
-    // 【關鍵修改】直接將漸層背景的 class 寫在這裡
-    <div className="min-h-screen font-sans bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100">
+    // 【關鍵修改】移除所有 class，讓它變成一個最簡單的容器
+    <>
       <Toaster richColors position="top-right" />
       {user ? (
         <Dashboard user={user} onLogout={handleLogout} />
       ) : (
         <LoginPage onLogin={handleLogin} />
       )}
-    </div>
+    </>
   );
 }

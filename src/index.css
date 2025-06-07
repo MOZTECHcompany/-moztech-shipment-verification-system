@@ -1,3 +1,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 我們不再用 @apply，直接用原生 CSS 來設定背景色，
+   這樣可以 100% 驗證這個 CSS 檔案是否被正確載入。*/
+body {
+  background-color: #f9fafb; /* 這是一個非常淺的灰色，對應 Tailwind 的 gray-50 */
+}
