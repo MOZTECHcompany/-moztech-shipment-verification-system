@@ -1,27 +1,26 @@
 // src/components/LoginPage.jsx
 import React, { useState } from 'react';
 import { Loader2, User, Lock } from 'lucide-react';
-import { userDatabase } from '../users'; // 【新增】引入我們的使用者資料庫
+import { userDatabase } from '../users'; // 引入我們的使用者資料庫
 
 export function LoginPage({ onLogin }) {
   const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState(''); // 【新增】密碼 state
-  const [error, setError] = useState('');     // 【新增】錯誤訊息 state
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const handleLoginClick = () => {
-    setError(''); // 先清除舊的錯誤訊息
+    setError('');
     setIsLoggingIn(true);
 
     setTimeout(() => {
-      const userFromDb = userDatabase[userId.toLowerCase()]; // 根據員工編號查找使用者 (忽略大小寫)
+      // 【關鍵修改】在查找之前，將使用者輸入的 userId 轉換為小寫
+      const userFromDb = userDatabase[userId.toLowerCase()]; 
 
-      // 【核心修改】驗證邏輯
       if (userFromDb && userFromDb.password === btoa(password)) {
-        // 帳號密碼都正確，執行登入
+        // 登入成功時，我們傳遞的是使用者輸入的原始 userId (或轉換成小寫的，取決於您的偏好)
         onLogin(userId, userFromDb.role, userFromDb.name);
       } else {
-        // 帳號或密碼錯誤
         setError('員工編號或密碼錯誤，請重新輸入。');
       }
       setIsLoggingIn(false);
@@ -46,7 +45,6 @@ export function LoginPage({ onLogin }) {
         </div>
 
         <div className="space-y-6">
-          {/* 員工編號輸入框 */}
           <div className="relative">
             <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
@@ -58,7 +56,6 @@ export function LoginPage({ onLogin }) {
             />
           </div>
           
-          {/* 【修改】密碼輸入框 */}
           <div className="relative">
              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
@@ -71,10 +68,9 @@ export function LoginPage({ onLogin }) {
           </div>
         </div>
         
-        {/* 顯示錯誤訊息 */}
         {error && <p className="mt-4 text-center text-red-500 text-sm animate-pulse">{error}</p>}
 
-        <div className="mt-8">
+        <div className="mt-6">
           <button
             onClick={handleLoginClick}
             disabled={!userId || !password || isLoggingIn}
