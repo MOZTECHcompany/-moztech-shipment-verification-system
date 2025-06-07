@@ -1,4 +1,3 @@
-// src/App.jsx
 import React from 'react';
 import { Toaster } from 'sonner';
 import { Dashboard } from './components/Dashboard';
@@ -15,19 +14,18 @@ export default function App() {
     }
   };
 
-  // 【已修正】這裡移除了多餘的等號
-  const handleLogout = () => {
+  const handleLogout = () => { // <--- 這裡已經被修正
     setUser(null);
   };
 
   return (
-    <div className="min-h-screen font-sans bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100">
+    <>
       <Toaster richColors position="top-right" />
       {user ? (
         <Dashboard user={user} onLogout={handleLogout} />
       ) : (
         <LoginPage onLogin={handleLogin} />
       )}
-    </div>
+    </>
   );
 }
