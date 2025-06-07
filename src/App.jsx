@@ -8,8 +8,17 @@ import './index.css';
 
 export default function App() {
   const [user, setUser] = useLocalStorage("user", null);
-  const handleLogin = (userId, role) => { if (userId && role) { setUser({ id: userId, role }); } };
-  const handleLogout = = () => { setUser(null); };
+
+  const handleLogin = (userId, role) => {
+    if (userId && role) {
+      setUser({ id: userId, role });
+    }
+  };
+
+  // 【已修正】這裡移除了多餘的等號
+  const handleLogout = () => {
+    setUser(null);
+  };
 
   return (
     <div className="min-h-screen font-sans bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100">
