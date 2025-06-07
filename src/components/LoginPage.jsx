@@ -30,11 +30,11 @@ export function LoginPage({ onLogin }) {
         onKeyDown={handleKeyDown}
       >
         <div className="flex flex-col items-center mb-8">
-          {/* 【已修改】這裡的路徑已經更新為您提供的檔名 */}
           <img 
             src="/MOZTECH-002.png" 
             alt="MOZTECH Logo" 
-            className="h-24 w-24 mb-4 object-contain" // 增加 object-contain 確保圖片比例正確
+            // 【關鍵修改】將 h-24 w-24 改為 h-32 w-32
+            className="h-32 w-32 mb-4 object-contain" 
           />
           <h1 className="text-3xl font-bold text-gray-800">
             倉儲作業系統
