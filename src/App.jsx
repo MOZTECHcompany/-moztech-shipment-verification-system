@@ -1,5 +1,5 @@
 // src/App.jsx
-import React from 'react'; // 確保 React 被引入
+import React from 'react';
 import { Toaster } from 'sonner';
 import { Dashboard } from './components/Dashboard';
 import { LoginPage } from './components/LoginPage';
@@ -12,8 +12,8 @@ export default function App() {
   const handleLogout = () => { setUser(null); };
 
   return (
-    // 將背景色設定在這裡，確保整個應用都有統一的底色
-    <div className="bg-gray-50 min-h-screen font-sans">
+    // 【關鍵修改】直接將漸層背景的 class 寫在這裡
+    <div className="min-h-screen font-sans bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100">
       <Toaster richColors position="top-right" />
       {user ? (
         <Dashboard user={user} onLogout={handleLogout} />
