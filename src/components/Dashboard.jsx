@@ -1,7 +1,26 @@
 // src/components/Dashboard.jsx
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { LogOut, Package, PackageCheck, AlertTriangle } from 'lucide-react';
+import { LogOut, Package, PackageCheck, AlertTriangle, FileUp, ScanLine, CheckCircle2, Loader2, Circle, AlertCircle } from 'lucide-react';
+
+// 小幫手函式：根據狀態返回圖示和顏色
+const getItemStatus = (item, pickedQty, packedQty) => {
+    const expectedQty = item.quantity;
+    if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
+    if (pickedQty >= expectedQty) return { Icon: PackageCheck, color: "text-blue-500", label: "待裝箱" };
+    if (pickedQty > 0 || packedQty > 0) return { Icon: Loader2, color: "text-yellow-500 animate-spin", label: "處理中" };
+    return { Icon: Circle, color: "text-gray-400", label: "待處理" };
+};
+
+// 小幫手元件：進度條
+const ProgressBar = ({ value, max, colorClass }) => {
+    const percentage = max > 0 ? (value / max) * 100 : 0;
+    return (
+        <div className="w-full bg-gray-200 rounded-full h-1.5 dark:bg-gray-700 mt-1">
+            <div className={`${colorClass} h-1.5 rounded-full transition-all duration-300`} style={{ width: `${percentage}%` }}></div>
+        </div>
+    );
+};
 
 export function Dashboard({ user, onLogout }) {
   const [shipmentData, setShipmentData] = useState([]);
@@ -10,6 +29,7 @@ export function Dashboard({ user, onLogout }) {
   const [errors, setErrors] = useState([]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const barcodeInputRef = useRef(null);
+  const [orderId, setOrderId] = useState("尚未匯入");
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -20,31 +40,31 @@ export function Dashboard({ user, onLogout }) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (event) => {
+      // ... (Excel 解析邏輯不變)
       const data = new Uint8Array(event.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
       const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-      const orderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+      const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+      setOrderId(parsedOrderId);
       const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
       const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
-      const parsed = detailRows.map((row) => ({
-        orderId, itemName: row[1], sku: String(row[0]), barcode: String(row[0]), quantity: Number(row[2])
-      }));
+      const parsed = detailRows.map((row) => ({ orderId: parsedOrderId, itemName: row[1], sku: String(row[0]), barcode: String(row[0]), quantity: Number(row[2]) }));
       setShipmentData(parsed);
       setScannedItems({});
       setConfirmedItems({});
       setErrors([]);
     };
     reader.readAsArrayBuffer(file);
+    e.target.value = null; // 允許再次上傳同一個檔案
   };
 
   const handleScan = () => {
+    // ... (掃描邏輯不變)
     const trimmedBarcode = barcodeInput.trim();
     if (!trimmedBarcode) return;
-
     const item = shipmentData.find((i) => i.barcode === trimmedBarcode);
     if (!item) {
       setErrors((prev) => [{ type: '未知條碼', barcode: trimmedBarcode, time: new Date().toLocaleString(), user: user.id, role: user.role }, ...prev]);
@@ -76,91 +96,95 @@ export function Dashboard({ user, onLogout }) {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <header className="flex justify-between items-center mb-6 pb-4 border-b">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50">
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">{roleInfo[user.role].icon} {roleInfo[user.role].name}作業</h1>
-          <p className="text-gray-500">操作員: {user.id}</p>
+          <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+            {user.role === 'picker' ? <Package size={32} /> : <PackageCheck size={32} />}
+            <span>{roleInfo[user.role].name}作業</span>
+          </h1>
+          <p className="text-gray-500 mt-1">操作員: {user.id} | 目前貨單: <span className="font-semibold text-gray-700">{orderId}</span></p>
         </div>
-        <button onClick={onLogout} className="flex items-center px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"><LogOut className="mr-2 h-4 w-4" /> 登出</button>
+        <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+          <LogOut className="mr-2 h-4 w-4" /> 登出
+        </button>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <div className="p-4 border rounded-lg bg-white shadow-sm">
-          <h2 className="font-bold mb-2">1. 匯入出貨單</h2>
-          <input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* 左側控制面板 */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2>
+            <input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" />
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2>
+            <div className="flex gap-2">
+              <input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" disabled={shipmentData.length === 0} />
+              <button onClick={handleScan} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300 transition-colors" disabled={shipmentData.length === 0}>確認</button>
+            </div>
+          </div>
         </div>
-        <div className="p-4 border rounded-lg bg-white shadow-sm md:col-span-2">
-          <h2 className="font-bold mb-2">2. 掃描區</h2>
-          <div className="flex gap-2">
-            <input ref={barcodeInputRef} type="text" placeholder={`掃描條碼以${roleInfo[user.role].name}...`} value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()} className="w-full px-4 py-2 border rounded-md" disabled={shipmentData.length === 0} />
-            <button onClick={handleScan} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400" disabled={shipmentData.length === 0}>確認</button>
+
+        {/* 右側清單 */}
+        <div className="lg:col-span-2">
+          <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
+            <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單</h2>
+            {shipmentData.length > 0 ? (
+              <div className="space-y-3">
+                {shipmentData.map((item) => {
+                  const pickedQty = scannedItems[item.barcode] || 0;
+                  const packedQty = confirmedItems[item.barcode] || 0;
+                  const status = getItemStatus(item, pickedQty, packedQty);
+                  return (
+                    <div key={item.barcode} className="border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all hover:shadow-lg hover:border-blue-300">
+                      <div className="flex items-center gap-4">
+                        <div title={status.label}><status.Icon size={28} className={status.color}/></div>
+                        <div>
+                          <p className="font-semibold text-gray-800">{item.itemName}</p>
+                          <p className="text-sm text-gray-500 font-mono">{item.barcode}</p>
+                        </div>
+                      </div>
+                      <div className="w-full sm:w-auto flex items-center gap-4">
+                         <div className="w-28 text-center">
+                            <span className="font-bold text-lg text-blue-600">{pickedQty}</span>
+                            <span className="text-gray-500"> / {item.quantity}</span>
+                            <ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" />
+                         </div>
+                         <div className="w-28 text-center">
+                            <span className="font-bold text-lg text-green-600">{packedQty}</span>
+                            <span className="text-gray-500"> / {item.quantity}</span>
+                            <ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" />
+                         </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-16">
+                <p className="text-gray-500">請先匯入出貨單以開始作業。</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {shipmentData.length > 0 && (
-        <div className="overflow-x-auto bg-white p-4 rounded-lg shadow-sm">
-          <h2 className="text-xl font-bold mb-4">作業清單</h2>
-          <table className="min-w-full border-collapse">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="py-2 px-4 border text-left">品項</th>
-                <th className="py-2 px-4 border text-left">條碼</th>
-                <th className="py-2 px-4 border text-center">預期</th>
-                <th className="py-2 px-4 border text-center">揀貨數</th>
-                <th className="py-2 px-4 border text-center">裝箱數</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shipmentData.map((item) => {
-                const pickedQty = scannedItems[item.barcode] || 0;
-                const packedQty = confirmedItems[item.barcode] || 0;
-                const isPickComplete = pickedQty >= item.quantity;
-                const isPackComplete = packedQty >= item.quantity;
-                let rowClass = 'transition-colors duration-300';
-                if (isPackComplete) rowClass += ' bg-green-100';
-                else if (isPickComplete) rowClass += ' bg-blue-100';
-                return (
-                  <tr key={item.barcode} className={rowClass}>
-                    <td className="py-2 px-4 border">{item.itemName}</td>
-                    <td className="py-2 px-4 border font-mono">{item.barcode}</td>
-                    <td className="py-2 px-4 border text-center font-bold">{item.quantity}</td>
-                    <td className="py-2 px-4 border text-center font-bold text-blue-600">{pickedQty}</td>
-                    <td className="py-2 px-4 border text-center font-bold text-green-600">{packedQty}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
       {errors.length > 0 && (
-        <div className="mt-6 bg-white p-4 rounded-lg shadow-sm">
-          <h2 className="text-xl font-bold text-red-600 mb-2 flex items-center gap-2"><AlertTriangle /> 錯誤紀錄</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="py-2 px-4 border text-left">類型</th>
-                  <th className="py-2 px-4 border text-left">條碼</th>
-                  <th className="py-2 px-4 border text-left">時間</th>
-                  <th className="py-2 px-4 border text-left">人員(身份)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {errors.map((err, index) => (
-                  <tr key={index} className="bg-red-50">
-                    <td className="py-2 px-4 border text-red-500 font-semibold">{err.type}</td>
-                    <td className="py-2 px-4 border font-mono">{err.barcode}</td>
-                    <td className="py-2 px-4 border">{err.time}</td>
-                    <td className="py-2 px-4 border">{err.user} ({err.role})</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="mt-8 bg-red-50 p-6 rounded-xl shadow-md border border-red-200">
+          <h2 className="text-xl font-semibold text-red-700 mb-4 flex items-center gap-2"><AlertCircle /> 錯誤紀錄</h2>
+          <ul className="space-y-2">
+            {errors.map((err, index) => (
+              <li key={index} className="flex items-center gap-3 p-2 bg-white rounded-md">
+                <span className="font-semibold text-red-600 w-36">{err.type}</span>
+                <span className="font-mono text-gray-700 bg-gray-100 px-2 py-1 rounded">{err.barcode}</span>
+                <span className="text-gray-600 flex-grow">{err.itemName || ''}</span>
+                <span className="text-sm text-gray-500">{err.time}</span>
+                <span className="text-sm text-gray-500">{err.user} ({err.role})</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
