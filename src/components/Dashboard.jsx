@@ -90,7 +90,7 @@ export function Dashboard({ user, onLogout }) {
 
     const item = shipmentData.find((i) => i.barcode === trimmedBarcode);
     if (!item) {
-      const newError = { type: '未知條碼', barcode: trimmedBarcode, time: new Date().toLocaleString(), user: user.id, role: user.role, isNew: true };
+      const newError = { type: '未知條碼', barcode: trimmedBarcode, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
       setErrors((prev) => [newError, ...prev]);
       toast.error("掃描錯誤: 未知條碼", { description: `條碼 "${trimmedBarcode}" 不在貨單上。` });
       return;
@@ -99,7 +99,7 @@ export function Dashboard({ user, onLogout }) {
     if (user.role === 'picker') {
       const currentQty = scannedItems[trimmedBarcode] || 0;
       if (currentQty >= item.quantity) {
-        const newError = { type: '揀貨超量', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.id, role: user.role, isNew: true };
+        const newError = { type: '揀貨超量', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         triggerFlash(trimmedBarcode, 'yellow');
         toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期數量 ${item.quantity}。` });
@@ -111,17 +111,16 @@ export function Dashboard({ user, onLogout }) {
     } else if (user.role === 'packer') {
       const pickedQty = scannedItems[trimmedBarcode] || 0;
       if(pickedQty === 0) {
-        const newError = { type: '錯誤流程', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.id, role: user.role, isNew: true };
+        const newError = { type: '錯誤流程', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未被揀貨，無法裝箱。` });
         return;
       }
       const confirmedQty = confirmedItems[trimmedBarcode] || 0;
       if (confirmedQty >= pickedQty) {
-        const newError = { type: '裝箱超量(>揀貨)', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.id, role: user.role, isNew: true };
+        const newError = { type: '裝箱超量(>揀貨)', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         triggerFlash(trimmedBarcode, 'yellow');
-
         toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數 ${pickedQty}。` });
       } else {
         setConfirmedItems((prev) => ({ ...prev, [trimmedBarcode]: confirmedQty + 1 }));
@@ -134,6 +133,7 @@ export function Dashboard({ user, onLogout }) {
   const roleInfo = {
     picker: { name: '揀貨', icon: <Package className="inline-block" /> },
     packer: { name: '裝箱', icon: <PackageCheck className="inline-block" /> },
+    admin: { name: '管理', icon: <PackageCheck className="inline-block" /> }, // 增加 admin 的顯示資訊
   };
 
   return (
@@ -141,10 +141,11 @@ export function Dashboard({ user, onLogout }) {
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-            {user.role === 'picker' ? <Package size={32} /> : <PackageCheck size={32} />}
-            <span>{roleInfo[user.role].name}作業</span>
+            {roleInfo[user.role]?.icon || <Package size={32} />}
+            <span>{roleInfo[user.role]?.name || user.role}作業</span>
           </h1>
-          <p className="text-gray-500 mt-1">操作員: {user.id} | 目前貨單: <span className="font-semibold text-gray-700">{orderId}</span></p>
+          {/* 【已修改】這裡會顯示姓名和括號起來的員工編號 */}
+          <p className="text-gray-500 mt-1">操作員: {user.name} ({user.id})</p>
         </div>
         <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
           <LogOut className="mr-2 h-4 w-4" /> 登出

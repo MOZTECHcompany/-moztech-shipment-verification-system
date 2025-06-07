@@ -1,20 +1,31 @@
 // src/components/LoginPage.jsx
 import React, { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, User, Lock } from 'lucide-react';
+import { userDatabase } from '../users'; // 【新增】引入我們的使用者資料庫
 
 export function LoginPage({ onLogin }) {
   const [userId, setUserId] = useState('');
-  const [role, setRole] = useState('');
+  const [password, setPassword] = useState(''); // 【新增】密碼 state
+  const [error, setError] = useState('');     // 【新增】錯誤訊息 state
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const handleLoginClick = () => {
-    if (userId.trim() && role && !isLoggingIn) {
-      setIsLoggingIn(true);
-      setTimeout(() => {
-        onLogin(userId, role);
-        setIsLoggingIn(false);
-      }, 500);
-    }
+    setError(''); // 先清除舊的錯誤訊息
+    setIsLoggingIn(true);
+
+    setTimeout(() => {
+      const userFromDb = userDatabase[userId.toLowerCase()]; // 根據員工編號查找使用者 (忽略大小寫)
+
+      // 【核心修改】驗證邏輯
+      if (userFromDb && userFromDb.password === btoa(password)) {
+        // 帳號密碼都正確，執行登入
+        onLogin(userId, userFromDb.role, userFromDb.name);
+      } else {
+        // 帳號或密碼錯誤
+        setError('員工編號或密碼錯誤，請重新輸入。');
+      }
+      setIsLoggingIn(false);
+    }, 500);
   };
 
   const handleKeyDown = (e) => {
@@ -30,64 +41,46 @@ export function LoginPage({ onLogin }) {
         onKeyDown={handleKeyDown}
       >
         <div className="flex flex-col items-center mb-8">
-          <img 
-            src="/MOZTECH-002.png" 
-            alt="MOZTECH Logo" 
-            // 【關鍵修改】將 h-24 w-24 改為 h-32 w-32
-            className="h-32 w-32 mb-4 object-contain" 
-          />
-          <h1 className="text-3xl font-bold text-gray-800">
-            倉儲作業系統
-          </h1>
-          <p className="text-gray-600 mt-2">請登入以開始您的作業流程</p>
+          <img src="/MOZTECH-002.png" alt="MOZTECH Logo" className="h-32 w-32 mb-4 object-contain" />
+          <h1 className="text-3xl font-bold text-gray-800">倉儲作業系統</h1>
         </div>
 
         <div className="space-y-6">
-          <div>
-            <label htmlFor="userId" className="text-sm font-medium text-gray-700">員工編號</label>
+          {/* 員工編號輸入框 */}
+          <div className="relative">
+            <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
-              id="userId"
               type="text"
-              placeholder="請輸入您的員工編號"
+              placeholder="員工編號"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
-              className="mt-1 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
+              className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg"
             />
           </div>
-
-          <div>
-            <label htmlFor="role" className="text-sm font-medium text-gray-700">選擇身份</label>
-            <select
-              id="role"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="mt-1 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
-            >
-              <option value="" disabled>請選擇身份...</option>
-              <option value="picker">揀貨人員</option>
-              <option value="packer">裝箱人員</option>
-            </select>
+          
+          {/* 【修改】密碼輸入框 */}
+          <div className="relative">
+             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+            <input
+              type="password"
+              placeholder="密碼"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg"
+            />
           </div>
         </div>
+        
+        {/* 顯示錯誤訊息 */}
+        {error && <p className="mt-4 text-center text-red-500 text-sm animate-pulse">{error}</p>}
 
         <div className="mt-8">
           <button
             onClick={handleLoginClick}
-            disabled={!userId.trim() || !role || isLoggingIn}
-            className={`w-full flex items-center justify-center gap-2 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 transform
-                        bg-gradient-to-r from-purple-600 to-indigo-600
-                        hover:from-purple-700 hover:to-indigo-700 hover:scale-105
-                        focus:outline-none focus:ring-4 focus:ring-purple-300
-                        disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100`}
+            disabled={!userId || !password || isLoggingIn}
+            className={`w-full flex items-center justify-center gap-2 text-white font-bold py-3 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:scale-105 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100`}
           >
-            {isLoggingIn ? (
-              <>
-                <Loader2 className="animate-spin h-5 w-5" />
-                登入中...
-              </>
-            ) : (
-              '安全登入'
-            )}
+            {isLoggingIn ? <><Loader2 className="animate-spin h-5 w-5" />登入中...</> : '安全登入'}
           </button>
         </div>
       </div>

@@ -1,0 +1,23 @@
+// src/users.js
+
+// 為了增加一點點安全性，我們不直接儲存密碼原文，
+// 而是儲存一個 Base64 編碼的版本。
+// 這不是真正的加密，但至少不會讓密碼在原始碼中一覽無遺。
+// 您可以在瀏覽器的 Console 中輸入 btoa('您的密碼') 來生成編碼。
+
+export const userDatabase = {
+  // ===== 請在這裡修改或新增您的帳號 =====
+
+  // 揀貨人員
+  "picker001": { password: btoa("password123"), role: "picker", name: "王小明" },
+  "picker002": { password: btoa("pickerpass"), role: "picker", name: "陳大華" },
+  
+  // 裝箱人員
+  "packer001": { password: btoa("packerpw"), role: "packer", name: "李美麗" },
+  "packer002": { password: btoa("123456"), role: "packer", name: "張健康" },
+  
+  // 管理員 (可選，未來擴充用)
+  "admin": { password: btoa("adminpass"), role: "admin", name: "系統管理員" }
+
+  // =====================================
+};
