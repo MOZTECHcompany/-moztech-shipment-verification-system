@@ -23,6 +23,14 @@ const ProgressBar = ({ value, max, colorClass }) => {
     );
 };
 
+// 【終極解決方案】建立一個正規化函式，用於徹底清理字串
+const normalizeString = (str) => {
+  if (!str) return "";
+  // 轉換為字串，並移除所有非字母和非數字的字元
+  return String(str).replace(/[^a-zA-Z0-9]/g, '');
+};
+
+
 export function Dashboard({ user, onLogout }) {
   const [shipmentData, setShipmentData] = useState([]);
   const [scannedItems, setScannedItems] = useState({});
@@ -31,7 +39,7 @@ export function Dashboard({ user, onLogout }) {
   const [barcodeInput, setBarcodeInput] = useState('');
   const barcodeInputRef = useRef(null);
   const [orderId, setOrderId] = useState("尚未匯入");
-  const [flash, setFlash] = useState({ sku: null, type: null }); // 動畫 key 改用 sku
+  const [flash, setFlash] = useState({ sku: null, type: null });
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -63,15 +71,15 @@ export function Dashboard({ user, onLogout }) {
         setOrderId(parsedOrderId);
         
         const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
-        if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位，請檢查 Excel 格式。");
+        if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位。");
         
         const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
         
         const parsed = detailRows.map((row) => ({
           orderId: parsedOrderId,
           itemName: String(row[1]),
-          sku: String(row[0]), // SKU 作為我們的唯一識別碼
-          barcode: String(row[0]), // 條碼依然保留，用於查找
+          sku: String(row[0]),
+          barcode: String(row[0]),
           quantity: Number(row[2])
         }));
 
@@ -82,11 +90,8 @@ export function Dashboard({ user, onLogout }) {
         setConfirmedItems({});
         setErrors([]);
         toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入。` });
-        console.log("解析後的出貨單資料:", parsed);
       } catch (err) {
         toast.error("Excel 匯入失敗", { description: err.message });
-        setShipmentData([]);
-        setOrderId("尚未匯入");
       }
     };
     reader.readAsArrayBuffer(file);
@@ -99,16 +104,19 @@ export function Dashboard({ user, onLogout }) {
   };
 
   const handleScan = () => {
-    const cleanedBarcode = barcodeInput.replace(/\s/g, '');
-    if (!cleanedBarcode) {
+    const normalizedInput = normalizeString(barcodeInput);
+
+    if (!normalizedInput) {
       setBarcodeInput('');
       return;
     }
+    
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
+    // 在比較時，對兩個條碼都使用這個徹底的正規化函式
     const item = shipmentData.find(
-      (i) => String(i.barcode).replace(/\s/g, '') === cleanedBarcode
+      (i) => normalizeString(i.barcode) === normalizedInput
     );
 
     if (!item) {
@@ -118,48 +126,45 @@ export function Dashboard({ user, onLogout }) {
       return;
     }
 
-    const itemSku = item.sku; // 找到品項後，我們獲取它的 SKU
+    const itemSku = item.sku; 
 
     if (user.role === 'picker') {
-      const currentQty = scannedItems[itemSku] || 0; // 用 sku 查找
+      const currentQty = scannedItems[itemSku] || 0;
       if (currentQty >= item.quantity) {
-        const newError = { type: '揀貨超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
-        setErrors((prev) => [newError, ...prev]);
-        triggerFlash(itemSku, 'yellow'); // 用 sku 觸發動畫
-        toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期數量。` });
+        setErrors((prev) => [{...}, ...prev]);
+        triggerFlash(itemSku, 'yellow');
+        toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期。` });
       } else {
         const newQty = currentQty + 1;
-        setScannedItems((prev) => ({ ...prev, [itemSku]: newQty })); // 用 sku 更新 state
-        triggerFlash(itemSku, 'green'); // 用 sku 觸發動畫
-        toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
+        setScannedItems((prev) => ({ ...prev, [itemSku]: newQty }));
+        triggerFlash(itemSku, 'green');
+        toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
     } else if (user.role === 'packer') {
-      const pickedQty = scannedItems[itemSku] || 0; // 用 sku 查找
-      if (pickedQty === 0) {
-        const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
-        setErrors((prev) => [newError, ...prev]);
+      const pickedQty = scannedItems[itemSku] || 0;
+      if(pickedQty === 0) {
+        setErrors((prev) => [{...}, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未揀貨。` });
         return;
       }
-      const confirmedQty = confirmedItems[itemSku] || 0; // 用 sku 查找
+      const confirmedQty = confirmedItems[itemSku] || 0;
       if (confirmedQty >= pickedQty) {
-        const newError = { type: '裝箱超量(>揀貨)', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
-        setErrors((prev) => [newError, ...prev]);
+        setErrors((prev) => [{...}, ...prev]);
         triggerFlash(itemSku, 'yellow');
         toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數。` });
       } else {
         const newQty = confirmedQty + 1;
-        setConfirmedItems((prev) => ({ ...prev, [itemSku]: newQty })); // 用 sku 更新 state
+        setConfirmedItems((prev) => ({ ...prev, [itemSku]: newQty }));
         triggerFlash(itemSku, 'green');
-        toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
+        toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
     }
   };
   
   const roleInfo = {
-    picker: { name: '揀貨', icon: <Package className="inline-block" /> },
-    packer: { name: '裝箱', icon: <PackageCheck className="inline-block" /> },
-    admin: { name: '管理', icon: <PackageCheck className="inline-block" /> },
+    picker: { name: '揀貨', icon: <Package /> },
+    packer: { name: '裝箱', icon: <PackageCheck /> },
+    admin: { name: '管理', icon: <PackageCheck /> },
   };
 
   return (
@@ -172,27 +177,24 @@ export function Dashboard({ user, onLogout }) {
           </h1>
           <p className="text-gray-500 mt-1">操作員: {user.name} ({user.id})</p>
         </div>
-        <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+        <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
           <LogOut className="mr-2 h-4 w-4" /> 登出
         </button>
       </header>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-md">
             <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2>
-            <input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" />
+            <input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
           </div>
-
           <div className="bg-white p-6 rounded-xl shadow-md">
             <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2>
             <div className="flex gap-2">
-              <input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" disabled={shipmentData.length === 0} />
-              <button onClick={handleScan} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300 transition-colors" disabled={shipmentData.length === 0}>確認</button>
+              <input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()} className="w-full px-4 py-2 border rounded-lg" disabled={shipmentData.length === 0} />
+              <button onClick={handleScan} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300" disabled={shipmentData.length === 0}>確認</button>
             </div>
           </div>
         </div>
-
         <div className="lg:col-span-2">
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
             <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單</h2>
@@ -202,13 +204,9 @@ export function Dashboard({ user, onLogout }) {
                   const pickedQty = scannedItems[item.sku] || 0;
                   const packedQty = confirmedItems[item.sku] || 0;
                   const status = getItemStatus(item, pickedQty, packedQty);
-                  
-                  const animationClass = flash.sku === item.sku
-                    ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow')
-                    : '';
-
+                  const animationClass = flash.sku === item.sku ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow') : '';
                   return (
-                    <div key={item.sku} className={`border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all hover:shadow-lg hover:border-blue-300 ${animationClass}`}>
+                    <div key={item.sku} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass}`}>
                       <div className="flex items-center gap-4">
                         <div title={status.label}><status.Icon size={28} className={status.color}/></div>
                         <div>
@@ -218,13 +216,11 @@ export function Dashboard({ user, onLogout }) {
                       </div>
                       <div className="w-full sm:w-auto flex items-center gap-4">
                          <div className="w-28 text-center">
-                            <span className="font-bold text-lg text-blue-600">{pickedQty}</span>
-                            <span className="text-gray-500"> / {item.quantity}</span>
+                            <span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span>
                             <ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" />
                          </div>
                          <div className="w-28 text-center">
-                            <span className="font-bold text-lg text-green-600">{packedQty}</span>
-                            <span className="text-gray-500"> / {item.quantity}</span>
+                            <span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span>
                             <ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" />
                          </div>
                       </div>
@@ -232,15 +228,10 @@ export function Dashboard({ user, onLogout }) {
                   );
                 })}
               </div>
-            ) : (
-              <div className="text-center py-16 text-gray-500">
-                <p>請先從左側匯入出貨單以開始作業。</p>
-              </div>
-            )}
+            ) : ( <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> )}
           </div>
         </div>
       </div>
-      
       {errors.length > 0 && (
         <div className="mt-8 bg-red-50 p-6 rounded-xl shadow-md border border-red-200">
           <h2 className="text-xl font-semibold text-red-700 mb-4 flex items-center gap-2"><AlertCircle /> 錯誤紀錄</h2>
