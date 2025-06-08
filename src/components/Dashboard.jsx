@@ -56,14 +56,25 @@ export function Dashboard({ user, onLogout }) {
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        // 【關鍵修改】確保所有資料都讀取為字串
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false }); 
+        
         const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
         const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
         setOrderId(parsedOrderId);
+        
         const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
         if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位，請檢查 Excel 格式。");
+        
         const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
-        const parsed = detailRows.map((row) => ({ orderId: parsedOrderId, itemName: row[1], sku: String(row[0]), barcode: String(row[0]), quantity: Number(row[2]) }));
+        const parsed = detailRows.map((row) => ({
+          orderId: parsedOrderId,
+          itemName: String(row[1]),
+          sku: String(row[0]),
+          barcode: String(row[0]), // 確保條碼是字串
+          quantity: Number(row[2])
+        }));
+
         setShipmentData(parsed);
         setScannedItems({});
         setConfirmedItems({});
@@ -88,7 +99,9 @@ export function Dashboard({ user, onLogout }) {
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
-    const item = shipmentData.find((i) => i.barcode === trimmedBarcode);
+    // 【已修正】這裡也再次確保比較時類型一致
+    const item = shipmentData.find((i) => String(i.barcode) === trimmedBarcode);
+
     if (!item) {
       const newError = { type: '未知條碼', barcode: trimmedBarcode, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
       setErrors((prev) => [newError, ...prev]);
@@ -104,9 +117,10 @@ export function Dashboard({ user, onLogout }) {
         triggerFlash(trimmedBarcode, 'yellow');
         toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期數量 ${item.quantity}。` });
       } else {
-        setScannedItems((prev) => ({ ...prev, [trimmedBarcode]: currentQty + 1 }));
+        const newQty = currentQty + 1;
+        setScannedItems((prev) => ({ ...prev, [trimmedBarcode]: newQty }));
         triggerFlash(trimmedBarcode, 'green');
-        toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${currentQty + 1} / ${item.quantity}` });
+        toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
       }
     } else if (user.role === 'packer') {
       const pickedQty = scannedItems[trimmedBarcode] || 0;
@@ -123,9 +137,10 @@ export function Dashboard({ user, onLogout }) {
         triggerFlash(trimmedBarcode, 'yellow');
         toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數 ${pickedQty}。` });
       } else {
-        setConfirmedItems((prev) => ({ ...prev, [trimmedBarcode]: confirmedQty + 1 }));
+        const newQty = confirmedQty + 1;
+        setConfirmedItems((prev) => ({ ...prev, [trimmedBarcode]: newQty }));
         triggerFlash(trimmedBarcode, 'green');
-        toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${confirmedQty + 1} / ${item.quantity}` });
+        toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
       }
     }
   };
@@ -133,7 +148,7 @@ export function Dashboard({ user, onLogout }) {
   const roleInfo = {
     picker: { name: '揀貨', icon: <Package className="inline-block" /> },
     packer: { name: '裝箱', icon: <PackageCheck className="inline-block" /> },
-    admin: { name: '管理', icon: <PackageCheck className="inline-block" /> }, // 增加 admin 的顯示資訊
+    admin: { name: '管理', icon: <PackageCheck className="inline-block" /> },
   };
 
   return (
@@ -144,7 +159,6 @@ export function Dashboard({ user, onLogout }) {
             {roleInfo[user.role]?.icon || <Package size={32} />}
             <span>{roleInfo[user.role]?.name || user.role}作業</span>
           </h1>
-          {/* 【已修改】這裡會顯示姓名和括號起來的員工編號 */}
           <p className="text-gray-500 mt-1">操作員: {user.name} ({user.id})</p>
         </div>
         <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
