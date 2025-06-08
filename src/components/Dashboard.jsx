@@ -23,13 +23,11 @@ const ProgressBar = ({ value, max, colorClass }) => {
     );
 };
 
-// 【最終解決方案】建立一個正規化函式，用於徹底清理字串
+// 正規化函式，用於清理字串
 const normalizeString = (str) => {
   if (!str) return "";
-  // 轉換為字串，並移除所有非字母和非數字的字元
   return String(str).replace(/[^a-zA-Z0-9]/g, '');
 };
-
 
 export function Dashboard({ user, onLogout }) {
   const [shipmentData, setShipmentData] = useState([]);
@@ -67,7 +65,7 @@ export function Dashboard({ user, onLogout }) {
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
         const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-        const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+        const parsedOrderId = orderIdRow ? String(row[0]).replace('憑證號碼 :', '').trim() : 'N/A';
         setOrderId(parsedOrderId);
         
         const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
@@ -107,6 +105,7 @@ export function Dashboard({ user, onLogout }) {
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
+  // 【最終版本】重構 handleScan 函式，賦予 admin 特殊權限
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) {
@@ -116,9 +115,7 @@ export function Dashboard({ user, onLogout }) {
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
-    const item = shipmentData.find(
-      (i) => normalizeString(i.barcode) === normalizedInput
-    );
+    const item = shipmentData.find((i) => normalizeString(i.barcode) === normalizedInput);
 
     if (!item) {
       const newError = { type: '未知條碼', barcode: barcodeInput.trim(), time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
@@ -127,9 +124,26 @@ export function Dashboard({ user, onLogout }) {
       return;
     }
 
-    const itemSku = item.sku; 
+    const itemSku = item.sku;
 
-    if (user.role === 'picker') {
+    // 1. 處理系統管理員 (admin) 的特殊邏輯
+    if (user.role === 'admin') {
+      const currentPacked = confirmedItems[itemSku] || 0;
+      if (currentPacked >= item.quantity) {
+        toast.warning("數量警告: 該品項已完成", { description: `${item.itemName} 已達應出貨數量。` });
+        triggerFlash(itemSku, 'yellow');
+        const newError = { type: '管理員超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        setErrors((prev) => [newError, ...prev]);
+      } else {
+        // Admin掃描一次，揀貨數和裝箱數同時+1
+        const newQty = currentPacked + 1;
+        setScannedItems((prev) => ({ ...prev, [itemSku]: newQty }));
+        setConfirmedItems((prev) => ({ ...prev, [itemSku]: newQty }));
+        toast.success(`管理員操作: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
+        triggerFlash(itemSku, 'green');
+      }
+    // 2. 處理揀貨員 (picker) 的邏輯
+    } else if (user.role === 'picker') {
       const currentQty = scannedItems[itemSku] || 0;
       if (currentQty >= item.quantity) {
         const newError = { type: '揀貨超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
@@ -142,9 +156,10 @@ export function Dashboard({ user, onLogout }) {
         triggerFlash(itemSku, 'green');
         toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
-    } else if (user.role === 'packer' || user.role === 'admin') { // 【問題已修復】允許 admin 執行 packer 的操作
+    // 3. 處理裝箱員 (packer) 的邏輯
+    } else if (user.role === 'packer') {
       const pickedQty = scannedItems[itemSku] || 0;
-      if(pickedQty === 0) {
+      if (pickedQty === 0) { // 嚴格檢查是否已揀貨
         const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未揀貨。` });
