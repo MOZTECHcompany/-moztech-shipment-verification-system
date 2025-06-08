@@ -107,12 +107,25 @@ export function Dashboard({ user, onLogout }) {
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
-  const handleScan = () => {
+// 請用這段程式碼完全取代您原本的 handleScan 函式
+const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) {
       setBarcodeInput('');
       return;
     }
+    
+    // --- 【偵錯碼】---
+    console.log("===============================");
+    console.log(`[偵錯] 原始掃描輸入: "${barcodeInput}"`);
+    console.log(`[偵錯] 正規化後輸入: "${normalizedInput}"`);
+    // 找出一個範例，看看Excel裡的條碼正規化後長怎樣
+    if (shipmentData.length > 0) {
+      console.log(`[偵錯] 系統中第一個條碼(正規化後): "${normalizeString(shipmentData[0].barcode)}"`);
+    }
+    console.log("===============================");
+    // --- 【偵錯碼結束】---
+
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
@@ -163,7 +176,7 @@ export function Dashboard({ user, onLogout }) {
         toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
     }
-  };
+};
   
   const roleInfo = {
     picker: { name: '揀貨', icon: <Package /> },
