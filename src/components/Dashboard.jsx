@@ -33,11 +33,8 @@ const normalizeString = (str) => {
 // 儀表板元件
 const ProgressDashboard = ({ stats }) => {
   const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
-
   if (totalSkus === 0) return null;
-  
   const isAllPacked = packedSkus >= totalSkus;
-
   return (
     <div className="bg-white p-6 rounded-xl shadow-md mb-8">
       <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ListChecks className="mr-2" />任務總覽</h2>
@@ -67,14 +64,12 @@ export function Dashboard({ user, onLogout }) {
   const barcodeInputRef = useRef(null);
   const [orderId, setOrderId] = useState("尚未匯入");
   const [flash, setFlash] = useState({ sku: null, type: null });
-  // 【新功能】用於觸發錯誤區塊動畫的狀態
   const [errorAnimation, setErrorAnimation] = useState(false);
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
   }, [shipmentData]);
   
-  // 【新功能】監聽錯誤，觸發動畫與計時器
   useEffect(() => {
     if (errors.length > 0 && errors[0]?.isNew) {
       setErrorAnimation(true);
@@ -88,7 +83,7 @@ export function Dashboard({ user, onLogout }) {
       };
     }
   }, [errors]);
-  
+
   const progressStats = useMemo(() => {
     const totalSkus = shipmentData.length;
     const totalQuantity = shipmentData.reduce((sum, item) => sum + item.quantity, 0);
@@ -97,7 +92,6 @@ export function Dashboard({ user, onLogout }) {
     const totalPackedQty = Object.values(confirmedItems).reduce((sum, qty) => sum + qty, 0);
     return { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty };
   }, [shipmentData, scannedItems, confirmedItems]);
-
 
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
@@ -139,8 +133,7 @@ export function Dashboard({ user, onLogout }) {
     setFlash({ sku, type });
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
-
-  // 【新功能】播放音效的函式
+  
   const playSound = (type) => {
       try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -160,19 +153,16 @@ export function Dashboard({ user, onLogout }) {
       }
   };
 
-  // 【新功能】統一處理錯誤的函式
   const handleError = (errorData) => {
     playSound('error');
     const fullErrorData = { ...errorData, isNew: true, time: new Date().toLocaleString(), user: user.name, role: user.role };
     setErrors(prev => [fullErrorData, ...prev]);
     if (errorData.barcode) {
-      triggerFlash(errorData.barcode, 'yellow');
+      triggerFlash(errorData.sku, 'yellow');
     }
     toast.error(errorData.toastTitle, { description: errorData.toastDescription });
   };
-
-
-  // 已修改，調用 handleError 函式
+  
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) { setBarcodeInput(''); return; }
@@ -181,16 +171,17 @@ export function Dashboard({ user, onLogout }) {
     const item = shipmentData.find((i) => normalizeString(i.barcode) === normalizedInput);
 
     if (!item) {
-        handleError({ type: '未知條碼', barcode: barcodeInput.trim(), itemName: '',
+        handleError({ type: '未知條碼', barcode: barcodeInput.trim(), sku: barcodeInput.trim(), itemName: '',
             toastTitle: "掃描錯誤: 未知條碼", toastDescription: `條碼 "${barcodeInput.trim()}" 不在貨單上。`
         });
         return;
     }
+
     const itemSku = item.sku; 
     if (user.role === 'admin') {
       const currentPacked = confirmedItems[itemSku] || 0;
       if (currentPacked >= item.quantity) {
-        handleError({ type: '管理員超量', barcode: item.barcode, itemName: item.itemName,
+        handleError({ type: '管理員超量', barcode: item.barcode, sku: item.sku, itemName: item.itemName,
           toastTitle: "數量警告: 品項已完成", toastDescription: `${item.itemName} 已達應出貨數量。`
         });
       } else {
@@ -203,7 +194,7 @@ export function Dashboard({ user, onLogout }) {
     } else if (user.role === 'picker') {
         const currentQty = scannedItems[itemSku] || 0;
         if (currentQty >= item.quantity) {
-             handleError({ type: '揀貨超量', barcode: item.barcode, itemName: item.itemName,
+             handleError({ type: '揀貨超量', barcode: item.barcode, sku: item.sku, itemName: item.itemName,
                 toastTitle: "數量警告: 揀貨超量", toastDescription: `${item.itemName} 已達預期。`
             });
         } else {
@@ -216,11 +207,11 @@ export function Dashboard({ user, onLogout }) {
       const pickedQty = scannedItems[itemSku] || 0;
       const confirmedQty = confirmedItems[itemSku] || 0;
       if (pickedQty === 0) {
-        handleError({ type: '錯誤流程', barcode: item.barcode, itemName: item.itemName,
+        handleError({ type: '錯誤流程', barcode: item.barcode, sku: item.sku, itemName: item.itemName,
           toastTitle: "流程錯誤: 請先揀貨", toastDescription: `${item.itemName} 尚未揀貨。`
         });
       } else if (confirmedQty >= pickedQty) {
-        handleError({ type: '裝箱超量(>揀貨)', barcode: item.barcode, itemName: item.itemName,
+        handleError({ type: '裝箱超量(>揀貨)', barcode: item.barcode, sku: item.sku, itemName: item.itemName,
           toastTitle: "數量警告: 裝箱超量", toastDescription: `裝箱數已達揀貨數。`
         });
       } else {
@@ -238,7 +229,6 @@ export function Dashboard({ user, onLogout }) {
     admin: { name: '管理', icon: <PackageCheck /> },
   };
   
-  // 【UI排版保證】這裡是您原始的、可正常運作的 UI 結構
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
@@ -253,7 +243,7 @@ export function Dashboard({ user, onLogout }) {
           <LogOut className="mr-2 h-4 w-4" /> 登出
         </button>
       </header>
-
+      
       <ProgressDashboard stats={progressStats} />
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -272,34 +262,34 @@ export function Dashboard({ user, onLogout }) {
         </div>
         <div className="lg:col-span-2">
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
-            <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
             {shipmentData.length > 0 ? (
-              <div className="space-y-3">
-                {shipmentData.map((item) => {
-                  const pickedQty = scannedItems[item.sku] || 0;
-                  const packedQty = confirmedItems[item.sku] || 0;
-                  const status = getItemStatus(item, pickedQty, packedQty);
-                  const animationClass = flash.sku === item.sku ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow') : '';
-                  return (
-                    <div key={item.sku} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass}`}>
-                      <div className="flex items-center gap-4 flex-1">
-                        <div title={status.label}><status.Icon size={28} className={status.color}/></div>
-                        <div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div>
+              <>
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
+                <div className="space-y-3">
+                  {shipmentData.map((item) => {
+                    const pickedQty = scannedItems[item.sku] || 0;
+                    const packedQty = confirmedItems[item.sku] || 0;
+                    const status = getItemStatus(item, pickedQty, packedQty);
+                    const animationClass = flash.sku === item.sku ? 'animate-flash-green' : 'animate-flash-yellow';
+                    return (
+                      <div key={item.sku} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass}`}>
+                        <div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div></div>
+                        <div className="w-full sm:w-auto flex items-center gap-4"><div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div><div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div></div>
                       </div>
-                      <div className="w-full sm:w-auto flex items-center gap-4">
-                         <div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div>
-                         <div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : ( <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> )}
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
+                <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> 
+              </>
+            )}
           </div>
         </div>
       </div>
       
-      {/* 【新功能】錯誤紀錄區塊，加入動畫 className 綁定 */}
       {errors.length > 0 && (
         <div className={`mt-8 bg-red-50 p-6 rounded-xl shadow-md border border-red-200 transition-all ${errorAnimation ? 'animate-shake animate-flash-red-border' : ''}`}>
           <h2 className="text-xl font-semibold text-red-700 mb-4 flex items-center gap-2"><AlertCircle /> 錯誤紀錄</h2>
