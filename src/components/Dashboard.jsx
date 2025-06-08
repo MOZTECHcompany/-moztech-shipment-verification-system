@@ -56,11 +56,10 @@ export function Dashboard({ user, onLogout }) {
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        // 【關鍵修改】確保所有資料都讀取為字串
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false }); 
         
         const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-        const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+        const parsedOrderId = orderIdRow ? String(row[0]).replace('憑證號碼 :', '').trim() : 'N/A';
         setOrderId(parsedOrderId);
         
         const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
@@ -71,7 +70,7 @@ export function Dashboard({ user, onLogout }) {
           orderId: parsedOrderId,
           itemName: String(row[1]),
           sku: String(row[0]),
-          barcode: String(row[0]), // 確保條碼是字串
+          barcode: String(row[0]),
           quantity: Number(row[2])
         }));
 
@@ -94,56 +93,65 @@ export function Dashboard({ user, onLogout }) {
   };
 
   const handleScan = () => {
-    const trimmedBarcode = barcodeInput.trim();
-    if (!trimmedBarcode) return;
+    // 【已修正】使用正規表示式，移除所有空白字元（包括空格、換行、tab等）
+    const cleanedBarcode = barcodeInput.replace(/\s/g, '');
+
+    if (!cleanedBarcode) {
+      setBarcodeInput('');
+      return;
+    }
+    
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
-    // 【已修正】這裡也再次確保比較時類型一致
-    const item = shipmentData.find((i) => String(i.barcode) === trimmedBarcode);
+    // 【已修正】在比較時，也對資料庫中的條碼做同樣的清理
+    const item = shipmentData.find(
+      (i) => String(i.barcode).replace(/\s/g, '') === cleanedBarcode
+    );
 
     if (!item) {
-      const newError = { type: '未知條碼', barcode: trimmedBarcode, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+      const newError = { type: '未知條碼', barcode: barcodeInput.trim(), time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
       setErrors((prev) => [newError, ...prev]);
-      toast.error("掃描錯誤: 未知條碼", { description: `條碼 "${trimmedBarcode}" 不在貨單上。` });
+      toast.error("掃描錯誤: 未知條碼", { description: `條碼 "${barcodeInput.trim()}" 不在貨單上。` });
       return;
     }
 
     if (user.role === 'picker') {
-      const currentQty = scannedItems[trimmedBarcode] || 0;
+      const currentQty = scannedItems[item.barcode] || 0;
       if (currentQty >= item.quantity) {
-        const newError = { type: '揀貨超量', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        const newError = { type: '揀貨超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
-        triggerFlash(trimmedBarcode, 'yellow');
+        triggerFlash(item.barcode, 'yellow');
         toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期數量 ${item.quantity}。` });
       } else {
         const newQty = currentQty + 1;
-        setScannedItems((prev) => ({ ...prev, [trimmedBarcode]: newQty }));
-        triggerFlash(trimmedBarcode, 'green');
+        setScannedItems((prev) => ({ ...prev, [item.barcode]: newQty }));
+        triggerFlash(item.barcode, 'green');
         toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
       }
     } else if (user.role === 'packer') {
-      const pickedQty = scannedItems[trimmedBarcode] || 0;
+      const pickedQty = scannedItems[item.barcode] || 0;
       if(pickedQty === 0) {
-        const newError = { type: '錯誤流程', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未被揀貨，無法裝箱。` });
         return;
       }
-      const confirmedQty = confirmedItems[trimmedBarcode] || 0;
+      const confirmedQty = confirmedItems[item.barcode] || 0;
       if (confirmedQty >= pickedQty) {
-        const newError = { type: '裝箱超量(>揀貨)', barcode: trimmedBarcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        const newError = { type: '裝箱超量(>揀貨)', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
-        triggerFlash(trimmedBarcode, 'yellow');
+        triggerFlash(item.barcode, 'yellow');
         toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數 ${pickedQty}。` });
       } else {
         const newQty = confirmedQty + 1;
-        setConfirmedItems((prev) => ({ ...prev, [trimmedBarcode]: newQty }));
-        triggerFlash(trimmedBarcode, 'green');
+        setConfirmedItems((prev) => ({ ...prev, [item.barcode]: newQty }));
+        triggerFlash(item.barcode, 'green');
         toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
       }
     }
   };
+
 
   const roleInfo = {
     picker: { name: '揀貨', icon: <Package className="inline-block" /> },
