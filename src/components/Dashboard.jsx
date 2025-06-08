@@ -3,8 +3,6 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle, ListChecks } from 'lucide-react';
-
-// 【新功能】引入 SweetAlert2
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
@@ -53,9 +51,7 @@ const ProgressDashboard = ({ stats }) => {
 
 
 export function Dashboard({ user, onLogout }) {
-  // 【新功能】初始化 SweetAlert2
   const MySwal = withReactContent(Swal);
-    
   const [shipmentData, setShipmentData] = useState([]);
   const [scannedItems, setScannedItems] = useState({});
   const [confirmedItems, setConfirmedItems] = useState({});
@@ -65,6 +61,10 @@ export function Dashboard({ user, onLogout }) {
   const [orderId, setOrderId] = useState("尚未匯入");
   const [flash, setFlash] = useState({ sku: null, type: null });
   const [errorAnimation, setErrorAnimation] = useState(false);
+  
+  // 【智慧聚焦】1. 新增狀態與 Ref
+  const [highlightedSku, setHighlightedSku] = useState(null);
+  const itemRefs = useRef({});
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -85,7 +85,6 @@ export function Dashboard({ user, onLogout }) {
   }, [errors]);
 
   const progressStats = useMemo(() => {
-    // ... progressStats 內容不變 ...
     const totalSkus = shipmentData.length;
     const totalQuantity = shipmentData.reduce((sum, item) => sum + item.quantity, 0);
     const packedSkus = shipmentData.filter(item => (confirmedItems[item.sku] || 0) >= item.quantity).length;
@@ -93,10 +92,31 @@ export function Dashboard({ user, onLogout }) {
     const totalPackedQty = Object.values(confirmedItems).reduce((sum, qty) => sum + qty, 0);
     return { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty };
   }, [shipmentData, scannedItems, confirmedItems]);
+  
+  // 【智慧聚焦】2. 計算排序後的列表
+  const sortedShipmentData = useMemo(() => {
+    if (!shipmentData.length) return [];
+    const isItemComplete = (item) => (confirmedItems[item.sku] || 0) >= item.quantity;
+    return [...shipmentData].sort((a, b) => isItemComplete(a) - isItemComplete(b));
+  }, [shipmentData, confirmedItems]);
+  
+  // 【智慧聚焦】3. 自動高亮與滾動的核心邏輯
+  useEffect(() => {
+    const firstUnfinished = sortedShipmentData.find(item => (confirmedItems[item.sku] || 0) < item.quantity);
+    const newHighlightedSku = firstUnfinished ? firstUnfinished.sku : null;
+    
+    setHighlightedSku(newHighlightedSku);
+    
+    if (newHighlightedSku && itemRefs.current[newHighlightedSku]) {
+      itemRefs.current[newHighlightedSku].scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }
+  }, [sortedShipmentData, confirmedItems]); // 當排序列表或確認數量改變時觸發
 
 
   const handleExcelImport = (e) => {
-    // ... handleExcelImport 內容不變 ...
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -124,7 +144,7 @@ export function Dashboard({ user, onLogout }) {
         setErrors([]);
         toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入。` });
       } catch (err) {
-        toast.error("Excel 匯入失敗", { description: err.message });
+        MySwal.fire({ icon: 'error', title: 'Excel 匯入失敗', text: err.message });
         setShipmentData([]); setOrderId("尚未匯入");
       }
     };
@@ -138,7 +158,6 @@ export function Dashboard({ user, onLogout }) {
   };
   
   const playSound = (type) => {
-      // ... playSound 內容不變 ...
       try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
@@ -157,7 +176,6 @@ export function Dashboard({ user, onLogout }) {
       }
   };
 
-  // 【修改】handleError 使用 SweetAlert2
   const handleError = (errorData) => {
     playSound('error');
     const fullErrorData = { ...errorData, isNew: true, time: new Date().toLocaleString(), user: user.name, role: user.role };
@@ -165,27 +183,16 @@ export function Dashboard({ user, onLogout }) {
     if (errorData.sku) {
       triggerFlash(errorData.sku, 'yellow');
     }
-
     MySwal.fire({
       icon: 'error',
       title: `<span class="text-2xl font-bold">${errorData.toastTitle}</span>`,
-      html: `
-        <div class="text-left text-gray-700 space-y-2 mt-4">
-          <p>${errorData.toastDescription}</p>
-          ${errorData.barcode ? `<p><strong>掃描條碼:</strong> <span class="font-mono bg-red-100 px-2 py-1 rounded">${errorData.barcode}</span></p>` : ''}
-          ${errorData.itemName ? `<p><strong>品項名稱:</strong> ${errorData.itemName}</p>` : ''}
-        </div>
-      `,
+      html: `<div class="text-left text-gray-700 space-y-2 mt-4"><p>${errorData.toastDescription}</p>${errorData.barcode ? `<p><strong>掃描條碼:</strong> <span class="font-mono bg-red-100 px-2 py-1 rounded">${errorData.barcode}</span></p>` : ''}${errorData.itemName ? `<p><strong>品項名稱:</strong> ${errorData.itemName}</p>` : ''}</div>`,
       confirmButtonText: '我知道了',
-      confirmButtonColor: '#3B82F6', // Blue-500
-      customClass: {
-          popup: 'rounded-xl',
-          confirmButton: 'px-6 py-2 font-semibold text-white rounded-lg shadow-md hover:bg-blue-600'
-      }
+      confirmButtonColor: '#3B82F6',
+      customClass: { popup: 'rounded-xl', confirmButton: 'px-6 py-2 font-semibold text-white rounded-lg shadow-md hover:bg-blue-600' }
     });
   };
 
-  // 【修改】handleScan 中不再建立錯誤物件，直接調用 handleError
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) { setBarcodeInput(''); return; }
@@ -251,7 +258,6 @@ export function Dashboard({ user, onLogout }) {
     admin: { name: '管理', icon: <PackageCheck /> },
   };
   
-  // UI 排版結構與正常版本完全一致
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
@@ -269,17 +275,32 @@ export function Dashboard({ user, onLogout }) {
         <div className="lg:col-span-2">
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
             <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
-            {shipmentData.length > 0 ? (
+            {/* 【智慧聚焦】4. 修改 JSX 渲染部分 */}
+            {sortedShipmentData.length > 0 ? (
               <div className="space-y-3">
-                {shipmentData.map((item) => {
+                {sortedShipmentData.map((item) => {
                   const pickedQty = scannedItems[item.sku] || 0;
                   const packedQty = confirmedItems[item.sku] || 0;
                   const status = getItemStatus(item, pickedQty, packedQty);
-                  const animationClass = flash.sku === item.sku ? 'animate-flash-green' : 'animate-flash-yellow';
+                  const isCompleted = packedQty >= item.quantity;
+                  const animationClass = flash.sku === item.sku ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow') : '';
+                  const highlightClass = highlightedSku === item.sku ? 'bg-blue-100 ring-2 ring-blue-400' : '';
+                  const completedClass = isCompleted ? 'opacity-50 hover:opacity-100' : '';
+                  
                   return (
-                    <div key={item.sku} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass}`}>
-                      <div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div></div>
-                      <div className="w-full sm:w-auto flex items-center gap-4"><div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div><div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div></div>
+                    <div 
+                      key={item.sku}
+                      ref={el => (itemRefs.current[item.sku] = el)}
+                      className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass} ${highlightClass} ${completedClass}`}
+                    >
+                      <div className="flex items-center gap-4 flex-1">
+                        <div title={status.label}><status.Icon size={28} className={status.color}/></div>
+                        <div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div>
+                      </div>
+                      <div className="w-full sm:w-auto flex items-center gap-4">
+                         <div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div>
+                         <div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div>
+                      </div>
                     </div>
                   );
                 })}
