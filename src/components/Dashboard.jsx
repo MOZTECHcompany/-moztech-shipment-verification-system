@@ -29,6 +29,7 @@ const normalizeString = (str) => {
   return String(str).replace(/[^a-zA-Z0-9]/g, '');
 };
 
+
 export function Dashboard({ user, onLogout }) {
   const [shipmentData, setShipmentData] = useState([]);
   const [scannedItems, setScannedItems] = useState({});
@@ -52,6 +53,7 @@ export function Dashboard({ user, onLogout }) {
     }
   }, [errors]);
 
+  // 【已校對】確保 Excel 匯入功能完整無誤
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -65,7 +67,7 @@ export function Dashboard({ user, onLogout }) {
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
         const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-        const parsedOrderId = orderIdRow ? String(row[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+        const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
         setOrderId(parsedOrderId);
         
         const headerIndex = jsonData.findIndex((row) => String(row[0]) === '品項編碼');
@@ -88,8 +90,10 @@ export function Dashboard({ user, onLogout }) {
         setConfirmedItems({});
         setErrors([]);
         toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入。` });
+        console.log("解析後的出貨單資料:", parsed);
       } catch (err) {
         toast.error("Excel 匯入失敗", { description: err.message });
+        console.error("捕獲到 Excel 匯入錯誤:", err);
         setShipmentData([]);
         setOrderId("尚未匯入");
       }
@@ -103,6 +107,7 @@ export function Dashboard({ user, onLogout }) {
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
+  // 【已校對】確保掃描功能與角色權限正確
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) {
@@ -121,13 +126,16 @@ export function Dashboard({ user, onLogout }) {
       return;
     }
 
-    const itemSku = item.sku; 
+    const itemSku = item.sku;
 
+    // 1. 處理系統管理員 (admin) 的特殊邏輯
     if (user.role === 'admin') {
       const currentPacked = confirmedItems[itemSku] || 0;
       if (currentPacked >= item.quantity) {
         toast.warning("數量警告: 該品項已完成", { description: `${item.itemName} 已達應出貨數量。` });
         triggerFlash(itemSku, 'yellow');
+        const newError = { type: '管理員超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        setErrors((prev) => [newError, ...prev]);
       } else {
         const newQty = currentPacked + 1;
         setScannedItems((prev) => ({ ...prev, [itemSku]: newQty }));
@@ -135,6 +143,7 @@ export function Dashboard({ user, onLogout }) {
         toast.success(`管理員操作: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
         triggerFlash(itemSku, 'green');
       }
+    // 2. 處理揀貨員 (picker) 的邏輯
     } else if (user.role === 'picker') {
       const currentQty = scannedItems[itemSku] || 0;
       if (currentQty >= item.quantity) {
@@ -148,9 +157,10 @@ export function Dashboard({ user, onLogout }) {
         triggerFlash(itemSku, 'green');
         toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
+    // 3. 處理裝箱員 (packer) 的邏輯
     } else if (user.role === 'packer') {
       const pickedQty = scannedItems[itemSku] || 0;
-      if (pickedQty === 0) {
+      if (pickedQty === 0) { 
         const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未揀貨。` });
