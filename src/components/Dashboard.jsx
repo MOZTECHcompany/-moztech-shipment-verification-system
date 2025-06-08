@@ -31,7 +31,7 @@ export function Dashboard({ user, onLogout }) {
   const [barcodeInput, setBarcodeInput] = useState('');
   const barcodeInputRef = useRef(null);
   const [orderId, setOrderId] = useState("尚未匯入");
-  const [flash, setFlash] = useState({ barcode: null, type: null });
+  const [flash, setFlash] = useState({ sku: null, type: null }); // 動畫 key 改用 sku
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -46,87 +46,69 @@ export function Dashboard({ user, onLogout }) {
     }
   }, [errors]);
 
-// 在 Dashboard.jsx 中，替換掉舊的 handleExcelImport 函式
+  const handleExcelImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+        
+        const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
+        const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+        setOrderId(parsedOrderId);
+        
+        const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
+        if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位，請檢查 Excel 格式。");
+        
+        const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
+        
+        const parsed = detailRows.map((row) => ({
+          orderId: parsedOrderId,
+          itemName: String(row[1]),
+          sku: String(row[0]), // SKU 作為我們的唯一識別碼
+          barcode: String(row[0]), // 條碼依然保留，用於查找
+          quantity: Number(row[2])
+        }));
 
-const handleExcelImport = (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    try {
-      const data = new Uint8Array(event.target.result);
-      const workbook = XLSX.read(data, { type: 'array' });
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }); 
-      
-      const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-      const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
-      setOrderId(parsedOrderId);
-      
-      const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
-      if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位，請檢查 Excel 格式。");
-      
-      const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
-      
-      const parsed = detailRows.map((row) => ({
-        orderId: parsedOrderId,
-        itemName: String(row[1]),
-        sku: String(row[0]),
-        barcode: String(row[0]),
-        quantity: Number(row[2])
-      }));
+        if (parsed.length === 0) { throw new Error("Excel 中沒有找到有效的品項資料。"); }
 
-      if (parsed.length === 0) {
-        throw new Error("Excel 中沒有找到有效的品項資料，請檢查檔案內容和格式。");
+        setShipmentData(parsed);
+        setScannedItems({});
+        setConfirmedItems({});
+        setErrors([]);
+        toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入。` });
+        console.log("解析後的出貨單資料:", parsed);
+      } catch (err) {
+        toast.error("Excel 匯入失敗", { description: err.message });
+        setShipmentData([]);
+        setOrderId("尚未匯入");
       }
-
-      setShipmentData(parsed);
-      setScannedItems({});
-      setConfirmedItems({});
-      setErrors([]);
-      toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入，共 ${parsed.length} 種品項。` });
-
-      // 【已修正】將 console.log 移到 try 區塊的內部
-      console.log("解析後的出貨單資料:", parsed); 
-    
-    } catch (err) {
-      toast.error("Excel 匯入失敗", { description: err.message });
-      setShipmentData([]);
-      setOrderId("尚未匯入");
-    }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = null;
   };
-  reader.readAsArrayBuffer(file);
-  e.target.value = null;
-};
 
-  const triggerFlash = (barcode, type) => {
-    setFlash({ barcode, type });
-    setTimeout(() => setFlash({ barcode: null, type: null }), 700);
+  const triggerFlash = (sku, type) => {
+    setFlash({ sku, type });
+    setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
   const handleScan = () => {
-    // 建立一個正規化函式，用於徹底清理字串
-    const normalizeBarcode = (barcode) => {
-      if (!barcode) return "";
-      return String(barcode)
-        .toLowerCase() // 1. 統一轉為小寫
-        .replace(/[^a-z0-9]/g, ''); // 2. 只保留字母和數字，移除所有其他字元
-    };
-
-    const normalizedInput = normalizeBarcode(barcodeInput);
-
-    if (!normalizedInput) {
+    const cleanedBarcode = barcodeInput.replace(/\s/g, '');
+    if (!cleanedBarcode) {
       setBarcodeInput('');
       return;
     }
-    
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
-    // 【已修正】在比較時，對兩個條碼都使用這個徹底的正規化函式
     const item = shipmentData.find(
-      (i) => normalizeBarcode(i.barcode) === normalizedInput
+      (i) => String(i.barcode).replace(/\s/g, '') === cleanedBarcode
     );
 
     if (!item) {
@@ -136,43 +118,44 @@ const handleExcelImport = (e) => {
       return;
     }
 
+    const itemSku = item.sku; // 找到品項後，我們獲取它的 SKU
+
     if (user.role === 'picker') {
-      const currentQty = scannedItems[item.barcode] || 0;
+      const currentQty = scannedItems[itemSku] || 0; // 用 sku 查找
       if (currentQty >= item.quantity) {
         const newError = { type: '揀貨超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
-        triggerFlash(item.barcode, 'yellow');
-        toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期數量 ${item.quantity}。` });
+        triggerFlash(itemSku, 'yellow'); // 用 sku 觸發動畫
+        toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期數量。` });
       } else {
         const newQty = currentQty + 1;
-        setScannedItems((prev) => ({ ...prev, [item.barcode]: newQty }));
-        triggerFlash(item.barcode, 'green');
+        setScannedItems((prev) => ({ ...prev, [itemSku]: newQty })); // 用 sku 更新 state
+        triggerFlash(itemSku, 'green'); // 用 sku 觸發動畫
         toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
       }
     } else if (user.role === 'packer') {
-      const pickedQty = scannedItems[item.barcode] || 0;
-      if(pickedQty === 0) {
+      const pickedQty = scannedItems[itemSku] || 0; // 用 sku 查找
+      if (pickedQty === 0) {
         const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
-        toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未被揀貨，無法裝箱。` });
+        toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未揀貨。` });
         return;
       }
-      const confirmedQty = confirmedItems[item.barcode] || 0;
+      const confirmedQty = confirmedItems[itemSku] || 0; // 用 sku 查找
       if (confirmedQty >= pickedQty) {
         const newError = { type: '裝箱超量(>揀貨)', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
-        triggerFlash(item.barcode, 'yellow');
-        toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數 ${pickedQty}。` });
+        triggerFlash(itemSku, 'yellow');
+        toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數。` });
       } else {
         const newQty = confirmedQty + 1;
-        setConfirmedItems((prev) => ({ ...prev, [item.barcode]: newQty }));
-        triggerFlash(item.barcode, 'green');
+        setConfirmedItems((prev) => ({ ...prev, [itemSku]: newQty })); // 用 sku 更新 state
+        triggerFlash(itemSku, 'green');
         toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty} / ${item.quantity}` });
       }
     }
   };
-
-
+  
   const roleInfo = {
     picker: { name: '揀貨', icon: <Package className="inline-block" /> },
     packer: { name: '裝箱', icon: <PackageCheck className="inline-block" /> },
@@ -216,16 +199,16 @@ const handleExcelImport = (e) => {
             {shipmentData.length > 0 ? (
               <div className="space-y-3">
                 {shipmentData.map((item) => {
-                  const pickedQty = scannedItems[item.barcode] || 0;
-                  const packedQty = confirmedItems[item.barcode] || 0;
+                  const pickedQty = scannedItems[item.sku] || 0;
+                  const packedQty = confirmedItems[item.sku] || 0;
                   const status = getItemStatus(item, pickedQty, packedQty);
                   
-                  const animationClass = flash.barcode === item.barcode
+                  const animationClass = flash.sku === item.sku
                     ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow')
                     : '';
 
                   return (
-                    <div key={item.barcode} className={`border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all hover:shadow-lg hover:border-blue-300 ${animationClass}`}>
+                    <div key={item.sku} className={`border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all hover:shadow-lg hover:border-blue-300 ${animationClass}`}>
                       <div className="flex items-center gap-4">
                         <div title={status.label}><status.Icon size={28} className={status.color}/></div>
                         <div>
