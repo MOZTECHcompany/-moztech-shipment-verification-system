@@ -4,7 +4,11 @@ import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle, ListChecks } from 'lucide-react';
 
-// 小幫手函式：根據狀態返回圖示和顏色
+// 【新功能】引入 SweetAlert2
+import Swal from 'sweetalert2';
+import withReactContent from 'sweetalert2-react-content';
+
+// 小幫手函式... (保持不變)
 const getItemStatus = (item, pickedQty, packedQty) => {
     const expectedQty = item.quantity;
     if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
@@ -12,8 +16,6 @@ const getItemStatus = (item, pickedQty, packedQty) => {
     if (pickedQty > 0 || packedQty > 0) return { Icon: Loader2, color: "text-yellow-500 animate-spin", label: "處理中" };
     return { Icon: Circle, color: "text-gray-400", label: "待處理" };
 };
-
-// 小幫手元件：進度條
 const ProgressBar = ({ value, max, colorClass }) => {
     const percentage = max > 0 ? (value / max) * 100 : 0;
     return (
@@ -22,15 +24,10 @@ const ProgressBar = ({ value, max, colorClass }) => {
         </div>
     );
 };
-
-// 正規化函式，用於清理字串
 const normalizeString = (str) => {
   if (!str) return "";
   return String(str).replace(/[^a-zA-Z0-9]/g, '');
 };
-
-
-// 儀表板元件
 const ProgressDashboard = ({ stats }) => {
   const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
   if (totalSkus === 0) return null;
@@ -56,6 +53,9 @@ const ProgressDashboard = ({ stats }) => {
 
 
 export function Dashboard({ user, onLogout }) {
+  // 【新功能】初始化 SweetAlert2
+  const MySwal = withReactContent(Swal);
+    
   const [shipmentData, setShipmentData] = useState([]);
   const [scannedItems, setScannedItems] = useState({});
   const [confirmedItems, setConfirmedItems] = useState({});
@@ -85,6 +85,7 @@ export function Dashboard({ user, onLogout }) {
   }, [errors]);
 
   const progressStats = useMemo(() => {
+    // ... progressStats 內容不變 ...
     const totalSkus = shipmentData.length;
     const totalQuantity = shipmentData.reduce((sum, item) => sum + item.quantity, 0);
     const packedSkus = shipmentData.filter(item => (confirmedItems[item.sku] || 0) >= item.quantity).length;
@@ -93,7 +94,9 @@ export function Dashboard({ user, onLogout }) {
     return { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty };
   }, [shipmentData, scannedItems, confirmedItems]);
 
+
   const handleExcelImport = (e) => {
+    // ... handleExcelImport 內容不變 ...
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -135,6 +138,7 @@ export function Dashboard({ user, onLogout }) {
   };
   
   const playSound = (type) => {
+      // ... playSound 內容不變 ...
       try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
@@ -153,16 +157,35 @@ export function Dashboard({ user, onLogout }) {
       }
   };
 
+  // 【修改】handleError 使用 SweetAlert2
   const handleError = (errorData) => {
     playSound('error');
     const fullErrorData = { ...errorData, isNew: true, time: new Date().toLocaleString(), user: user.name, role: user.role };
     setErrors(prev => [fullErrorData, ...prev]);
-    if (errorData.barcode) {
+    if (errorData.sku) {
       triggerFlash(errorData.sku, 'yellow');
     }
-    toast.error(errorData.toastTitle, { description: errorData.toastDescription });
+
+    MySwal.fire({
+      icon: 'error',
+      title: `<span class="text-2xl font-bold">${errorData.toastTitle}</span>`,
+      html: `
+        <div class="text-left text-gray-700 space-y-2 mt-4">
+          <p>${errorData.toastDescription}</p>
+          ${errorData.barcode ? `<p><strong>掃描條碼:</strong> <span class="font-mono bg-red-100 px-2 py-1 rounded">${errorData.barcode}</span></p>` : ''}
+          ${errorData.itemName ? `<p><strong>品項名稱:</strong> ${errorData.itemName}</p>` : ''}
+        </div>
+      `,
+      confirmButtonText: '我知道了',
+      confirmButtonColor: '#3B82F6', // Blue-500
+      customClass: {
+          popup: 'rounded-xl',
+          confirmButton: 'px-6 py-2 font-semibold text-white rounded-lg shadow-md hover:bg-blue-600'
+      }
+    });
   };
-  
+
+  // 【修改】handleScan 中不再建立錯誤物件，直接調用 handleError
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) { setBarcodeInput(''); return; }
@@ -176,7 +199,6 @@ export function Dashboard({ user, onLogout }) {
         });
         return;
     }
-
     const itemSku = item.sku; 
     if (user.role === 'admin') {
       const currentPacked = confirmedItems[itemSku] || 0;
@@ -229,63 +251,40 @@ export function Dashboard({ user, onLogout }) {
     admin: { name: '管理', icon: <PackageCheck /> },
   };
   
+  // UI 排版結構與正常版本完全一致
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-            {roleInfo[user.role]?.icon || <Package size={32} />}
-            <span>{roleInfo[user.role]?.name || user.role}作業</span>
-          </h1>
-          <p className="text-gray-500 mt-1">操作員: {user.name} ({user.id})</p>
-        </div>
-        <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
-          <LogOut className="mr-2 h-4 w-4" /> 登出
-        </button>
+        <div><h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">{roleInfo[user.role]?.icon || <Package size={32} />}<span>{roleInfo[user.role]?.name || user.role}作業</span></h1><p className="text-gray-500 mt-1">操作員: {user.name} ({user.id})</p></div>
+        <button onClick={onLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"><LogOut className="mr-2 h-4 w-4" /> 登出</button>
       </header>
-      
+
       <ProgressDashboard stats={progressStats} />
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white p-6 rounded-xl shadow-md">
-            <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2>
-            <input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-          </div>
-          <div className="bg-white p-6 rounded-xl shadow-md">
-            <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2>
-            <div className="flex gap-2">
-              <input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()} className="w-full px-4 py-2 border rounded-lg" disabled={shipmentData.length === 0} />
-              <button onClick={handleScan} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300" disabled={shipmentData.length === 0}>確認</button>
-            </div>
-          </div>
+          <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2><input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" /></div>
+          <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2><div className="flex gap-2"><input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()} className="w-full px-4 py-2 border rounded-lg" disabled={shipmentData.length === 0} /><button onClick={handleScan} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300" disabled={shipmentData.length === 0}>確認</button></div></div>
         </div>
         <div className="lg:col-span-2">
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
+            <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
             {shipmentData.length > 0 ? (
-              <>
-                <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
-                <div className="space-y-3">
-                  {shipmentData.map((item) => {
-                    const pickedQty = scannedItems[item.sku] || 0;
-                    const packedQty = confirmedItems[item.sku] || 0;
-                    const status = getItemStatus(item, pickedQty, packedQty);
-                    const animationClass = flash.sku === item.sku ? 'animate-flash-green' : 'animate-flash-yellow';
-                    return (
-                      <div key={item.sku} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass}`}>
-                        <div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div></div>
-                        <div className="w-full sm:w-auto flex items-center gap-4"><div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div><div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div></div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            ) : (
-              <>
-                <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
-                <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> 
-              </>
-            )}
+              <div className="space-y-3">
+                {shipmentData.map((item) => {
+                  const pickedQty = scannedItems[item.sku] || 0;
+                  const packedQty = confirmedItems[item.sku] || 0;
+                  const status = getItemStatus(item, pickedQty, packedQty);
+                  const animationClass = flash.sku === item.sku ? 'animate-flash-green' : 'animate-flash-yellow';
+                  return (
+                    <div key={item.sku} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass}`}>
+                      <div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div></div>
+                      <div className="w-full sm:w-auto flex items-center gap-4"><div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div><div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div></div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : ( <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> )}
           </div>
         </div>
       </div>
