@@ -46,13 +46,16 @@ export function Dashboard({ user, onLogout }) {
   const KEY_SCANNED = 'scanned_items';
   const KEY_CONFIRMED = 'confirmed_items';
   const KEY_ORDER_ID = 'order_id';
+  // 【新功能】為錯誤紀錄新增儲存鑰匙
+  const KEY_ERRORS = 'shipment_errors';
 
   const [shipmentData, setShipmentData] = useState(() => JSON.parse(localStorage.getItem(KEY_SHIPMENT)) || []);
   const [scannedItems, setScannedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_SCANNED)) || {});
   const [confirmedItems, setConfirmedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_CONFIRMED)) || {});
   const [orderId, setOrderId] = useState(() => localStorage.getItem(KEY_ORDER_ID) || "尚未匯入");
+  // 【新功能】錯誤紀錄也從 localStorage 初始化
+  const [errors, setErrors] = useState(() => JSON.parse(localStorage.getItem(KEY_ERRORS)) || []);
 
-  const [errors, setErrors] = useState([]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [flash, setFlash] = useState({ sku: null, type: null });
   const [errorAnimation, setErrorAnimation] = useState(false);
@@ -65,6 +68,8 @@ export function Dashboard({ user, onLogout }) {
   useEffect(() => { localStorage.setItem(KEY_SCANNED, JSON.stringify(scannedItems)); }, [scannedItems]);
   useEffect(() => { localStorage.setItem(KEY_CONFIRMED, JSON.stringify(confirmedItems)); }, [confirmedItems]);
   useEffect(() => { if (orderId && orderId !== "尚未匯入") localStorage.setItem(KEY_ORDER_ID, orderId); else localStorage.removeItem(KEY_ORDER_ID); }, [orderId]);
+  // 【新功能】新增 useEffect 來監聽並儲存錯誤
+  useEffect(() => { localStorage.setItem(KEY_ERRORS, JSON.stringify(errors)); }, [errors]);
 
   useEffect(() => { barcodeInputRef.current?.focus(); }, [shipmentData]);
   useEffect(() => {
@@ -119,11 +124,12 @@ export function Dashboard({ user, onLogout }) {
         const parsed = detailRows.map((row) => ({ orderId: parsedOrderId, itemName: String(row[1]), sku: String(row[0]), barcode: String(row[0]), quantity: Number(row[2]) }));
         if (parsed.length === 0) { throw new Error("Excel 中沒有找到有效的品項資料。"); }
         
+        // 匯入新單時，同時清空舊的錯誤紀錄
         setShipmentData(parsed);
         setScannedItems({});
         setConfirmedItems({});
         setOrderId(parsedOrderId);
-        setErrors([]);
+        setErrors([]); // 清空錯誤會自動觸發 useEffect 來更新儲存
         toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入。` });
         
       } catch (err) {
@@ -135,10 +141,12 @@ export function Dashboard({ user, onLogout }) {
   };
 
   const handleLogout = () => {
+    // 【新功能】登出時一併清除錯誤紀錄
     localStorage.removeItem(KEY_SHIPMENT);
     localStorage.removeItem(KEY_SCANNED);
     localStorage.removeItem(KEY_CONFIRMED);
     localStorage.removeItem(KEY_ORDER_ID);
+    localStorage.removeItem(KEY_ERRORS);
     onLogout();
   };
   
@@ -155,10 +163,9 @@ export function Dashboard({ user, onLogout }) {
     barcodeInputRef.current?.focus();
     const item = shipmentData.find((i) => normalizeString(i.barcode) === normalizedInput);
 
-    // 【BUG 修正】這一步是關鍵，確保 item 不存在時能安全退出
     if (!item) {
         handleError({ type: '未知條碼', barcode: barcodeInput.trim(), sku: barcodeInput.trim(), itemName: '', toastTitle: "掃描錯誤: 未知條碼", toastDescription: `條碼 "${barcodeInput.trim()}" 不在貨單上。` });
-        setBarcodeInput(''); // 清空輸入框
+        setBarcodeInput('');
         return;
     }
 
