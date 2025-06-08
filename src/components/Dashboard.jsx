@@ -46,46 +46,60 @@ export function Dashboard({ user, onLogout }) {
     }
   }, [errors]);
 
-  const handleExcelImport = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = new Uint8Array(event.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false }); 
-        
-        const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-        const parsedOrderId = orderIdRow ? String(row[0]).replace('憑證號碼 :', '').trim() : 'N/A';
-        setOrderId(parsedOrderId);
-        
-        const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
-        if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位，請檢查 Excel 格式。");
-        
-        const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
-        const parsed = detailRows.map((row) => ({
-          orderId: parsedOrderId,
-          itemName: String(row[1]),
-          sku: String(row[0]),
-          barcode: String(row[0]),
-          quantity: Number(row[2])
-        }));
+// 在 Dashboard.jsx 中，替換掉舊的 handleExcelImport 函式
 
-        setShipmentData(parsed);
-        setScannedItems({});
-        setConfirmedItems({});
-        setErrors([]);
-        toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入，共 ${parsed.length} 種品項。` });
-      } catch (err) {
-        toast.error("Excel 匯入失敗", { description: err.message });
+const handleExcelImport = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const data = new Uint8Array(event.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+
+      // 【關鍵修改】移除 raw: false，使用預設的讀取方式
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }); 
+      
+      const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
+      const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+      setOrderId(parsedOrderId);
+      
+      const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
+      if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位，請檢查 Excel 格式。");
+      
+      const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
+      
+      // 在這裡，我們對每一行的資料進行明確的類型轉換
+      const parsed = detailRows.map((row) => ({
+        orderId: parsedOrderId,
+        itemName: String(row[1]),
+        sku: String(row[0]), // 確保 SKU/條碼是字串
+        barcode: String(row[0]), // 再次確保條碼是字串
+        quantity: Number(row[2]) // 確保數量是數字
+      }));
+
+      if (parsed.length === 0) {
+        throw new Error("Excel 中沒有找到有效的品項資料，請檢查檔案內容和格式。");
       }
-    };
-    reader.readAsArrayBuffer(file);
-    e.target.value = null;
+
+      setShipmentData(parsed);
+      setScannedItems({});
+      setConfirmedItems({});
+      setErrors([]);
+      toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入，共 ${parsed.length} 種品項。` });
+
+    } catch (err) {
+      toast.error("Excel 匯入失敗", { description: err.message });
+      // 發生錯誤時，清空舊資料，避免混淆
+      setShipmentData([]);
+      setOrderId("尚未匯入");
+    }
   };
+  reader.readAsArrayBuffer(file);
+  e.target.value = null;
+};
 
   const triggerFlash = (barcode, type) => {
     setFlash({ barcode, type });
