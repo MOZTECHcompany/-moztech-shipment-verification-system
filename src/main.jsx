@@ -1,7 +1,8 @@
+// src/main.jsx
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
-import './index.css' // <--- 確保這一行存在
+import './index.css' // <--- 這一行是載入所有樣式的關鍵！
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
