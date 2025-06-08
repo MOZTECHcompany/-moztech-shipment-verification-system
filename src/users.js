@@ -39,7 +39,5 @@ export const userDatabase = {
   "mztcshipment28": { password: btoa("17346382"), role: "packer", name: "裝箱員 28號" },
   "mztcshipment29": { password: btoa("46382173"), role: "packer", name: "裝箱員 29號" },
   "mztcshipment30": { password: btoa("73463821"), role: "packer", name: "裝箱員 30號" },
-
-  // 管理員 (保留，可選)
   "admin": { password: btoa("adminpass"), role: "admin", name: "系統管理員" }
 };
