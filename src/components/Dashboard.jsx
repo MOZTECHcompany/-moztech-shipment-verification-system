@@ -4,7 +4,6 @@ import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle } from 'lucide-react';
 
-// 小幫手函式：根據狀態返回圖示和顏色
 const getItemStatus = (item, pickedQty, packedQty) => {
     const expectedQty = item.quantity;
     if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
@@ -13,7 +12,6 @@ const getItemStatus = (item, pickedQty, packedQty) => {
     return { Icon: Circle, color: "text-gray-400", label: "待處理" };
 };
 
-// 小幫手元件：進度條
 const ProgressBar = ({ value, max, colorClass }) => {
     const percentage = max > 0 ? (value / max) * 100 : 0;
     return (
@@ -23,13 +21,10 @@ const ProgressBar = ({ value, max, colorClass }) => {
     );
 };
 
-// 【終極解決方案】建立一個正規化函式，用於徹底清理字串
 const normalizeString = (str) => {
   if (!str) return "";
-  // 轉換為字串，並移除所有非字母和非數字的字元
   return String(str).replace(/[^a-zA-Z0-9]/g, '');
 };
-
 
 export function Dashboard({ user, onLogout }) {
   const [shipmentData, setShipmentData] = useState([]);
@@ -105,16 +100,13 @@ export function Dashboard({ user, onLogout }) {
 
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
-
     if (!normalizedInput) {
       setBarcodeInput('');
       return;
     }
-    
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
-    // 在比較時，對兩個條碼都使用這個徹底的正規化函式
     const item = shipmentData.find(
       (i) => normalizeString(i.barcode) === normalizedInput
     );
@@ -131,7 +123,8 @@ export function Dashboard({ user, onLogout }) {
     if (user.role === 'picker') {
       const currentQty = scannedItems[itemSku] || 0;
       if (currentQty >= item.quantity) {
-        setErrors((prev) => [{...}, ...prev]);
+        const newError = { type: '揀貨超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        setErrors((prev) => [newError, ...prev]);
         triggerFlash(itemSku, 'yellow');
         toast.warning("數量警告: 揀貨超量", { description: `${item.itemName} 已達預期。` });
       } else {
@@ -143,13 +136,15 @@ export function Dashboard({ user, onLogout }) {
     } else if (user.role === 'packer') {
       const pickedQty = scannedItems[itemSku] || 0;
       if(pickedQty === 0) {
-        setErrors((prev) => [{...}, ...prev]);
+        const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        setErrors((prev) => [newError, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未揀貨。` });
         return;
       }
       const confirmedQty = confirmedItems[itemSku] || 0;
       if (confirmedQty >= pickedQty) {
-        setErrors((prev) => [{...}, ...prev]);
+        const newError = { type: '裝箱超量(>揀貨)', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
+        setErrors((prev) => [newError, ...prev]);
         triggerFlash(itemSku, 'yellow');
         toast.warning("數量警告: 裝箱超量", { description: `裝箱數已達揀貨數。` });
       } else {
