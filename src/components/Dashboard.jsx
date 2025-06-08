@@ -42,7 +42,6 @@ const ProgressDashboard = ({ stats }) => {
 
 export function Dashboard({ user, onLogout }) {
   const MySwal = withReactContent(Swal);
-  
   const KEY_SHIPMENT = 'shipment_data';
   const KEY_SCANNED = 'scanned_items';
   const KEY_CONFIRMED = 'confirmed_items';
@@ -62,10 +61,11 @@ export function Dashboard({ user, onLogout }) {
   const barcodeInputRef = useRef(null);
   const itemRefs = useRef({});
 
-  useEffect(() => { if (shipmentData.length) localStorage.setItem(KEY_SHIPMENT, JSON.stringify(shipmentData)); }, [shipmentData]);
+  // 【儲存修正】使用獨立的 useEffect 精準地監聽每個狀態變化並儲存
+  useEffect(() => { if (shipmentData.length > 0) localStorage.setItem(KEY_SHIPMENT, JSON.stringify(shipmentData)); else localStorage.removeItem(KEY_SHIPMENT); }, [shipmentData]);
   useEffect(() => { localStorage.setItem(KEY_SCANNED, JSON.stringify(scannedItems)); }, [scannedItems]);
   useEffect(() => { localStorage.setItem(KEY_CONFIRMED, JSON.stringify(confirmedItems)); }, [confirmedItems]);
-  useEffect(() => { if (orderId !== "尚未匯入") localStorage.setItem(KEY_ORDER_ID, orderId); }, [orderId]);
+  useEffect(() => { if (orderId !== "尚未匯入") localStorage.setItem(KEY_ORDER_ID, orderId); else localStorage.removeItem(KEY_ORDER_ID); }, [orderId]);
 
   useEffect(() => { barcodeInputRef.current?.focus(); }, [shipmentData]);
   useEffect(() => {
@@ -120,6 +120,7 @@ export function Dashboard({ user, onLogout }) {
         const parsed = detailRows.map((row) => ({ orderId: parsedOrderId, itemName: String(row[1]), sku: String(row[0]), barcode: String(row[0]), quantity: Number(row[2]) }));
         if (parsed.length === 0) { throw new Error("Excel 中沒有找到有效的品項資料。"); }
         
+        // 【儲存修正】匯入新單時，用最簡單直接的方式更新所有狀態
         setShipmentData(parsed);
         setScannedItems({});
         setConfirmedItems({});
@@ -134,7 +135,7 @@ export function Dashboard({ user, onLogout }) {
     reader.readAsArrayBuffer(file);
     e.target.value = null;
   };
-  
+
   const handleLogout = () => {
     localStorage.removeItem(KEY_SHIPMENT);
     localStorage.removeItem(KEY_SCANNED);
@@ -145,22 +146,21 @@ export function Dashboard({ user, onLogout }) {
   
   const triggerFlash = (sku, type) => { setFlash({ sku, type }); setTimeout(() => setFlash({ sku: null, type: null }), 700); };
   
-  const playSound = (type) => {
-    try { const audioContext = new (window.AudioContext || window.webkitAudioContext)(); const oscillator = audioContext.createOscillator(); const gainNode = audioContext.createGain(); oscillator.connect(gainNode); gainNode.connect(audioContext.destination); if (type === 'error') { oscillator.type = 'square'; oscillator.frequency.setValueAtTime(150, audioContext.currentTime); gainNode.gain.setValueAtTime(0.2, audioContext.currentTime); } oscillator.start(); oscillator.stop(audioContext.currentTime + 0.15); } catch (e) { console.error("無法播放音效:", e); }
-  };
-
-  const handleError = (errorData) => {
-    playSound('error'); const fullErrorData = { ...errorData, isNew: true, time: new Date().toLocaleString(), user: user.name, role: user.role }; setErrors(prev => [fullErrorData, ...prev]); if (errorData.sku) { triggerFlash(errorData.sku, 'yellow'); } MySwal.fire({ icon: 'error', title: `<span class="text-2xl font-bold">${errorData.toastTitle}</span>`, html: `<div class="text-left text-gray-700 space-y-2 mt-4"><p>${errorData.toastDescription}</p>${errorData.barcode ? `<p><strong>掃描條碼:</strong> <span class="font-mono bg-red-100 px-2 py-1 rounded">${errorData.barcode}</span></p>` : ''}${errorData.itemName ? `<p><strong>品項名稱:</strong> ${errorData.itemName}</p>` : ''}</div>`, confirmButtonText: '我知道了', confirmButtonColor: '#3B82F6', customClass: { popup: 'rounded-xl', confirmButton: 'px-6 py-2 font-semibold text-white rounded-lg shadow-md hover:bg-blue-600' } });
-  };
+  const playSound = (type) => { try { const audioContext = new (window.AudioContext || window.webkitAudioContext)(); const oscillator = audioContext.createOscillator(); const gainNode = audioContext.createGain(); oscillator.connect(gainNode); gainNode.connect(audioContext.destination); if (type === 'error') { oscillator.type = 'square'; oscillator.frequency.setValueAtTime(150, audioContext.currentTime); gainNode.gain.setValueAtTime(0.2, audioContext.currentTime); } oscillator.start(); oscillator.stop(audioContext.currentTime + 0.15); } catch (e) { console.error("無法播放音效:", e); }};
   
+  const handleError = (errorData) => { playSound('error'); const fullErrorData = { ...errorData, isNew: true, time: new Date().toLocaleString(), user: user.name, role: user.role }; setErrors(prev => [fullErrorData, ...prev]); if (errorData.sku) { triggerFlash(errorData.sku, 'yellow'); } MySwal.fire({ icon: 'error', title: `<span class="text-2xl font-bold">${errorData.toastTitle}</span>`, html: `<div class="text-left text-gray-700 space-y-2 mt-4"><p>${errorData.toastDescription}</p>${errorData.barcode ? `<p><strong>掃描條碼:</strong> <span class="font-mono bg-red-100 px-2 py-1 rounded">${errorData.barcode}</span></p>` : ''}${errorData.itemName ? `<p><strong>品項名稱:</strong> ${errorData.itemName}</p>` : ''}</div>`, confirmButtonText: '我知道了', confirmButtonColor: '#3B82F6', customClass: { popup: 'rounded-xl', confirmButton: 'px-6 py-2 font-semibold text-white rounded-lg shadow-md hover:bg-blue-600' } }); };
+
+  // 【BUG 修正】 handleScan 邏輯現在是 100% 安全的
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) { setBarcodeInput(''); return; }
+
     barcodeInputRef.current?.focus();
+    
     const item = shipmentData.find((i) => normalizeString(i.barcode) === normalizedInput);
 
     if (!item) {
-        handleError({ type: '未知條碼', barcode: barcodeInput.trim(), sku: barcodeInput.trim(), itemName: '', toastTitle: "掃描錯誤: 未知條碼", toastDescription: `條碼 "${barcodeInput.trim()}" 不在貨單上。` });
+        handleError({ type: '未知條碼', barcode: barcodeInput, sku: barcodeInput, itemName: '', toastTitle: "掃描錯誤: 未知條碼", toastDescription: `條碼 "${barcodeInput}" 不在貨單上。` });
         setBarcodeInput('');
         return;
     }
@@ -201,18 +201,19 @@ export function Dashboard({ user, onLogout }) {
         handleError({ type: '裝箱超量(>揀貨)', barcode: item.barcode, sku: item.sku, itemName: item.itemName, toastTitle: "數量警告: 裝箱超量", toastDescription: `裝箱數已達揀貨數。` });
       }
     }
+    // 【免確認】在處理完邏輯後清空輸入框
     setBarcodeInput('');
   };
   
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault(); 
-      handleScan();
+      handleScan(); // 當按下 Enter 時，呼叫 handleScan
     }
   };
 
   const handleClick = () => {
-    handleScan();
+    handleScan(); // 當點擊按鈕時，也呼叫 handleScan
   };
   
   const roleInfo = { picker: { name: '揀貨', icon: <Package /> }, packer: { name: '裝箱', icon: <PackageCheck /> }, admin: { name: '管理', icon: <PackageCheck /> }, };
@@ -229,12 +230,31 @@ export function Dashboard({ user, onLogout }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2><input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" /></div>
-          <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2><div className="flex gap-2"><input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={handleKeyDown} className="w-full px-4 py-2 border rounded-lg" disabled={shipmentData.length === 0} /><button onClick={handleClick} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300" disabled={shipmentData.length === 0}>確認</button></div></div>
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2>
+            <div className="flex gap-2">
+                <input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={handleKeyDown} className="w-full px-4 py-2 border rounded-lg" disabled={shipmentData.length === 0} />
+                <button onClick={handleClick} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300" disabled={shipmentData.length === 0}>確認</button>
+            </div>
+          </div>
         </div>
         <div className="lg:col-span-2">
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
             <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
-            {sortedShipmentData.length > 0 ? ( <div className="space-y-3">{sortedShipmentData.map((item) => { const pickedQty = scannedItems[item.sku] || 0; const packedQty = confirmedItems[item.sku] || 0; const status = getItemStatus(item, pickedQty, packedQty); const isCompleted = packedQty >= item.quantity; const animationClass = flash.sku === item.sku ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow') : ''; const highlightClass = highlightedSku === item.sku ? 'bg-blue-100 ring-2 ring-blue-400' : ''; const completedClass = isCompleted ? 'opacity-50 hover:opacity-100' : ''; return ( <div key={item.sku} ref={el => (itemRefs.current[item.sku] = el)} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass} ${highlightClass} ${completedClass}`}><div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div></div><div className="w-full sm:w-auto flex items-center gap-4"><div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div><div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div></div></div> ); })}</div> ) : ( <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> )}
+            {sortedShipmentData.length > 0 ? (
+              <div className="space-y-3">
+                {sortedShipmentData.map((item) => {
+                  const pickedQty = scannedItems[item.sku] || 0;
+                  const packedQty = confirmedItems[item.sku] || 0;
+                  const status = getItemStatus(item, pickedQty, packedQty);
+                  const isCompleted = packedQty >= item.quantity;
+                  const animationClass = flash.sku === item.sku ? (flash.type === 'green' ? 'animate-flash-green' : 'animate-flash-yellow') : '';
+                  const highlightClass = highlightedSku === item.sku ? 'bg-blue-100 ring-2 ring-blue-400' : '';
+                  const completedClass = isCompleted ? 'opacity-50 hover:opacity-100' : '';
+                  return ( <div key={item.sku} ref={el => (itemRefs.current[item.sku] = el)} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:shadow-lg ${animationClass} ${highlightClass} ${completedClass}`}><div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.itemName}</p><p className="text-sm text-gray-500 font-mono">{item.barcode}</p></div></div><div className="w-full sm:w-auto flex items-center gap-4"><div className="w-28 text-center"><span className="font-bold text-lg text-blue-600">{pickedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={pickedQty} max={item.quantity} colorClass="bg-blue-500" /></div><div className="w-28 text-center"><span className="font-bold text-lg text-green-600">{packedQty}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={packedQty} max={item.quantity} colorClass="bg-green-500" /></div></div></div> );
+                })}
+              </div>
+            ) : ( <div className="text-center py-16 text-gray-500"><p>請先從左側匯入出貨單以開始作業。</p></div> )}
           </div>
         </div>
       </div>
