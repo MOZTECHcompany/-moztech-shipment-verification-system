@@ -29,6 +29,7 @@ const normalizeString = (str) => {
   return String(str).replace(/[^a-zA-Z0-9]/g, '');
 };
 
+
 export function Dashboard({ user, onLogout }) {
   const [shipmentData, setShipmentData] = useState([]);
   const [scannedItems, setScannedItems] = useState({});
@@ -52,6 +53,7 @@ export function Dashboard({ user, onLogout }) {
     }
   }, [errors]);
 
+  // 【已校對】確保 Excel 匯入功能完整無誤
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -65,11 +67,11 @@ export function Dashboard({ user, onLogout }) {
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
         const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-        const parsedOrderId = orderIdRow ? String(row[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+        const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
         setOrderId(parsedOrderId);
         
-        const headerIndex = jsonData.findIndex((row) => row[0] === '品項編碼');
-        if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位。");
+        const headerIndex = jsonData.findIndex((row) => String(row[0]) === '品項編碼');
+        if (headerIndex === -1) throw new Error("找不到 '品項編碼' 欄位。請檢查Excel格式。");
         
         const detailRows = jsonData.slice(headerIndex + 1).filter((row) => row[0] && row[1] && row[2]);
         
@@ -105,7 +107,7 @@ export function Dashboard({ user, onLogout }) {
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
-  // 【最終版本】重構 handleScan 函式，賦予 admin 特殊權限
+  // 【已校對】確保掃描功能與角色權限正確
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) {
@@ -135,7 +137,6 @@ export function Dashboard({ user, onLogout }) {
         const newError = { type: '管理員超量', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
       } else {
-        // Admin掃描一次，揀貨數和裝箱數同時+1
         const newQty = currentPacked + 1;
         setScannedItems((prev) => ({ ...prev, [itemSku]: newQty }));
         setConfirmedItems((prev) => ({ ...prev, [itemSku]: newQty }));
@@ -159,7 +160,7 @@ export function Dashboard({ user, onLogout }) {
     // 3. 處理裝箱員 (packer) 的邏輯
     } else if (user.role === 'packer') {
       const pickedQty = scannedItems[itemSku] || 0;
-      if (pickedQty === 0) { // 嚴格檢查是否已揀貨
+      if (pickedQty === 0) { 
         const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
         setErrors((prev) => [newError, ...prev]);
         toast.error("流程錯誤: 請先揀貨", { description: `${item.itemName} 尚未揀貨。` });
