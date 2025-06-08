@@ -107,25 +107,12 @@ export function Dashboard({ user, onLogout }) {
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
-// 請用這段程式碼完全取代您原本的 handleScan 函式
-const handleScan = () => {
+  const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) {
       setBarcodeInput('');
       return;
     }
-    
-    // --- 【偵錯碼】---
-    console.log("===============================");
-    console.log(`[偵錯] 原始掃描輸入: "${barcodeInput}"`);
-    console.log(`[偵錯] 正規化後輸入: "${normalizedInput}"`);
-    // 找出一個範例，看看Excel裡的條碼正規化後長怎樣
-    if (shipmentData.length > 0) {
-      console.log(`[偵錯] 系統中第一個條碼(正規化後): "${normalizeString(shipmentData[0].barcode)}"`);
-    }
-    console.log("===============================");
-    // --- 【偵錯碼結束】---
-
     setBarcodeInput('');
     barcodeInputRef.current?.focus();
 
@@ -155,7 +142,7 @@ const handleScan = () => {
         triggerFlash(itemSku, 'green');
         toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
-    } else if (user.role === 'packer') {
+    } else if (user.role === 'packer' || user.role === 'admin') { // 【問題已修復】允許 admin 執行 packer 的操作
       const pickedQty = scannedItems[itemSku] || 0;
       if(pickedQty === 0) {
         const newError = { type: '錯誤流程', barcode: item.barcode, itemName: item.itemName, time: new Date().toLocaleString(), user: user.name, role: user.role, isNew: true };
@@ -176,7 +163,7 @@ const handleScan = () => {
         toast.success(`裝箱成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
     }
-};
+  };
   
   const roleInfo = {
     picker: { name: '揀貨', icon: <Package /> },
