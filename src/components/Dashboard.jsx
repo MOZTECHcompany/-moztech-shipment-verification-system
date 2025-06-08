@@ -83,7 +83,16 @@ export function Dashboard({ user, onLogout }) {
         setScannedItems({});
         setConfirmedItems({});
         setErrors([]);
-        toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入，共 ${parsed.length} 種品項。` });
+        toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入，共 ${parsed.length} 種品項。` });// 在 handleExcelImport 函式中...
+
+    setErrors([]);
+    toast.success("匯入成功", { description: `貨單 ${parsedOrderId} 已載入，共 ${parsed.length} 種品項。` });
+
+    // 【診斷步驟】在這裡印出解析後的資料
+    console.log("解析後的出貨單資料:", parsed); 
+
+  } catch (err) {
+    // ...
 
       } catch (err) {
         toast.error("Excel 匯入失敗", { description: err.message });
