@@ -1,10 +1,10 @@
 // src/components/Dashboard.jsx
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react'; // 1. 引入 useMemo
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
-import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle } from 'lucide-react';
+import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle, ListChecks } from 'lucide-react';
 
-// 小幫手函式：根據狀態返回圖示和顏色
+// ... ( getItemStatus, ProgressBar, normalizeString 函式保持不變 ) ...
 const getItemStatus = (item, pickedQty, packedQty) => {
     const expectedQty = item.quantity;
     if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
@@ -12,8 +12,6 @@ const getItemStatus = (item, pickedQty, packedQty) => {
     if (pickedQty > 0 || packedQty > 0) return { Icon: Loader2, color: "text-yellow-500 animate-spin", label: "處理中" };
     return { Icon: Circle, color: "text-gray-400", label: "待處理" };
 };
-
-// 小幫手元件：進度條
 const ProgressBar = ({ value, max, colorClass }) => {
     const percentage = max > 0 ? (value / max) * 100 : 0;
     return (
@@ -22,11 +20,46 @@ const ProgressBar = ({ value, max, colorClass }) => {
         </div>
     );
 };
-
-// 正規化函式，用於清理字串
 const normalizeString = (str) => {
   if (!str) return "";
   return String(str).replace(/[^a-zA-Z0-9]/g, '');
+};
+
+// 【升級新增】儀表板元件
+const ProgressDashboard = ({ stats }) => {
+  const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
+
+  if (totalSkus === 0) return null; // 如果沒有資料則不顯示
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-md mb-8">
+      <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ListChecks className="mr-2" />任務總覽</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+        <div className="bg-gray-50 p-4 rounded-lg">
+          <p className="text-sm text-gray-500">品項完成度</p>
+          <p className="text-2xl font-bold text-gray-800">
+            {packedSkus}<span className="text-lg font-normal text-gray-500">/{totalSkus}</span>
+          </p>
+        </div>
+        <div className="bg-blue-50 p-4 rounded-lg">
+          <p className="text-sm text-blue-700">總揀貨數</p>
+          <p className="text-2xl font-bold text-blue-600">
+            {totalPickedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span>
+          </p>
+        </div>
+        <div className="bg-green-50 p-4 rounded-lg">
+          <p className="text-sm text-green-700">總裝箱數</p>
+          <p className="text-2xl font-bold text-green-600">
+            {totalPackedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span>
+          </p>
+        </div>
+      </div>
+      <div className="mt-4">
+          <p className="text-sm text-gray-600 mb-1">整體進度</p>
+          <ProgressBar value={totalPackedQty} max={totalQuantity} colorClass="bg-gradient-to-r from-green-400 to-emerald-500 h-2.5" />
+      </div>
+    </div>
+  );
 };
 
 
@@ -52,8 +85,21 @@ export function Dashboard({ user, onLogout }) {
       return () => clearTimeout(timer);
     }
   }, [errors]);
+  
+  // 【升級新增】使用 useMemo 計算總覽數據
+  const progressStats = useMemo(() => {
+    const totalSkus = shipmentData.length;
+    const totalQuantity = shipmentData.reduce((sum, item) => sum + item.quantity, 0);
 
-  // 【已校對】確保 Excel 匯入功能完整無誤
+    const packedSkus = shipmentData.filter(item => (confirmedItems[item.sku] || 0) >= item.quantity).length;
+    
+    const totalPickedQty = Object.values(scannedItems).reduce((sum, qty) => sum + qty, 0);
+    const totalPackedQty = Object.values(confirmedItems).reduce((sum, qty) => sum + qty, 0);
+
+    return { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty };
+  }, [shipmentData, scannedItems, confirmedItems]);
+
+
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -67,7 +113,7 @@ export function Dashboard({ user, onLogout }) {
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
         const orderIdRow = jsonData.find((row) => String(row[0]).includes('憑證號碼'));
-        const parsedOrderId = orderIdRow ? String(orderIdRow[0]).replace('憑證號碼 :', '').trim() : 'N/A';
+        const parsedOrderId = orderIdRow ? String(row[0]).replace('憑證號碼 :', '').trim() : 'N/A';
         setOrderId(parsedOrderId);
         
         const headerIndex = jsonData.findIndex((row) => String(row[0]) === '品項編碼');
@@ -107,7 +153,6 @@ export function Dashboard({ user, onLogout }) {
     setTimeout(() => setFlash({ sku: null, type: null }), 700);
   };
 
-  // 【已校對】確保掃描功能與角色權限正確
   const handleScan = () => {
     const normalizedInput = normalizeString(barcodeInput);
     if (!normalizedInput) {
@@ -128,7 +173,6 @@ export function Dashboard({ user, onLogout }) {
 
     const itemSku = item.sku;
 
-    // 1. 處理系統管理員 (admin) 的特殊邏輯
     if (user.role === 'admin') {
       const currentPacked = confirmedItems[itemSku] || 0;
       if (currentPacked >= item.quantity) {
@@ -143,7 +187,6 @@ export function Dashboard({ user, onLogout }) {
         toast.success(`管理員操作: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
         triggerFlash(itemSku, 'green');
       }
-    // 2. 處理揀貨員 (picker) 的邏輯
     } else if (user.role === 'picker') {
       const currentQty = scannedItems[itemSku] || 0;
       if (currentQty >= item.quantity) {
@@ -157,7 +200,6 @@ export function Dashboard({ user, onLogout }) {
         triggerFlash(itemSku, 'green');
         toast.success(`揀貨成功: ${item.itemName}`, { description: `數量: ${newQty}/${item.quantity}` });
       }
-    // 3. 處理裝箱員 (packer) 的邏輯
     } else if (user.role === 'packer') {
       const pickedQty = scannedItems[itemSku] || 0;
       if (pickedQty === 0) { 
@@ -201,6 +243,10 @@ export function Dashboard({ user, onLogout }) {
           <LogOut className="mr-2 h-4 w-4" /> 登出
         </button>
       </header>
+      
+      {/* 2. 【升級新增】將儀表板整合到主畫面 */}
+      <ProgressDashboard stats={progressStats} />
+      
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-md">
@@ -217,7 +263,7 @@ export function Dashboard({ user, onLogout }) {
         </div>
         <div className="lg:col-span-2">
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
-            <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單</h2>
+            <h2 className="text-xl font-semibold text-gray-700 mb-4">作業清單 ({orderId})</h2>
             {shipmentData.length > 0 ? (
               <div className="space-y-3">
                 {shipmentData.map((item) => {
