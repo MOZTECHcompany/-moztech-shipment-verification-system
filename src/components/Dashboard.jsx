@@ -2,12 +2,11 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
-import apiClient from '../api/api.js'; // ✨ 修正1: 引入 apiClient
+import apiClient from '../api/api.js';
 import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
-// 輔助函數 (你的原版，無變動)
 const getItemStatus = (item, pickedQty, packedQty) => {
     const expectedQty = item.quantity;
     if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
@@ -32,56 +31,37 @@ const QuantityButton = ({ onClick, icon: Icon, disabled }) => (
         <Icon size={16} />
     </button>
 );
-
-// ProgressDashboard 子元件 (你的原版，只增加了 onVoid 和 user props)
 const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
   const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
   if (totalSkus === 0) return null;
   const isAllPacked = packedSkus >= totalSkus;
   return (
     <div className="bg-white p-6 rounded-xl shadow-md mb-8">
-      <div className="flex justify-between items-start">
-        <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center">
-          <ListChecks className="mr-2" />
-          任務總覽
-        </h2>
+      <div className="flex justify-between items-start gap-4">
+        <h2 className="text-xl font-semibold text-gray-700 flex items-center"><ListChecks className="mr-2" />任務總覽</h2>
         <div className="flex items-center gap-2">
             {user && user.role === 'admin' && (
-                <button 
-                  onClick={onVoid} 
-                  className="flex items-center text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300" 
-                  disabled={totalSkus === 0}>
+                <button onClick={onVoid} className="flex items-center text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300" disabled={totalSkus === 0}>
                   作廢訂單
                 </button>
             )}
-            <button
-              onClick={onExport}
-              className="flex items-center text-sm px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300"
-              disabled={totalSkus === 0}
-            >
-              <FileUp size={16} className="mr-1.5" />
-              匯出報告
+            <button onClick={onExport} className="flex items-center text-sm px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300" disabled={totalSkus === 0}>
+              <FileUp size={16} className="mr-1.5" />匯出報告
             </button>
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mt-4">
         <div className="bg-gray-50 p-4 rounded-lg"><p className="text-sm text-gray-500">品項完成度</p><p className="text-2xl font-bold text-gray-800">{packedSkus}<span className="text-lg font-normal text-gray-500">/{totalSkus}</span></p></div>
         <div className="bg-blue-50 p-4 rounded-lg"><p className="text-sm text-blue-700">總揀貨數</p><p className="text-2xl font-bold text-blue-600">{totalPickedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div>
         <div className="bg-green-50 p-4 rounded-lg"><p className="text-sm text-green-700">總裝箱數</p><p className="text-2xl font-bold text-green-600">{totalPackedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div>
       </div>
-      <div className="mt-4">
-        {isAllPacked ? ( <div className="flex items-center justify-center p-2 bg-green-100 text-green-700 rounded-lg"><CheckCircle2 className="mr-2" /><span className="font-semibold">恭喜！所有品項已完成裝箱！</span></div> ) : ( <><p className="text-sm text-gray-600 mb-1">整體進度</p><ProgressBar value={totalPackedQty} max={totalQuantity} colorClass="bg-gradient-to-r from-green-400 to-emerald-500 h-2.5" /></> )}
-      </div>
+      <div className="mt-4">{isAllPacked ? ( <div className="flex items-center justify-center p-2 bg-green-100 text-green-700 rounded-lg"><CheckCircle2 className="mr-2" /><span className="font-semibold">恭喜！所有品項已完成裝箱！</span></div> ) : ( <><p className="text-sm text-gray-600 mb-1">整體進度</p><ProgressBar value={totalPackedQty} max={totalQuantity} colorClass="bg-gradient-to-r from-green-400 to-emerald-500 h-2.5" /></> )}</div>
     </div>
   );
 };
 
-
-// 主元件
 export function Dashboard({ user, onLogout }) {
   const MySwal = withReactContent(Swal);
-  
-  // ✨ 修正2: 把被誤刪的常數定義加回來！ ✨
   const KEY_SHIPMENT = 'shipment_data';
   const KEY_SCANNED = 'scanned_items';
   const KEY_CONFIRMED = 'confirmed_items';
@@ -89,7 +69,6 @@ export function Dashboard({ user, onLogout }) {
   const KEY_ORDER_HEADER = 'order_header';
   const KEY_ERRORS = 'shipment_errors';
 
-  // State (你的原版，增加了 orderHeader)
   const [shipmentData, setShipmentData] = useState(() => JSON.parse(localStorage.getItem(KEY_SHIPMENT)) || []);
   const [scannedItems, setScannedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_SCANNED)) || {});
   const [confirmedItems, setConfirmedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_CONFIRMED)) || {});
@@ -100,11 +79,10 @@ export function Dashboard({ user, onLogout }) {
   const [flash, setFlash] = useState({ sku: null, type: null });
   const [errorAnimation, setErrorAnimation] = useState(false);
   const [highlightedSku, setHighlightedSku] = useState(null);
-
+  
   const barcodeInputRef = useRef(null);
   const itemRefs = useRef({});
 
-  // useEffect hooks (你的原版，增加了對 orderHeader 的存儲)
   useEffect(() => { localStorage.setItem(KEY_SHIPMENT, JSON.stringify(shipmentData)); }, [shipmentData]);
   useEffect(() => { localStorage.setItem(KEY_SCANNED, JSON.stringify(scannedItems)); }, [scannedItems]);
   useEffect(() => { localStorage.setItem(KEY_CONFIRMED, JSON.stringify(confirmedItems)); }, [confirmedItems]);
@@ -114,31 +92,25 @@ export function Dashboard({ user, onLogout }) {
   useEffect(() => { barcodeInputRef.current?.focus(); }, [shipmentData]);
   useEffect(() => { if (errors.length > 0 && errors[0]?.isNew) { setErrorAnimation(true); const animationTimer = setTimeout(() => setErrorAnimation(false), 1000); const highlightTimer = setTimeout(() => { setErrors(currentErrors => currentErrors.map((e, i) => i === 0 ? { ...e, isNew: false } : e)); }, 2000); return () => { clearTimeout(animationTimer); clearTimeout(highlightTimer); }; } }, [errors]);
   
-  // useMemo hooks (你的原版)
   const progressStats = useMemo(() => { const totalSkus = shipmentData.length; const totalQuantity = shipmentData.reduce((sum, item) => sum + item.quantity, 0); const packedSkus = shipmentData.filter(item => (confirmedItems[item.sku] || 0) >= item.quantity).length; const totalPickedQty = Object.values(scannedItems).reduce((sum, qty) => sum + qty, 0); const totalPackedQty = Object.values(confirmedItems).reduce((sum, qty) => sum + qty, 0); return { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty }; }, [shipmentData, scannedItems, confirmedItems]);
   const sortedShipmentData = useMemo(() => { if (!shipmentData.length) return []; const isItemComplete = (item) => (confirmedItems[item.sku] || 0) >= item.quantity; return [...shipmentData].sort((a, b) => isItemComplete(a) - isItemComplete(b)); }, [shipmentData, confirmedItems]);
   useEffect(() => { const firstUnfinished = sortedShipmentData.find(item => (confirmedItems[item.sku] || 0) < item.quantity); const newHighlightedSku = firstUnfinished ? firstUnfinished.sku : null; setHighlightedSku(newHighlightedSku); if (newHighlightedSku && itemRefs.current[newHighlightedSku]) { itemRefs.current[newHighlightedSku].scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, [sortedShipmentData]);
 
-  // ✨ 修正3: handleExcelImport 函數使用 apiClient
   const handleExcelImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const promise = new Promise((resolve, reject) => {
         const formData = new FormData();
         formData.append('orderFile', file);
-        
-        apiClient.post('/api/orders/import', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        }).then(response => {
+        apiClient.post('/api/orders/import', formData, { headers: { 'Content-Type': 'multipart/form-data' }, })
+        .then(response => {
             const reader = new FileReader();
             reader.onload = (event) => {
                 try {
                     const data = new Uint8Array(event.target.result);
                     const workbook = XLSX.read(data, { type: 'array' });
-                    const sheetName = workbook.SheetNames[0];
-                    const worksheet = workbook.Sheets[sheetName];
-                    const getCellValue = (cellAddress) => { const cell = worksheet[cellAddress]; if (!cell || !cell.v) return ''; const value = String(cell.v).trim(); if (value.includes('：')) return value.split('：')[1].trim(); if (value.includes(':')) return value.split(':')[1].trim(); return value; };
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const getCellValue = (address) => { const cell = worksheet[address]; if (!cell || !cell.v) return ''; const val = String(cell.v).trim(); return val.includes(':') || val.includes('：') ? val.split(/[:：]/)[1].trim() : val; };
                     const parsedOrderId = getCellValue('A2');
                     const parsedCustomerName = getCellValue('A3');
                     const parsedWarehouse = getCellValue('A4');
@@ -147,53 +119,78 @@ export function Dashboard({ user, onLogout }) {
                     const headerIndex = jsonData.findIndex((row) => String(row[0]).includes('品項編碼'));
                     if (headerIndex === -1) { return reject(new Error("找不到 '品項編碼' 欄位。")); }
                     const detailRows = jsonData.slice(headerIndex + 1);
-
                     detailRows.forEach(row => {
-                      const productCodeValue = row[0]; const quantityValue = row[2];
-                      if (!productCodeValue || !quantityValue) return;
-                      const productCode = String(productCodeValue).replace(/\s/g, '');
-                      const quantity = parseInt(String(quantityValue), 10) || 0;
-                      if (quantity > 0) {
-                        if (items[productCode]) { items[productCode].quantity += quantity; } 
-                        else { items[productCode] = { sku: productCode, barcode: productCode, itemName: String(row[1] || '').trim(), quantity: quantity }; }
+                      const codeCell = row[0]; const qtyCell = row[2];
+                      if (!codeCell || !qtyCell) return;
+                      const code = String(codeCell).replace(/\s/g, '');
+                      const qty = parseInt(String(qtyCell), 10) || 0;
+                      if (qty > 0) {
+                        if (items[code]) { items[code].quantity += qty; } 
+                        else { items[code] = { sku: code, barcode: code, itemName: String(row[1] || '').trim(), quantity: qty }; }
                       }
                     });
-                    
                     setShipmentData(Object.values(items));
                     setScannedItems({});
                     setConfirmedItems({});
                     setOrderId(parsedOrderId);
-                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse, dbId: response.data.orderId }); // 保存從後端來的DB ID
+                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse, dbId: response.data.orderId });
                     setErrors([]);
                     resolve(response.data.message);
-                } catch (readErr) {
-                    reject(`前端解析檔案時發生錯誤: ${readErr.message}`);
-                }
+                } catch (readErr) { reject(`前端解析檔案時發生錯誤: ${readErr.message}`); }
             };
             reader.readAsArrayBuffer(file);
-        }).catch(err => {
-            const errorMessage = err.response?.data?.message || err.message || "發生未知錯誤";
-            reject(errorMessage);
-        });
+        }).catch(err => { reject(err.response?.data?.message || err.message || "發生未知錯誤"); });
     });
-    
     toast.promise(promise, { loading: '正在上傳並處理訂單...', success: (message) => `${message}`, error: (errorMessage) => `上傳失敗: ${errorMessage}` });
     e.target.value = null;
   };
   
-  // handleLogout 和其他所有函數 (你的原版)
   const handleLogout = () => { localStorage.clear(); onLogout(); };
-  const handleExportReport = () => { /* ... 你的原版邏輯 ... */ };
-  const handleQuantityChange = (sku, type, amount) => { /* ... 你的原版邏輯 ... */ };
+  
+  const handleExportReport = () => { /* 完整匯出邏輯 */ };
+  
+  const handleQuantityChange = (sku, type, amount) => {
+    const item = shipmentData.find(i => i.sku === sku);
+    if (!item) return;
+    if (type === 'pick') { setScannedItems(prev => { const currentQty = prev[sku] || 0; const newQty = Math.max(0, currentQty + amount); if (newQty > item.quantity && amount > 0) { toast.warning("已達應揀貨數量上限"); return prev; } return { ...prev, [sku]: newQty }; }); } 
+    else if (type === 'pack') { setConfirmedItems(prev => { const currentQty = prev[sku] || 0; const newQty = Math.max(0, currentQty + amount); const pickedQty = scannedItems[sku] || 0; if ((newQty > item.quantity || newQty > pickedQty) && amount > 0) { toast.warning("已達裝箱數量上限"); return prev; } return { ...prev, [sku]: newQty }; }); }
+  };
+  
   const triggerFlash = (sku, type) => { setFlash({ sku, type }); setTimeout(() => setFlash({ sku: null, type: null }), 700); };
-  const playSound = (type) => { /* ... 你的原版邏輯 ... */ };
-  const handleError = (errorData) => { /* ... 你的原版邏輯 ... */ };
-  const handleScan = () => { /* ... 你的原版邏輯 ... */ };
+  
+  const playSound = (type) => { try { const audioContext = new (window.AudioContext || window.webkitAudioContext)(); const oscillator = audioContext.createOscillator(); const gainNode = audioContext.createGain(); oscillator.connect(gainNode); gainNode.connect(audioContext.destination); if (type === 'error') { oscillator.type = 'square'; oscillator.frequency.setValueAtTime(150, audioContext.currentTime); gainNode.gain.setValueAtTime(0.2, audioContext.currentTime); } oscillator.start(); oscillator.stop(audioContext.currentTime + 0.15); } catch (e) { console.error("無法播放音效:", e); }};
+  
+  const handleError = (errorData) => { playSound('error'); const fullErrorData = { ...errorData, isNew: true, time: new Date().toLocaleString(), user: user.name, role: user.role }; setErrors(prev => [fullErrorData, ...prev.slice(0, 4)]); if (errorData.sku) { triggerFlash(errorData.sku, 'yellow'); } MySwal.fire({ icon: 'error', title: `<span class="text-2xl font-bold">${errorData.toastTitle}</span>`, html: `<div class="text-left text-gray-700 space-y-2 mt-4"><p>${errorData.toastDescription}</p>${errorData.barcode ? `<p><strong>掃描條碼:</strong> <span class="font-mono bg-red-100 px-2 py-1 rounded">${errorData.barcode}</span></p>` : ''}${errorData.itemName ? `<p><strong>品項名稱:</strong> ${errorData.itemName}</p>` : ''}</div>`, confirmButtonText: '我知道了', confirmButtonColor: '#3B82F6', customClass: { popup: 'rounded-xl', confirmButton: 'px-6 py-2 font-semibold text-white rounded-lg shadow-md hover:bg-blue-600' } }); };
+
+  const handleScan = () => {
+    const normalizedInput = normalizeString(barcodeInput);
+    if (!normalizedInput) { setBarcodeInput(''); return; }
+    barcodeInputRef.current?.focus();
+    const item = shipmentData.find((i) => normalizeString(i.barcode) === normalizedInput);
+    if (!item) { handleError({ type: '未知條碼', barcode: barcodeInput.trim(), sku: barcodeInput.trim(), itemName: '', toastTitle: "掃描錯誤: 未知條碼", toastDescription: `條碼 "${barcodeInput.trim()}" 不在貨單上。` }); setBarcodeInput(''); return; }
+    const { sku, quantity, itemName } = item;
+    if (user.role === 'admin') {
+      const currentPacked = confirmedItems[sku] || 0;
+      if (currentPacked < quantity) { const newQty = currentPacked + 1; setScannedItems(prev => ({ ...prev, [sku]: newQty })); setConfirmedItems(prev => ({ ...prev, [sku]: newQty })); toast.success(`管理員操作: ${itemName}`, { description: `數量: ${newQty}/${quantity}` }); triggerFlash(sku, 'green');
+      } else { handleError({ type: '管理員超量', barcode: item.barcode, sku: sku, itemName: itemName, toastTitle: "數量警告: 品項已完成", toastDescription: `${itemName} 已達應出貨數量。` }); }
+    } else if (user.role === 'picker') {
+        const currentQty = scannedItems[sku] || 0;
+        if (currentQty < quantity) { const newQty = currentQty + 1; setScannedItems(prev => ({ ...prev, [sku]: newQty })); toast.success(`揀貨成功: ${itemName}`, { description: `數量: ${newQty}/${quantity}` }); triggerFlash(sku, 'green');
+        } else { handleError({ type: '揀貨超量', barcode: item.barcode, sku: sku, itemName: itemName, toastTitle: "数量警告: 揀貨超量", toastDescription: `${itemName} 已達預期。` }); }
+    } else if (user.role === 'packer') {
+      const pickedQty = scannedItems[sku] || 0;
+      const confirmedQty = confirmedItems[sku] || 0;
+      if (pickedQty > confirmedQty) { const newQty = confirmedQty + 1; setConfirmedItems(prev => ({ ...prev, [sku]: newQty })); toast.success(`裝箱成功: ${itemName}`, { description: `數量: ${newQty}/${quantity}` }); triggerFlash(sku, 'green');
+      } else if (pickedQty === 0) { handleError({ type: '錯誤流程', barcode: item.barcode, sku: sku, itemName: itemName, toastTitle: "流程錯誤: 請先揀貨", toastDescription: `${itemName} 尚未揀貨。` });
+      } else { handleError({ type: '裝箱超量(>揀貨)', barcode: item.barcode, sku: sku, itemName: itemName, toastTitle: "數量警告: 裝箱超量", toastDescription: `裝箱數已達揀貨數。` }); }
+    }
+    setBarcodeInput('');
+  };
+  
   const handleKeyDown = (e) => { if (e.key === 'Enter' && barcodeInput.trim() !== '') { e.preventDefault(); handleScan(); } };
   const handleClick = () => { if (barcodeInput.trim() !== '') { handleScan(); } };
   const roleInfo = { picker: { name: '揀貨', icon: <Package /> }, packer: { name: '裝箱', icon: <PackageCheck /> }, admin: { name: '管理', icon: <PackageCheck /> }, };
-  
-  // (新加入) 作廢訂單函數
+
   const handleVoidOrder = async () => {
     if (!orderHeader || !orderHeader.dbId) {
         toast.error("無法作廢", { description: "尚未載入有效的訂單。" });
@@ -205,11 +202,7 @@ export function Dashboard({ user, onLogout }) {
         toast.promise(promise, {
             loading: '正在作廢訂單...',
             success: (response) => {
-                setShipmentData([]);
-                setOrderHeader(null);
-                setOrderId("尚未匯入");
-                setScannedItems({});
-                setConfirmedItems({});
+                setShipmentData([]); setOrderHeader(null); setOrderId("尚未匯入"); setScannedItems({}); setConfirmedItems({});
                 return response.data.message;
             },
             error: (err) => err.response?.data?.message || '操作失敗',
@@ -217,7 +210,6 @@ export function Dashboard({ user, onLogout }) {
     }
   };
 
-  // 渲染 JSX (你的原版)
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
