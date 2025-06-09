@@ -1,5 +1,5 @@
 // =================================================================
-//                 Moztech WMS - 核心後端 API 伺服器
+//                 Moztech WMS - 核心後端 API 伺服器 (最終安全版)
 // =================================================================
 
 // 1. 引入所有需要的套件
@@ -58,30 +58,13 @@ const verifyAdmin = (req, res, next) => {
 //                         API 路由 (Endpoints)
 // =================================================================
 
-// ✨✨✨ 1. 新增這個臨時的一次性 API ✨✨✨
-app.get('/api/auth/generate-super-secret-admin-hash', async (req, res) => {
-    try {
-        const passwordToHash = '12345678';
-        const saltRounds = 10;
-        const hashedPassword = await bcrypt.hash(passwordToHash, saltRounds);
-        
-        // 把生成的新 hash 回傳到前端
-        res.status(200).json({
-            password: passwordToHash,
-            hashedPassword: hashedPassword
-        });
-    } catch (error) {
-        console.error('生成 Hash 失敗', error);
-        res.status(500).json({ message: '生成 Hash 失敗', error: error.message });
-    }
-});
-
+// (我們把那個臨時的 /api/auth/generate... 路由從這裡刪掉了)
 
 app.get('/', (req, res) => { res.status(200).send('Moztech WMS API Server is running and ready!'); });
 
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ message: '使用者名稱或密碼不能為空' });
+    if (!username || !password) return res.status(400).json({ message: '使用者名稱和密碼不能為空' });
     const plainTextPassword = String(password);
     try {
         const userResult = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
