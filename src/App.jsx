@@ -9,7 +9,6 @@ import { Dashboard as PickingDashboard } from './components/Dashboard';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import './index.css';
 
-// ✨✨✨ 修改後的 Navbar 元件 ✨✨✨
 function AppNavbar({ user, onLogout }) {
   if (!user) return null;
   return (
@@ -17,8 +16,8 @@ function AppNavbar({ user, onLogout }) {
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         {/* 左側 Logo 和標題 */}
         <div className="flex items-center gap-3">
-            {/* 請確保你的新 Logo 圖片放在 public 資料夾下 */}
-            <img src="/new-logo.png" alt="MOZTECH Logo" className="h-8 w-auto" /> {/* 調整 h-8 來改變高度 */}
+            {/* ✨✨✨ 已經幫你把檔名換成 moztech_1.png ✨✨✨ */}
+            <img src="/moztech_1.png" alt="MOZTECH Logo" className="h-8 w-auto" />
             <span className="font-semibold text-xl tracking-wider">WMS</span>
         </div>
         
@@ -41,24 +40,17 @@ function AppNavbar({ user, onLogout }) {
 }
 
 
-// 主 App 元件 (保持不變)
+// 主 App 元件
 export default function App() {
   const [user, setUser] = useLocalStorage("user", null);
 
   const handleLogin = (userId, role, name) => {
     if (userId && role) setUser({ id: userId, role: role, name: name || userId });
   };
+  
   const handleLogout = () => {
     setUser(null); 
-    // 清理所有相關的 localStorage
-    localStorage.removeItem('user');
-    localStorage.removeItem('token');
-    localStorage.removeItem('shipment_data');
-    localStorage.removeItem('scanned_items');
-    localStorage.removeItem('confirmed_items');
-    localStorage.removeItem('order_id');
-    localStorage.removeItem('order_header');
-    localStorage.removeItem('shipment_errors');
+    localStorage.clear();
   };
 
   return (
