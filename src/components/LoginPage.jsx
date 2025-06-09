@@ -1,30 +1,47 @@
 // src/components/LoginPage.jsx
 import React, { useState } from 'react';
 import { Loader2, User, Lock } from 'lucide-react';
-import { userDatabase } from '../users'; // 引入我們的使用者資料庫
+import { toast } from 'sonner';
+import apiClient from '../api/api'; // ✨ 1. 引入我們全局的 apiClient
 
 export function LoginPage({ onLogin }) {
-  const [userId, setUserId] = useState('');
+  const [username, setUsername] = useState(''); // 改成 username 來匹配後端
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const handleLoginClick = () => {
+  const handleLoginClick = async () => {
     setError('');
     setIsLoggingIn(true);
+    
+    try {
+        // ✨ 2. 呼叫後端的 /api/auth/login API
+        const response = await apiClient.post('/api/auth/login', {
+            username,
+            password
+        });
+        
+        // ✨ 3. 從後端的回應中獲取 token 和 user 資訊
+        const { token, user } = response.data;
+        
+        // ✨ 4. 將 token 和 user 資訊儲存到 localStorage
+        localStorage.setItem('token', token);
+        // 我們也在 App.jsx 層級儲存了 user，這裡可以不用重複儲存
+        // localStorage.setItem('user', JSON.stringify(user));
 
-    setTimeout(() => {
-      // 【關鍵修改】在查找之前，將使用者輸入的 userId 轉換為小寫
-      const userFromDb = userDatabase[userId.toLowerCase()]; 
+        toast.success(`歡迎回來, ${user.name || user.username}!`);
 
-      if (userFromDb && userFromDb.password === btoa(password)) {
-        // 登入成功時，我們傳遞的是使用者輸入的原始 userId (或轉換成小寫的，取決於您的偏好)
-        onLogin(userId, userFromDb.role, userFromDb.name);
-      } else {
-        setError('員工編號或密碼錯誤，請重新輸入。');
-      }
-      setIsLoggingIn(false);
-    }, 500);
+        // ✨ 5. 呼叫 App.jsx 傳來的 onLogin 函數，更新全局狀態
+        onLogin(user.id, user.role, user.name || user.username);
+        
+    } catch (err) {
+        // 處理登入失敗
+        console.error("登入失敗", err);
+        const errorMessage = err.response?.data?.message || '登入時發生錯誤，請稍後再試。';
+        setError(errorMessage);
+    } finally {
+        setIsLoggingIn(false);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -49,9 +66,9 @@ export function LoginPage({ onLogin }) {
             <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
               type="text"
-              placeholder="員工編號"
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
+              placeholder="使用者名稱" // 標籤也改成使用者名稱
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg"
             />
           </div>
@@ -68,12 +85,12 @@ export function LoginPage({ onLogin }) {
           </div>
         </div>
         
-        {error && <p className="mt-4 text-center text-red-500 text-sm animate-pulse">{error}</p>}
+        {error && <p className="mt-4 text-center text-red-500 text-sm">{error}</p>}
 
         <div className="mt-6">
           <button
             onClick={handleLoginClick}
-            disabled={!userId || !password || isLoggingIn}
+            disabled={!username || !password || isLoggingIn}
             className={`w-full flex items-center justify-center gap-2 text-white font-bold py-3 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:scale-105 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100`}
           >
             {isLoggingIn ? <><Loader2 className="animate-spin h-5 w-5" />登入中...</> : '安全登入'}
