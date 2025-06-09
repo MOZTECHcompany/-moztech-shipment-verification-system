@@ -15,10 +15,9 @@ const xlsx = require('xlsx');
 
 // 2. 應用程式與 Multer 設定
 const app = express();
-app.use(cors()); // 允許跨來源請求
-app.use(express.json()); // 讓 Express 可以解析 JSON request body
+app.use(cors());
+app.use(express.json());
 
-// 設定檔案上傳的暫存資料夾
 const uploadDir = 'uploads/';
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
@@ -37,7 +36,7 @@ const pool = new Pool({
     password: process.env.DB_PASSWORD,
     database: process.env.DB_DATABASE,
     ssl: {
-      rejectUnauthorized: false // 在 Render 上連接資料庫通常需要這個 SSL 設定
+      rejectUnauthorized: false
     }
 });
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -65,12 +64,8 @@ app.get('/api/db-test', async (req, res) => {
     }
 });
 
-// --- 用戶認證 API ---
-app.post('/api/auth/register', async (req, res) => { /* ... 註冊邏輯 ... */ }); // (此處省略詳細程式碼以求簡潔，實際貼上時會包含)
-app.post('/api/auth/login', async (req, res) => { /* ... 登入邏輯 ... */ });   // (此處省略詳細程式碼以求簡潔，實際貼上時會包含)
 
-
-// --- ✨ 訂單匯入 API (更新後的版本) ✨ ---
+// --- 訂單匯入 API (✨ 最新修正版本 ✨) ---
 app.post('/api/orders/import', upload.single('orderFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: '沒有上傳檔案' });
@@ -84,18 +79,12 @@ app.post('/api/orders/import', upload.single('orderFile'), async (req, res) => {
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
 
-        // 建立一個更強健的通用取值函數
         const getCellValue = (cellAddress) => {
             const cell = worksheet[cellAddress];
             if (!cell || !cell.v) return '';
             const value = String(cell.v).trim();
-            
-            if (value.includes('：')) {
-                return value.split('：')[1].trim();
-            }
-            if (value.includes(':')) {
-                return value.split(':')[1].trim();
-            }
+            if (value.includes('：')) return value.split('：')[1].trim();
+            if (value.includes(':')) return value.split(':')[1].trim();
             return value;
         };
 
@@ -120,7 +109,9 @@ app.post('/api/orders/import', upload.single('orderFile'), async (req, res) => {
 
             if (!productCodeCell || !productCodeCell.v) continue;
 
-            const productCode = String(productCodeCell.v).trim();
+            // ✨✨✨ 關鍵的修復程式碼在這裡！✨✨✨
+            const productCode = String(productCodeCell.v).replace(/\s/g, '');
+            
             const productName = productNameCell ? String(productNameCell.v).trim() : '';
             const quantityString = quantityCell ? String(quantityCell.v) : '0';
             const quantity = parseInt(quantityString, 10) || 0;
@@ -160,7 +151,9 @@ app.post('/api/orders/import', upload.single('orderFile'), async (req, res) => {
         await client.query('ROLLBACK');
         console.error('檔案匯入失敗', error);
         
+        const worksheet = error.worksheet || (xlsx.readFile(filePath).Sheets[xlsx.readFile(filePath).SheetNames[0]]);
         const voucherNumberForError = (worksheet && getCellValue('A2')) || '未知';
+
         if (error.code === '23505' && error.constraint === 'orders_voucher_number_key') {
             return res.status(409).json({ message: `錯誤：憑證號碼 ${voucherNumberForError} 已存在，請勿重複匯入！`});
         }
@@ -203,7 +196,7 @@ app.get('/api/reports/summary', async (req, res) => {
     }
 });
 
-// --- 為了程式碼的完整性，把 Auth 相關路由補回來 ---
+// --- 用戶認證 API ---
 app.post('/api/auth/register', async (req, res) => { const { username, password } = req.body; if (!username || !password) { return res.status(400).json({ message: '使用者名稱和密碼不能為空' }); } try { const hashedPassword = await bcrypt.hash(password, 10); const newUser = await pool.query( "INSERT INTO users (username, password, role) VALUES ($1, $2, 'staff') RETURNING id, username, role", [username, hashedPassword] ); res.status(201).json({ message: `使用者 ${newUser.rows[0].username} 註冊成功`, user: newUser.rows[0], }); } catch (error) { console.error('註冊失敗', error); if (error.code === '23505') { return res.status(409).json({ message: '此使用者名稱已被註冊' }); } res.status(500).json({ message: '伺服器內部錯誤' }); } });
 app.post('/api/auth/login', async (req, res) => { const { username, password } = req.body; if (!username || !password) { return res.status(400).json({ message: '使用者名稱和密碼不能為空' }); } try { const userResult = await pool.query("SELECT * FROM users WHERE username = $1", [username]); if (userResult.rows.length === 0) { return res.status(401).json({ message: '使用者名稱或密碼錯誤' }); } const user = userResult.rows[0]; const isMatch = await bcrypt.compare(password, user.password); if (!isMatch) { return res.status(401).json({ message: '使用者名稱或密碼錯誤' }); } const token = jwt.sign( { id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '1h' } ); res.json({ message: '登入成功', token: token, user: { id: user.id, username: user.username, role: user.role } }); } catch (error) { console.error('登入失敗', error); res.status(500).json({ message: '伺服器內部錯誤' }); } });
 
