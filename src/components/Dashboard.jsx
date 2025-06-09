@@ -2,27 +2,96 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
-import apiClient from '../api/api.js'; // ✨ 1. 引入 apiClient
+import apiClient from '../api/api.js'; // ✨ 修正1: 引入 apiClient
 import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
-const getItemStatus = (item, pickedQty, packedQty) => { const expectedQty = item.quantity; if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" }; if (pickedQty >= expectedQty) return { Icon: PackageCheck, color: "text-blue-500", label: "待裝箱" }; if (pickedQty > 0 || packedQty > 0) return { Icon: Loader2, color: "text-yellow-500 animate-spin", label: "處理中" }; return { Icon: Circle, color: "text-gray-400", label: "待處理" }; };
-const ProgressBar = ({ value, max, colorClass }) => { const percentage = max > 0 ? (value / max) * 100 : 0; return ( <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div className={`${colorClass} h-1.5 rounded-full transition-all duration-300`} style={{ width: `${percentage}%` }}></div></div> ); };
-const normalizeString = (str) => { if (!str) return ""; return String(str).replace(/[^a-zA-Z0-9]/g, ''); };
-const QuantityButton = ({ onClick, icon: Icon, disabled }) => ( <button onClick={onClick} disabled={disabled} className="p-1 rounded-full text-gray-500 hover:bg-gray-200 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"><Icon size={16} /></button> );
-const ProgressDashboard = ({ stats, onExport, onVoid, user }) => { const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats; if (totalSkus === 0) return null; const isAllPacked = packedSkus >= totalSkus; return ( <div className="bg-white p-6 rounded-xl shadow-md mb-8"><div className="flex justify-between items-start gap-4"><h2 className="text-xl font-semibold text-gray-700 flex items-center"><ListChecks className="mr-2" />任務總覽</h2><div className="flex gap-2">{user.role === 'admin' && <button onClick={onVoid} className="flex items-center text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300" disabled={totalSkus === 0}>作廢訂單</button>}<button onClick={onExport} className="flex items-center text-sm px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300" disabled={totalSkus === 0}><FileUp size={16} className="mr-1.5" />匯出報告</button></div></div><div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mt-4"><div className="bg-gray-50 p-4 rounded-lg"><p className="text-sm text-gray-500">品項完成度</p><p className="text-2xl font-bold text-gray-800">{packedSkus}<span className="text-lg font-normal text-gray-500">/{totalSkus}</span></p></div><div className="bg-blue-50 p-4 rounded-lg"><p className="text-sm text-blue-700">總揀貨數</p><p className="text-2xl font-bold text-blue-600">{totalPickedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div><div className="bg-green-50 p-4 rounded-lg"><p className="text-sm text-green-700">總裝箱數</p><p className="text-2xl font-bold text-green-600">{totalPackedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div></div><div className="mt-4">{isAllPacked ? ( <div className="flex items-center justify-center p-2 bg-green-100 text-green-700 rounded-lg"><CheckCircle2 className="mr-2" /><span className="font-semibold">恭喜！所有品項已完成裝箱！</span></div> ) : ( <><p className="text-sm text-gray-600 mb-1">整體進度</p><ProgressBar value={totalPackedQty} max={totalQuantity} colorClass="bg-gradient-to-r from-green-400 to-emerald-500 h-2.5" /></> )}</div></div> ); };
+// 輔助函數 (你的原版，無變動)
+const getItemStatus = (item, pickedQty, packedQty) => {
+    const expectedQty = item.quantity;
+    if (packedQty >= expectedQty) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
+    if (pickedQty >= expectedQty) return { Icon: PackageCheck, color: "text-blue-500", label: "待裝箱" };
+    if (pickedQty > 0 || packedQty > 0) return { Icon: Loader2, color: "text-yellow-500 animate-spin", label: "處理中" };
+    return { Icon: Circle, color: "text-gray-400", label: "待處理" };
+};
+const ProgressBar = ({ value, max, colorClass }) => {
+    const percentage = max > 0 ? (value / max) * 100 : 0;
+    return ( <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div className={`${colorClass} h-1.5 rounded-full transition-all duration-300`} style={{ width: `${percentage}%` }}></div></div> );
+};
+const normalizeString = (str) => {
+  if (!str) return "";
+  return String(str).replace(/[^a-zA-Z0-9]/g, '');
+};
+const QuantityButton = ({ onClick, icon: Icon, disabled }) => (
+    <button
+        onClick={onClick}
+        disabled={disabled}
+        className="p-1 rounded-full text-gray-500 hover:bg-gray-200 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+    >
+        <Icon size={16} />
+    </button>
+);
 
+// ProgressDashboard 子元件 (你的原版，只增加了 onVoid 和 user props)
+const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
+  const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
+  if (totalSkus === 0) return null;
+  const isAllPacked = packedSkus >= totalSkus;
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-md mb-8">
+      <div className="flex justify-between items-start">
+        <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center">
+          <ListChecks className="mr-2" />
+          任務總覽
+        </h2>
+        <div className="flex items-center gap-2">
+            {user && user.role === 'admin' && (
+                <button 
+                  onClick={onVoid} 
+                  className="flex items-center text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-300" 
+                  disabled={totalSkus === 0}>
+                  作廢訂單
+                </button>
+            )}
+            <button
+              onClick={onExport}
+              className="flex items-center text-sm px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300"
+              disabled={totalSkus === 0}
+            >
+              <FileUp size={16} className="mr-1.5" />
+              匯出報告
+            </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+        <div className="bg-gray-50 p-4 rounded-lg"><p className="text-sm text-gray-500">品項完成度</p><p className="text-2xl font-bold text-gray-800">{packedSkus}<span className="text-lg font-normal text-gray-500">/{totalSkus}</span></p></div>
+        <div className="bg-blue-50 p-4 rounded-lg"><p className="text-sm text-blue-700">總揀貨數</p><p className="text-2xl font-bold text-blue-600">{totalPickedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div>
+        <div className="bg-green-50 p-4 rounded-lg"><p className="text-sm text-green-700">總裝箱數</p><p className="text-2xl font-bold text-green-600">{totalPackedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div>
+      </div>
+      <div className="mt-4">
+        {isAllPacked ? ( <div className="flex items-center justify-center p-2 bg-green-100 text-green-700 rounded-lg"><CheckCircle2 className="mr-2" /><span className="font-semibold">恭喜！所有品項已完成裝箱！</span></div> ) : ( <><p className="text-sm text-gray-600 mb-1">整體進度</p><ProgressBar value={totalPackedQty} max={totalQuantity} colorClass="bg-gradient-to-r from-green-400 to-emerald-500 h-2.5" /></> )}
+      </div>
+    </div>
+  );
+};
+
+
+// 主元件
 export function Dashboard({ user, onLogout }) {
   const MySwal = withReactContent(Swal);
+  
+  // ✨ 修正2: 把被誤刪的常數定義加回來！ ✨
   const KEY_SHIPMENT = 'shipment_data';
   const KEY_SCANNED = 'scanned_items';
   const KEY_CONFIRMED = 'confirmed_items';
   const KEY_ORDER_ID = 'order_id';
   const KEY_ORDER_HEADER = 'order_header';
   const KEY_ERRORS = 'shipment_errors';
+
+  // State (你的原版，增加了 orderHeader)
   const [shipmentData, setShipmentData] = useState(() => JSON.parse(localStorage.getItem(KEY_SHIPMENT)) || []);
-  const [scannedItems, setScannedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_SCanned)) || {});
+  const [scannedItems, setScannedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_SCANNED)) || {});
   const [confirmedItems, setConfirmedItems] = useState(() => JSON.parse(localStorage.getItem(KEY_CONFIRMED)) || {});
   const [orderId, setOrderId] = useState(() => localStorage.getItem(KEY_ORDER_ID) || "尚未匯入");
   const [orderHeader, setOrderHeader] = useState(() => JSON.parse(localStorage.getItem(KEY_ORDER_HEADER)) || null);
@@ -31,8 +100,11 @@ export function Dashboard({ user, onLogout }) {
   const [flash, setFlash] = useState({ sku: null, type: null });
   const [errorAnimation, setErrorAnimation] = useState(false);
   const [highlightedSku, setHighlightedSku] = useState(null);
+
   const barcodeInputRef = useRef(null);
   const itemRefs = useRef({});
+
+  // useEffect hooks (你的原版，增加了對 orderHeader 的存儲)
   useEffect(() => { localStorage.setItem(KEY_SHIPMENT, JSON.stringify(shipmentData)); }, [shipmentData]);
   useEffect(() => { localStorage.setItem(KEY_SCANNED, JSON.stringify(scannedItems)); }, [scannedItems]);
   useEffect(() => { localStorage.setItem(KEY_CONFIRMED, JSON.stringify(confirmedItems)); }, [confirmedItems]);
@@ -41,10 +113,13 @@ export function Dashboard({ user, onLogout }) {
   useEffect(() => { localStorage.setItem(KEY_ERRORS, JSON.stringify(errors)); }, [errors]);
   useEffect(() => { barcodeInputRef.current?.focus(); }, [shipmentData]);
   useEffect(() => { if (errors.length > 0 && errors[0]?.isNew) { setErrorAnimation(true); const animationTimer = setTimeout(() => setErrorAnimation(false), 1000); const highlightTimer = setTimeout(() => { setErrors(currentErrors => currentErrors.map((e, i) => i === 0 ? { ...e, isNew: false } : e)); }, 2000); return () => { clearTimeout(animationTimer); clearTimeout(highlightTimer); }; } }, [errors]);
+  
+  // useMemo hooks (你的原版)
   const progressStats = useMemo(() => { const totalSkus = shipmentData.length; const totalQuantity = shipmentData.reduce((sum, item) => sum + item.quantity, 0); const packedSkus = shipmentData.filter(item => (confirmedItems[item.sku] || 0) >= item.quantity).length; const totalPickedQty = Object.values(scannedItems).reduce((sum, qty) => sum + qty, 0); const totalPackedQty = Object.values(confirmedItems).reduce((sum, qty) => sum + qty, 0); return { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty }; }, [shipmentData, scannedItems, confirmedItems]);
   const sortedShipmentData = useMemo(() => { if (!shipmentData.length) return []; const isItemComplete = (item) => (confirmedItems[item.sku] || 0) >= item.quantity; return [...shipmentData].sort((a, b) => isItemComplete(a) - isItemComplete(b)); }, [shipmentData, confirmedItems]);
   useEffect(() => { const firstUnfinished = sortedShipmentData.find(item => (confirmedItems[item.sku] || 0) < item.quantity); const newHighlightedSku = firstUnfinished ? firstUnfinished.sku : null; setHighlightedSku(newHighlightedSku); if (newHighlightedSku && itemRefs.current[newHighlightedSku]) { itemRefs.current[newHighlightedSku].scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, [sortedShipmentData]);
 
+  // ✨ 修正3: handleExcelImport 函數使用 apiClient
   const handleExcelImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -53,7 +128,6 @@ export function Dashboard({ user, onLogout }) {
         const formData = new FormData();
         formData.append('orderFile', file);
         
-        // ✨ 2. 使用 apiClient 來取代 axios，它會自動攜帶 Token
         apiClient.post('/api/orders/import', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
         }).then(response => {
@@ -89,7 +163,7 @@ export function Dashboard({ user, onLogout }) {
                     setScannedItems({});
                     setConfirmedItems({});
                     setOrderId(parsedOrderId);
-                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse });
+                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse, dbId: response.data.orderId }); // 保存從後端來的DB ID
                     setErrors([]);
                     resolve(response.data.message);
                 } catch (readErr) {
@@ -107,24 +181,50 @@ export function Dashboard({ user, onLogout }) {
     e.target.value = null;
   };
   
+  // handleLogout 和其他所有函數 (你的原版)
   const handleLogout = () => { localStorage.clear(); onLogout(); };
-  const handleExportReport = () => { /* ... 保持不變 ... */ };
-  const handleQuantityChange = (sku, type, amount) => { /* ... 保持不變 ... */ };
+  const handleExportReport = () => { /* ... 你的原版邏輯 ... */ };
+  const handleQuantityChange = (sku, type, amount) => { /* ... 你的原版邏輯 ... */ };
   const triggerFlash = (sku, type) => { setFlash({ sku, type }); setTimeout(() => setFlash({ sku: null, type: null }), 700); };
-  const playSound = (type) => { /* ... 保持不變 ... */ };
-  const handleError = (errorData) => { /* ... 保持不變 ... */ };
-  const handleScan = () => { /* ... 保持不變 ... */ };
+  const playSound = (type) => { /* ... 你的原版邏輯 ... */ };
+  const handleError = (errorData) => { /* ... 你的原版邏輯 ... */ };
+  const handleScan = () => { /* ... 你的原版邏輯 ... */ };
   const handleKeyDown = (e) => { if (e.key === 'Enter' && barcodeInput.trim() !== '') { e.preventDefault(); handleScan(); } };
   const handleClick = () => { if (barcodeInput.trim() !== '') { handleScan(); } };
   const roleInfo = { picker: { name: '揀貨', icon: <Package /> }, packer: { name: '裝箱', icon: <PackageCheck /> }, admin: { name: '管理', icon: <PackageCheck /> }, };
   
+  // (新加入) 作廢訂單函數
+  const handleVoidOrder = async () => {
+    if (!orderHeader || !orderHeader.dbId) {
+        toast.error("無法作廢", { description: "尚未載入有效的訂單。" });
+        return;
+    }
+    const { value: reason } = await MySwal.fire({ title: '確定要作廢此訂單？', text: "這個操作無法復原。請輸入作廢原因：", input: 'text', inputPlaceholder: '例如：客戶取消、重複建單...', showCancelButton: true, confirmButtonText: '確認作廢', cancelButtonText: '取消', inputValidator: (value) => { if (!value) { return '你必須輸入原因！' } } });
+    if (reason) {
+        const promise = apiClient.patch(`/api/orders/${orderHeader.dbId}/void`, { reason: reason });
+        toast.promise(promise, {
+            loading: '正在作廢訂單...',
+            success: (response) => {
+                setShipmentData([]);
+                setOrderHeader(null);
+                setOrderId("尚未匯入");
+                setScannedItems({});
+                setConfirmedItems({});
+                return response.data.message;
+            },
+            error: (err) => err.response?.data?.message || '操作失敗',
+        });
+    }
+  };
+
+  // 渲染 JSX (你的原版)
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
         <div><h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">{roleInfo[user.role]?.icon || <Package size={32} />}<span>作業面板</span></h1><p className="text-gray-500 mt-1">操作員: {user.name} ({user.role})</p></div>
         <button onClick={handleLogout} className="mt-4 sm:mt-0 flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"><LogOut className="mr-2 h-4 w-4" /> 登出</button>
       </header>
-      <ProgressDashboard stats={progressStats} onExport={handleExportReport} user={user} />
+      <ProgressDashboard stats={progressStats} onExport={handleExportReport} onVoid={handleVoidOrder} user={user} />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2><input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" /></div>
@@ -134,12 +234,7 @@ export function Dashboard({ user, onLogout }) {
           <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
             <div className="mb-4">
               <h2 className="text-xl font-semibold text-gray-700">作業清單 ({orderId})</h2>
-              {orderHeader && (
-                <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600 mt-2 border-t pt-3">
-                    <span className="flex items-center gap-1.5"><User size={14} /> 客戶: <strong className="text-gray-800">{orderHeader.customerName}</strong></span>
-                    <span className="flex items-center gap-1.5"><Building size={14} /> 倉庫: <strong className="text-gray-800">{orderHeader.warehouse}</strong></span>
-                </div>
-              )}
+              {orderHeader && ( <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600 mt-2 border-t pt-3"><span className="flex items-center gap-1.5"><User size={14} /> 客戶: <strong className="text-gray-800">{orderHeader.customerName}</strong></span><span className="flex items-center gap-1.5"><Building size={14} /> 倉庫: <strong className="text-gray-800">{orderHeader.warehouse}</strong></span></div> )}
             </div>
             {sortedShipmentData.length > 0 ? (
               <div className="space-y-3">
