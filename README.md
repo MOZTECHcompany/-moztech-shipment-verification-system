@@ -1,4 +1,4 @@
-# React + Vite
+# Moztech WMS
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
@@ -10,3 +10,16 @@ Currently, two official plugins are available:
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+## 環境變數設定
+
+前端 (Vite):
+- `VITE_API_BASE_URL`：後端 API Base URL，例如 `https://moztech-wms-api.onrender.com`
+
+後端 (Node):
+- `DATABASE_URL`：Postgres 連線字串
+- `JWT_SECRET`：JWT 簽發密鑰
+- `ALLOWED_ORIGINS`：以逗號分隔的允許前端來源，例如 `https://your-frontend.example.com,http://localhost:5173`
+
+健康檢查端點：
+- `GET /api/health` 回傳 DB 與 JWT 配置狀態

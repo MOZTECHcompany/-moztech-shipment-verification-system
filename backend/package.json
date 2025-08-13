@@ -4,7 +4,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "db:schema": "psql $DATABASE_URL -f db/schema.sql",
+    "db:seed-admin": "node scripts/seed-admin.js"
   },
   "keywords": [],
   "author": "",

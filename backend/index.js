@@ -15,7 +15,8 @@ const xlsx = require('xlsx');
 // 1. 應用程式與中介軟體設定
 const app = express();
 // ✨ 注意：這裡的 URL 應該換成你部署的前端 URL
-const allowedOrigins = [ 'https://moztech-shipment-verification-system.onrender.com', 'http://localhost:5173', 'http://localhost:3000' ];
+const envAllowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+const allowedOrigins = envAllowedOrigins.length > 0 ? envAllowedOrigins : [ 'https://moztech-shipment-verification-system.onrender.com', 'http://localhost:5173', 'http://localhost:3000' ];
 const corsOptions = {
     origin: function (origin, callback) {
         if (!origin || allowedOrigins.indexOf(origin) !== -1) { callback(null, true); } 
@@ -54,12 +55,27 @@ const verifyAdmin = (req, res, next) => {
 
 // 根目錄健康檢查
 app.get('/', (req, res) => res.status(200).send('Moztech WMS API Server (v2) is running.'));
+// 進階健康檢查：檢查 DB 與 JWT 設定
+app.get('/api/health', async (req, res) => {
+    try {
+        const dbOk = await pool.query('SELECT 1');
+        if (!JWT_SECRET) {
+            return res.status(500).json({ ok: false, db: true, jwt: false, message: 'JWT_SECRET 未設定' });
+        }
+        res.json({ ok: true, db: true, jwt: true, allowedOrigins });
+    } catch (e) {
+        res.status(500).json({ ok: false, db: false, jwt: Boolean(JWT_SECRET), message: '資料庫連線失敗' });
+    }
+});
 
 // =================== 使用者與權限 (Auth & Users) ===================
 
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     try {
+        if (!JWT_SECRET) {
+            return res.status(500).json({ message: '伺服器設定錯誤：JWT_SECRET 未設定' });
+        }
         const userResult = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
         if (userResult.rows.length === 0) return res.status(401).json({ message: '使用者名稱或密碼錯誤' });
         const user = userResult.rows[0];
@@ -67,7 +83,7 @@ app.post('/api/auth/login', async (req, res) => {
         if (!isMatch) return res.status(401).json({ message: '使用者名稱或密碼錯誤' });
         const token = jwt.sign({ id: user.id, username: user.username, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
         res.json({ message: '登入成功', token: token, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
-    } catch (error) { console.error('Login error:', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
+    } catch (error) { console.error('Login error:', error); res.status(500).json({ message: '伺服器內部錯誤', detail: error?.message }); }
 });
 
 app.post('/api/auth/register', verifyToken, verifyAdmin, async (req, res) => {
