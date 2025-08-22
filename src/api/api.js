@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // 1. 建立一個自訂的 axios 實例
 const apiClient = axios.create({
-    baseURL: 'https://moztech-wms-api.onrender.com', // 你的後端基礎 URL
+    baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001',
     headers: {
         'Content-Type': 'application/json',
     },
