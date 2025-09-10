@@ -46,10 +46,10 @@ export function AdminDashboard({ user }) {
             } catch (err) {
                 console.error("❌ 獲取儀表板數據失敗", err);
                 let errorMessage = "無法載入數據，請檢查後端服務或網路連線。";
-                if (err.response) {
-                    errorMessage += ` (錯誤碼: ${err.response.status})`;
-                }
-                setError(errorMessage);
+                if (err.response) { errorMessage += ` (錯誤碼: ${err.response.status})`; }
+                // ✨ 離線回退：顯示本地統計占位值
+                setSummaryData({ totalOrders: 0, pendingOrders: 0, completedOrders: 0, totalItems: 0 });
+                setError(errorMessage + ' (顯示離線占位資料)');
             } finally {
                 setIsLoading(false);
             }

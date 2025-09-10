@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Loader2, User, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api'; // ✨ 1. 引入我們全局的 apiClient
+import { userDatabase } from '../users';
 
 export function LoginPage({ onLogin }) {
   const [username, setUsername] = useState(''); // 改成 username 來匹配後端
@@ -35,10 +36,24 @@ export function LoginPage({ onLogin }) {
         onLogin(user.id, user.role, user.name || user.username);
         
     } catch (err) {
-        // 處理登入失敗
-        console.error("登入失敗", err);
-        const errorMessage = err.response?.data?.message || '登入時發生錯誤，請稍後再試。';
-        setError(errorMessage);
+        // 後端失敗時，嘗試本機離線帳號登入
+        try {
+          const localUser = userDatabase[username];
+          if (localUser && localUser.password === btoa(String(password))) {
+            const offlineUser = { id: username, username, name: localUser.name || username, role: localUser.role };
+            localStorage.setItem('token', 'offline-token');
+            toast.success(`已使用離線模式登入，歡迎 ${offlineUser.name}`);
+            onLogin(offlineUser.id, offlineUser.role, offlineUser.name);
+            setError('');
+          } else {
+            const errorMessage = err.response?.data?.message || '使用者名稱或密碼錯誤';
+            setError(errorMessage);
+          }
+        } catch (offlineErr) {
+          console.error('離線登入處理失敗', offlineErr);
+          const errorMessage = err.response?.data?.message || '登入時發生錯誤，請稍後再試。';
+          setError(errorMessage);
+        }
     } finally {
         setIsLoggingIn(false);
     }
