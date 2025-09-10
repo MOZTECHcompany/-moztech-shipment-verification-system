@@ -15,11 +15,17 @@ const xlsx = require('xlsx');
 // 1. 應用程式與中介軟體設定
 const app = express();
 // ✨ 注意：這裡的 URL 應該換成你部署的前端 URL
-const allowedOrigins = [ 'https://moztech-shipment-verification-system.onrender.com', 'http://localhost:5173', 'http://localhost:3000' ];
+// 允許以環境變數設定；若未設定則允許預設清單；若設為 * 則放行所有（開發用）
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://moztech-shipment-verification-system.onrender.com,http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 const corsOptions = {
     origin: function (origin, callback) {
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) { callback(null, true); } 
-        else { callback(new Error('此來源不被 CORS 策略所允許')); }
+        if (!origin) { return callback(null, true); }
+        if (allowedOrigins.includes('*')) { return callback(null, true); }
+        if (allowedOrigins.indexOf(origin) !== -1) { return callback(null, true); }
+        return callback(new Error('此來源不被 CORS 策略所允許'));
     },
     credentials: true
 };

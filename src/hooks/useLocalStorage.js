@@ -13,7 +13,9 @@ export function useLocalStorage(key, defaultValue) {
   useEffect(() => {
     try {
       window.localStorage.setItem(key, JSON.stringify(state));
-    } catch (error) {}
+    } catch (error) {
+      // 儲存失敗時靜默處理，避免中斷 UI
+    }
   }, [key, state]);
 
   return [state, setState];

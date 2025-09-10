@@ -133,13 +133,54 @@ export function Dashboard({ user, onLogout }) {
                     setScannedItems({});
                     setConfirmedItems({});
                     setOrderId(parsedOrderId);
-                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse, dbId: response.data.orderId });
+                    const backendDbId = response?.data?.orderHeader?.dbId ?? null;
+                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse, dbId: backendDbId });
                     setErrors([]);
                     resolve(response.data.message);
                 } catch (readErr) { reject(`前端解析檔案時發生錯誤: ${readErr.message}`); }
             };
             reader.readAsArrayBuffer(file);
-        }).catch(err => { reject(err.response?.data?.message || err.message || "發生未知錯誤"); });
+        }).catch(err => {
+            // 後端不可用時，改為離線載入檔案，允許本地作業
+            console.warn('匯入到後端失敗，改用離線模式：', err);
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const getCellValue = (address) => { const cell = worksheet[address]; if (!cell || !cell.v) return ''; const val = String(cell.v).trim(); return val.includes(':') || val.includes('：') ? val.split(/[:：]/)[1].trim() : val; };
+                    const parsedOrderId = getCellValue('A2');
+                    const parsedCustomerName = getCellValue('A3');
+                    const parsedWarehouse = getCellValue('A4');
+                    const items = {};
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                    const headerIndex = jsonData.findIndex((row) => String(row[0]).includes('品項編碼'));
+                    if (headerIndex === -1) { return reject(new Error("找不到 '品項編碼' 欄位。")); }
+                    const detailRows = jsonData.slice(headerIndex + 1);
+                    detailRows.forEach(row => {
+                      const codeCell = row[0]; const qtyCell = row[2];
+                      if (!codeCell || !qtyCell) return;
+                      const code = String(codeCell).replace(/\s/g, '');
+                      const qty = parseInt(String(qtyCell), 10) || 0;
+                      if (qty > 0) {
+                        if (items[code]) { items[code].quantity += qty; } 
+                        else { items[code] = { sku: code, barcode: code, itemName: String(row[1] || '').trim(), quantity: qty }; }
+                      }
+                    });
+                    setShipmentData(Object.values(items));
+                    setScannedItems({});
+                    setConfirmedItems({});
+                    setOrderId(parsedOrderId);
+                    setOrderHeader({ customerName: parsedCustomerName, warehouse: parsedWarehouse, dbId: null });
+                    setErrors([]);
+                    resolve('離線模式：已載入訂單（未同步至後端）');
+                } catch (readErr) {
+                    reject(`離線解析檔案時發生錯誤: ${readErr.message}`);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
     });
     toast.promise(promise, { loading: '正在上傳並處理訂單...', success: (message) => `${message}`, error: (errorMessage) => `上傳失敗: ${errorMessage}` });
     e.target.value = null;

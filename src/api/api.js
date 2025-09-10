@@ -2,11 +2,18 @@
 import axios from 'axios';
 
 // 1. 建立一個自訂的 axios 實例
+// 動態決定 baseURL：
+// - 若設定了 VITE_API_URL，則使用該 URL
+// - 否則使用相對路徑，讓開發環境由 Vite 代理到後端、正式環境由同網域反向代理
+const resolvedBaseURL = import.meta.env.VITE_API_URL || '/';
+
 const apiClient = axios.create({
-    baseURL: 'https://moztech-wms-api.onrender.com', // 你的後端基礎 URL
+    baseURL: resolvedBaseURL,
     headers: {
         'Content-Type': 'application/json',
     },
+    // 跨來源時攜帶憑證（若後端需要）
+    withCredentials: false,
 });
 
 // 2. 新增一個「請求攔截器 (Request Interceptor)」

@@ -24,9 +24,9 @@ function StatCard({ title, value, isLoading, error, icon: Icon, colorClass }) {
     );
 }
 
-export function AdminDashboard({ user }) {
+export function AdminDashboard() {
     const [summaryData, setSummaryData] = useState(null);
-    const [chartData, setChartData] = useState(null);
+    const [chartData] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
 
