@@ -2,8 +2,13 @@
 import axios from 'axios';
 
 // 1. 建立一個自訂的 axios 實例
+//    允許透過環境變數設定 API Base URL（Vite: VITE_API_BASE_URL）
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
+  ? import.meta.env.VITE_API_BASE_URL
+  : 'https://moztech-wms-api.onrender.com';
+
 const apiClient = axios.create({
-    baseURL: 'https://moztech-wms-api.onrender.com', // 你的後端基礎 URL
+    baseURL: API_BASE_URL,
     headers: {
         'Content-Type': 'application/json',
     },
