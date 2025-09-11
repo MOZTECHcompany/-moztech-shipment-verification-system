@@ -1,5 +1,5 @@
 // =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (修正版)
+//         Moztech WMS - 核心後端 API 伺服器 (包含臨時註冊功能)
 // =================================================================
 
 // 1. 引入所有需要的套件
@@ -17,7 +17,6 @@ const xlsx = require('xlsx');
 const app = express();
 
 // --- CORS 設定 ---
-// 允許的來源列表
 const allowedOrigins = [
     'https://moztech-shipment-verification-system.onrender.com', // 您的線上前端
     'http://localhost:5173', // 本地開發環境
@@ -26,7 +25,6 @@ const allowedOrigins = [
 
 const corsOptions = {
     origin: function (origin, callback) {
-        // 允許非瀏覽器請求 (如 Postman) 或在白名單中的來源
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
@@ -35,8 +33,8 @@ const corsOptions = {
     },
     credentials: true
 };
-app.use(cors(corsOptions)); // 應用 CORS 設定
-app.use(express.json());   // 解析 JSON body
+app.use(cors(corsOptions));
+app.use(express.json());
 
 // --- 檔案上傳設定 ---
 const uploadDir = 'uploads/';
@@ -46,11 +44,11 @@ if (!fs.existsSync(uploadDir)) {
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
-}); // ✅ 修正：正確關閉 multer.diskStorage
+});
 const upload = multer({ storage: storage });
 
-
 // 3. 資料庫連線設定
+// 優先使用 DATABASE_URL，如果沒有，則從獨立變數組合
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL || `postgres://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_DATABASE}`,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
@@ -67,8 +65,8 @@ const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     if (!authHeader) return res.status(401).json({ message: '未提供 Authorization header' });
 
-    const token = authHeader.split(' ')[1]; // Bearer <token>
-    if (!token) return res.status(401).json({ message: '未提供權杖' }); // ✅ 修正：將錯誤的程式碼移到這裡
+    const token = authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ message: '未提供權杖' });
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ message: '無效權杖' });
@@ -95,6 +93,34 @@ app.post('/api/auth/login', async (req, res) => {
         res.json({ message: '登入成功', token, user: { id: user.id, username: user.username, role: user.role } });
     } catch (error) {
         console.error('Login error:', error);
+        res.status(500).json({ message: '伺服器內部錯誤' });
+    }
+});
+
+// =================================================================
+//         ✨✨✨ 臨時註冊 API (建立第一個使用者後即可刪除) ✨✨✨
+// =================================================================
+app.post('/api/auth/register', async (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ message: '使用者名稱和密碼為必填項' });
+    }
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        const newUserResult = await pool.query(
+            "INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING id, username, role",
+            [username, hashedPassword, role || 'admin']
+        );
+        res.status(201).json({
+            message: '使用者註冊成功！現在您可以使用此帳號登入。',
+            user: newUserResult.rows[0]
+        });
+    } catch (error) {
+        console.error('Register error:', error);
+        if (error.code === '23505') {
+            return res.status(409).json({ message: '此使用者名稱已被註冊' });
+        }
         res.status(500).json({ message: '伺服器內部錯誤' });
     }
 });
