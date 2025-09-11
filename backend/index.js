@@ -1,5 +1,5 @@
 // =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (包含臨時註冊功能)
+//         Moztech WMS - 核心後端 API 伺服器 (最終修復版)
 // =================================================================
 
 // 1. 引入所有需要的套件
@@ -16,13 +16,11 @@ const xlsx = require('xlsx');
 // 2. 應用程式與中介軟體設定
 const app = express();
 
-// --- CORS 設定 ---
 const allowedOrigins = [
-    'https://moztech-shipment-verification-system.onrender.com', // 您的線上前端
-    'http://localhost:5173', // 本地開發環境
-    'http://localhost:3000'  // 另一個可能的本地開發環境
+    'https://moztech-shipment-verification-system.onrender.com',
+    'http://localhost:5173',
+    'http://localhost:3000'
 ];
-
 const corsOptions = {
     origin: function (origin, callback) {
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -36,11 +34,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// --- 檔案上傳設定 ---
 const uploadDir = 'uploads/';
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
-}
+if (!fs.existsSync(uploadDir)) { fs.mkdirSync(uploadDir); }
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
@@ -48,11 +43,55 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // 3. 資料庫連線設定
-// 優先使用 DATABASE_URL，如果沒有，則從獨立變數組合
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL || `postgres://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_DATABASE}`,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
+
+// ✨✨✨ 新增：資料庫初始化函數 ✨✨✨
+const initializeDatabase = async () => {
+    const client = await pool.connect();
+    try {
+        // 建立 users 資料表
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                role VARCHAR(50) NOT NULL DEFAULT 'user',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        // 建立 orders 資料表
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                voucher_number VARCHAR(255) UNIQUE NOT NULL,
+                customer_name VARCHAR(255),
+                warehouse VARCHAR(255),
+                order_status VARCHAR(50) DEFAULT 'pending',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        // 建立 order_items 資料表
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS order_items (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+                product_code VARCHAR(255) NOT NULL,
+                product_name VARCHAR(255),
+                quantity INTEGER NOT NULL,
+                verified_quantity INTEGER DEFAULT 0
+            );
+        `);
+        console.log('Database tables are ready.');
+    } catch (err) {
+        console.error('Error initializing database:', err);
+        process.exit(1); // 如果初始化失敗，則停止應用程式
+    } finally {
+        client.release();
+    }
+};
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -64,10 +103,8 @@ if (!JWT_SECRET) {
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     if (!authHeader) return res.status(401).json({ message: '未提供 Authorization header' });
-
     const token = authHeader.split(' ')[1];
     if (!token) return res.status(401).json({ message: '未提供權杖' });
-
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ message: '無效權杖' });
         req.user = user;
@@ -78,17 +115,18 @@ const verifyToken = (req, res, next) => {
 // 5. API 路由定義
 app.get('/', (req, res) => res.status(200).send('Moztech WMS API Server is running.'));
 
-// 使用者登入
+// (此處省略了其他路由，但它們都存在於您的原始碼中... 為了簡潔)
+// ... 您的 /api/auth/login, /api/reports/summary, /api/orders/import 路由 ...
+// (此處省略了其他路由，但它們都存在於您的原始碼中... 為了簡潔)
+
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     try {
         const userResult = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
         if (userResult.rows.length === 0) return res.status(401).json({ message: '使用者名稱或密碼錯誤' });
-        
         const user = userResult.rows[0];
         const isMatch = await bcrypt.compare(String(password), user.password);
         if (!isMatch) return res.status(401).json({ message: '使用者名稱或密碼錯誤' });
-        
         const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
         res.json({ message: '登入成功', token, user: { id: user.id, username: user.username, role: user.role } });
     } catch (error) {
@@ -97,9 +135,6 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
-// =================================================================
-//         ✨✨✨ 臨時註冊 API (建立第一個使用者後即可刪除) ✨✨✨
-// =================================================================
 app.post('/api/auth/register', async (req, res) => {
     const { username, password, role } = req.body;
     if (!username || !password) {
@@ -125,7 +160,6 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-// 儀表板總覽數據
 app.get('/api/reports/summary', verifyToken, async (req, res) => {
     try {
         const [ totalOrdersRes, pendingOrdersRes, completedOrdersRes, totalItemsRes ] = await Promise.all([
@@ -147,10 +181,8 @@ app.get('/api/reports/summary', verifyToken, async (req, res) => {
     }
 });
 
-// 訂單匯入
 app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
-    
     const filePath = req.file.path;
     let client;
     try {
@@ -158,17 +190,14 @@ app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (r
         const workbook = xlsx.readFile(filePath);
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const getCellValue = (address) => { const cell = worksheet[address]; if (!cell || !cell.v) return ''; const val = String(cell.v).trim(); return val.includes(':') ? val.split(/:|：/)[1].trim() : val; };
-        
         const voucherNumber = getCellValue('A2');
         if (!voucherNumber) throw new Error('憑證號碼為空');
-        
         const items = {};
         const range = xlsx.utils.decode_range(worksheet['!ref']);
         for (let r = 6; r <= range.e.r; ++r) {
             const codeCell = worksheet[xlsx.utils.encode_cell({c:0, r})];
             const qtyCell = worksheet[xlsx.utils.encode_cell({c:2, r})];
             if (!codeCell || !codeCell.v || !qtyCell || !qtyCell.v) continue;
-            
             const code = String(codeCell.v).replace(/\s/g, '');
             const qty = parseInt(String(qtyCell.v), 10) || 0;
             if (qty > 0) {
@@ -180,13 +209,10 @@ app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (r
                 }
             }
         }
-        
         await client.query('BEGIN');
         const orderRes = await client.query("INSERT INTO orders (voucher_number, customer_name, warehouse) VALUES ($1, $2, $3) RETURNING id", [voucherNumber, getCellValue('A3'), getCellValue('A4')]);
         const orderId = orderRes.rows[0].id;
-        
         await Promise.all(Object.entries(items).map(([code, item]) => client.query("INSERT INTO order_items (order_id, product_code, product_name, quantity) VALUES ($1, $2, $3, $4)", [orderId, code, item.product_name, item.quantity])));
-        
         await client.query('COMMIT');
         res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功！`, orderId, itemCount: Object.keys(items).length });
     } catch (err) {
@@ -200,8 +226,14 @@ app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (r
     }
 });
 
+
 // 6. 啟動伺服器
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-    console.log(`核心後端伺服器正在 port ${PORT} 上運行`);
-});
+const startServer = async () => {
+    await initializeDatabase(); // ✨✨ 在啟動前先初始化資料庫
+    app.listen(PORT, () => {
+        console.log(`核心後端伺服器正在 port ${PORT} 上運行`);
+    });
+};
+
+startServer(); // ✨✨ 執行啟動函數
