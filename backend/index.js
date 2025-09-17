@@ -1,5 +1,5 @@
 // =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (最终数据库连接修正版)
+//         Moztech WMS - 核心後端 API 伺服器 (最终完美版)
 // =================================================================
 require('dotenv').config();
 const express = require('express');
@@ -31,7 +31,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// ✨✨✨ 最终的、正确的数据库连接池设定 ✨✨✨
 const pool = new Pool({
     user: process.env.DB_USER,
     host: process.env.DB_HOST,
@@ -55,6 +54,8 @@ const initializeDatabase = async () => {
     finally { client.release(); }
 };
 
+// ✨✨✨ 最终的、正确的 JWT_SECRET 定义位置 ✨✨✨
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -216,7 +217,14 @@ app.get('/api/reports/daily-orders', verifyToken, async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 const startServer = async () => {
+    // ✨ 我们仍然在启动时检查，以确保它被正确加载 ✨
+    if (!JWT_SECRET) {
+        console.error("FATAL ERROR: JWT_SECRET is not defined. Check your Environment Group.");
+        process.exit(1);
+    }
     await initializeDatabase();
-    app.listen(PORT, () => { console.log(`核心後端伺服器正在 port ${PORT} 上運行`); });
+    app.listen(PORT, () => {
+        console.log(`核心後端伺服器正在 port ${PORT} 上運行`);
+    });
 };
 startServer();
