@@ -1,259 +1,470 @@
-// =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (包含管理员创建用户功能)
-// =================================================================
-require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const { Pool } = require('pg');
+const cors = require('cors');
+const multer = require('multer');
+const xlsx = require('xlsx');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
-const fs = require('fs');
-const xlsx = require('xlsx');
+const Papa = require('papaparse'); // 新增：用於生成 CSV
+
+require('dotenv').config();
 
 const app = express();
-const allowedOrigins = [ 'https://moztech-shipment-verification-system.onrender.com', 'http://localhost:5173', 'http://localhost:3000' ];
-const corsOptions = {
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) { callback(null, true); } 
-        else { callback(new Error('此來源不被 CORS 策略所允許')); }
-    },
-    credentials: true
-};
-app.use(cors(corsOptions));
+const port = process.env.PORT || 3001;
+
+// --- 中介軟體 (Middleware) ---
+app.use(cors());
 app.use(express.json());
 
-const uploadDir = 'uploads/';
-if (!fs.existsSync(uploadDir)) { fs.mkdirSync(uploadDir); }
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
-});
-const upload = multer({ storage: storage });
-
+// --- 資料庫連線設定 ---
 const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_DATABASE,
-    password: process.env.DB_PASSWORD,
-    port: parseInt(process.env.DB_PORT || "5432", 10),
-    ssl: { rejectUnauthorized: false }
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
-const initializeDatabase = async () => {
-    const client = await pool.connect();
-    try {
-        await client.query(`CREATE TABLE IF NOT EXISTS users ( id SERIAL PRIMARY KEY, username VARCHAR(255) UNIQUE NOT NULL, password VARCHAR(255) NOT NULL, name VARCHAR(255), role VARCHAR(50) NOT NULL DEFAULT 'picker', created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP );`);
-        await client.query(`CREATE TABLE IF NOT EXISTS orders ( id SERIAL PRIMARY KEY, voucher_number VARCHAR(255) UNIQUE NOT NULL, customer_name VARCHAR(255), warehouse VARCHAR(255), order_status VARCHAR(50) DEFAULT 'pending', void_reason TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP );`);
-        await client.query(`CREATE TABLE IF NOT EXISTS order_items ( id SERIAL PRIMARY KEY, order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE, product_code VARCHAR(255) NOT NULL, product_name VARCHAR(255), quantity INTEGER NOT NULL, picked_quantity INTEGER DEFAULT 0, packed_quantity INTEGER DEFAULT 0 );`);
-        await client.query(`CREATE TABLE IF NOT EXISTS operation_logs ( id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), order_id INTEGER, item_id INTEGER, action_type VARCHAR(50) NOT NULL, details TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP );`);
-        console.log('Database tables (with logs) are ready.');
-    } catch (err) { console.error('Error initializing database:', err); process.exit(1); } 
-    finally { client.release(); }
-};
-
-const JWT_SECRET = process.env.JWT_SECRET;
-
-const verifyToken = (req, res, next) => {
+// --- JWT 認證中介軟體 ---
+const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ message: '未提供權杖' });
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ message: '無效權杖' });
+    if (token == null) return res.sendStatus(401);
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        if (err) return res.sendStatus(403);
         req.user = user;
         next();
     });
 };
 
-app.get('/', (req, res) => res.status(200).send('Moztech WMS API Server is running.'));
+// --- 管理員權限驗證中介軟體 ---
+const authorizeAdmin = (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
+    }
+    next();
+};
 
+// --- Helper 函數: 記錄操作日誌 ---
+const logOperation = async (userId, orderId, operationType, details) => {
+    try {
+        await pool.query(
+            'INSERT INTO operation_logs (user_id, order_id, operation_type, details) VALUES ($1, $2, $3, $4)',
+            [userId, orderId, operationType, JSON.stringify(details)]
+        );
+    } catch (error) {
+        console.error('記錄操作日誌失敗:', error);
+    }
+};
+
+// --- Multer 設定 (用於檔案上傳) ---
+const upload = multer({ storage: multer.memoryStorage() });
+
+// --- 資料庫初始化 ---
+const initializeDatabase = async () => {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                name VARCHAR(100),
+                role VARCHAR(20) NOT NULL CHECK (role IN ('picker', 'packer', 'admin')),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                voucher_number VARCHAR(100) UNIQUE NOT NULL,
+                customer_name VARCHAR(255),
+                warehouse VARCHAR(100),
+                status VARCHAR(20) DEFAULT 'pending',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP WITH TIME ZONE
+            );
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS order_items (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+                product_code VARCHAR(100) NOT NULL,
+                product_name VARCHAR(255),
+                quantity INTEGER NOT NULL,
+                picked_quantity INTEGER DEFAULT 0,
+                packed_quantity INTEGER DEFAULT 0
+            );
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS operation_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                order_id INTEGER,
+                operation_type VARCHAR(50),
+                details JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('資料庫表單檢查/建立完成');
+    } catch (err) {
+        console.error('初始化資料庫失敗:', err);
+    }
+};
+
+
+// =============================================
+// API 路由 (Routes)
+// =============================================
+
+// --- 健康檢查 ---
+app.get('/', (req, res) => {
+    res.send('Moztech WMS API is running!');
+});
+
+// --- 使用者認證 API ---
 app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, password } = req.query;
+    if (!username || !password) {
+        return res.status(400).json({ message: '請提供使用者名稱和密碼' });
+    }
     try {
         const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-        if (result.rows.length === 0) return res.status(401).json({ message: '使用者名稱或密碼錯誤' });
         const user = result.rows[0];
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(401).json({ message: '使用者名稱或密碼錯誤' });
-        const token = jwt.sign({ id: user.id, username: user.username, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
-        res.json({ message: '登入成功', token, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
-    } catch (error) { console.error('Login error:', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
+        if (!user) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
+
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
+
+        const accessToken = jwt.sign({ id: user.id, username: user.username, name: user.name, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' });
+        res.json({ accessToken, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
+    } catch (err) {
+        console.error('登入失敗:', err);
+        res.status(500).json({ message: '伺服器內部錯誤' });
+    }
 });
 
-// ✨✨✨ 正式的、受保护的管理员专用“创建用户” API ✨✨✨
-app.post('/api/admin/create-user', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ message: '權限不足，只有管理員才能建立新使用者。' });
-    }
+// --- 管理員 API ---
+app.post('/api/admin/create-user', authenticateToken, authorizeAdmin, async (req, res) => {
     const { username, password, name, role } = req.body;
     if (!username || !password || !name || !role) {
-        return res.status(400).json({ message: '使用者名稱、密碼、姓名和角色為必填項。' });
-    }
-    if (!['picker', 'packer', 'admin'].includes(role)) {
-        return res.status(400).json({ message: '無效的角色。角色必須是 picker, packer 或 admin。' });
+        return res.status(400).json({ message: '缺少必要欄位' });
     }
     try {
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        const newUserResult = await pool.query(
-            "INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, username, name, role",
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await pool.query(
+            'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)',
             [username, hashedPassword, name, role]
         );
-        console.log(`Admin ${req.user.username} created a new user: ${username} with role ${role}`);
-        res.status(201).json({
-            message: '新使用者建立成功！',
-            user: newUserResult.rows[0]
-        });
-    } catch (error) {
-        console.error('Create user error:', error);
-        if (error.code === '23505') {
-            return res.status(409).json({ message: '此使用者名稱已被註冊' });
-        }
-        res.status(500).json({ message: '伺服器內部錯誤' });
-    }
-});
-
-app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
-    const filePath = req.file.path;
-    let client;
-    try {
-        client = await pool.connect();
-        const workbook = xlsx.readFile(filePath);
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const getCellValue = (address) => { const cell = worksheet[address]; if (!cell || !cell.v) return ''; const val = String(cell.v).trim(); return val.includes(':') ? val.split(/:|：/)[1].trim() : val; };
-        const voucherNumber = getCellValue('A2');
-        if (!voucherNumber) throw new Error('憑證號碼為空');
-        const items = {};
-        const range = xlsx.utils.decode_range(worksheet['!ref']);
-        for (let r = 6; r <= range.e.r; ++r) {
-            const codeCell = worksheet[xlsx.utils.encode_cell({c:0, r})]; const qtyCell = worksheet[xlsx.utils.encode_cell({c:2, r})];
-            if (!codeCell || !codeCell.v || !qtyCell || !qtyCell.v) continue;
-            const code = String(codeCell.v).replace(/\s/g, ''); const qty = parseInt(String(qtyCell.v), 10) || 0;
-            if (qty > 0) {
-                if (items[code]) { items[code].quantity += qty; } 
-                else { const nameCell = worksheet[xlsx.utils.encode_cell({c:1, r})]; items[code] = { product_name: nameCell ? String(nameCell.v).trim() : '', quantity: qty }; }
-            }
-        }
-        await client.query('BEGIN');
-        const orderRes = await client.query("INSERT INTO orders (voucher_number, customer_name, warehouse) VALUES ($1, $2, $3) RETURNING id", [voucherNumber, getCellValue('A3'), getCellValue('A4')]);
-        const orderId = orderRes.rows[0].id;
-        await Promise.all(Object.entries(items).map(([code, item]) => client.query("INSERT INTO order_items (order_id, product_code, product_name, quantity) VALUES ($1, $2, $3, $4)", [orderId, code, item.product_name, item.quantity])));
-        await client.query(`INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, 'IMPORT_ORDER', $3)`, [req.user.id, orderId, `Imported ${Object.keys(items).length} items`]);
-        await client.query('COMMIT');
-        res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功！`, orderId, itemCount: Object.keys(items).length });
+        res.status(201).json({ message: `使用者 ${username} (${role}) 已成功建立` });
     } catch (err) {
-        if (client) await client.query('ROLLBACK');
-        console.error('Order import failed:', err);
-        if (err.code === '23505') return res.status(409).json({ message: '憑證號碼已存在' });
+        if (err.code === '23505') { // Unique violation
+            return res.status(409).json({ message: '使用者名稱已存在' });
+        }
+        console.error('建立使用者失敗:', err);
         res.status(500).json({ message: '伺服器內部錯誤' });
-    } finally {
-        if (client) client.release();
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
 });
 
-app.get('/api/orders/:orderId', verifyToken, async (req, res) => {
-    const { orderId } = req.params;
-    try {
-        const orderRes = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
-        if (orderRes.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
-        const itemsRes = await pool.query("SELECT * FROM order_items WHERE order_id = $1 ORDER BY id", [orderId]);
-        res.json({ order: orderRes.rows[0], items: itemsRes.rows });
-    } catch (error) { console.error('Get order details error:', error); res.status(500).json({ message: '獲取訂單詳情失敗' }); }
-});
+// --- 訂單處理 API ---
+app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
 
-app.post('/api/orders/update_item', verifyToken, async (req, res) => {
-    const { orderId, sku, type, amount } = req.body;
-    const { id: userId, role: userRole } = req.user;
-    if (!['pick', 'pack'].includes(type) || !sku || !amount || !orderId) return res.status(400).json({ message: '無效的請求參數' });
-    if (type === 'pick' && !['picker', 'admin'].includes(userRole)) return res.status(403).json({ message: '權限不足以執行揀貨操作' });
-    if (type === 'pack' && !['packer', 'admin'].includes(userRole)) return res.status(403).json({ message: '權限不足以執行裝箱操作' });
-    const fieldToUpdate = type === 'pick' ? 'picked_quantity' : 'packed_quantity';
-    let client;
+    const client = await pool.connect();
     try {
-        client = await pool.connect();
+        const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+
+        // 從 Excel 解析訂單資訊 (假設格式固定)
+        const voucherNumber = data[1][1];
+        const customerName = data[2][1];
+        const warehouse = data[3][1];
+        const itemsData = data.slice(6).filter(row => row[0]); // 從第7行開始是品項資料
+
+        if (!voucherNumber) return res.status(400).json({ message: 'Excel 檔案缺少單據編號' });
+
         await client.query('BEGIN');
-        const itemRes = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND product_code = $2 FOR UPDATE', [orderId, sku]);
-        if (itemRes.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ message: '找不到對應的品項' }); }
-        const item = itemRes.rows[0];
-        const newQty = item[fieldToUpdate] + amount;
-        if (newQty < 0) { await client.query('ROLLBACK'); return res.status(400).json({ message: '數量不能為負數' }); }
-        if (type === 'pick' && newQty > item.quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '揀貨數量不能超過訂單總數' }); }
-        if (type === 'pack' && newQty > item.picked_quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '裝箱數量不能超過已揀貨數' }); }
-        const result = await client.query(`UPDATE order_items SET ${fieldToUpdate} = $1 WHERE id = $2 RETURNING *;`, [newQty, item.id]);
-        await client.query(`INSERT INTO operation_logs (user_id, order_id, item_id, action_type, details) VALUES ($1, $2, $3, $4, $5)`, [userId, orderId, item.id, `${type.toUpperCase()}_${amount > 0 ? 'ADD' : 'SUB'}` , JSON.stringify({ amount })]);
-        await client.query("UPDATE orders SET order_status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND order_status = 'pending'", [orderId]);
-        const completionCheck = await client.query("SELECT COUNT(*) FROM order_items WHERE order_id = $1 AND packed_quantity < quantity", [orderId]);
-        if (completionCheck.rows[0].count === '0') { await client.query("UPDATE orders SET order_status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]); }
+
+        // 檢查訂單是否已存在
+        const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
+        if (existingOrder.rows.length > 0) {
+             await client.query('ROLLBACK');
+             return res.status(409).json({ message: `訂單 ${voucherNumber} 已存在，請勿重複匯入` });
+        }
+
+        const orderInsertResult = await client.query(
+            'INSERT INTO orders (voucher_number, customer_name, warehouse) VALUES ($1, $2, $3) RETURNING id',
+            [voucherNumber, customerName, warehouse]
+        );
+        const orderId = orderInsertResult.rows[0].id;
+
+        for (const row of itemsData) {
+            await client.query(
+                'INSERT INTO order_items (order_id, product_code, product_name, quantity) VALUES ($1, $2, $3, $4)',
+                [orderId, row[1], row[2], parseInt(row[3], 10)]
+            );
+        }
+
         await client.query('COMMIT');
-        const updatedOrderRes = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
-        const updatedItemsRes = await pool.query("SELECT * FROM order_items WHERE order_id = $1 ORDER BY id", [orderId]);
-        res.json({ order: updatedOrderRes.rows[0], items: updatedItemsRes.rows });
-    } catch (error) {
-        if (client) await client.query('ROLLBACK');
-        console.error(`Error updating ${type} quantity:`, error);
-        res.status(500).json({ message: '伺服器內部錯誤' });
+        
+        await logOperation(req.user.id, orderId, 'import', { voucherNumber });
+
+        res.status(201).json({ message: '訂單匯入成功', orderId: orderId, voucherNumber: voucherNumber });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('匯入訂單失敗:', err);
+        res.status(500).json({ message: '處理 Excel 檔案時發生錯誤' });
     } finally {
-        if (client) client.release();
+        client.release();
     }
 });
 
-app.patch('/api/orders/:orderId/void', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: '權限不足' });
+app.get('/api/orders/:orderId', authenticateToken, async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const orderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+        const itemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+
+        if (orderResult.rows.length === 0) {
+            return res.status(404).json({ message: '找不到訂單' });
+        }
+        res.json({ order: orderResult.rows[0], items: itemsResult.rows });
+    } catch (err) {
+        console.error('獲取訂單詳情失敗:', err);
+        res.status(500).json({ message: '伺服器內部錯誤' });
+    }
+});
+
+app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
+    const { orderId, sku, type, amount } = req.body;
+    const { role } = req.user;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const itemResult = await client.query(
+            'SELECT * FROM order_items WHERE order_id = $1 AND product_code = $2 FOR UPDATE',
+            [orderId, sku]
+        );
+        if (itemResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '在訂單中找不到此產品' });
+        }
+        
+        const item = itemResult.rows[0];
+        let newPickedQty = item.picked_quantity;
+        let newPackedQty = item.packed_quantity;
+        let updateQuery = '';
+
+        if (type === 'pick') {
+            if (!['picker', 'admin'].includes(role)) {
+                 await client.query('ROLLBACK');
+                 return res.status(403).json({ message: '權限不足，無法執行揀貨' });
+            }
+            newPickedQty += amount;
+            if (newPickedQty < 0 || newPickedQty > item.quantity) {
+                 await client.query('ROLLBACK');
+                 return res.status(400).json({ message: '揀貨數量無效' });
+            }
+            updateQuery = 'UPDATE order_items SET picked_quantity = $1 WHERE id = $2';
+            await client.query(updateQuery, [newPickedQty, item.id]);
+
+        } else if (type === 'pack') {
+            if (!['packer', 'admin'].includes(role)) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: '權限不足，無法執行裝箱' });
+            }
+            newPackedQty += amount;
+            if (newPackedQty < 0 || newPackedQty > item.picked_quantity) {
+                 await client.query('ROLLBACK');
+                 return res.status(400).json({ message: '裝箱數量不能超過已揀貨數量' });
+            }
+            updateQuery = 'UPDATE order_items SET packed_quantity = $1 WHERE id = $2';
+            await client.query(updateQuery, [newPackedQty, item.id]);
+        } else {
+             await client.query('ROLLBACK');
+             return res.status(400).json({ message: '無效的操作類型' });
+        }
+
+        await client.query('UPDATE orders SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [orderId]);
+        
+        // 檢查訂單是否全部完成
+        const allItemsResult = await client.query('SELECT quantity, packed_quantity FROM order_items WHERE order_id = $1', [orderId]);
+        const isCompleted = allItemsResult.rows.every(i => i.packed_quantity >= i.quantity);
+        
+        if (isCompleted) {
+            await client.query(
+                `UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP 
+                 WHERE id = $1 AND status != 'completed'`, 
+                [orderId]
+            );
+        }
+
+        await client.query('COMMIT');
+
+        await logOperation(req.user.id, orderId, type, { sku, amount });
+
+        // 返回更新後的整個訂單數據
+        const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+        const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('更新品項數量失敗:', err);
+        res.status(500).json({ message: '伺服器內部錯誤' });
+    } finally {
+        client.release();
+    }
+});
+
+
+app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const { reason } = req.body;
-    if (!reason) return res.status(400).json({ message: '必須提供作廢原因' });
     try {
-        const result = await pool.query("UPDATE orders SET order_status = 'voided', void_reason = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *", [reason, orderId]);
-        if (result.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
-        await pool.query(`INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, 'VOID_ORDER', $3)`, [req.user.id, orderId, reason]);
-        res.json({ message: '訂單已成功作廢' });
-    } catch (error) { console.error('Error voiding order:', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
-});
+        const result = await pool.query(
+            "UPDATE orders SET status = 'voided', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number",
+            [orderId]
+        );
 
-app.get('/api/reports/summary', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: '權限不足' });
-    try {
-        const [ totalOrdersRes, pendingOrdersRes, completedOrdersRes, totalItemsRes ] = await Promise.all([
-            pool.query("SELECT COUNT(*) FROM orders WHERE order_status != 'voided'"),
-            pool.query("SELECT COUNT(*) FROM orders WHERE order_status = 'pending'"),
-            pool.query("SELECT COUNT(*) FROM orders WHERE order_status = 'completed'"),
-            pool.query("SELECT SUM(oi.packed_quantity) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.order_status = 'completed'")
-        ]);
-        res.json({
-            totalOrders: parseInt(totalOrdersRes.rows[0].count, 10),
-            pendingOrders: parseInt(pendingOrdersRes.rows[0].count, 10),
-            completedOrders: parseInt(completedOrdersRes.rows[0].count, 10),
-            totalItems: parseInt(totalItemsRes.rows[0].sum, 10) || 0,
-        });
-    } catch (error) { console.error('獲取總覽數據失敗', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
-});
+        if (result.rowCount === 0) {
+            return res.status(404).json({ message: '找不到要作廢的訂單' });
+        }
+        
+        await logOperation(req.user.id, orderId, 'void', { reason });
 
-app.get('/api/reports/daily-orders', verifyToken, async (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: '權限不足' });
-    try {
-        const result = await pool.query(`
-            SELECT TO_CHAR(date_series.day, 'YYYY-MM-DD') AS date, COUNT(orders.id) AS count
-            FROM (SELECT generate_series(CURRENT_DATE - INTERVAL '6 day', CURRENT_DATE, '1 day')::date AS day) AS date_series
-            LEFT JOIN orders ON TO_CHAR(orders.created_at, 'YYYY-MM-DD') = TO_CHAR(date_series.day, 'YYYY-MM-DD') AND orders.order_status != 'voided'
-            GROUP BY date_series.day ORDER BY date_series.day ASC;
-        `);
-        const labels = result.rows.map(row => row.date.substring(5));
-        const data = result.rows.map(row => parseInt(row.count, 10));
-        res.json({ labels, data });
-    } catch (error) { console.error('獲取每日訂單數據失敗', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
-});
-
-const PORT = process.env.PORT || 3001;
-const startServer = async () => {
-    if (!JWT_SECRET) {
-        console.error("FATAL ERROR: JWT_SECRET is not defined. Check your Environment Group.");
-        process.exit(1);
+        res.json({ message: `訂單 ${result.rows[0].voucher_number} 已成功作廢` });
+    } catch (error) {
+        console.error('作廢訂單失敗:', error);
+        res.status(500).json({ message: '伺服器內部錯誤' });
     }
+});
+
+// --- 報告相關 API ---
+app.get('/api/reports/summary', authenticateToken, authorizeAdmin, async (req, res) => {
+    // 這裡可以放報告總覽的邏輯
+    res.json({ message: "Summary report endpoint" });
+});
+
+app.get('/api/reports/daily-orders', authenticateToken, authorizeAdmin, async (req, res) => {
+    // 這裡可以放每日訂單趨勢的邏輯
+    res.json({ message: "Daily orders report endpoint" });
+});
+
+
+// =============================================
+//  【新增】管理員報告匯出 API
+// =============================================
+app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, res) => {
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+        return res.status(400).json({ message: '必須提供開始與結束日期' });
+    }
+
+    try {
+        // 為了讓查詢包含結束日期的整天，我們在結束日期後加上時間
+        const inclusiveEndDate = endDate + ' 23:59:59';
+
+        // 1. 查詢在指定日期範圍內已完成或已作廢的訂單
+        const orderResult = await pool.query(
+            `SELECT id, voucher_number, status, completed_at, updated_at
+             FROM orders
+             WHERE (status = 'completed' AND completed_at BETWEEN $1 AND $2)
+                OR (status = 'voided' AND updated_at BETWEEN $1 AND $2)
+             ORDER BY updated_at DESC, completed_at DESC`,
+            [startDate, inclusiveEndDate]
+        );
+        
+        const orders = orderResult.rows;
+        if (orders.length === 0) {
+             // 注意：這裡返回 JSON 錯誤，以便前端能正確解析
+            return res.status(404).json({ message: '在指定日期範圍內找不到任何已完成或作廢的訂單' });
+        }
+        
+        const orderIds = orders.map(o => o.id);
+
+        // 2. 一次性查詢所有相關訂單的品項總數
+        const itemsResult = await pool.query(
+            `SELECT order_id, SUM(quantity) as total_quantity
+             FROM order_items
+             WHERE order_id = ANY($1::int[])
+             GROUP BY order_id`,
+            [orderIds]
+        );
+        const itemCounts = itemsResult.rows.reduce((acc, row) => {
+            acc[row.order_id] = row.total_quantity;
+            return acc;
+        }, {});
+
+
+        // 3. 一次性查詢所有相關的操作日誌，並關聯使用者名稱
+        const logsResult = await pool.query(
+            `SELECT ol.order_id, ol.operation_type, ol.created_at, u.name as user_name
+             FROM operation_logs ol
+             JOIN users u ON ol.user_id = u.id
+             WHERE ol.order_id = ANY($1::int[])`,
+            [orderIds]
+        );
+        
+        // 4. 將日誌按 order_id 分組，方便處理
+        const logsByOrderId = logsResult.rows.reduce((acc, log) => {
+            if (!acc[log.order_id]) {
+                acc[log.order_id] = [];
+            }
+            acc[log.order_id].push(log);
+            return acc;
+        }, {});
+        
+        // 5. 組合最終報告數據
+        const reportData = orders.map(order => {
+            const orderLogs = logsByOrderId[order.id] || [];
+            
+            // 使用 Set 確保人員不重複
+            const pickers = [...new Set(orderLogs.filter(l => l.operation_type === 'pick').map(l => l.user_name))].join(', ');
+            const packers = [...new Set(orderLogs.filter(l => l.operation_type === 'pack').map(l => l.user_name))].join(', ');
+            
+            const voidLog = orderLogs.find(l => l.operation_type === 'void');
+
+            // 使用 toLocaleString 格式化時間為台灣時區的本地時間格式
+            const formatTime = (date) => date ? new Date(date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '';
+
+            return {
+                "訂單編號": order.voucher_number,
+                "訂單狀態": order.status === 'completed' ? '已完成' : '已作廢',
+                "出貨總件數": itemCounts[order.id] || 0,
+                "揀貨人員": pickers || '無紀錄',
+                "裝箱人員": packers || '無紀錄',
+                "出貨完成時間": order.status === 'completed' ? formatTime(order.completed_at) : '',
+                "作廢人員": voidLog ? voidLog.user_name : '',
+                "作廢時間": voidLog ? formatTime(voidLog.created_at) : '',
+            };
+        });
+        
+        // 6. 使用 papaparse 將 JSON 轉換為 CSV 字串
+        const csv = Papa.unparse(reportData);
+
+        // 7. 設定 response headers，觸發瀏覽器下載
+        const fileName = `營運報告_${startDate}_至_${endDate}.csv`;
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+        
+        // 加上 BOM (Byte Order Mark) 確保 Excel 能正確識別 UTF-8 編碼，避免中文亂碼
+        res.status(200).send('\uFEFF' + csv);
+
+    } catch (error) {
+        console.error('匯出報告時發生錯誤:', error);
+        res.status(500).json({ message: '產生報告時發生內部伺服器錯誤' });
+    }
+});
+
+
+// --- 啟動伺服器 ---
+app.listen(port, async () => {
     await initializeDatabase();
-    app.listen(PORT, () => {
-        console.log(`核心後端伺服器正在 port ${PORT} 上運行`);
-    });
-};
-startServer();
+    console.log(`伺服器正在 http://localhost:${port} 上運行`);
+});
