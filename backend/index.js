@@ -1,5 +1,5 @@
 // =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (最终完美版)
+//         Moztech WMS - 核心後端 API 伺服器 (包含管理员创建用户功能)
 // =================================================================
 require('dotenv').config();
 const express = require('express');
@@ -37,9 +37,7 @@ const pool = new Pool({
     database: process.env.DB_DATABASE,
     password: process.env.DB_PASSWORD,
     port: parseInt(process.env.DB_PORT || "5432", 10),
-    ssl: {
-        rejectUnauthorized: false
-    }
+    ssl: { rejectUnauthorized: false }
 });
 
 const initializeDatabase = async () => {
@@ -54,7 +52,6 @@ const initializeDatabase = async () => {
     finally { client.release(); }
 };
 
-// ✨✨✨ 最终的、正确的 JWT_SECRET 定义位置 ✨✨✨
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const verifyToken = (req, res, next) => {
@@ -81,6 +78,39 @@ app.post('/api/auth/login', async (req, res) => {
         const token = jwt.sign({ id: user.id, username: user.username, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
         res.json({ message: '登入成功', token, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
     } catch (error) { console.error('Login error:', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
+});
+
+// ✨✨✨ 新增：受保护的管理员专用“创建用户” API ✨✨✨
+app.post('/api/admin/create-user', verifyToken, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ message: '權限不足，只有管理員才能建立新使用者。' });
+    }
+    const { username, password, name, role } = req.body;
+    if (!username || !password || !name || !role) {
+        return res.status(400).json({ message: '使用者名稱、密碼、姓名和角色為必填項。' });
+    }
+    if (!['picker', 'packer', 'admin'].includes(role)) {
+        return res.status(400).json({ message: '無效的角色。角色必須是 picker, packer 或 admin。' });
+    }
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        const newUserResult = await pool.query(
+            "INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, username, name, role",
+            [username, hashedPassword, name, role]
+        );
+        console.log(`Admin ${req.user.username} created a new user: ${username} with role ${role}`);
+        res.status(201).json({
+            message: '新使用者建立成功！',
+            user: newUserResult.rows[0]
+        });
+    } catch (error) {
+        console.error('Create user error:', error);
+        if (error.code === '23505') {
+            return res.status(409).json({ message: '此使用者名稱已被註冊' });
+        }
+        res.status(500).json({ message: '伺服器內部錯誤' });
+    }
 });
 
 app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (req, res) => {
@@ -217,7 +247,6 @@ app.get('/api/reports/daily-orders', verifyToken, async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 const startServer = async () => {
-    // ✨ 我们仍然在启动时检查，以确保它被正确加载 ✨
     if (!JWT_SECRET) {
         console.error("FATAL ERROR: JWT_SECRET is not defined. Check your Environment Group.");
         process.exit(1);
