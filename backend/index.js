@@ -1,7 +1,6 @@
 // =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (最终完整功能 + 完整日志版)
+//         Moztech WMS - 核心後端 API 伺服器 (最终完整功能 + 完整日志 + 图表 API 版)
 // =================================================================
-
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -33,7 +32,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL, // Render 会自动提供这个环境变量
+    connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
 
@@ -43,19 +42,7 @@ const initializeDatabase = async () => {
         await client.query(`CREATE TABLE IF NOT EXISTS users ( id SERIAL PRIMARY KEY, username VARCHAR(255) UNIQUE NOT NULL, password VARCHAR(255) NOT NULL, name VARCHAR(255), role VARCHAR(50) NOT NULL DEFAULT 'picker', created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP );`);
         await client.query(`CREATE TABLE IF NOT EXISTS orders ( id SERIAL PRIMARY KEY, voucher_number VARCHAR(255) UNIQUE NOT NULL, customer_name VARCHAR(255), warehouse VARCHAR(255), order_status VARCHAR(50) DEFAULT 'pending', void_reason TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP );`);
         await client.query(`CREATE TABLE IF NOT EXISTS order_items ( id SERIAL PRIMARY KEY, order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE, product_code VARCHAR(255) NOT NULL, product_name VARCHAR(255), quantity INTEGER NOT NULL, picked_quantity INTEGER DEFAULT 0, packed_quantity INTEGER DEFAULT 0 );`);
-        
-        // ✨✨✨ 新增：操作日志表 ✨✨✨
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS operation_logs (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id),
-                order_id INTEGER,
-                item_id INTEGER,
-                action_type VARCHAR(50) NOT NULL,
-                details TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
+        await client.query(`CREATE TABLE IF NOT EXISTS operation_logs ( id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), order_id INTEGER, item_id INTEGER, action_type VARCHAR(50) NOT NULL, details TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP );`);
         console.log('Database tables (with logs) are ready.');
     } catch (err) { console.error('Error initializing database:', err); process.exit(1); } 
     finally { client.release(); }
@@ -159,16 +146,11 @@ app.post('/api/orders/update_item', verifyToken, async (req, res) => {
         if (type === 'pick' && newQty > item.quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '揀貨數量不能超過訂單總數' }); }
         if (type === 'pack' && newQty > item.picked_quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '裝箱數量不能超過已揀貨數' }); }
         const result = await client.query(`UPDATE order_items SET ${fieldToUpdate} = $1 WHERE id = $2 RETURNING *;`, [newQty, item.id]);
-        
-        // ✨✨✨ 记录成功操作日志 ✨✨✨
         await client.query(`INSERT INTO operation_logs (user_id, order_id, item_id, action_type, details) VALUES ($1, $2, $3, $4, $5)`, [userId, orderId, item.id, `${type.toUpperCase()}_${amount > 0 ? 'ADD' : 'SUB'}` , JSON.stringify({ amount })]);
-        
         await client.query("UPDATE orders SET order_status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND order_status = 'pending'", [orderId]);
         const completionCheck = await client.query("SELECT COUNT(*) FROM order_items WHERE order_id = $1 AND packed_quantity < quantity", [orderId]);
         if (completionCheck.rows[0].count === '0') { await client.query("UPDATE orders SET order_status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]); }
         await client.query('COMMIT');
-        
-        // 在返回前重新查询整个订单状态
         const updatedOrderRes = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
         const updatedItemsRes = await pool.query("SELECT * FROM order_items WHERE order_id = $1 ORDER BY id", [orderId]);
         res.json({ order: updatedOrderRes.rows[0], items: updatedItemsRes.rows });
@@ -189,13 +171,44 @@ app.patch('/api/orders/:orderId/void', verifyToken, async (req, res) => {
     try {
         const result = await pool.query("UPDATE orders SET order_status = 'voided', void_reason = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *", [reason, orderId]);
         if (result.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
-        
-        // ✨✨✨ 记录作废操作日志 ✨✨✨
         await pool.query(`INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, 'VOID_ORDER', $3)`, [req.user.id, orderId, reason]);
-        
         res.json({ message: '訂單已成功作廢' });
     } catch (error) { console.error('Error voiding order:', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
 });
+
+app.get('/api/reports/summary', verifyToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: '權限不足' });
+    try {
+        const [ totalOrdersRes, pendingOrdersRes, completedOrdersRes, totalItemsRes ] = await Promise.all([
+            pool.query("SELECT COUNT(*) FROM orders WHERE order_status != 'voided'"),
+            pool.query("SELECT COUNT(*) FROM orders WHERE order_status = 'pending'"),
+            pool.query("SELECT COUNT(*) FROM orders WHERE order_status = 'completed'"),
+            pool.query("SELECT SUM(oi.packed_quantity) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.order_status = 'completed'")
+        ]);
+        res.json({
+            totalOrders: parseInt(totalOrdersRes.rows[0].count, 10),
+            pendingOrders: parseInt(pendingOrdersRes.rows[0].count, 10),
+            completedOrders: parseInt(completedOrdersRes.rows[0].count, 10),
+            totalItems: parseInt(totalItemsRes.rows[0].sum, 10) || 0,
+        });
+    } catch (error) { console.error('獲取總覽數據失敗', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
+});
+
+app.get('/api/reports/daily-orders', verifyToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: '權限不足' });
+    try {
+        const result = await pool.query(`
+            SELECT TO_CHAR(date_series.day, 'YYYY-MM-DD') AS date, COUNT(orders.id) AS count
+            FROM (SELECT generate_series(CURRENT_DATE - INTERVAL '6 day', CURRENT_DATE, '1 day')::date AS day) AS date_series
+            LEFT JOIN orders ON TO_CHAR(orders.created_at, 'YYYY-MM-DD') = TO_CHAR(date_series.day, 'YYYY-MM-DD') AND orders.order_status != 'voided'
+            GROUP BY date_series.day ORDER BY date_series.day ASC;
+        `);
+        const labels = result.rows.map(row => row.date.substring(5));
+        const data = result.rows.map(row => parseInt(row.count, 10));
+        res.json({ labels, data });
+    } catch (error) { console.error('獲取每日訂單數據失敗', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
+});
+
 
 const PORT = process.env.PORT || 3001;
 const startServer = async () => {
