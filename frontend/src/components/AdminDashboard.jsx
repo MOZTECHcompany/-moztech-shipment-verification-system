@@ -1,9 +1,8 @@
-// src/components/AdminDashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js';
 import { Server, Package, Loader2, CheckCircle2, ListChecks, AlertCircle } from 'lucide-react';
-import apiClient from '../api/api.js'; // ✨ 1. 引入我們新的 API 客戶端
+import apiClient from '@/api/api.js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
@@ -34,33 +33,28 @@ export function AdminDashboard({ user }) {
         const fetchData = async () => {
             setIsLoading(true);
             setError(null);
-            
             try {
-                // ✨ 2. 不再需要手動組合 URL，直接用相對路徑
-                const summaryApiUrl = '/api/reports/summary';
-                // ✨ 3. 使用 apiClient 來取代 axios，它會自動攜帶 Token
-                const summaryRes = await apiClient.get(summaryApiUrl);
-                
+                const [summaryRes, chartRes] = await Promise.all([
+                    apiClient.get('/api/reports/summary'),
+                    apiClient.get('/api/reports/daily-orders')
+                ]);
                 setSummaryData(summaryRes.data);
-                console.log("✅ 成功從後端獲取儀表板數據:", summaryRes.data);
+                setChartData(chartRes.data);
             } catch (err) {
                 console.error("❌ 獲取儀表板數據失敗", err);
                 let errorMessage = "無法載入數據，請檢查後端服務或網路連線。";
-                if (err.response) {
-                    errorMessage += ` (錯誤碼: ${err.response.status})`;
-                }
+                if (err.response) { errorMessage += ` (錯誤碼: ${err.response.status})`; }
                 setError(errorMessage);
             } finally {
                 setIsLoading(false);
             }
         };
-
         fetchData();
     }, []);
 
     const lineChartOptions = {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, title: { display: true, text: '每日訂單數量趨勢' } },
+        plugins: { legend: { display: false }, title: { display: true, text: '過去 7 日訂單數量趨勢' } },
         scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
     };
 
@@ -93,7 +87,7 @@ export function AdminDashboard({ user }) {
                 </div>
             )}
             <div className="mt-8 bg-white p-6 rounded-xl shadow-md border h-96">
-                {isLoading ? <div className="flex justify-center items-center h-full"><Loader2 className="animate-spin h-8 w-8 text-blue-500" /></div> : chartData ? <Line options={lineChartOptions} data={lineChartData} /> : <div className="flex justify-center items-center h-full text-gray-500">{error ? '圖表資料載入失敗。' : '後端尚未提供圖表數據。'}</div>}
+                {isLoading ? <div className="flex justify-center items-center h-full"><Loader2 className="animate-spin h-8 w-8 text-blue-500" /></div> : <Line options={lineChartOptions} data={lineChartData} />}
             </div>
         </div>
     );

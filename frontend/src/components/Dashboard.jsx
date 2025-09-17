@@ -6,12 +6,11 @@ import { LogOut, Package, PackageCheck, AlertCircle, FileUp, ScanLine, CheckCirc
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
-// 辅助组件 (无需修改)
 const getItemStatus = (item) => {
     const { quantity, picked_quantity, packed_quantity } = item;
     if (packed_quantity >= quantity) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
     if (picked_quantity >= quantity) return { Icon: PackageCheck, color: "text-blue-500", label: "待裝箱" };
-    if (picked_quantity > 0 || packed_quantity > 0) return { Icon: Loader2, color: "text-yellow-500", label: "處理中" }; // 移除 spin 避免過度動畫
+    if (picked_quantity > 0 || packed_quantity > 0) return { Icon: Loader2, color: "text-yellow-500", label: "處理中" };
     return { Icon: Circle, color: "text-gray-400", label: "待處理" };
 };
 const ProgressBar = ({ value, max, colorClass }) => {
@@ -24,11 +23,9 @@ const QuantityButton = ({ onClick, icon: Icon, disabled }) => (
     </button>
 );
 
-// ProgressDashboard 子组件 (无需修改)
 const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
     const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
     if (totalSkus === 0) return null;
-    const isAllPacked = packedSkus >= totalSkus;
     return (
         <div className="bg-white p-6 rounded-xl shadow-md mb-8">
             <div className="flex justify-between items-start">
@@ -49,24 +46,19 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
     );
 };
 
-// 主组件
 export function Dashboard({ user, onLogout }) {
     const MySwal = withReactContent(Swal);
     const [currentOrder, setCurrentOrder] = useState(null);
     const [barcodeInput, setBarcodeInput] = useState('');
     const barcodeInputRef = useRef(null);
 
-    useEffect(() => {
-        barcodeInputRef.current?.focus();
-    }, [currentOrder]);
+    useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrder]);
 
     const fetchOrderDetails = useCallback(async (orderId) => {
         try {
             const response = await apiClient.get(`/api/orders/${orderId}`);
             setCurrentOrder(response.data);
-        } catch (err) {
-            toast.error('错误', { description: err.response?.data?.message || '无法获取订单详情' });
-        }
+        } catch (err) { toast.error('错误', { description: err.response?.data?.message || '无法获取订单详情' }); }
     }, []);
 
     const handleExcelImport = (e) => {
@@ -74,15 +66,10 @@ export function Dashboard({ user, onLogout }) {
         if (!file) return;
         const formData = new FormData();
         formData.append('orderFile', file);
-        const promise = apiClient.post('/api/orders/import', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        const promise = apiClient.post('/api/orders/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         toast.promise(promise, {
             loading: '正在上传并处理订单...',
-            success: (response) => {
-                fetchOrderDetails(response.data.orderId);
-                return response.data.message;
-            },
+            success: (response) => { fetchOrderDetails(response.data.orderId); return response.data.message; },
             error: (err) => `上传失败: ${err.response?.data?.message || err.message}`,
         });
         e.target.value = null;
@@ -95,29 +82,18 @@ export function Dashboard({ user, onLogout }) {
                 orderId: currentOrder.order.id, sku, type, amount
             });
             setCurrentOrder(response.data);
-        } catch (err) {
-            toast.error(`更新失败`, { description: err.response?.data?.message || '发生未知错误' });
-        }
+        } catch (err) { toast.error(`更新失败`, { description: err.response?.data?.message || '发生未知错误' }); }
     };
     
-    const handleQuantityChange = (sku, type, amount) => {
-        updateItemQuantityOnServer(sku, type, amount);
-    };
+    const handleQuantityChange = (sku, type, amount) => { updateItemQuantityOnServer(sku, type, amount); };
 
     const handleScan = () => {
         const skuToScan = barcodeInput.trim();
         if (!skuToScan || !currentOrder) return;
         const targetItem = currentOrder.items.find(item => item.product_code === skuToScan);
-        if (!targetItem) {
-            toast.error('扫描错误', { description: '此产品不在此订单中。' });
-            setBarcodeInput('');
-            return;
-        }
-        if (['picker', 'admin'].includes(user.role)) {
-            updateItemQuantityOnServer(skuToScan, 'pick', 1);
-        } else {
-            toast.error('权限不足', { description: '您没有拣货权限' });
-        }
+        if (!targetItem) { toast.error('扫描错误', { description: '此产品不在此订单中。' }); setBarcodeInput(''); return; }
+        if (['picker', 'admin'].includes(user.role)) { updateItemQuantityOnServer(skuToScan, 'pick', 1); } 
+        else { toast.error('权限不足', { description: '您没有拣货权限' }); }
         setBarcodeInput('');
     };
     
@@ -143,7 +119,7 @@ export function Dashboard({ user, onLogout }) {
         const worksheet = XLSX.utils.json_to_sheet(data);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "出货报告");
-        XLSX.writeFile(workbook, `出货报告-${currentOrder.order.voucher_number}.xlsx`);
+        XLSX.writeFile(workbook, `出货報告-${currentOrder.order.voucher_number}.xlsx`);
     };
 
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
@@ -178,7 +154,7 @@ export function Dashboard({ user, onLogout }) {
             <ProgressDashboard stats={progressStats} onExport={handleExportReport} onVoid={handleVoidOrder} user={user} />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1 space-y-6">
+                <div className="lg-col-span-1 space-y-6">
                     <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileUp className="mr-2"/>1. 匯入出貨單</h2><input type="file" accept=".xlsx, .xls" onChange={handleExcelImport} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" /></div>
                     <div className="bg-white p-6 rounded-xl shadow-md"><h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>2. 掃描區</h2><div className="flex gap-2"><input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={handleKeyDown} className="w-full px-4 py-2 border rounded-lg" disabled={!currentOrder} /><button onClick={handleClick} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300" disabled={!currentOrder}>確認</button></div></div>
                 </div>
@@ -193,7 +169,7 @@ export function Dashboard({ user, onLogout }) {
                                 {sortedShipmentData.map((item) => {
                                     const status = getItemStatus(item);
                                     const canAdjustPick = ['picker', 'admin'].includes(user.role);
-                                    const canAdjustPack = ['packer', 'admin'].includes(user.role) && item.picked_quantity > item.packed_quantity;
+                                    const canAdjustPack = ['packer', 'admin'].includes(user.role);
                                     return (
                                         <div key={item.product_code} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all`}>
                                             <div className="flex items-center gap-4 flex-1"><div title={status.label}><status.Icon size={28} className={status.color}/></div><div><p className="font-semibold text-gray-800">{item.product_name}</p><p className="text-sm text-gray-500 font-mono">{item.product_code}</p></div></div>
