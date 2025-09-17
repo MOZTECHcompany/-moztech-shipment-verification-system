@@ -80,35 +80,7 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) { console.error('Login error:', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
 });
 
-// =================================================================
-//         ✨✨✨ 在这里新增临时的注册 API (用完即删) ✨✨✨
-// =================================================================
-app.post('/api/auth/register', async (req, res) => {
-    const { username, password, name, role } = req.body;
-    if (!username || !password) {
-        return res.status(400).json({ message: '使用者名稱和密碼為必填項' });
-    }
-    try {
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        
-        const newUserResult = await pool.query(
-            "INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, username, name, role",
-            [username, hashedPassword, name || username, role || 'admin'] // 默认角色为 admin
-        );
 
-        res.status(201).json({
-            message: '管理员帐号注册成功！',
-            user: newUserResult.rows[0]
-        });
-    } catch (error) {
-        console.error('Register error:', error);
-        if (error.code === '23505') {
-            return res.status(409).json({ message: '此使用者名稱已被註冊' });
-        }
-        res.status(500).json({ message: '伺服器內部錯誤' });
-    }
-});
 
 
 app.post('/api/orders/import', verifyToken, upload.single('orderFile'), async (req, res) => {
