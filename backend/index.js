@@ -55,8 +55,6 @@ const initializeDatabase = async () => {
     finally { client.release(); }
 };
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) { console.error("FATAL ERROR: JWT_SECRET is not defined."); process.exit(1); }
 
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
