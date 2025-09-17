@@ -1,93 +1,96 @@
-import React, { useState, useEffect } from 'react';
-import { Line } from 'react-chartjs-2';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js';
-import { Server, Package, Loader2, CheckCircle2, ListChecks, AlertCircle } from 'lucide-react';
-import apiClient from '@/api/api.js';
+// 在 AdminDashboard.jsx 的頂部引入
+import React, { useState } from 'react';
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
+import { format } from 'date-fns';
+import apiClient from '@/api/api.js'; // 確保路徑正確
+import { toast } from 'sonner';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
+// 在 AdminDashboard 元件內部
+function AdminDashboard() {
+    // ... 其他既有的 state 和邏輯
+    
+    const [dateRange, setDateRange] = useState([new Date(), new Date()]);
+    const [startDate, endDate] = dateRange;
 
-function StatCard({ title, value, isLoading, error, icon: Icon, colorClass }) {
-    const displayValue = () => {
-        if (isLoading) return <Loader2 size={24} className="animate-spin text-gray-400" />;
-        if (error) return <AlertCircle size={24} className="text-red-400" />;
-        return value !== null && typeof value !== 'undefined' ? value : '--';
-    };
-    return (
-        <div className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-4 border hover:shadow-md transition-shadow">
-            <div className={`p-3 rounded-full ${colorClass}`}><Icon size={24} className="text-white" /></div>
-            <div>
-                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">{title}</h3>
-                <p className="text-3xl font-bold text-gray-800">{displayValue()}</p>
-            </div>
-        </div>
-    );
-}
+    const handleExportAdminReport = async () => {
+        if (!startDate || !endDate) {
+            toast.error("請選擇完整的日期範圍");
+            return;
+        }
 
-export function AdminDashboard({ user }) {
-    const [summaryData, setSummaryData] = useState(null);
-    const [chartData, setChartData] = useState(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState(null);
+        const formattedStartDate = format(startDate, 'yyyy-MM-dd');
+        const formattedEndDate = format(endDate, 'yyyy-MM-dd');
 
-    useEffect(() => {
-        const fetchData = async () => {
-            setIsLoading(true);
-            setError(null);
-            try {
-                const [summaryRes, chartRes] = await Promise.all([
-                    apiClient.get('/api/reports/summary'),
-                    apiClient.get('/api/reports/daily-orders')
-                ]);
-                setSummaryData(summaryRes.data);
-                setChartData(chartRes.data);
-            } catch (err) {
-                console.error("❌ 獲取儀表板數據失敗", err);
-                let errorMessage = "無法載入數據，請檢查後端服務或網路連線。";
-                if (err.response) { errorMessage += ` (錯誤碼: ${err.response.status})`; }
-                setError(errorMessage);
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        fetchData();
-    }, []);
+        const promise = apiClient.get(`/api/reports/export`, {
+            params: {
+                startDate: formattedStartDate,
+                endDate: formattedEndDate,
+            },
+            responseType: 'blob', // 關鍵：告訴 axios 我們期望接收一個二進位檔案
+        });
 
-    const lineChartOptions = {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, title: { display: true, text: '過去 7 日訂單數量趨勢' } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
-    };
+        toast.promise(promise, {
+            loading: `正在產生 ${formattedStartDate} 至 ${formattedEndDate} 的報告...`,
+            success: (response) => {
+                // 創建一個 Blob URL
+                const url = window.URL.createObjectURL(new Blob([response.data]));
+                // 創建一個隱藏的 a 標籤來觸發下載
+                const link = document.createElement('a');
+                link.href = url;
+                const fileName = `營運報告_${formattedStartDate}_${formattedEndDate}.csv`;
+                link.setAttribute('download', fileName);
+                document.body.appendChild(link);
+                link.click();
+                // 清理
+                link.parentNode.removeChild(link);
+                window.URL.revokeObjectURL(url);
 
-    const lineChartData = {
-        labels: chartData?.labels || [],
-        datasets: [{
-            label: '訂單數量', data: chartData?.data || [], fill: true,
-            backgroundColor: 'rgba(59, 130, 246, 0.2)', borderColor: 'rgba(59, 130, 246, 1)', tension: 0.3,
-        }],
+                return `報告 ${fileName} 已成功下載！`;
+            },
+            error: (err) => {
+                 // 如果後端返回 JSON 錯誤訊息，需要特殊處理
+                if (err.response.data.type === 'application/json') {
+                    const reader = new FileReader();
+                    reader.onload = function() {
+                        const errorData = JSON.parse(this.result);
+                        toast.error(errorData.message || '產生報告失敗');
+                    }
+                    reader.readAsText(err.response.data);
+                    return '後端回報錯誤';
+                }
+                return '產生報告失敗，請檢查網路或聯繫管理員';
+            },
+        });
     };
 
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto">
-            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3"><Server size={32} /><span>後台數據總覽</span></h1>
-                    <p className="text-gray-500 mt-1">即時業務核心指標</p>
+        <div>
+            {/* ... 您其他的管理員儀表板內容 ... */}
+
+            <div className="bg-white p-6 rounded-xl shadow-md mt-8">
+                <h3 className="text-lg font-semibold text-gray-700 mb-4">匯出營運報告</h3>
+                <div className="flex items-center gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-600 mb-1">選擇日期範圍：</label>
+                        <DatePicker
+                            selectsRange={true}
+                            startDate={startDate}
+                            endDate={endDate}
+                            onChange={(update) => setDateRange(update)}
+                            isClearable={true}
+                            dateFormat="yyyy/MM/dd"
+                            className="w-full px-3 py-2 border rounded-lg"
+                        />
+                    </div>
+                    <button 
+                        onClick={handleExportAdminReport} 
+                        className="self-end px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-400"
+                        disabled={!startDate || !endDate}
+                    >
+                        下載 CSV 報告
+                    </button>
                 </div>
-            </header>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard title="總訂單數" value={summaryData?.totalOrders} isLoading={isLoading} error={error} icon={Package} colorClass="bg-blue-500" />
-                <StatCard title="待處理訂單" value={summaryData?.pendingOrders} isLoading={isLoading} error={error} icon={Loader2} colorClass="bg-yellow-500" />
-                <StatCard title="已完成訂單" value={summaryData?.completedOrders} isLoading={isLoading} error={error} icon={CheckCircle2} colorClass="bg-green-500" />
-                <StatCard title="總出貨品項數" value={summaryData?.totalItems} isLoading={isLoading} error={error} icon={ListChecks} colorClass="bg-indigo-500" />
-            </div>
-            {error && !isLoading && (
-                <div className="mt-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <strong className="font-bold">資料載入失敗: </strong>
-                    <span className="block sm:inline">{error}</span>
-                </div>
-            )}
-            <div className="mt-8 bg-white p-6 rounded-xl shadow-md border h-96">
-                {isLoading ? <div className="flex justify-center items-center h-full"><Loader2 className="animate-spin h-8 w-8 text-blue-500" /></div> : <Line options={lineChartOptions} data={lineChartData} />}
             </div>
         </div>
     );
