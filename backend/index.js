@@ -1,5 +1,5 @@
 // =================================================================
-//         Moztech WMS - 核心後端 API 伺服器 (最终完整功能 + 完整日志 + 图表 API 版)
+//         Moztech WMS - 核心後端 API 伺服器 (最终数据库连接修正版)
 // =================================================================
 require('dotenv').config();
 const express = require('express');
@@ -31,9 +31,16 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
+// ✨✨✨ 最终的、正确的数据库连接池设定 ✨✨✨
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_DATABASE,
+    password: process.env.DB_PASSWORD,
+    port: parseInt(process.env.DB_PORT || "5432", 10),
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 const initializeDatabase = async () => {
@@ -208,7 +215,6 @@ app.get('/api/reports/daily-orders', verifyToken, async (req, res) => {
         res.json({ labels, data });
     } catch (error) { console.error('獲取每日訂單數據失敗', error); res.status(500).json({ message: '伺服器內部錯誤' }); }
 });
-
 
 const PORT = process.env.PORT || 3001;
 const startServer = async () => {
