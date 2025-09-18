@@ -1,5 +1,5 @@
-// src/components/LoginPage.jsx
-import React, { useState } from 'react'; // 【修正】将 'useState' 放入花括号 {}
+// frontend/src/components/LoginPage.jsx
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, User, Lock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -30,15 +30,11 @@ export function LoginPage({ onLogin }) {
 
         toast.success(`歡迎回來, ${responseData.user.name || responseData.user.username}!`);
 
-        // 先更新 App 的全局狀態
+        // 更新 App 的全局狀態
         onLogin(responseData);
         
-        // 根據使用者角色，導航到不同的頁面
-        if (responseData.user.role === 'admin') {
-            navigate('/admin');
-        } else {
-            navigate('/tasks');
-        }
+        // 【关键修改】无论是什么角色，登入后一律跳轉到作業面板
+        navigate('/tasks');
         
     } catch (err) {
         console.error("登入失敗", err);

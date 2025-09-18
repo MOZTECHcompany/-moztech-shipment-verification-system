@@ -1,10 +1,9 @@
 // frontend/src/components/TaskDashboard.jsx
-
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { ListTodo, Package, Box, User, Clock, Loader2, ServerOff } from 'lucide-react';
+import { ListTodo, Package, Box, User, Clock, Loader2, ServerOff, LayoutDashboard } from 'lucide-react';
 
 const statusMap = {
     pending: { text: '待揀貨', color: 'bg-yellow-500' },
@@ -27,7 +26,7 @@ const TaskCard = ({ task, onClaim }) => {
             </div>
             <p className="text-gray-600 mt-1 flex items-center"><User size={14} className="mr-2" />客戶: {task.customer_name}</p>
             {task.task_type === 'pack' && (
-                <p className="text-sm text-gray-500 mt-1">由 <span className="font-semibold">{task.picker_name}</span> 完成揀貨</p>
+                <p className="text-sm text-gray-500 mt-1">由 <span className="font-semibold">{task.picker_name || '未知人員'}</span> 完成揀貨</p>
             )}
             {isMyTask ? (
                 <div className="mt-4 flex justify-between items-center bg-green-50 p-2 rounded-md">
@@ -43,7 +42,7 @@ const TaskCard = ({ task, onClaim }) => {
     );
 };
 
-export function TaskDashboard() {
+export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
@@ -64,18 +63,16 @@ export function TaskDashboard() {
     }, []);
 
     const handleClaimTask = async (orderId, isContinue) => {
-        // 如果是繼續作業，直接跳轉
         if(isContinue){
             navigate(`/order/${orderId}`);
             return;
         }
         
-        // 如果是認領新任務
         const promise = apiClient.post(`/api/orders/${orderId}/claim`);
         toast.promise(promise, {
             loading: '正在認領任務...',
             success: (response) => {
-                navigate(`/order/${orderId}`); // 成功後跳轉到作業頁面
+                navigate(`/order/${orderId}`);
                 return '任務認領成功，開始作業！';
             },
             error: (err) => err.response?.data?.message || '認領失敗',
@@ -91,29 +88,39 @@ export function TaskDashboard() {
 
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-            <h1 className="text-3xl font-bold text-gray-800 mb-6">我的任務</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-gray-800">我的任務</h1>
+                {/* 【关键修改】只有管理员才能看到这个按钮 */}
+                {user && user.role === 'admin' && (
+                    <Link 
+                        to="/admin" 
+                        className="flex items-center px-4 py-2 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors shadow-sm"
+                    >
+                        <LayoutDashboard className="mr-2" />
+                        管理員儀表板
+                    </Link>
+                )}
+            </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {/* 揀貨任務區 */}
                 <div>
                     <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><Package className="mr-2" /> 待揀貨任務 ({pickTasks.length})</h2>
                     <div className="space-y-4">
                         {pickTasks.length > 0 ? (
                             pickTasks.map(task => <TaskCard key={task.id} task={task} onClaim={handleClaimTask} />)
                         ) : (
-                            <p className="text-gray-500 p-4 bg-white rounded-lg shadow-sm">目前沒有待處理的揀貨任務。</p>
+                            <div className="text-gray-500 p-4 bg-white rounded-lg shadow-sm">目前沒有待處理的揀貨任務。</div>
                         )}
                     </div>
                 </div>
 
-                {/* 裝箱任務區 */}
                 <div>
                     <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><Box className="mr-2" /> 待裝箱任務 ({packTasks.length})</h2>
                     <div className="space-y-4">
                         {packTasks.length > 0 ? (
                             packTasks.map(task => <TaskCard key={task.id} task={task} onClaim={handleClaimTask} />)
                         ) : (
-                            <p className="text-gray-500 p-4 bg-white rounded-lg shadow-sm">目前沒有待處理的裝箱任務。</p>
+                            <div className="text-gray-500 p-4 bg-white rounded-lg shadow-sm">目前沒有待處理的裝箱任務。</div>
                         )}
                     </div>
                 </div>
