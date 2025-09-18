@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { ListTodo, Package, Box, User, Clock, Loader2, ServerOff, LayoutDashboard } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard } from 'lucide-react';
 
 const statusMap = {
     pending: { text: '待揀貨', color: 'bg-yellow-500' },
@@ -47,20 +47,27 @@ export function TaskDashboard({ user }) {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
+    // 【关键修改】将 user 添加到 useEffect 的依赖数组中
     useEffect(() => {
         const fetchTasks = async () => {
-            try {
-                setLoading(true);
-                const response = await apiClient.get('/api/tasks');
-                setTasks(response.data);
-            } catch (error) {
-                toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
-            } finally {
-                setLoading(false);
+            // 确保 user 对象存在才发起请求，避免不必要的调用
+            if (user) { 
+                try {
+                    setLoading(true);
+                    const response = await apiClient.get('/api/tasks');
+                    setTasks(response.data);
+                } catch (error) {
+                    // 柔和地处理登入瞬间可能发生的 401 错误
+                    if (error.response?.status !== 401) {
+                         toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
+                    }
+                } finally {
+                    setLoading(false);
+                }
             }
         };
         fetchTasks();
-    }, []);
+    }, [user]); // <<--- 当 user 状态更新时，这个 effect 会重新执行
 
     const handleClaimTask = async (orderId, isContinue) => {
         if(isContinue){
@@ -90,14 +97,13 @@ export function TaskDashboard({ user }) {
         <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-gray-800">我的任務</h1>
-                {/* 【关键修改】只有管理员才能看到这个按钮 */}
                 {user && user.role === 'admin' && (
                     <Link 
                         to="/admin" 
                         className="flex items-center px-4 py-2 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors shadow-sm"
                     >
                         <LayoutDashboard className="mr-2" />
-                        管理員儀表板
+                        管理中心
                     </Link>
                 )}
             </div>

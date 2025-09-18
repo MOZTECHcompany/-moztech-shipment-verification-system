@@ -24,8 +24,9 @@ function AppLayout({ user, onLogout }) {
     );
 }
 
-function ProtectedRoute({ user }) {
-    if (!user) {
+// 【关键修改】让 ProtectedRoute 依赖 token 和 user
+function ProtectedRoute({ user, token }) {
+    if (!user || !token) {
         return <Navigate to="/login" replace />;
     }
     return <Outlet />;
@@ -39,23 +40,25 @@ function App() {
         if (token) {
             apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         } else {
+            // 确保在 token 不存在时清除 header
             delete apiClient.defaults.headers.common['Authorization'];
         }
     }, [token]);
 
     const handleLogin = (data) => {
-        setUser(data.user);
+        // 先设置 token，再设置 user，保证 useEffect 的顺序
         setToken(data.accessToken);
+        setUser(data.user);
     };
 
     const handleLogout = () => {
+        // 先清除 user，再清除 token
         setUser(null);
         setToken(null);
     };
     
     const getHomeRoute = () => {
-        if (!user) return "/login";
-        // 登入後預設都去 /tasks
+        if (!user || !token) return "/login";
         return "/tasks";
     };
 
@@ -66,15 +69,20 @@ function App() {
                 <Routes>
                     <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
                     
-                    <Route element={<ProtectedRoute user={user} />}>
+                    {/* 【关键修改】将 token 传入 ProtectedRoute */}
+                    <Route element={<ProtectedRoute user={user} token={token} />}>
                         <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
-                            <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/tasks" />} />
-                            {/* 【关键修改】将 user prop 传递给 TaskDashboard */}
+                            {/* 管理员专属路由，如果不是 admin 则重定向到 /tasks */}
+                            <Route 
+                                path="/admin" 
+                                element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/tasks" />} 
+                            />
                             <Route path="/tasks" element={<TaskDashboard user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
                         </Route>
                     </Route>
 
+                    {/* 根路径，根据登录状态决定跳转方向 */}
                     <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
                 </Routes>
             </BrowserRouter>
