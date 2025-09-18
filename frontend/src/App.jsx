@@ -1,11 +1,12 @@
 // frontend/src/App.jsx
+
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import apiClient from './api/api';
+import { socket } from './api/socket'; // 引入我们创建的 socket 实例
 
 import { LoginPage } from './components/LoginPage';
-// 【修正】从正确的 admin 文件夹中引入
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { UserManagement } from './components/admin/UserManagement';
 import { TaskDashboard } from './components/TaskDashboard';
@@ -37,11 +38,18 @@ function App() {
     const [user, setUser] = useLocalStorage('wms_user', null);
     const [token, setToken] = useLocalStorage('wms_token', null);
 
+    // 【关键修改】在 token 变化时控制 apiClient 和 socket 连接
     useEffect(() => {
         if (token) {
             apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            // 如果有 token 且 socket 未连接，则手动连接
+            if (!socket.connected) {
+                socket.connect();
+            }
         } else {
             delete apiClient.defaults.headers.common['Authorization'];
+            // 如果没有 token（例如登出时），则断开连接
+            socket.disconnect();
         }
     }, [token]);
 

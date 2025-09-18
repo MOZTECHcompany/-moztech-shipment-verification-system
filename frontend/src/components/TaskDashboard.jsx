@@ -1,8 +1,10 @@
 // frontend/src/components/TaskDashboard.jsx
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
+import { socket } from '@/api/socket.js'; // 引入 socket
 import { Package, Box, User, Loader2, ServerOff, LayoutDashboard } from 'lucide-react';
 
 const statusMap = {
@@ -51,24 +53,72 @@ export function TaskDashboard({ user }) {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        const fetchTasks = async () => {
-            if (user) {
-                try {
-                    setLoading(true);
-                    const response = await apiClient.get('/api/tasks');
-                    setTasks(response.data);
-                } catch (error) {
-                    if (error.response?.status !== 401) {
-                        toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
-                    }
-                } finally {
-                    setLoading(false);
+    const fetchTasks = useCallback(async () => {
+        if (user) { 
+            try {
+                setLoading(true);
+                const response = await apiClient.get('/api/tasks');
+                setTasks(response.data);
+            } catch (error) {
+                if (error.response?.status !== 401) {
+                    toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
                 }
+            } finally {
+                setLoading(false);
             }
-        };
-        fetchTasks();
+        }
     }, [user]);
+
+    useEffect(() => {
+        fetchTasks();
+    }, [fetchTasks]);
+
+    useEffect(() => {
+        const handleNewTask = (newTask) => {
+            toast.info(`收到新任務: ${newTask.voucher_number}`);
+            // 避免重複添加
+            setTasks(currentTasks => 
+                currentTasks.some(task => task.id === newTask.id) ? currentTasks : [...currentTasks, newTask]
+            );
+        };
+        
+        const handleTaskUpdate = (updatedTask) => {
+             setTasks(currentTasks => {
+                const index = currentTasks.findIndex(t => t.id === updatedTask.id);
+                // 如果任务已经不存在于列表中 (例如，一个新的 picked 任务)，则添加它
+                if (index === -1) {
+                    // 检查角色权限是否能看到此任务
+                    if ((user.role === 'picker' || user.role === 'admin') && updatedTask.task_type === 'pick') return [...currentTasks, updatedTask];
+                    if ((user.role === 'packer' || user.role === 'admin') && updatedTask.task_type === 'pack') return [...currentTasks, updatedTask];
+                    return currentTasks;
+                }
+                
+                // 如果任务已完成或被转移到下一个阶段，则从当前列表中移除
+                if (
+                    (updatedTask.status === 'picked' && user.role === 'picker') ||
+                    (updatedTask.status === 'completed') || 
+                    (updatedTask.status === 'voided')
+                ) {
+                    return currentTasks.filter(t => t.id !== updatedTask.id);
+                }
+                
+                // 否则，更新列表中的任务
+                const newTasks = [...currentTasks];
+                newTasks[index] = updatedTask;
+                return newTasks;
+            });
+        };
+
+        socket.on('new_task', handleNewTask);
+        socket.on('task_claimed', handleTaskUpdate);
+        socket.on('task_status_changed', handleTaskUpdate);
+        
+        return () => {
+            socket.off('new_task', handleNewTask);
+            socket.off('task_claimed', handleTaskUpdate);
+            socket.off('task_status_changed', handleTaskUpdate);
+        };
+    }, [user]); // 依赖 user 以便在角色判断时获取最新值
 
     const handleClaimTask = async (orderId, isContinue) => {
         if (isContinue) {
@@ -78,20 +128,20 @@ export function TaskDashboard({ user }) {
         const promise = apiClient.post(`/api/orders/${orderId}/claim`);
         toast.promise(promise, {
             loading: '正在認領任務...',
-            success: (response) => {
-                navigate(`/order/${orderId}`);
-                return '任務認領成功，開始作業！';
+            success: () => {
+                // 认领成功后，让 socket 事件来更新 UI，前端不再主动跳转
+                return '任務認領成功！';
             },
             error: (err) => err.response?.data?.message || '認領失敗',
         });
     };
 
+    const pickTasks = tasks.filter(t => t.task_type === 'pick');
+    const packTasks = tasks.filter(t => t.task_type === 'pack');
+
     if (loading) {
         return <div className="flex justify-center items-center h-screen"><Loader2 className="animate-spin text-primary" size={48} /></div>;
     }
-
-    const pickTasks = tasks.filter(t => t.task_type === 'pick');
-    const packTasks = tasks.filter(t => t.task_type === 'pack');
 
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto">
