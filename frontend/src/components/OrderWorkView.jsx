@@ -5,11 +5,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { ArrowLeft, PackageCheck, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User, ScanLine, FileUp } from 'lucide-react';
+import { ArrowLeft, PackageCheck, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User, ScanLine, FileUp, XCircle } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
-// --- 輔助組件 (保持不變) ---
+// --- 辅助组件 (保持不变) ---
 const getItemStatus = (item) => {
     const { quantity, picked_quantity, packed_quantity } = item;
     if (packed_quantity >= quantity) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
@@ -53,8 +53,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
 };
 
 
-// --- 主作業視圖組件 ---
-
+// --- 主作业视图组件 ---
 export function OrderWorkView({ user }) {
     const { orderId } = useParams();
     const navigate = useNavigate();
@@ -63,6 +62,8 @@ export function OrderWorkView({ user }) {
     const [currentOrder, setCurrentOrder] = useState(null);
     const [loading, setLoading] = useState(true);
     const [barcodeInput, setBarcodeInput] = useState('');
+    const [scanError, setScanError] = useState(null);
+
     const barcodeInputRef = useRef(null);
     const errorSoundRef = useRef(null);
 
@@ -92,49 +93,57 @@ export function OrderWorkView({ user }) {
             setCurrentOrder(response.data);
             if (response.data.order.status === 'picked' || response.data.order.status === 'completed') {
                 const nextStep = response.data.order.status === 'picked' ? '訂單已完成揀貨！' : '訂單已完成所有作業！';
-                 MySwal.fire({ title: '階段完成！', text: nextStep, icon: 'success', timer: 2000, showConfirmButton: false })
+                MySwal.fire({ title: '階段完成！', text: nextStep, icon: 'success', timer: 2000, showConfirmButton: false })
                     .then(() => navigate('/tasks'));
             }
-        } catch (err) { 
-            toast.error(`更新失敗`, { description: err.response?.data?.message || '發生未知錯誤' }); 
+        } catch (err) {
+            setScanError(err.response?.data?.message || '發生未知錯誤');
             errorSoundRef.current?.play();
+            setTimeout(() => setScanError(null), 1500);
         }
     };
-    
+
     const handleQuantityChange = (sku, type, amount) => { updateItemQuantityOnServer(sku, type, amount); };
 
     const handleScan = () => {
         const skuToScan = barcodeInput.trim();
         if (!skuToScan || !currentOrder) return;
+        setScanError(null); // Reset error on new scan
         const targetItem = currentOrder.items.find(item => item.product_code === skuToScan);
-        if (!targetItem) { 
-            toast.error('掃描錯誤', { description: '此產品不在此訂單中。' });
+
+        if (!targetItem) {
             errorSoundRef.current?.play();
-            setBarcodeInput(''); 
-            return; 
-        }
-        const { status } = currentOrder.order;
-        const { role } = user;
-        let operationType = null;
-        if ((role === 'picker' || role === 'admin') && status === 'picking') operationType = 'pick';
-        if ((role === 'packer' || role === 'admin') && status === 'packing') operationType = 'pack';
-        if (!operationType) {
-            toast.error('操作錯誤', { description: `目前狀態 (${status}) 或您的角色 (${role}) 不允許此操作`});
-            errorSoundRef.current?.play();
+            setScanError('掃描錯誤：此產品不在此訂單中。');
+            setTimeout(() => setScanError(null), 1500);
             setBarcodeInput('');
             return;
         }
+
+        const { status } = currentOrder.order;
+        const { role } = user;
+        let operationType = null;
+
+        if ((role === 'picker' || role === 'admin') && status === 'picking') operationType = 'pick';
+        else if ((role === 'packer' || role === 'admin') && status === 'packing') operationType = 'pack';
+        
+        if (!operationType) {
+            errorSoundRef.current?.play();
+            setScanError(`操作錯誤：目前狀態 (${status}) 不允許此操作`);
+            setTimeout(() => setScanError(null), 1500);
+            setBarcodeInput('');
+            return;
+        }
+
         updateItemQuantityOnServer(skuToScan, operationType, 1);
         setBarcodeInput('');
     };
-    
+
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
     const handleClick = () => { handleScan(); };
 
-    // 【关键修改】将所有函数和 hooks 移至函式元件内部
     const handleVoidOrder = async () => {
         if (!currentOrder?.order) return;
-        const { value: reason } = await MySwal.fire({ title: '確定要作廢此訂單？', text: "此操作無法復原，請輸入作廢原因：", input: 'text', showCancelButton: true });
+        const { value: reason } = await MySwal.fire({ title: '確定要作廢此訂單？', text: "此操作無法復原，請輸入作廢原因：", input: 'text', showCancelButton: true, confirmButtonText: '確認作廢', cancelButtonText: '取消' });
         if (reason) {
             const promise = apiClient.patch(`/api/orders/${currentOrder.order.id}/void`, { reason });
             toast.promise(promise, {
@@ -154,7 +163,7 @@ export function OrderWorkView({ user }) {
         XLSX.writeFile(workbook, `出貨明細-${currentOrder.order.voucher_number}.xlsx`);
         toast.success('檔案已成功匯出');
     };
-    
+
     const progressStats = useMemo(() => {
         if (!currentOrder?.items) return { totalSkus: 0, packedSkus: 0, totalQuantity: 0, totalPickedQty: 0, totalPackedQty: 0 };
         return {
@@ -170,7 +179,7 @@ export function OrderWorkView({ user }) {
         if (!currentOrder?.items) return [];
         return [...currentOrder.items].sort((a, b) => (a.packed_quantity >= a.quantity) - (b.packed_quantity >= b.quantity));
     }, [currentOrder]);
-    
+
     const handleReturnToTasks = () => navigate('/tasks');
 
     if (loading || !currentOrder) {
@@ -178,7 +187,7 @@ export function OrderWorkView({ user }) {
     }
 
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
+        <div className={`p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen transition-colors duration-300 ${scanError ? 'bg-red-100' : ''}`}>
             <header className="flex justify-between items-center mb-8">
                 <button onClick={handleReturnToTasks} className="flex items-center text-gray-600 hover:text-gray-900 font-semibold p-2 rounded-lg hover:bg-gray-200 transition-colors">
                     <ArrowLeft className="mr-2" /> 返回任務列表
@@ -188,7 +197,7 @@ export function OrderWorkView({ user }) {
                     <p className="text-gray-500 mt-1 text-right">操作員: {user.name || user.username}</p>
                 </div>
             </header>
-            
+
             <ProgressDashboard stats={progressStats} onExport={handleExportReport} onVoid={handleVoidOrder} user={user} />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -196,13 +205,27 @@ export function OrderWorkView({ user }) {
                     <div className="bg-white p-6 rounded-xl shadow-md">
                         <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ScanLine className="mr-2"/>掃描區</h2>
                         <div className="flex gap-2">
-                            <input ref={barcodeInputRef} type="text" placeholder="掃描或輸入條碼..." value={barcodeInput} onChange={(e) => setBarcodeInput(e.target.value)} onKeyDown={handleKeyDown} className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500" />
+                            <input
+                                ref={barcodeInputRef}
+                                type="text"
+                                placeholder="掃描或輸入條碼..."
+                                value={barcodeInput}
+                                onChange={(e) => setBarcodeInput(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 transition-all ${scanError ? 'border-red-500 ring-red-500 animate-shake' : 'border-gray-300'}`}
+                            />
                             <button onClick={handleClick} className="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">確認</button>
                         </div>
                     </div>
                 </div>
                 <div className="lg:col-span-2">
-                    <div className="bg-white p-6 rounded-xl shadow-md min-h-full">
+                    <div className="bg-white p-6 rounded-xl shadow-md min-h-full relative">
+                        {scanError && (
+                            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col justify-center items-center z-10 rounded-xl">
+                                <XCircle className="text-red-500 h-16 w-16" />
+                                <p className="mt-4 text-xl font-bold text-red-600 text-center px-4">{scanError}</p>
+                            </div>
+                        )}
                         <div className="mb-4">
                             <h2 className="text-xl font-semibold text-gray-700">作業清單 ({currentOrder.order.voucher_number})</h2>
                             <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600 mt-2 border-t pt-3">

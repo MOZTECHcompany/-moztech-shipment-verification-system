@@ -22,12 +22,11 @@ export function AdminDashboard() {
         formData.append('orderFile', file);
         const promise = apiClient.post('/api/orders/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         toast.promise(promise, {
-            loading: '正在上传并处理订单...',
+            loading: '正在上傳並處理訂單...',
             success: (response) => {
-                // 成功后提示，但不强制跳转，让管理员决定下一步操作
-                return `订单「${response.data.voucherNumber}」已成功汇入！新任务已建立。`;
+                return `訂單「${response.data.voucherNumber}」已成功匯入！新任務已建立。`;
             },
-            error: (err) => `上传失败: ${err.response?.data?.message || err.message}`,
+            error: (err) => `上傳失敗: ${err.response?.data?.message || err.message}`,
         });
         if (fileInputRef.current) { fileInputRef.current.value = null; }
     };
@@ -73,11 +72,12 @@ export function AdminDashboard() {
 
             <div className="space-y-8">
                 <div className="bg-white p-6 rounded-xl shadow-md">
-                    <h3 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><UploadCloud className="mr-2 text-purple-600" />建立新任务：汇入出货单</h3>
+                    <h3 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><UploadCloud className="mr-2 text-purple-600" />建立新任務：匯入出貨單</h3>
                     <div className="flex items-center justify-center w-full p-6 border-2 border-gray-200 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => fileInputRef.current?.click()}>
                         <div className="text-center">
                             <FileSpreadsheet className="mx-auto h-12 w-12 text-gray-400" />
-                            <p className="mt-2 text-sm text-gray-600"><span className="font-semibold text-purple-600">点击此处上传</span> 或拖曳档案到此区域</p>
+                            {/* 【关键修改】修正为繁体中文 */}
+                            <p className="mt-2 text-sm text-gray-600"><span className="font-semibold text-purple-600">點擊此處上傳</span> 或拖曳檔案到此區域</p>
                             <p className="text-xs text-gray-500">支援 .xlsx, .xls 格式</p>
                         </div>
                     </div>
@@ -85,16 +85,16 @@ export function AdminDashboard() {
                 </div>
 
                 <div className="bg-white p-6 rounded-xl shadow-md">
-                    <h3 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileDown className="mr-2 text-green-600" />汇出营运报告</h3>
+                    <h3 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><FileDown className="mr-2 text-green-600" />匯出營運報告</h3>
                     <div className="flex flex-col sm:flex-row items-center gap-4">
-                        <div className="w-full sm:w-auto"><label className="block text-sm font-medium text-gray-600 mb-1">选择日期范围：</label><DatePicker selectsRange={true} startDate={startDate} endDate={endDate} onChange={(update) => setDateRange(update)} isClearable={true} dateFormat="yyyy/MM/dd" className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500" /></div>
-                        <button onClick={handleExportAdminReport} className="w-full sm:w-auto self-end px-5 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors" disabled={!startDate || !endDate}>下载 CSV 报告</button>
+                        <div className="w-full sm:w-auto"><label className="block text-sm font-medium text-gray-600 mb-1">選擇日期範圍：</label><DatePicker selectsRange={true} startDate={startDate} endDate={endDate} onChange={(update) => setDateRange(update)} isClearable={true} dateFormat="yyyy/MM/dd" className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500" /></div>
+                        <button onClick={handleExportAdminReport} className="w-full sm:w-auto self-end px-5 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors" disabled={!startDate || !endDate}>下載 CSV 報告</button>
                     </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-white p-6 rounded-xl shadow-md opacity-60"><h3 className="text-xl font-semibold text-gray-700 mb-2 flex items-center"><Users className="mr-2" />使用者管理</h3><p className="text-gray-500 mb-4">新增、编辑或删除系统操作员帐号。</p><button className="px-4 py-2 bg-gray-200 text-gray-500 font-semibold rounded-lg cursor-not-allowed">即将推出</button></div>
-                    <div className="bg-white p-6 rounded-xl shadow-md opacity-60"><h3 className="text-xl font-semibold text-gray-700 mb-2 flex items-center"><History className="mr-2" />操作日志查询</h3><p className="text-gray-500 mb-4">查询特定订单或人员的所有操作记录。</p><button className="px-4 py-2 bg-gray-200 text-gray-500 font-semibold rounded-lg cursor-not-allowed">即将推出</button></div>
+                    <div className="bg-white p-6 rounded-xl shadow-md opacity-60"><h3 className="text-xl font-semibold text-gray-700 mb-2 flex items-center"><Users className="mr-2" />使用者管理</h3><p className="text-gray-500 mb-4">新增、編輯或刪除系統操作員帳號。</p><button className="px-4 py-2 bg-gray-200 text-gray-500 font-semibold rounded-lg cursor-not-allowed">即將推出</button></div>
+                    <div className="bg-white p-6 rounded-xl shadow-md opacity-60"><h3 className="text-xl font-semibold text-gray-700 mb-2 flex items-center"><History className="mr-2" />操作日誌查詢</h3><p className="text-gray-500 mb-4">查詢特定訂單或人員的所有操作記錄。</p><button className="px-4 py-2 bg-gray-200 text-gray-500 font-semibold rounded-lg cursor-not-allowed">即將推出</button></div>
                 </div>
             </div>
         </div>
