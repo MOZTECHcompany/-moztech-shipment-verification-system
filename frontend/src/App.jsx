@@ -1,70 +1,91 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
+// frontend/src/App.jsx
+
+import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
-import { LogOut, LayoutDashboard, HardHat } from 'lucide-react';
+import apiClient from './api/api';
 
 import { LoginPage } from './components/LoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
-import { Dashboard as PickingDashboard } from './components/Dashboard';
+import { TaskDashboard } from './components/TaskDashboard'; // 新的任務列表
+import { OrderWorkView } from './components/OrderWorkView'; // 我們舊的 Dashboard
 import { useLocalStorage } from './hooks/useLocalStorage';
-import './index.css';
+import { LogOut } from 'lucide-react';
 
-function AppNavbar({ user, onLogout }) {
-  if (!user) return null;
-  return (
-    <nav className="bg-gray-800 text-white p-4 sticky top-0 z-50 shadow-md">
-      <div className="max-w-7xl mx-auto flex justify-between items-center">
-        {/* 左側 Logo 和標題 */}
-        <div className="flex items-center gap-3">
-            {/* ✨✨✨ 已經幫你把檔名換成 moztech_1.png ✨✨✨ */}
-            <img src="/moztech_1.png" alt="MOZTECH Logo" className="h-8 w-auto" />
-            <span className="font-semibold text-xl tracking-wider">WMS</span>
+// 頁面佈局組件，包含登出按鈕等
+function AppLayout({ user, onLogout }) {
+    return (
+        <div>
+            <header className="absolute top-4 right-4 z-10">
+                 {user && <button onClick={onLogout} className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 shadow-lg"><LogOut className="mr-2 h-4 w-4" /> 登出</button>}
+            </header>
+            <main>
+                <Outlet /> {/* 這裡是子路由頁面顯示的地方 */}
+            </main>
         </div>
-        
-        {/* 中間導覽連結 */}
-        <div className="flex items-center gap-2">
-          <Link to="/" className="flex items-center gap-2 text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium"><LayoutDashboard size={16}/>數據總覽</Link>
-          <Link to="/picking" className="flex items-center gap-2 text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium"><HardHat size={16}/>本地作業</Link>
-        </div>
-
-        {/* 右側使用者資訊和登出 */}
-        <div className="flex items-center gap-4">
-          <span className="text-gray-300 text-sm">歡迎, {user.name}</span>
-          <button onClick={onLogout} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2">
-            <LogOut size={16} /><span>登出</span>
-          </button>
-        </div>
-      </div>
-    </nav>
-  );
+    );
 }
 
 
-// 主 App 元件
-export default function App() {
-  const [user, setUser] = useLocalStorage("user", null);
-
-  const handleLogin = (userId, role, name) => {
-    if (userId && role) setUser({ id: userId, role: role, name: name || userId });
-  };
-  
-  const handleLogout = () => {
-    setUser(null); 
-    localStorage.clear();
-  };
-
-  return (
-    <Router>
-      <div className="min-h-screen font-sans bg-gray-50">
-        <Toaster richColors position="top-right" />
-        <AppNavbar user={user} onLogout={handleLogout} />
-        <Routes>
-          <Route path="/login" element={!user ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/" />} />
-          <Route path="/" element={user ? <AdminDashboard user={user} /> : <Navigate to="/login" />} />
-          <Route path="/picking" element={user ? <PickingDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} />
-          <Route path="*" element={<Navigate to={user ? "/" : "/login"} />} />
-        </Routes>
-      </div>
-    </Router>
-  );
+// 保護路由，未登入則導向登入頁
+function ProtectedRoute({ user }) {
+    if (!user) {
+        return <Navigate to="/login" replace />;
+    }
+    return <Outlet />;
 }
+
+function App() {
+    const [user, setUser] = useLocalStorage('wms_user', null);
+    const [token, setToken] = useLocalStorage('wms_token', null);
+
+    useEffect(() => {
+        if (token) {
+            apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        } else {
+            delete apiClient.defaults.headers.common['Authorization'];
+        }
+    }, [token]);
+
+    const handleLogin = (data) => {
+        setUser(data.user);
+        setToken(data.accessToken);
+    };
+
+    const handleLogout = () => {
+        setUser(null);
+        setToken(null);
+    };
+    
+    // 決定登入後要去哪個頁面
+    const getHomeRoute = () => {
+        if (!user) return "/login";
+        if (user.role === 'admin') return "/admin";
+        return "/tasks";
+    };
+
+    return (
+        <>
+            <Toaster richColors position="top-right" />
+            <BrowserRouter>
+                <Routes>
+                    <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+                    
+                    {/* 需要登入才能訪問的頁面 */}
+                    <Route element={<ProtectedRoute user={user} />}>
+                        <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
+                            <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
+                            <Route path="/tasks" element={<TaskDashboard user={user} />} />
+                            <Route path="/order/:orderId" element={<OrderWorkView user={user} onLogout={handleLogout}/>} />
+                        </Route>
+                    </Route>
+
+                    {/* 根路徑，根據登入狀態跳轉 */}
+                    <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
+                </Routes>
+            </BrowserRouter>
+        </>
+    );
+}
+
+export default App;
