@@ -47,17 +47,14 @@ export function TaskDashboard({ user }) {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    // 【关键修改】将 user 添加到 useEffect 的依赖数组中
     useEffect(() => {
         const fetchTasks = async () => {
-            // 确保 user 对象存在才发起请求，避免不必要的调用
             if (user) { 
                 try {
                     setLoading(true);
                     const response = await apiClient.get('/api/tasks');
                     setTasks(response.data);
                 } catch (error) {
-                    // 柔和地处理登入瞬间可能发生的 401 错误
                     if (error.response?.status !== 401) {
                          toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
                     }
@@ -67,7 +64,7 @@ export function TaskDashboard({ user }) {
             }
         };
         fetchTasks();
-    }, [user]); // <<--- 当 user 状态更新时，这个 effect 会重新执行
+    }, [user]);
 
     const handleClaimTask = async (orderId, isContinue) => {
         if(isContinue){

@@ -1,4 +1,5 @@
 // frontend/src/components/LoginPage.jsx
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, User, Lock } from 'lucide-react';
@@ -27,14 +28,15 @@ export function LoginPage({ onLogin }) {
         });
         
         const responseData = response.data;
-
         toast.success(`歡迎回來, ${responseData.user.name || responseData.user.username}!`);
-
-        // 更新 App 的全局狀態
         onLogin(responseData);
         
-        // 【关键修改】无论是什么角色，登入后一律跳轉到作業面板
-        navigate('/tasks');
+        // 【關鍵修改】恢復管理員分流邏輯
+        if (responseData.user.role === 'admin') {
+            navigate('/admin');
+        } else {
+            navigate('/tasks');
+        }
         
     } catch (err) {
         console.error("登入失敗", err);
