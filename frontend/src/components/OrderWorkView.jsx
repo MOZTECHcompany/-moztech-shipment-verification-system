@@ -1,14 +1,15 @@
+// frontend/src/components/OrderWorkView.jsx
+
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom'; // 引入路由工具
+import { useParams, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { ArrowLeft, PackageCheck, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User, ScanLine, FileUp, AlertCircle } from 'lucide-react';
+import { ArrowLeft, PackageCheck, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User, ScanLine, FileUp } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
-// --- 輔助組件 (從舊 Dashboard.jsx 完整保留) ---
-
+// --- 輔助組件 (保持不變) ---
 const getItemStatus = (item) => {
     const { quantity, picked_quantity, packed_quantity } = item;
     if (packed_quantity >= quantity) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
@@ -55,8 +56,8 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
 // --- 主作業視圖組件 ---
 
 export function OrderWorkView({ user }) {
-    const { orderId } = useParams(); // 【新】從 URL 獲取 orderId
-    const navigate = useNavigate();   // 【新】用於頁面跳轉
+    const { orderId } = useParams();
+    const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
 
     const [currentOrder, setCurrentOrder] = useState(null);
@@ -64,13 +65,10 @@ export function OrderWorkView({ user }) {
     const [barcodeInput, setBarcodeInput] = useState('');
     const barcodeInputRef = useRef(null);
     const errorSoundRef = useRef(null);
-    
-    // 初始化音效
-    useEffect(() => {
-        errorSoundRef.current = new Audio('/sounds/error.mp3');
-    }, []);
-    
-    // 【修改】資料獲取邏輯，現在依賴從 URL 傳入的 orderId
+
+    useEffect(() => { errorSoundRef.current = new Audio('/sounds/error.mp3'); }, []);
+    useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrder]);
+
     const fetchOrderDetails = useCallback(async (id) => {
         if (!id) return;
         try {
@@ -79,45 +77,24 @@ export function OrderWorkView({ user }) {
             setCurrentOrder(response.data);
         } catch (err) {
             toast.error('無法獲取訂單詳情', { description: err.response?.data?.message || '請返回任務列表重試' });
-            navigate('/tasks'); // 如果獲取失敗，直接返回任務列表
+            navigate('/tasks');
         } finally {
             setLoading(false);
         }
     }, [navigate]);
 
-    // 當 orderId 變化時 (即進入頁面時)，載入訂單資料
-    useEffect(() => {
-        fetchOrderDetails(orderId);
-    }, [orderId, fetchOrderDetails]);
-    
-    // 自動對焦到輸入框
-    useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrder]);
-    
-    // 核心作業函數 (與舊版 Dashboard.jsx 相同)
+    useEffect(() => { fetchOrderDetails(orderId); }, [orderId, fetchOrderDetails]);
+
     const updateItemQuantityOnServer = async (sku, type, amount) => {
-        if (!currentOrder || !currentOrder.order) return;
+        if (!currentOrder?.order) return;
         try {
-            const response = await apiClient.post(`/api/orders/update_item`, {
-                orderId: currentOrder.order.id, sku, type, amount
-            });
+            const response = await apiClient.post(`/api/orders/update_item`, { orderId: currentOrder.order.id, sku, type, amount });
             setCurrentOrder(response.data);
-            
-            // 【新】檢查訂單是否已完成並提示
             if (response.data.order.status === 'picked' || response.data.order.status === 'completed') {
                 const nextStep = response.data.order.status === 'picked' ? '訂單已完成揀貨！' : '訂單已完成所有作業！';
-                 MySwal.fire({
-                    title: '階段完成！',
-                    text: nextStep,
-                    icon: 'success',
-                    timer: 2000,
-                    showConfirmButton: false
-                }).then(() => {
-                    if (response.data.order.status === 'completed' || response.data.order.status === 'picked') {
-                       navigate('/tasks'); // 自動返回任務列表
-                    }
-                });
+                 MySwal.fire({ title: '階段完成！', text: nextStep, icon: 'success', timer: 2000, showConfirmButton: false })
+                    .then(() => navigate('/tasks'));
             }
-            
         } catch (err) { 
             toast.error(`更新失敗`, { description: err.response?.data?.message || '發生未知錯誤' }); 
             errorSoundRef.current?.play();
@@ -136,53 +113,65 @@ export function OrderWorkView({ user }) {
             setBarcodeInput(''); 
             return; 
         }
-
-        const currentStatus = currentOrder.order.status;
-        const role = user.role;
+        const { status } = currentOrder.order;
+        const { role } = user;
         let operationType = null;
-        
-        // 決定操作類型
-        if ((role === 'picker' || role === 'admin') && currentStatus === 'picking') operationType = 'pick';
-        if ((role === 'packer' || role === 'admin') && currentStatus === 'packing') operationType = 'pack';
-
+        if ((role === 'picker' || role === 'admin') && status === 'picking') operationType = 'pick';
+        if ((role === 'packer' || role === 'admin') && status === 'packing') operationType = 'pack';
         if (!operationType) {
-            toast.error('操作錯誤', { description: `目前狀態 (${currentStatus}) 或您的角色 (${role}) 不允許此操作`});
+            toast.error('操作錯誤', { description: `目前狀態 (${status}) 或您的角色 (${role}) 不允許此操作`});
             errorSoundRef.current?.play();
             setBarcodeInput('');
             return;
         }
-
         updateItemQuantityOnServer(skuToScan, operationType, 1);
         setBarcodeInput('');
     };
     
-    // 其他函數 (與舊版 Dashboard.jsx 相同)
-    const handleVoidOrder = async () => { /* ... 邏輯不變 ... */ };
-    const handleExportReport = () => { /* ... 邏輯不變 ... */ };
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
     const handleClick = () => { handleScan(); };
 
-    // useMemo hooks (與舊版 Dashboard.jsx 相同)
-    const progressStats = useMemo(() => { /* ... 邏輯不變 ... */ }, [currentOrder]);
-    const sortedShipmentData = useMemo(() => { /* ... 邏輯不變 ... */ }, [currentOrder]);
-    
-    // 【新】返回任務列表的函數
-    const handleReturnToTasks = () => {
-        MySwal.fire({
-            title: '您確定要返回嗎？',
-            text: "目前的作業進度會被儲存。若要繼續，您需要從列表重新進入。",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#3085d6',
-            cancelButtonColor: '#d33',
-            confirmButtonText: '確定返回',
-            cancelButtonText: '取消'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                navigate('/tasks');
-            }
-        });
+    // 【关键修改】将所有函数和 hooks 移至函式元件内部
+    const handleVoidOrder = async () => {
+        if (!currentOrder?.order) return;
+        const { value: reason } = await MySwal.fire({ title: '確定要作廢此訂單？', text: "此操作無法復原，請輸入作廢原因：", input: 'text', showCancelButton: true });
+        if (reason) {
+            const promise = apiClient.patch(`/api/orders/${currentOrder.order.id}/void`, { reason });
+            toast.promise(promise, {
+                loading: '正在作廢訂單...',
+                success: (res) => { navigate('/tasks'); return res.data.message; },
+                error: (err) => err.response?.data?.message || '操作失敗',
+            });
+        }
     };
+
+    const handleExportReport = () => {
+        if (!currentOrder?.items) return;
+        const data = currentOrder.items.map(item => ({ "品項編碼": item.product_code, "品項名稱": item.product_name, "應出數量": item.quantity, "已揀数量": item.picked_quantity, "已装箱数量": item.packed_quantity }));
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "出貨報告");
+        XLSX.writeFile(workbook, `出貨明細-${currentOrder.order.voucher_number}.xlsx`);
+        toast.success('檔案已成功匯出');
+    };
+    
+    const progressStats = useMemo(() => {
+        if (!currentOrder?.items) return { totalSkus: 0, packedSkus: 0, totalQuantity: 0, totalPickedQty: 0, totalPackedQty: 0 };
+        return {
+            totalSkus: currentOrder.items.length,
+            packedSkus: currentOrder.items.filter(item => item.packed_quantity >= item.quantity).length,
+            totalQuantity: currentOrder.items.reduce((sum, item) => sum + (item.quantity || 0), 0),
+            totalPickedQty: currentOrder.items.reduce((sum, item) => sum + (item.picked_quantity || 0), 0),
+            totalPackedQty: currentOrder.items.reduce((sum, item) => sum + (item.packed_quantity || 0), 0),
+        };
+    }, [currentOrder]);
+
+    const sortedShipmentData = useMemo(() => {
+        if (!currentOrder?.items) return [];
+        return [...currentOrder.items].sort((a, b) => (a.packed_quantity >= a.quantity) - (b.packed_quantity >= b.quantity));
+    }, [currentOrder]);
+    
+    const handleReturnToTasks = () => navigate('/tasks');
 
     if (loading || !currentOrder) {
         return <div className="flex justify-center items-center h-screen"><Loader2 className="animate-spin text-blue-500" size={48} /></div>;
@@ -190,7 +179,6 @@ export function OrderWorkView({ user }) {
 
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-            {/* 【修改】Header 區域 */}
             <header className="flex justify-between items-center mb-8">
                 <button onClick={handleReturnToTasks} className="flex items-center text-gray-600 hover:text-gray-900 font-semibold p-2 rounded-lg hover:bg-gray-200 transition-colors">
                     <ArrowLeft className="mr-2" /> 返回任務列表
@@ -201,7 +189,6 @@ export function OrderWorkView({ user }) {
                 </div>
             </header>
             
-            {/* 匯入功能已移除，因為現在是從任務列表進入 */}
             <ProgressDashboard stats={progressStats} onExport={handleExportReport} onVoid={handleVoidOrder} user={user} />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -227,8 +214,6 @@ export function OrderWorkView({ user }) {
                             {sortedShipmentData.map((item) => {
                                 const status = getItemStatus(item);
                                 const currentStatus = currentOrder.order.status;
-                                
-                                // 【修改】權限判斷現在更依賴訂單狀態
                                 const canAdjustPick = (user.role === 'picker' || user.role === 'admin') && currentStatus === 'picking';
                                 const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && currentStatus === 'packing';
                                 return (
@@ -259,24 +244,3 @@ export function OrderWorkView({ user }) {
         </div>
     );
 }
-
-// 為了讓程式碼更完整，我把之前省略的邏輯補回來
-const MemoizedProgressStats = React.memo(function ProgressDashboard({ stats, onExport, onVoid, user }) {
-    // ... 這裡放入 ProgressDashboard 的 JSX ...
-});
-
-OrderWorkView.prototype.handleVoidOrder = async function() {
-    // ... 這裡放入 handleVoidOrder 的邏輯 ...
-};
-
-OrderWorkView.prototype.handleExportReport = function() {
-    // ... 這裡放入 handleExportReport 的邏輯 ...
-};
-
-OrderWorkView.prototype.progressStats = function() {
-    // ... 這裡放入 progressStats 的 useMemo 邏輯 ...
-};
-
-OrderWorkView.prototype.sortedShipmentData = function() {
-    // ... 這裡放入 sortedShipmentData 的 useMemo 邏輯 ...
-};
