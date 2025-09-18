@@ -6,37 +6,41 @@ import apiClient from '@/api/api.js';
 import { Package, Box, User, Loader2, ServerOff, LayoutDashboard } from 'lucide-react';
 
 const statusMap = {
-    pending: { text: '待揀貨', color: 'bg-yellow-500' },
-    picking: { text: '揀貨中', color: 'bg-blue-500 animate-pulse' },
-    picked: { text: '待裝箱', color: 'bg-indigo-500' },
-    packing: { text: '裝箱中', color: 'bg-cyan-500 animate-pulse' },
+    pending: { text: '待揀貨', color: 'bg-yellow-100 text-yellow-800 border border-yellow-200' },
+    picking: { text: '揀貨中', color: 'bg-blue-100 text-blue-800 border border-blue-200 animate-pulse' },
+    picked: { text: '待裝箱', color: 'bg-indigo-100 text-indigo-800 border border-indigo-200' },
+    packing: { text: '裝箱中', color: 'bg-cyan-100 text-cyan-800 border border-cyan-200 animate-pulse' },
 };
 
 const TaskCard = ({ task, onClaim }) => {
     const isMyTask = task.current_user;
-    const statusInfo = statusMap[task.status] || { text: task.status, color: 'bg-gray-400' };
+    const statusInfo = statusMap[task.status] || { text: task.status, color: 'bg-gray-200 text-gray-800' };
 
     return (
-        <div className={`bg-white p-5 rounded-lg shadow-md border-l-4 ${isMyTask ? 'border-green-500' : 'border-gray-300'}`}>
-            <div className="flex justify-between items-center">
-                <h3 className="font-bold text-lg text-gray-800">{task.voucher_number}</h3>
-                <span className={`px-2 py-1 text-xs font-semibold text-white rounded-full ${statusInfo.color}`}>
-                    {statusInfo.text}
-                </span>
+        <div className={`bg-card rounded-xl shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden ${isMyTask ? 'ring-2 ring-green-500' : 'border'}`}>
+            <div className="p-5">
+                <div className="flex justify-between items-center">
+                    <h3 className="font-bold text-lg text-foreground truncate">{task.voucher_number}</h3>
+                    <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${statusInfo.color}`}>
+                        {statusInfo.text}
+                    </span>
+                </div>
+                <p className="text-sm text-secondary-foreground mt-2 flex items-center"><User size={14} className="mr-1.5" />{task.customer_name}</p>
+                {task.task_type === 'pack' && (
+                    <p className="text-xs text-gray-400 mt-1">由 <span className="font-medium text-gray-500">{task.picker_name || '未知人員'}</span> 完成揀貨</p>
+                )}
             </div>
-            <p className="text-gray-600 mt-1 flex items-center"><User size={14} className="mr-2" />客戶: {task.customer_name}</p>
-            {task.task_type === 'pack' && (
-                <p className="text-sm text-gray-500 mt-1">由 <span className="font-semibold">{task.picker_name || '未知人員'}</span> 完成揀貨</p>
-            )}
             {isMyTask ? (
-                <div className="mt-4 flex justify-between items-center bg-green-50 p-2 rounded-md">
-                     <p className="text-sm text-green-700 font-semibold">您正在處理此任務</p>
-                     <button onClick={() => onClaim(task.id, true)} className="px-4 py-1 bg-green-600 text-white rounded-md hover:bg-green-700">繼續作業</button>
+                <div className="bg-green-50 p-3 px-5 flex justify-between items-center border-t">
+                     <p className="text-sm text-green-800 font-semibold">您正在處理此任務</p>
+                     <button onClick={() => onClaim(task.id, true)} className="px-4 py-1.5 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700 transition-colors">繼續作業</button>
                 </div>
             ) : (
-                <button onClick={() => onClaim(task.id, false)} className="mt-4 w-full px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">
-                    {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}
-                </button>
+                <div className="p-3 bg-gray-50/50 border-t">
+                    <button onClick={() => onClaim(task.id, false)} className="w-full px-4 py-2 bg-primary text-primary-foreground font-semibold rounded-lg hover:bg-primary/90 transition-all duration-200 transform hover:scale-[1.02]">
+                        {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}
+                    </button>
+                </div>
             )}
         </div>
     );
@@ -49,14 +53,14 @@ export function TaskDashboard({ user }) {
 
     useEffect(() => {
         const fetchTasks = async () => {
-            if (user) { 
+            if (user) {
                 try {
                     setLoading(true);
                     const response = await apiClient.get('/api/tasks');
                     setTasks(response.data);
                 } catch (error) {
                     if (error.response?.status !== 401) {
-                         toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
+                        toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
                     }
                 } finally {
                     setLoading(false);
@@ -67,11 +71,10 @@ export function TaskDashboard({ user }) {
     }, [user]);
 
     const handleClaimTask = async (orderId, isContinue) => {
-        if(isContinue){
+        if (isContinue) {
             navigate(`/order/${orderId}`);
             return;
         }
-        
         const promise = apiClient.post(`/api/orders/${orderId}/claim`);
         toast.promise(promise, {
             loading: '正在認領任務...',
@@ -82,56 +85,57 @@ export function TaskDashboard({ user }) {
             error: (err) => err.response?.data?.message || '認領失敗',
         });
     };
-    
+
+    if (loading) {
+        return <div className="flex justify-center items-center h-screen"><Loader2 className="animate-spin text-primary" size={48} /></div>;
+    }
+
     const pickTasks = tasks.filter(t => t.task_type === 'pick');
     const packTasks = tasks.filter(t => t.task_type === 'pack');
 
-    if (loading) {
-        return <div className="flex justify-center items-center h-screen"><Loader2 className="animate-spin text-blue-500" size={48} /></div>;
-    }
-
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-gray-800">我的任務</h1>
+        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+            <header className="flex justify-between items-center mb-8">
+                <div>
+                    <h1 className="text-4xl font-bold text-gray-800">我的任務</h1>
+                    <p className="text-secondary-foreground mt-1">選擇一項任務以開始作業</p>
+                </div>
                 {user && user.role === 'admin' && (
-                    <Link 
-                        to="/admin" 
-                        className="flex items-center px-4 py-2 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors shadow-sm"
-                    >
-                        <LayoutDashboard className="mr-2" />
+                    <Link to="/admin" className="flex items-center px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 transition-colors shadow-sm">
+                        <LayoutDashboard className="mr-2 h-5 w-5" />
                         管理中心
                     </Link>
                 )}
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                    <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><Package className="mr-2" /> 待揀貨任務 ({pickTasks.length})</h2>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <section>
+                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center px-2 mb-4"><Package className="mr-3 text-gray-400" /> 待揀貨任務 <span className="ml-2 text-lg font-medium text-gray-500">{pickTasks.length}</span></h2>
                     <div className="space-y-4">
                         {pickTasks.length > 0 ? (
                             pickTasks.map(task => <TaskCard key={task.id} task={task} onClaim={handleClaimTask} />)
                         ) : (
-                            <div className="text-gray-500 p-4 bg-white rounded-lg shadow-sm">目前沒有待處理的揀貨任務。</div>
+                            <div className="text-center text-gray-500 p-8 bg-card rounded-xl border-2 border-dashed">目前沒有待處理的揀貨任務。</div>
                         )}
                     </div>
-                </div>
+                </section>
 
-                <div>
-                    <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><Box className="mr-2" /> 待裝箱任務 ({packTasks.length})</h2>
+                <section>
+                    <h2 className="text-2xl font-semibold text-gray-700 flex items-center px-2 mb-4"><Box className="mr-3 text-gray-400" /> 待裝箱任務 <span className="ml-2 text-lg font-medium text-gray-500">{packTasks.length}</span></h2>
                     <div className="space-y-4">
                         {packTasks.length > 0 ? (
                             packTasks.map(task => <TaskCard key={task.id} task={task} onClaim={handleClaimTask} />)
                         ) : (
-                            <div className="text-gray-500 p-4 bg-white rounded-lg shadow-sm">目前沒有待處理的裝箱任務。</div>
+                            <div className="text-center text-gray-500 p-8 bg-card rounded-xl border-2 border-dashed">目前沒有待處理的裝箱任務。</div>
                         )}
                     </div>
-                </div>
+                </section>
             </div>
+
              {tasks.length === 0 && !loading && (
-                 <div className="text-center py-16 text-gray-500">
-                    <ServerOff size={48} className="mx-auto mb-4" />
-                    <h3 className="text-xl font-semibold">太棒了！</h3>
+                 <div className="text-center py-24 text-gray-500 col-span-1 lg:col-span-2">
+                    <ServerOff size={56} className="mx-auto mb-4 text-gray-400" />
+                    <h3 className="text-2xl font-semibold">太棒了！</h3>
                     <p>所有任務都已完成。</p>
                 </div>
              )}

@@ -1,24 +1,60 @@
-/* src/index.css */
+/* frontend/src/index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@keyframes shake {
-  10%, 90% { transform: translate3d(-1px, 0, 0); }
-  20%, 80% { transform: translate3d(2px, 0, 0); }
-  30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
-  40%, 60% { transform: translate3d(4px, 0, 0); }
+@layer base {
+  :root {
+    /* 色彩系统 */
+    --background: 210 20% 98%;      /* #F8F9FA - 柔和的浅灰色背景 */
+    --foreground: 210 10% 23%;     /* #212529 - 深灰色文字 */
+    
+    --card: 0 0% 100%;             /* #FFFFFF - 卡片背景 */
+    --card-foreground: 210 10% 23%;
+    
+    --primary: 243 93% 63%;        /* #5E60CE - 更沉稳的品牌紫色 */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 210 16% 93%;      /* #E9ECEF - 次要背景/输入框背景 */
+    --secondary-foreground: 210 9% 31%; /* #495057 */
+
+    --accent: 210 16% 82%;         /* #DEE2E6 - Hover 效果 */
+    --accent-foreground: 210 10% 23%;
+
+    --destructive: 354 70% 54%;    /* #DC3545 - 红色 */
+    --destructive-foreground: 0 0% 100%;
+    
+    --ring: 243 93% 63%;
+    
+    /* 圆角 */
+    --radius: 0.75rem;
+  }
 }
 
-@keyframes flash-red-border {
-  from, to { border-color: #fecaca; } /* red-200 */
-  50% { border-color: #ef4444; } /* red-500 */
-}
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
 
-.animate-shake {
-  animation: shake 0.82s cubic-bezier(.36,.07,.19,.97) both;
-}
-
-.animate-flash-red-border {
-  animation: flash-red-border 1s ease-out;
+  body {
+    @apply bg-background text-foreground;
+    font-family: theme('fontFamily.sans');
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  /* 美化滚动条 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-secondary;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-accent rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
 }
