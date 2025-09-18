@@ -124,7 +124,7 @@ app.get('/', (req, res) => {
 
 // --- 使用者認證 API ---
 app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.query;
+    const { username, password } = req.body;
     if (!username || !password) {
         return res.status(400).json({ message: '請提供使用者名稱和密碼' });
     }
