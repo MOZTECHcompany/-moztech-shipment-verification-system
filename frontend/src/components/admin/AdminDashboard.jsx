@@ -1,4 +1,5 @@
 // frontend/src/components/admin/AdminDashboard.jsx
+
 import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import DatePicker from 'react-datepicker';
@@ -9,10 +10,11 @@ import apiClient from '@/api/api.js';
 import { LayoutDashboard, FileDown, Users, History, LayoutGrid, UploadCloud, FileSpreadsheet } from 'lucide-react';
 
 export function AdminDashboard() {
-    const [dateRange, setDateRange] = useState([new Date(), new Date()]);
+    const [dateRange, setDateRange] = useState([null, null]);
     const [startDate, endDate] = dateRange;
     const fileInputRef = useRef(null);
 
+    // 匯入 Excel 邏輯
     const handleExcelImport = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -27,7 +29,29 @@ export function AdminDashboard() {
         if (fileInputRef.current) { fileInputRef.current.value = null; }
     };
 
-    const handleExportAdminReport = async () => { /* ... 逻辑与之前相同 ... */ };
+    // 匯出報告邏輯
+    const handleExportAdminReport = async () => {
+        if (!startDate || !endDate) { toast.error("請選擇完整的日期範圍"); return; }
+        const formattedStartDate = format(startDate, 'yyyy-MM-dd');
+        const formattedEndDate = format(endDate, 'yyyy-MM-dd');
+        const promise = apiClient.get(`/api/reports/export`, { params: { startDate: formattedStartDate, endDate: formattedEndDate }, responseType: 'blob' });
+        toast.promise(promise, {
+            loading: `正在產生 ${formattedStartDate} 至 ${formattedEndDate} 的報告...`,
+            success: (response) => {
+                const url = window.URL.createObjectURL(new Blob([response.data]));
+                const link = document.createElement('a');
+                link.href = url;
+                const fileName = `營運報告_${formattedStartDate}_至_${formattedEndDate}.csv`;
+                link.setAttribute('download', fileName);
+                document.body.appendChild(link);
+                link.click();
+                link.parentNode.removeChild(link);
+                window.URL.revokeObjectURL(url);
+                return `報告 ${fileName} 已成功下載！`;
+            },
+            error: (err) => '產生報告失敗，請檢查日期範圍內是否有資料。'
+        });
+    };
 
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto bg-background min-h-screen">
@@ -41,22 +65,51 @@ export function AdminDashboard() {
                 </Link>
             </header>
 
-            <div className="space-y-8">
-                {/* 汇入和汇出区块 */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-card p-6 rounded-xl shadow-sm border">
-                        <h3 className="text-xl font-semibold text-card-foreground mb-2 flex items-center"><Users className="mr-2" />使用者管理</h3>
-                        <p className="text-secondary-foreground mb-4">新增、編輯或刪除系統操作員帳號。</p>
-                        {/* 【修正】确保 Link to 的路径正确 */}
-                        <Link to="/admin/users" className="inline-block px-4 py-2 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 transition-colors">
-                            前往管理
-                        </Link>
+            {/* 【關鍵修改】將所有功能整合到一個 Grid 佈局中 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* 1. 建立新任務 */}
+                <div className="bg-card p-6 rounded-xl shadow-sm border">
+                    <h3 className="text-xl font-semibold text-card-foreground mb-4 flex items-center"><UploadCloud className="mr-2 text-purple-600" />建立新任務</h3>
+                    <div className="flex items-center justify-center w-full p-6 border-2 border-gray-200 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => fileInputRef.current?.click()}>
+                        <div className="text-center">
+                            <FileSpreadsheet className="mx-auto h-12 w-12 text-gray-400" />
+                            <p className="mt-2 text-sm text-gray-600"><span className="font-semibold text-purple-600">點擊此處上傳出貨單</span></p>
+                            <p className="text-xs text-gray-500">支援 .xlsx, .xls 格式</p>
+                        </div>
                     </div>
-                    <div className="bg-card p-6 rounded-xl shadow-sm border opacity-60">
-                        <h3 className="text-xl font-semibold text-card-foreground mb-2 flex items-center"><History className="mr-2" />操作日誌查詢</h3>
-                        <p className="text-secondary-foreground mb-4">查詢特定訂單或人員的所有操作記錄。</p>
-                        <button className="px-4 py-2 bg-secondary text-secondary-foreground font-semibold rounded-md cursor-not-allowed">即將推出</button>
+                    <input type="file" ref={fileInputRef} onChange={handleExcelImport} accept=".xlsx, .xls" className="hidden" />
+                </div>
+
+                {/* 2. 匯出營運報告 */}
+                <div className="bg-card p-6 rounded-xl shadow-sm border">
+                    <h3 className="text-xl font-semibold text-card-foreground mb-4 flex items-center"><FileDown className="mr-2 text-green-600" />匯出營運報告</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-600 mb-1">選擇日期範圍：</label>
+                            <DatePicker selectsRange={true} startDate={startDate} endDate={endDate} onChange={(update) => setDateRange(update)} isClearable={true} dateFormat="yyyy/MM/dd" className="w-full px-3 py-2 border rounded-md" placeholderText="點擊選擇日期"/>
+                        </div>
+                        <button onClick={handleExportAdminReport} className="w-full px-5 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors" disabled={!startDate || !endDate}>
+                            下載 CSV 報告
+                        </button>
                     </div>
+                </div>
+
+                {/* 3. 使用者管理 */}
+                <div className="bg-card p-6 rounded-xl shadow-sm border">
+                     <h3 className="text-xl font-semibold text-card-foreground mb-2 flex items-center"><Users className="mr-2" />使用者管理</h3>
+                     <p className="text-secondary-foreground mb-4">新增、編輯或刪除系統操作員帳號。</p>
+                     <Link to="/admin/users" className="inline-block px-4 py-2 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary/90 transition-colors">
+                        前往管理
+                     </Link>
+                </div>
+                
+                {/* 4. 操作日誌查詢 */}
+                 <div className="bg-card p-6 rounded-xl shadow-sm border opacity-60">
+                     <h3 className="text-xl font-semibold text-card-foreground mb-2 flex items-center"><History className="mr-2" />操作日誌查詢</h3>
+                     <p className="text-secondary-foreground mb-4">查詢特定訂單或人員的所有操作記錄。</p>
+                     <button className="px-4 py-2 bg-secondary text-secondary-foreground font-semibold rounded-md cursor-not-allowed">
+                        即將推出
+                     </button>
                 </div>
             </div>
         </div>
