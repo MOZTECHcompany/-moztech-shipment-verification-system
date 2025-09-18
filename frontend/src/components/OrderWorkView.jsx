@@ -1,4 +1,4 @@
-// frontend/src/components/OrderWorkView.jsx
+// frontend/src/pages/OrderWorkView.jsx
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -63,6 +63,9 @@ export function OrderWorkView({ user }) {
     const [loading, setLoading] = useState(true);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
+    
+    // ✅ 【修改點 1】新增 isUpdating 狀態來鎖定按鈕
+    const [isUpdating, setIsUpdating] = useState(false);
 
     const barcodeInputRef = useRef(null);
     const errorSoundRef = useRef(null);
@@ -86,11 +89,16 @@ export function OrderWorkView({ user }) {
 
     useEffect(() => { fetchOrderDetails(orderId); }, [orderId, fetchOrderDetails]);
 
+    // ✅ 【修改點 2】升級 updateItemQuantityOnServer 函式，整合鎖定邏輯
     const updateItemQuantityOnServer = async (sku, type, amount) => {
-        if (!currentOrder?.order) return;
+        if (isUpdating || !currentOrder?.order) return; // 如果正在更新，直接返回
+        
+        setIsUpdating(true); // 開始更新，鎖定介面
+
         try {
             const response = await apiClient.post(`/api/orders/update_item`, { orderId: currentOrder.order.id, sku, type, amount });
-            setCurrentOrder(response.data);
+            setCurrentOrder(response.data); // 使用後端回傳的最新資料更新畫面
+
             if (response.data.order.status === 'picked' || response.data.order.status === 'completed') {
                 const nextStep = response.data.order.status === 'picked' ? '訂單已完成揀貨！' : '訂單已完成所有作業！';
                 MySwal.fire({ title: '階段完成！', text: nextStep, icon: 'success', timer: 2000, showConfirmButton: false })
@@ -100,10 +108,13 @@ export function OrderWorkView({ user }) {
             setScanError(err.response?.data?.message || '發生未知錯誤');
             errorSoundRef.current?.play();
             setTimeout(() => setScanError(null), 1500);
+        } finally {
+            setIsUpdating(false); // 無論成功或失敗，都解除鎖定
         }
     };
-
-    const handleQuantityChange = (sku, type, amount) => { updateItemQuantityOnServer(sku, type, amount); };
+    
+    // handleQuantityChange 現在只是 updateItemQuantityOnServer 的別名，可以直接使用後者
+    // const handleQuantityChange = (sku, type, amount) => { updateItemQuantityOnServer(sku, type, amount); };
 
     const handleScan = () => {
         const skuToScan = barcodeInput.trim();
@@ -247,14 +258,15 @@ export function OrderWorkView({ user }) {
                                         </div>
                                         <div className="w-full sm:w-auto flex items-center gap-2 justify-end">
                                             <div className="flex items-center gap-1 w-36">
-                                                <QuantityButton icon={Minus} onClick={() => handleQuantityChange(item.product_code, 'pick', -1)} disabled={!canAdjustPick || item.picked_quantity <= 0} />
+                                                {/* ✅ 【修改點 3】將 isUpdating 狀態綁定到按鈕的 disabled 屬性上 */}
+                                                <QuantityButton icon={Minus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pick', -1)} disabled={isUpdating || !canAdjustPick || item.picked_quantity <= 0} />
                                                 <div className="flex-1 text-center"><p className='text-xs text-blue-700'>揀貨</p><span className="font-bold text-lg text-blue-600">{item.picked_quantity}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={item.picked_quantity} max={item.quantity} colorClass="bg-blue-500" /></div>
-                                                <QuantityButton icon={Plus} onClick={() => handleQuantityChange(item.product_code, 'pick', 1)} disabled={!canAdjustPick || item.picked_quantity >= item.quantity} />
+                                                <QuantityButton icon={Plus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pick', 1)} disabled={isUpdating || !canAdjustPick || item.picked_quantity >= item.quantity} />
                                             </div>
                                             <div className="flex items-center gap-1 w-36">
-                                                <QuantityButton icon={Minus} onClick={() => handleQuantityChange(item.product_code, 'pack', -1)} disabled={!canAdjustPack || item.packed_quantity <= 0} />
+                                                <QuantityButton icon={Minus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pack', -1)} disabled={isUpdating || !canAdjustPack || item.packed_quantity <= 0} />
                                                 <div className="flex-1 text-center"><p className='text-xs text-green-700'>裝箱</p><span className="font-bold text-lg text-green-600">{item.packed_quantity}</span><span className="text-gray-500">/{item.picked_quantity}</span><ProgressBar value={item.packed_quantity} max={item.picked_quantity} colorClass="bg-green-500" /></div>
-                                                <QuantityButton icon={Plus} onClick={() => handleQuantityChange(item.product_code, 'pack', 1)} disabled={!canAdjustPack || item.packed_quantity >= item.picked_quantity} />
+                                                <QuantityButton icon={Plus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pack', 1)} disabled={isUpdating || !canAdjustPack || item.packed_quantity >= item.picked_quantity} />
                                             </div>
                                         </div>
                                     </div>
