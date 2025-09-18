@@ -442,6 +442,28 @@ app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async 
     }
 });
 
+// ✅ 新增：永久刪除訂單 API (僅限管理員)
+app.delete('/api/orders/:orderId', authenticateToken, authorizeAdmin, async (req, res) => {
+    const { orderId } = req.params;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
+        if (result.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '找不到要刪除的訂單' });
+        }
+        await client.query('COMMIT');
+        io.emit('task_deleted', { orderId: parseInt(orderId, 10) });
+        res.status(200).json({ message: `訂單 ${result.rows[0].voucher_number} 已被永久刪除` });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`刪除訂單 ${orderId} 失敗:`, error);
+        res.status(500).json({ message: '刪除訂單時發生伺服器內部錯誤' });
+    } finally {
+        client.release();
+    }
+});
 
 // --- 報告相關 API (僅限管理員) ---
 app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, res) => {
