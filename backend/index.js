@@ -194,7 +194,7 @@ app.delete('/api/admin/users/:userId', authenticateToken, authorizeAdmin, async 
 // --- 核心工作流 API ---
 
 /**
- * 【智慧化升級】匯入訂單 API
+ * 【智慧化升級】匯入訂單 API (最終強化版)
  */
 app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), async (req, res) => {
     if (!req.file) {
@@ -208,18 +208,22 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         const worksheet = workbook.Sheets[sheetName];
         const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
 
-        // 1. 智慧解析訂單基本資訊
-        const voucherNumber = data[1] && data[1][0] ? String(data[1][0]).split('：')[1]?.trim() : null;
-        const customerName = data[2] && data[2][0] ? String(data[2][0]).split('：')[1]?.trim() : null;
+        // --- 1. 使用正規表示式，強健地解析訂單基本資訊 ---
+        const voucherCell = data[1] && data[1][0] ? String(data[1][0]) : '';
+        const voucherMatch = voucherCell.match(/憑證號碼\s*[:：]\s*(.*)/);
+        const voucherNumber = voucherMatch ? voucherMatch[1].trim() : null;
+        
+        const customerCell = data[2] && data[2][0] ? String(data[2][0]) : '';
+        const customerMatch = customerCell.match(/收件-客戶\/供應商\s*[:：]\s*(.*)/);
+        const customerName = customerMatch ? customerMatch[1].trim() : null;
 
         if (!voucherNumber) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼 (請檢查 A2 儲存格是否為 '憑證號碼：...')" });
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼 (請檢查 A2 儲存格是否為 '憑證號碼 : ...' 或 '憑證號碼：...')" });
         }
 
-        // 2. 智慧尋找品項資料的起始位置與關鍵欄位索引
+        // --- 2. 智慧尋找品項資料的起始位置與關鍵欄位索引 ---
         let itemsStartRow = -1;
         let headerRow = [];
-        // 使用 "品項名稱" 作為標頭行的可靠標記
         for (let i = 0; i < data.length; i++) {
             if (data[i] && Array.isArray(data[i]) && data[i].some(cell => typeof cell === 'string' && cell.includes('品項名稱'))) {
                 itemsStartRow = i + 1;
@@ -232,7 +236,6 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到包含 '品項名稱' 的標頭行" });
         }
 
-        // 動態尋找 "品項名稱" 和 "數量" 欄位的索引
         const nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品項名稱'));
         const quantityIndex = headerRow.findIndex(h => String(h).includes('數量'));
 
@@ -240,7 +243,7 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             return res.status(400).json({ message: "Excel 檔案格式錯誤：在標頭行中找不到 '品項名稱' 或 '數量' 欄位" });
         }
 
-        // 3. 開始資料庫交易，確保資料一致性
+        // --- 3. 開始資料庫交易，確保資料一致性 ---
         await client.query('BEGIN');
 
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
@@ -253,7 +256,7 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         const orderId = orderInsertResult.rows[0].id;
 
         let itemsAddedCount = 0;
-        // 4. 遍歷品項資料並插入資料庫
+        // --- 4. 遍歷品項資料並插入資料庫 ---
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
             
@@ -262,11 +265,9 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             const fullNameAndSku = String(row[nameAndSkuIndex]);
             const quantity = parseInt(row[quantityIndex], 10);
 
-            // 使用正規表示式從 "產品名稱 [SKU]" 格式中智慧提取 SKU
             const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
             const productCode = skuMatch ? skuMatch[1] : null;
 
-            // 提取產品名稱 (SKU 之前的部分)
             const productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
 
             if (productCode && productName && !isNaN(quantity) && quantity > 0) {
@@ -283,7 +284,7 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
              return res.status(400).json({ message: 'Excel 檔案中未找到任何有效的品項資料，請檢查品項格式是否正確' });
         }
         
-        // 5. 提交交易並通知前端
+        // --- 5. 提交交易並通知前端 ---
         await client.query('COMMIT');
 
         await logOperation(req.user.id, orderId, 'import', { voucherNumber });
