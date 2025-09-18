@@ -1,12 +1,12 @@
 // src/components/LoginPage.jsx
-import React, 'useState' from 'react';
-import { useNavigate } from 'react-router-dom'; // 【新】引入 useNavigate，這是 React Router 的導航工具
+import React, { useState } from 'react'; // 【修正】将 'useState' 放入花括号 {}
+import { useNavigate } from 'react-router-dom';
 import { Loader2, User, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api';
 
 export function LoginPage({ onLogin }) {
-  const navigate = useNavigate(); // 【新】初始化 navigate 函數
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -33,7 +33,7 @@ export function LoginPage({ onLogin }) {
         // 先更新 App 的全局狀態
         onLogin(responseData);
         
-        // 【關鍵修改】根據使用者角色，導航到不同的頁面
+        // 根據使用者角色，導航到不同的頁面
         if (responseData.user.role === 'admin') {
             navigate('/admin');
         } else {
@@ -56,8 +56,6 @@ export function LoginPage({ onLogin }) {
   };
 
   return (
-    // ... JSX 部分保持不變，這裡省略以保持簡潔 ...
-    // 您原有的 JSX 結構是完美的，不需要修改
     <div className="flex items-center justify-center min-h-screen p-4 font-sans bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100">
       <div
         className="w-full max-w-sm p-8 bg-white/60 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20"
@@ -70,16 +68,32 @@ export function LoginPage({ onLogin }) {
         <div className="space-y-6">
           <div className="relative">
             <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input type="text" placeholder="使用者名稱" value={username} onChange={(e) => setUsername(e.target.value)} className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <input 
+              type="text" 
+              placeholder="使用者名稱" 
+              value={username} 
+              onChange={(e) => setUsername(e.target.value)} 
+              className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+            />
           </div>
           <div className="relative">
              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input type="password" placeholder="密碼" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <input 
+              type="password" 
+              placeholder="密碼" 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+            />
           </div>
         </div>
         {error && <p className="mt-4 text-center text-red-500 text-sm">{error}</p>}
         <div className="mt-6">
-          <button onClick={handleLoginClick} disabled={!username || !password || isLoggingIn} className="w-full flex items-center justify-center gap-2 text-white font-bold py-3 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 transition-transform duration-200 hover:scale-105 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100">
+          <button 
+            onClick={handleLoginClick} 
+            disabled={!username || !password || isLoggingIn} 
+            className="w-full flex items-center justify-center gap-2 text-white font-bold py-3 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 transition-transform duration-200 hover:scale-105 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100"
+          >
             {isLoggingIn ? <><Loader2 className="animate-spin h-5 w-5" />登入中...</> : '安全登入'}
           </button>
         </div>
