@@ -104,23 +104,23 @@ const upload = multer({ storage: multer.memoryStorage() });
 // API 路由 (API Routes)
 // =================================================================
 
-app.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'));
 
-// --- 認證相關 API ---
-app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ message: '請提供使用者名稱和密碼' });
+app.get('/api/tasks', authenticateToken, async (req, res) => {
+    const { role, id: userId } = req.user;
     try {
-        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-        const user = result.rows[0];
-        if (!user) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
-        const accessToken = jwt.sign({ id: user.id, username: user.username, name: user.name, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.json({ accessToken, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
-    } catch (err) {
-        console.error('登入失敗:', err);
-        res.status(500).json({ message: '伺服器內部錯誤' });
+        let tasks = [];
+        if (role === 'picker' || role === 'admin') {
+            const pickerTasksResult = await pool.query(`SELECT o.id, o.voucher_number, o.customer_name, o.status, u.name as current_user FROM orders o LEFT JOIN users u ON o.picker_id = u.id WHERE o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1) ORDER BY o.created_at ASC`, [userId]);
+            tasks.push(...pickerTasksResult.rows.map(t => ({ ...t, task_type: 'pick' })));
+        }
+        if (role === 'packer' || role === 'admin') {
+            const packerTasksResult = await pool.query(`SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name, u.name as current_user FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users u ON o.packer_id = u.id WHERE o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1) ORDER BY o.updated_at ASC`, [userId]);
+            tasks.push(...packerTasksResult.rows.map(t => ({ ...t, task_type: 'pack' })));
+        }
+        res.json(tasks);
+    } catch (error) {
+        console.error(`获取角色 ${role} 的任务列表失败:`, error);
+        res.status(500).json({ message: '获取任务列表时发生错误' });
     }
 });
 
