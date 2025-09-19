@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js)
+// MOZTECH WMS 後端主程式 (index.js) - 最終穩定版
 // =================================================================
 
 // 引入必要套件
@@ -47,10 +47,6 @@ const io = new Server(server, {
 // 中介軟體 (Middlewares)
 // =================================================================
 
-/**
- * 驗證 JWT 權杖 (Token)
- * 確保請求來自已登入的使用者
- */
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -63,10 +59,6 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-/**
- * 驗證管理員權限
- * 確保只有 admin 角色的使用者可以存取特定 API
- */
 const authorizeAdmin = (req, res, next) => {
     if (req.user.role !== 'admin') {
         return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
@@ -78,13 +70,6 @@ const authorizeAdmin = (req, res, next) => {
 // 輔助函式 (Helper Functions)
 // =================================================================
 
-/**
- * 記錄操作日誌到資料庫
- * @param {number} userId - 執行操作的使用者 ID
- * @param {number} orderId - 相關的訂單 ID
- * @param {string} operationType - 操作類型 (e.g., 'import', 'claim', 'pick')
- * @param {object} details - 操作的詳細資訊 (JSON)
- */
 const logOperation = async (userId, orderId, operationType, details) => {
     try {
         await pool.query(
@@ -96,31 +81,44 @@ const logOperation = async (userId, orderId, operationType, details) => {
     }
 };
 
-// 設定 Multer 將上傳的檔案暫存在記憶體中
 const upload = multer({ storage: multer.memoryStorage() });
-
 
 // =================================================================
 // API 路由 (API Routes)
 // =================================================================
 
+app.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'));
 
-app.get('/api/tasks', authenticateToken, async (req, res) => {
-    const { role, id: userId } = req.user;
+// --- 認證相關 API ---
+app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ message: '请提供使用者名称和密码' });
+    }
     try {
-        let tasks = [];
-        if (role === 'picker' || role === 'admin') {
-            const pickerTasksResult = await pool.query(`SELECT o.id, o.voucher_number, o.customer_name, o.status, u.name as current_user FROM orders o LEFT JOIN users u ON o.picker_id = u.id WHERE o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1) ORDER BY o.created_at ASC`, [userId]);
-            tasks.push(...pickerTasksResult.rows.map(t => ({ ...t, task_type: 'pick' })));
+        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        const user = result.rows[0];
+        if (!user) {
+            return res.status(400).json({ message: '无效的使用者名称或密码' });
         }
-        if (role === 'packer' || role === 'admin') {
-            const packerTasksResult = await pool.query(`SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name, u.name as current_user FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users u ON o.packer_id = u.id WHERE o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1) ORDER BY o.updated_at ASC`, [userId]);
-            tasks.push(...packerTasksResult.rows.map(t => ({ ...t, task_type: 'pack' })));
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(400).json({ message: '无效的使用者名称或密码' });
         }
-        res.json(tasks);
-    } catch (error) {
-        console.error(`获取角色 ${role} 的任务列表失败:`, error);
-        res.status(500).json({ message: '获取任务列表时发生错误' });
+        
+        const accessToken = jwt.sign(
+            { id: user.id, username: user.username, name: user.name, role: user.role }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '8h' }
+        );
+        
+        res.json({ 
+            accessToken, 
+            user: { id: user.id, username: user.username, name: user.name, role: user.role } 
+        });
+    } catch (err) {
+        console.error('登入失败:', err);
+        res.status(500).json({ message: '伺服器内部错误' });
     }
 });
 
@@ -192,15 +190,10 @@ app.delete('/api/admin/users/:userId', authenticateToken, authorizeAdmin, async 
 
 
 // --- 核心工作流 API ---
-
-/**
- * 【智慧化升級】匯入訂單 API (最終強化版)
- */
 app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: '沒有上傳檔案' });
     }
-
     const client = await pool.connect();
     try {
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
@@ -208,7 +201,6 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         const worksheet = workbook.Sheets[sheetName];
         const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
 
-        // --- 1. 使用正規表示式，強健地解析訂單基本資訊 ---
         const voucherCell = data[1] && data[1][0] ? String(data[1][0]) : '';
         const voucherMatch = voucherCell.match(/憑證號碼\s*[:：]\s*(.*)/);
         const voucherNumber = voucherMatch ? voucherMatch[1].trim() : null;
@@ -221,7 +213,6 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼 (請檢查 A2 儲存格是否為 '憑證號碼 : ...' 或 '憑證號碼：...')" });
         }
 
-        // --- 2. 智慧尋找品項資料的起始位置與關鍵欄位索引 ---
         let itemsStartRow = -1;
         let headerRow = [];
         for (let i = 0; i < data.length; i++) {
@@ -242,34 +233,24 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         if (nameAndSkuIndex === -1 || quantityIndex === -1) {
             return res.status(400).json({ message: "Excel 檔案格式錯誤：在標頭行中找不到 '品項名稱' 或 '數量' 欄位" });
         }
-
-        // --- 3. 開始資料庫交易，確保資料一致性 ---
+        
         await client.query('BEGIN');
-
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
         if (existingOrder.rows.length > 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({ message: `訂單 ${voucherNumber} 已存在，請勿重複匯入` });
         }
-
         const orderInsertResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status) VALUES ($1, $2, $3) RETURNING id', [voucherNumber, customerName, 'pending']);
         const orderId = orderInsertResult.rows[0].id;
-
         let itemsAddedCount = 0;
-        // --- 4. 遍歷品項資料並插入資料庫 ---
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
-            
             if (!row || !row[nameAndSkuIndex] || !row[quantityIndex]) continue;
-
             const fullNameAndSku = String(row[nameAndSkuIndex]);
             const quantity = parseInt(row[quantityIndex], 10);
-
             const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
             const productCode = skuMatch ? skuMatch[1] : null;
-
             const productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
-
             if (productCode && productName && !isNaN(quantity) && quantity > 0) {
                 await client.query(
                     'INSERT INTO order_items (order_id, product_code, product_name, quantity) VALUES ($1, $2, $3, $4)',
@@ -278,46 +259,45 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
                 itemsAddedCount++;
             }
         }
-
         if (itemsAddedCount === 0) {
              await client.query('ROLLBACK');
              return res.status(400).json({ message: 'Excel 檔案中未找到任何有效的品項資料，請檢查品項格式是否正確' });
         }
-        
-        // --- 5. 提交交易並通知前端 ---
         await client.query('COMMIT');
-
         await logOperation(req.user.id, orderId, 'import', { voucherNumber });
         const newTask = { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick' };
         io.emit('new_task', newTask);
-
         res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功，共新增 ${itemsAddedCount} 個品項`, orderId: orderId });
-
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('匯入訂單時發生嚴重錯誤:', err);
         res.status(500).json({ message: '處理 Excel 檔案時發生伺服器內部錯誤，請檢查檔案格式或聯絡管理員' });
     } finally {
-        client.release(); // 無論成功或失敗，都釋放資料庫連線
+        client.release();
     }
 });
 
-
 app.get('/api/tasks', authenticateToken, async (req, res) => {
+    console.log(`[GET /api/tasks] 收到來自使用者 ID: ${req.user.id}, 角色: "${req.user.role}" 的任務請求`);
     const { role, id: userId } = req.user;
+    const userRole = role ? role.trim() : null;
     try {
         let tasks = [];
-        if (role === 'picker' || role === 'admin') {
-            const pickerTasksResult = await pool.query(`SELECT o.id, o.voucher_number, o.customer_name, o.status, u.name as current_user FROM orders o LEFT JOIN users u ON o.picker_id = u.id WHERE o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1) ORDER BY o.created_at ASC`, [userId]);
+        if (userRole === 'picker' || userRole === 'admin') {
+            const pickerTasksQuery = `SELECT o.id, o.voucher_number, o.customer_name, o.status, u.name as current_user FROM orders o LEFT JOIN users u ON o.picker_id = u.id WHERE o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1) ORDER BY o.created_at ASC`;
+            const pickerTasksResult = await pool.query(pickerTasksQuery, [userId]);
+            console.log(`[GET /api/tasks] 為角色 "${userRole}" 查詢到 ${pickerTasksResult.rowCount} 筆揀貨任務`);
             tasks.push(...pickerTasksResult.rows.map(t => ({ ...t, task_type: 'pick' })));
         }
-        if (role === 'packer' || role === 'admin') {
-            const packerTasksResult = await pool.query(`SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name, u.name as current_user FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users u ON o.packer_id = u.id WHERE o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1) ORDER BY o.updated_at ASC`, [userId]);
+        if (userRole === 'packer' || userRole === 'admin') {
+            const packerTasksQuery = `SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name, u.name as current_user FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users u ON o.packer_id = u.id WHERE o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1) ORDER BY o.updated_at ASC`;
+            const packerTasksResult = await pool.query(packerTasksQuery, [userId]);
+            console.log(`[GET /api/tasks] 為角色 "${userRole}" 查詢到 ${packerTasksResult.rowCount} 筆裝箱任務`);
             tasks.push(...packerTasksResult.rows.map(t => ({ ...t, task_type: 'pack' })));
         }
         res.json(tasks);
     } catch (error) {
-        console.error(`獲取角色 ${role} 的任務列表失敗:`, error);
+        console.error(`[GET /api/tasks] 獲取角色 ${role} 的任務列表失敗:`, error);
         res.status(500).json({ message: '獲取任務列表時發生錯誤' });
     }
 });
@@ -343,9 +323,7 @@ app.post('/api/orders/:orderId/claim', authenticateToken, async (req, res) => {
         await logOperation(userId, orderId, 'claim', { claimed_by: userName, new_status: newStatus });
         const updatedOrderResult = await pool.query('SELECT o.*, u.name as picker_name FROM orders o LEFT JOIN users u ON o.picker_id = u.id WHERE o.id = $1', [orderId]);
         const itemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
-        
         io.emit('task_claimed', { ...updatedOrderResult.rows[0] });
-
         res.json({ order: updatedOrderResult.rows[0], items: itemsResult.rows });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -355,7 +333,6 @@ app.post('/api/orders/:orderId/claim', authenticateToken, async (req, res) => {
         client.release();
     }
 });
-
 
 app.get('/api/orders/:orderId', authenticateToken, async (req, res) => {
     try {
@@ -442,7 +419,6 @@ app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async 
     }
 });
 
-// ✅ 新增：永久刪除訂單 API (僅限管理員)
 app.delete('/api/orders/:orderId', authenticateToken, authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const client = await pool.connect();
