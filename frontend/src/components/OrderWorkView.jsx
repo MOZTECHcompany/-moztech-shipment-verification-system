@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { ArrowLeft, PackageCheck, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User, ScanLine, FileUp, XCircle } from 'lucide-react';
+import { ArrowLeft, PackageCheck, CheckCircle2, Loader2, Circle, ListChecks, Minus, Plus, Building, User, ScanLine, FileUp, XCircle, Barcode, Tag } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
@@ -23,8 +23,9 @@ const ProgressBar = ({ value, max, colorClass }) => {
     return ( <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div className={`${colorClass} h-1.5 rounded-full transition-all duration-300`} style={{ width: `${percentage}%` }}></div></div> );
 };
 
-const QuantityButton = ({ onClick, icon: Icon, disabled }) => (
-    <button onClick={onClick} disabled={disabled} className="p-1 rounded-full text-gray-500 hover:bg-gray-200 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors">
+// 【修改】将 isUpdating 状态整合进 QuantityButton
+const QuantityButton = ({ onClick, icon: Icon, disabled, isUpdating }) => (
+    <button onClick={onClick} disabled={disabled || isUpdating} className="p-1 rounded-full text-gray-500 hover:bg-gray-200 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors">
         <Icon size={16} />
     </button>
 );
@@ -63,8 +64,6 @@ export function OrderWorkView({ user }) {
     const [loading, setLoading] = useState(true);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
-    
-    // ✅ 【修改點 1】新增 isUpdating 狀態來鎖定按鈕
     const [isUpdating, setIsUpdating] = useState(false);
 
     const barcodeInputRef = useRef(null);
@@ -89,15 +88,20 @@ export function OrderWorkView({ user }) {
 
     useEffect(() => { fetchOrderDetails(orderId); }, [orderId, fetchOrderDetails]);
 
-    // ✅ 【修改點 2】升級 updateItemQuantityOnServer 函式，整合鎖定邏輯
-    const updateItemQuantityOnServer = async (sku, type, amount) => {
-        if (isUpdating || !currentOrder?.order) return; // 如果正在更新，直接返回
-        
-        setIsUpdating(true); // 開始更新，鎖定介面
+    // ✅ 【修改點 1】现在函式接收 barcode 作为唯一标识符
+    const updateItemQuantityOnServer = async (identifier, type, amount) => {
+        if (isUpdating || !currentOrder?.order) return;
+        setIsUpdating(true);
 
         try {
-            const response = await apiClient.post(`/api/orders/update_item`, { orderId: currentOrder.order.id, sku, type, amount });
-            setCurrentOrder(response.data); // 使用後端回傳的最新資料更新畫面
+            // 将 identifier 作为 sku 栏位发送，以匹配后端 `req.body.sku` 的逻辑
+            const response = await apiClient.post(`/api/orders/update_item`, { 
+                orderId: currentOrder.order.id, 
+                sku: identifier, 
+                type, 
+                amount 
+            });
+            setCurrentOrder(response.data);
 
             if (response.data.order.status === 'picked' || response.data.order.status === 'completed') {
                 const nextStep = response.data.order.status === 'picked' ? '訂單已完成揀貨！' : '訂單已完成所有作業！';
@@ -109,22 +113,22 @@ export function OrderWorkView({ user }) {
             errorSoundRef.current?.play();
             setTimeout(() => setScanError(null), 1500);
         } finally {
-            setIsUpdating(false); // 無論成功或失敗，都解除鎖定
+            setIsUpdating(false);
         }
     };
-    
-    // handleQuantityChange 現在只是 updateItemQuantityOnServer 的別名，可以直接使用後者
-    // const handleQuantityChange = (sku, type, amount) => { updateItemQuantityOnServer(sku, type, amount); };
 
+    // ✅ 【修改點 2】扫描逻辑现在比对 item.barcode
     const handleScan = () => {
-        const skuToScan = barcodeInput.trim();
-        if (!skuToScan || !currentOrder) return;
-        setScanError(null); // Reset error on new scan
-        const targetItem = currentOrder.items.find(item => item.product_code === skuToScan);
+        const scannedBarcode = barcodeInput.trim();
+        if (!scannedBarcode || !currentOrder) return;
+        setScanError(null);
+        
+        // 使用后端定义的 '品项编码' 即 barcode 进行比对
+        const targetItem = currentOrder.items.find(item => item.barcode === scannedBarcode);
 
         if (!targetItem) {
             errorSoundRef.current?.play();
-            setScanError('掃描錯誤：此產品不在此訂單中。');
+            setScanError('掃描錯誤：此產品條碼不在此訂單中。');
             setTimeout(() => setScanError(null), 1500);
             setBarcodeInput('');
             return;
@@ -144,8 +148,9 @@ export function OrderWorkView({ user }) {
             setBarcodeInput('');
             return;
         }
-
-        updateItemQuantityOnServer(skuToScan, operationType, 1);
+        
+        // 将扫描到的条码传给更新函数
+        updateItemQuantityOnServer(scannedBarcode, operationType, 1);
         setBarcodeInput('');
     };
 
@@ -167,7 +172,7 @@ export function OrderWorkView({ user }) {
 
     const handleExportReport = () => {
         if (!currentOrder?.items) return;
-        const data = currentOrder.items.map(item => ({ "品項編碼": item.product_code, "品項名稱": item.product_name, "應出數量": item.quantity, "已揀数量": item.picked_quantity, "已装箱数量": item.packed_quantity }));
+        const data = currentOrder.items.map(item => ({ "國際條碼": item.barcode, "品項型號": item.product_code, "品項名稱": item.product_name, "應出數量": item.quantity, "已揀数量": item.picked_quantity, "已装箱数量": item.packed_quantity }));
         const worksheet = XLSX.utils.json_to_sheet(data);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "出貨報告");
@@ -219,7 +224,7 @@ export function OrderWorkView({ user }) {
                             <input
                                 ref={barcodeInputRef}
                                 type="text"
-                                placeholder="掃描或輸入條碼..."
+                                placeholder="掃描或輸入國際條碼..."
                                 value={barcodeInput}
                                 onChange={(e) => setBarcodeInput(e.target.value)}
                                 onKeyDown={handleKeyDown}
@@ -251,22 +256,33 @@ export function OrderWorkView({ user }) {
                                 const canAdjustPick = (user.role === 'picker' || user.role === 'admin') && currentStatus === 'picking';
                                 const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && currentStatus === 'packing';
                                 return (
-                                    <div key={item.product_code} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all`}>
+                                    <div key={item.id} className={`border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all`}>
                                         <div className="flex items-center gap-4 flex-1">
                                             <div title={status.label}><status.Icon size={28} className={`${status.color} ${status.animate ? 'animate-spin' : ''}`}/></div>
-                                            <div><p className="font-semibold text-gray-800">{item.product_name}</p><p className="text-sm text-gray-500 font-mono">{item.product_code}</p></div>
+                                            <div>
+                                                <p className="font-semibold text-gray-800">{item.product_name}</p>
+                                                {/* ✅ 【修改點 3】同时显示型号 (product_code) 和国际条码 (barcode) */}
+                                                <p className="text-sm text-gray-500 font-mono flex items-center gap-2 mt-1">
+                                                    <Tag size={14} className="text-gray-400"/>
+                                                    {item.product_code}
+                                                </p>
+                                                <p className="text-sm text-blue-600 font-mono flex items-center gap-2">
+                                                    <Barcode size={14} className="text-gray-400"/>
+                                                    {item.barcode}
+                                                </p>
+                                            </div>
                                         </div>
                                         <div className="w-full sm:w-auto flex items-center gap-2 justify-end">
+                                            {/* ✅ 【修改點 4】手动按钮现在传递 item.barcode */}
                                             <div className="flex items-center gap-1 w-36">
-                                                {/* ✅ 【修改點 3】將 isUpdating 狀態綁定到按鈕的 disabled 屬性上 */}
-                                                <QuantityButton icon={Minus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pick', -1)} disabled={isUpdating || !canAdjustPick || item.picked_quantity <= 0} />
+                                                <QuantityButton icon={Minus} onClick={() => updateItemQuantityOnServer(item.barcode, 'pick', -1)} disabled={!canAdjustPick || item.picked_quantity <= 0} isUpdating={isUpdating} />
                                                 <div className="flex-1 text-center"><p className='text-xs text-blue-700'>揀貨</p><span className="font-bold text-lg text-blue-600">{item.picked_quantity}</span><span className="text-gray-500">/{item.quantity}</span><ProgressBar value={item.picked_quantity} max={item.quantity} colorClass="bg-blue-500" /></div>
-                                                <QuantityButton icon={Plus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pick', 1)} disabled={isUpdating || !canAdjustPick || item.picked_quantity >= item.quantity} />
+                                                <QuantityButton icon={Plus} onClick={() => updateItemQuantityOnServer(item.barcode, 'pick', 1)} disabled={!canAdjustPick || item.picked_quantity >= item.quantity} isUpdating={isUpdating} />
                                             </div>
                                             <div className="flex items-center gap-1 w-36">
-                                                <QuantityButton icon={Minus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pack', -1)} disabled={isUpdating || !canAdjustPack || item.packed_quantity <= 0} />
+                                                <QuantityButton icon={Minus} onClick={() => updateItemQuantityOnServer(item.barcode, 'pack', -1)} disabled={!canAdjustPack || item.packed_quantity <= 0} isUpdating={isUpdating} />
                                                 <div className="flex-1 text-center"><p className='text-xs text-green-700'>裝箱</p><span className="font-bold text-lg text-green-600">{item.packed_quantity}</span><span className="text-gray-500">/{item.picked_quantity}</span><ProgressBar value={item.packed_quantity} max={item.picked_quantity} colorClass="bg-green-500" /></div>
-                                                <QuantityButton icon={Plus} onClick={() => updateItemQuantityOnServer(item.product_code, 'pack', 1)} disabled={isUpdating || !canAdjustPack || item.packed_quantity >= item.picked_quantity} />
+                                                <QuantityButton icon={Plus} onClick={() => updateItemQuantityOnServer(item.barcode, 'pack', 1)} disabled={!canAdjustPack || item.packed_quantity >= item.picked_quantity} isUpdating={isUpdating} />
                                             </div>
                                         </div>
                                     </div>

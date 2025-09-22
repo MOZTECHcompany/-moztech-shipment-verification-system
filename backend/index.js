@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - 最終穩定版
+// MOZTECH WMS 後端主程式 (index.js) - v3.0 支持国际条码
 // =================================================================
 
 // 引入必要套件
@@ -190,6 +190,8 @@ app.delete('/api/admin/users/:userId', authenticateToken, authorizeAdmin, async 
 
 
 // --- 核心工作流 API ---
+
+// ✅ 【修改點 1】升级订单汇入 API，使其能够读取并储存国际条码
 app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: '沒有上傳檔案' });
@@ -204,34 +206,33 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         const voucherCell = data[1] && data[1][0] ? String(data[1][0]) : '';
         const voucherMatch = voucherCell.match(/憑證號碼\s*[:：]\s*(.*)/);
         const voucherNumber = voucherMatch ? voucherMatch[1].trim() : null;
-        
         const customerCell = data[2] && data[2][0] ? String(data[2][0]) : '';
         const customerMatch = customerCell.match(/收件-客戶\/供應商\s*[:：]\s*(.*)/);
         const customerName = customerMatch ? customerMatch[1].trim() : null;
 
         if (!voucherNumber) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼 (請檢查 A2 儲存格是否為 '憑證號碼 : ...' 或 '憑證號碼：...')" });
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼" });
         }
 
         let itemsStartRow = -1;
         let headerRow = [];
         for (let i = 0; i < data.length; i++) {
-            if (data[i] && Array.isArray(data[i]) && data[i].some(cell => typeof cell === 'string' && cell.includes('品項名稱'))) {
+            if (data[i] && Array.isArray(data[i]) && data[i].some(cell => typeof cell === 'string' && cell.includes('品項編碼'))) {
                 itemsStartRow = i + 1;
                 headerRow = data[i];
                 break;
             }
         }
-
         if (itemsStartRow === -1) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到包含 '品項名稱' 的標頭行" });
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到包含 '品項編碼' 的標頭行" });
         }
 
+        const barcodeIndex = headerRow.findIndex(h => String(h).includes('品項編碼'));
         const nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品項名稱'));
         const quantityIndex = headerRow.findIndex(h => String(h).includes('數量'));
 
-        if (nameAndSkuIndex === -1 || quantityIndex === -1) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：在標頭行中找不到 '品項名稱' 或 '數量' 欄位" });
+        if (barcodeIndex === -1 || nameAndSkuIndex === -1 || quantityIndex === -1) {
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：標頭行中找不到 '品項編碼'、'品項名稱' 或 '數量' 欄位" });
         }
         
         await client.query('BEGIN');
@@ -245,24 +246,30 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         let itemsAddedCount = 0;
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
-            if (!row || !row[nameAndSkuIndex] || !row[quantityIndex]) continue;
+            if (!row || !row[barcodeIndex] || !row[nameAndSkuIndex] || !row[quantityIndex]) continue;
+
+            const barcode = String(row[barcodeIndex]);
             const fullNameAndSku = String(row[nameAndSkuIndex]);
             const quantity = parseInt(row[quantityIndex], 10);
+            
             const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
             const productCode = skuMatch ? skuMatch[1] : null;
             const productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
-            if (productCode && productName && !isNaN(quantity) && quantity > 0) {
+
+            if (barcode && productCode && productName && !isNaN(quantity) && quantity > 0) {
                 await client.query(
-                    'INSERT INTO order_items (order_id, product_code, product_name, quantity) VALUES ($1, $2, $3, $4)',
-                    [orderId, productCode, productName, quantity]
+                    'INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5)',
+                    [orderId, productCode, productName, quantity, barcode]
                 );
                 itemsAddedCount++;
             }
         }
+
         if (itemsAddedCount === 0) {
              await client.query('ROLLBACK');
-             return res.status(400).json({ message: 'Excel 檔案中未找到任何有效的品項資料，請檢查品項格式是否正確' });
+             return res.status(400).json({ message: 'Excel 檔案中未找到任何有效的品項資料' });
         }
+        
         await client.query('COMMIT');
         await logOperation(req.user.id, orderId, 'import', { voucherNumber });
         const newTask = { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick' };
@@ -271,7 +278,7 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('匯入訂單時發生嚴重錯誤:', err);
-        res.status(500).json({ message: '處理 Excel 檔案時發生伺服器內部錯誤，請檢查檔案格式或聯絡管理員' });
+        res.status(500).json({ message: '處理 Excel 檔案時發生伺服器內部錯誤' });
     } finally {
         client.release();
     }
@@ -347,20 +354,30 @@ app.get('/api/orders/:orderId', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ 【修改點 2】升级品项更新 API，使其能够接收并使用 barcode 进行查找
 app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
-    const { orderId, sku, type, amount } = req.body;
+    const { orderId, sku, type, amount } = req.body; // sku 现在代表 barcode
     const { id: userId, name: userName } = req.user;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const itemResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND product_code = $2 FOR UPDATE', [orderId, sku]);
-        if (itemResult.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ message: '在訂單中找不到此產品' }); }
+        
+        // 使用 barcode (即前端传来的 sku) 进行查找
+        const itemResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND barcode = $2 FOR UPDATE', [orderId, sku]);
+        
+        if (itemResult.rows.length === 0) { 
+            await client.query('ROLLBACK'); 
+            return res.status(404).json({ message: '在訂單中找不到此產品條碼' }); 
+        }
+
         const item = itemResult.rows[0];
         const order = (await client.query('SELECT * FROM orders WHERE id = $1', [orderId])).rows[0];
         if (type === 'pick' && order.status === 'picking' && order.picker_id !== userId ) { await client.query('ROLLBACK'); return res.status(403).json({ message: '您不是此訂單的指定揀貨員' }); }
         if (type === 'pack' && order.status === 'packing' && order.packer_id !== userId) { await client.query('ROLLBACK'); return res.status(403).json({ message: '您不是此訂單的指定裝箱員' }); }
+        
         let newPickedQty = item.picked_quantity;
         let newPackedQty = item.packed_quantity;
+
         if (type === 'pick') {
             newPickedQty += amount;
             if (newPickedQty < 0 || newPickedQty > item.quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '揀貨數量無效' }); }
@@ -370,6 +387,7 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
             if (newPackedQty < 0 || newPackedQty > item.picked_quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '裝箱數量不能超過已揀貨數量' }); }
             await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]);
         }
+
         await client.query('UPDATE orders SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [orderId]);
         const allItems = (await client.query('SELECT quantity, picked_quantity, packed_quantity FROM order_items WHERE order_id = $1', [orderId])).rows;
         const currentOrderStatus = order.status;
@@ -387,7 +405,7 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
             statusChanged = true;
         }
         await client.query('COMMIT');
-        await logOperation(userId, orderId, type, { sku, amount, by: userName });
+        await logOperation(userId, orderId, type, { sku: item.product_code, barcode: sku, amount, by: userName });
         if (statusChanged) {
             await logOperation(userId, orderId, 'status_change', { from: currentOrderStatus, to: finalStatus });
             const taskResult = await pool.query('SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name, u.name as current_user FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users u ON o.packer_id = u.id WHERE o.id = $1', [orderId]);
