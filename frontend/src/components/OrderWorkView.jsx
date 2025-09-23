@@ -1,4 +1,4 @@
-// frontend/src/pages/OrderWorkView.jsx - v4.1 混合模式 (SN + Barcode)
+// frontend/src/pages/OrderWorkView.jsx - v4.3 混合模式前端
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -47,7 +47,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
     );
 };
 
-// --- 新增：SN 码模式的品项卡片 ---
+// --- SN 码模式的品项卡片 ---
 const SNItemCard = ({ item, instances }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const pickedInstances = instances.filter(i => i.status === 'picked' || i.status === 'packed');
@@ -84,9 +84,9 @@ const SNItemCard = ({ item, instances }) => {
             {isExpanded && (
                 <div className="border-t bg-gray-50/50 p-4 max-h-60 overflow-y-auto">
                     <h4 className="font-semibold mb-2 text-gray-600">序號 (SN) 列表</h4>
-                    <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 text-sm">
+                    <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
                         {instances.map(inst => (
-                            <li key={inst.id} className="font-mono flex items-center" title={`狀態: ${inst.status}`}>
+                            <li key={inst.id} className="font-mono flex items-center basis-full sm:basis-1/2 md:basis-1/3 lg:basis-1/4" title={`狀態: ${inst.status}`}>
                                 {inst.status === 'packed' && <CheckCircle2 size={16} className="text-green-500 mr-2 flex-shrink-0" />}
                                 {inst.status === 'picked' && <PackageCheck size={16} className="text-blue-500 mr-2 flex-shrink-0" />}
                                 {inst.status === 'pending' && <Circle size={16} className="text-gray-400 mr-2 flex-shrink-0" />}
@@ -100,7 +100,7 @@ const SNItemCard = ({ item, instances }) => {
     );
 };
 
-// --- 新增：数量模式的品项卡片 ---
+// --- 数量模式的品项卡片 ---
 const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating }) => {
     const canAdjustPick = (user.role === 'picker' || user.role === 'admin') && orderStatus === 'picking';
     const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && orderStatus === 'packing';
@@ -229,8 +229,8 @@ export function OrderWorkView({ user }) {
             "品項型號": item.product_code, 
             "品項名稱": item.product_name, 
             "應出數量": item.quantity, 
-            "已揀数量": item.picked_quantity, 
-            "已装箱数量": item.packed_quantity,
+            "已揀数量(計數)": item.picked_quantity, 
+            "已装箱数量(計數)": item.packed_quantity,
             "SN列表": currentOrderData.instances.filter(i => i.order_item_id === item.id).map(i => i.serial_number).join(', ')
         }));
         const worksheet = XLSX.utils.json_to_sheet(data);
@@ -280,8 +280,10 @@ export function OrderWorkView({ user }) {
             const getPackedRatio = (item) => {
                 const itemInstances = instances.filter(i => i.order_item_id === item.id);
                 if (itemInstances.length > 0) {
+                    if(item.quantity === 0) return 1;
                     return itemInstances.filter(i => i.status === 'packed').length / item.quantity;
                 }
+                if(item.quantity === 0) return 1;
                 return item.packed_quantity / item.quantity;
             };
             return getPackedRatio(a) - getPackedRatio(b);
@@ -346,7 +348,7 @@ export function OrderWorkView({ user }) {
                                 const hasSN = itemInstances.length > 0;
 
                                 if (hasSN) {
-                                    return <SNItemCard key={item.id} item={item} instances={itemInstances} orderStatus={currentOrderData.order.status} user={user} />;
+                                    return <SNItemCard key={item.id} item={item} instances={itemInstances} />;
                                 } else {
                                     return <QuantityItemCard key={item.id} item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order.status} isUpdating={isUpdating} />;
                                 }

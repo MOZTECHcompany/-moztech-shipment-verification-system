@@ -389,17 +389,21 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
             await logOperation(userId, orderId, type, { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` });
 
         } else {
-            const itemResult = await client.query(
-                `SELECT oi.* FROM order_items oi 
-                 LEFT JOIN order_item_instances i ON oi.id = i.order_item_id
-                 WHERE oi.order_id = $1 AND oi.barcode = $2 AND i.id IS NULL FOR UPDATE`,
-                [orderId, scanValue]
+            const itemIdResult = await client.query(
+                 `SELECT oi.id FROM order_items oi 
+                  LEFT JOIN order_item_instances i ON oi.id = i.order_item_id
+                  WHERE oi.order_id = $1 AND oi.barcode = $2 AND i.id IS NULL`,
+                 [orderId, scanValue]
             );
 
-            if (itemResult.rows.length === 0) {
+            if (itemIdResult.rows.length === 0) {
                 throw new Error(`條碼 ${scanValue} 不屬於此訂單，或該品項需要掃描 SN 碼`);
             }
+            const itemId = itemIdResult.rows[0].id;
+            
+            const itemResult = await client.query('SELECT * FROM order_items WHERE id = $1 FOR UPDATE', [itemId]);
             const item = itemResult.rows[0];
+
             if (type === 'pick') {
                 const newPickedQty = item.picked_quantity + amount;
                 if (newPickedQty < 0 || newPickedQty > item.quantity) throw new Error('揀貨數量無效');
@@ -415,7 +419,7 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         await client.query('COMMIT');
         
         const allItems = (await pool.query('SELECT * FROM order_items WHERE order_id = $1', [orderId])).rows;
-        const allInstances = (await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId])).rows;
+        const allInstances = (await pool.query('SELECT i.*, oi.order_id FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId])).rows;
         
         let allPicked = true;
         let allPacked = true;
@@ -444,7 +448,7 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         }
         
         if (statusChanged) {
-             io.emit('task_status_changed', { orderId: parseInt(orderId), newStatus: finalStatus });
+             io.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: finalStatus });
         }
         
         const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
