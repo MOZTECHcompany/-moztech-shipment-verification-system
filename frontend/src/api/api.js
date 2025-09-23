@@ -1,33 +1,33 @@
 import axios from 'axios';
 
-// 從環境變數讀取後端 API 的 URL，這是一個好習慣
-// 在 .env 檔案中可以設定 VITE_API_URL=https://moztech-wms-api.onrender.com
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// 根據環境變數智慧設定 baseURL
+// 在本地開發時 (npm run dev)，import.meta.env.DEV 會是 true
+// 在生產環境構建時 (npm run build)，import.meta.env.PROD 會是 true
+const baseURL = import.meta.env.PROD
+  ? 'https://moztech-wms-api.onrender.com' // 生產環境 API
+  : 'http://localhost:3001';              // 開發環境 API
 
-const api = axios.create({
-  baseURL: API_URL,
+console.log(`[API] Current mode: ${import.meta.env.MODE}, Base URL: ${baseURL}`);
+
+const apiClient = axios.create({
+    baseURL: baseURL, // 使用智慧設定的 baseURL
+    headers: {
+        'Content-Type': 'application/json',
+    },
 });
 
-// 建立請求攔截器 (Request Interceptor)
-api.interceptors.request.use(
-  (config) => {
-    // 從 localStorage 中獲取 token
-    const token = localStorage.getItem('token');
-    
-    // 如果 token 存在，則在每個請求的 Header 中加入 Authorization
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;
+// 請求攔截器 (這部分您的程式碼是完美的，保持不變)
+apiClient.interceptors.request.use(
+    (config) => {
+        const token = localStorage.getItem('token');
+        if (token) {
+            config.headers['Authorization'] = `Bearer ${token}`;
+        }
+        return config;
+    },
+    (error) => {
+        return Promise.reject(error);
     }
-    
-    return config;
-  },
-  (error) => {
-    // 對請求錯誤做些什麼
-    return Promise.reject(error);
-  }
 );
 
-// 如果需要，也可以加入回應攔截器來處理 401/403 等全局錯誤
-// api.interceptors.response.use(...)
-
-export default api;
+export default apiClient;
