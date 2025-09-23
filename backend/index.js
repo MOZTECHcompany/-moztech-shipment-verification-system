@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v5.0 终极修复版 (全繁體中文)
+// MOZTECH WMS 後端主程式 (index.js) - v5.2 语法修复版 (全繁體中文)
 // =================================================================
 
 // 引入必要套件
@@ -73,7 +73,7 @@ const authorizeAdmin = (req, res, next) => {
 const logOperation = async (userId, orderId, operationType, details) => {
     try {
         await pool.query(
-            'INSERT INTO operation_logs (user_id, order_id, operation_type, details) VALUES ($1, $2, $3, $4)', 
+            'INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4)', 
             [userId, orderId, operationType, JSON.stringify(details)]
         );
     } catch (error) {
@@ -517,13 +517,13 @@ app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, re
         const orderIds = orders.map(o => o.id);
         const itemsResult = await pool.query(`SELECT order_id, SUM(quantity) as total_quantity FROM order_items WHERE order_id = ANY($1::int[]) GROUP BY order_id`, [orderIds]);
         const itemCounts = itemsResult.rows.reduce((acc, row) => { acc[row.order_id] = row.total_quantity; return acc; }, {});
-        const logsResult = await pool.query(`SELECT ol.order_id, ol.operation_type, ol.created_at, u.name as user_name FROM operation_logs ol JOIN users u ON ol.user_id = u.id WHERE ol.order_id = ANY($1::int[])`, [orderIds]);
+        const logsResult = await pool.query(`SELECT ol.order_id, ol.action_type, ol.created_at, u.name as user_name FROM operation_logs ol JOIN users u ON ol.user_id = u.id WHERE ol.order_id = ANY($1::int[])`, [orderIds]);
         const logsByOrderId = logsResult.rows.reduce((acc, log) => { if (!acc[log.order_id]) { acc[log.order_id] = []; } acc[log.order_id].push(log); return acc; }, {});
         const reportData = orders.map(order => {
             const orderLogs = logsByOrderId[order.id] || [];
-            const pickers = [...new Set(orderLogs.filter(l => l.operation_type === 'pick').map(l => l.user_name))].join(', ');
-            const packers = [...new Set(orderLogs.filter(l => l.operation_type === 'pack').map(l => l.user_name))].join(', ');
-            const voidLog = orderLogs.find(l => l.operation_type === 'void');
+            const pickers = [...new Set(orderLogs.filter(l => l.action_type === 'pick').map(l => l.user_name))].join(', ');
+            const packers = [...new Set(orderLogs.filter(l => l.action_type === 'pack').map(l => l.user_name))].join(', ');
+            const voidLog = orderLogs.find(l => l.action_type === 'void');
             const formatTime = (date) => date ? new Date(date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '';
             return { "訂單編號": order.voucher_number, "訂單狀態": order.status === 'completed' ? '已完成' : '已作廢', "出貨總件數": itemCounts[order.id] || 0, "揀貨人員": pickers || '無紀錄', "裝箱人員": packers || '無紀錄', "出貨完成時間": order.status === 'completed' ? formatTime(order.completed_at) : '', "作廢人員": voidLog ? voidLog.user_name : '', "作廢時間": voidLog ? formatTime(voidLog.created_at) : '' };
         });
@@ -532,4 +532,26 @@ app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, re
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
         res.status(200).send('\uFEFF' + csv);
-    } catch (
+    } catch (error) {
+        console.error('匯出報告時發生錯誤:', error);
+        res.status(500).json({ message: '產生報告時發生內部伺服器錯誤' });
+    }
+});
+
+
+// =================================================================
+// Socket.IO 事件監聽
+// =================================================================
+io.on('connection', (socket) => {
+  console.log('一個使用者已連線:', socket.id);
+  socket.on('disconnect', () => {
+    console.log('使用者已離線:', socket.id);
+  });
+});
+
+// =================================================================
+// 啟動伺服器
+// =================================================================
+server.listen(port, () => {
+    console.log(`伺服器正在 http://localhost:${port} 上運行`);
+});
