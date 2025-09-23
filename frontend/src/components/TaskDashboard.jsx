@@ -4,11 +4,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { socket } from '@/api/socket.js'; // 引入 socket
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2 } from 'lucide-react'; // ✅ 1. 引入垃圾桶圖示
+import { socket } from '@/api/socket.js';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
-
 
 const statusMap = {
     pending: { text: '待揀貨', color: 'bg-yellow-100 text-yellow-800 border border-yellow-200' },
@@ -17,7 +16,6 @@ const statusMap = {
     packing: { text: '裝箱中', color: 'bg-cyan-100 text-cyan-800 border border-cyan-200 animate-pulse' },
 };
 
-// ✅ 修改 TaskCard 元件以接收 user 和 onDelete 屬性
 const TaskCard = ({ task, onClaim, user, onDelete }) => {
     const isMyTask = task.current_user;
     const statusInfo = statusMap[task.status] || { text: task.status, color: 'bg-gray-200 text-gray-800' };
@@ -31,7 +29,6 @@ const TaskCard = ({ task, onClaim, user, onDelete }) => {
                         <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${statusInfo.color}`}>
                             {statusInfo.text}
                         </span>
-                        {/* ✅ 3. 新增刪除按鈕，僅管理員可見 */}
                         {user && user.role === 'admin' && (
                             <button
                                 onClick={() => onDelete(task.id, task.voucher_number)}
@@ -68,13 +65,14 @@ export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
-    const MySwal = withReactContent(Swal); // 使用 SweetAlert2
+    const MySwal = withReactContent(Swal);
 
     const fetchTasks = useCallback(async () => {
         if (user) { 
             try {
                 setLoading(true);
-                const response = await apiClient.get('/api/tasks');
+                // ✅ 修正 #1: 移除 /api 前綴
+                const response = await apiClient.get('/tasks');
                 setTasks(response.data);
             } catch (error) {
                 if (error.response?.status !== 401) {
@@ -121,7 +119,6 @@ export function TaskDashboard({ user }) {
             });
         };
 
-        // ✅ 2. 新增 Socket.IO 刪除事件監聽
         const handleTaskDeleted = ({ orderId }) => {
             toast.warning(`訂單已被管理員刪除`);
             setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
@@ -145,7 +142,8 @@ export function TaskDashboard({ user }) {
             navigate(`/order/${orderId}`);
             return;
         }
-        const promise = apiClient.post(`/api/orders/${orderId}/claim`);
+        // ✅ 修正 #2: 移除 /api 前綴
+        const promise = apiClient.post(`/orders/${orderId}/claim`);
         toast.promise(promise, {
             loading: '正在認領任務...',
             success: () => '任務認領成功！',
@@ -153,7 +151,6 @@ export function TaskDashboard({ user }) {
         });
     };
 
-    // ✅ 4. 新增刪除訂單的處理函式
     const handleDeleteOrder = (orderId, voucherNumber) => {
         MySwal.fire({
             title: `確定要永久刪除訂單 ${voucherNumber}？`,
@@ -170,12 +167,12 @@ export function TaskDashboard({ user }) {
             }
         }).then((result) => {
             if (result.isConfirmed) {
-                const promise = apiClient.delete(`/api/orders/${orderId}`);
+                // ✅ 修正 #3: 移除 /api 前綴
+                const promise = apiClient.delete(`/orders/${orderId}`);
 
                 toast.promise(promise, {
                     loading: `正在刪除訂單 ${voucherNumber}...`,
                     success: (res) => {
-                        // 即使有 socket 事件，立即更新 UI 可提供更好的使用者體驗
                         setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
                         return res.data.message;
                     },
