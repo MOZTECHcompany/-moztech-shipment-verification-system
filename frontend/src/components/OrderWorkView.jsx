@@ -1,4 +1,4 @@
-// frontend/src/pages/OrderWorkView.jsx - v4.3 混合模式前端
+// frontend/src/pages/OrderWorkView.jsx - v4.1 混合模式前端
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -84,16 +84,16 @@ const SNItemCard = ({ item, instances }) => {
             {isExpanded && (
                 <div className="border-t bg-gray-50/50 p-4 max-h-60 overflow-y-auto">
                     <h4 className="font-semibold mb-2 text-gray-600">序號 (SN) 列表 ({instances.length})</h4>
-                    <div className="columns-2 sm:columns-3 md:columns-4 gap-x-6 text-sm">
+                    <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
                         {instances.map(inst => (
-                            <div key={inst.id} className="font-mono flex items-center mb-1 break-inside-avoid" title={`狀態: ${inst.status}`}>
+                            <li key={inst.id} className="font-mono flex items-center basis-full sm:basis-1/2 md:basis-1/3 lg:basis-1/4" title={`狀態: ${inst.status}`}>
                                 {inst.status === 'packed' && <CheckCircle2 size={16} className="text-green-500 mr-2 flex-shrink-0" />}
                                 {inst.status === 'picked' && <PackageCheck size={16} className="text-blue-500 mr-2 flex-shrink-0" />}
                                 {inst.status === 'pending' && <Circle size={16} className="text-gray-400 mr-2 flex-shrink-0" />}
                                 <span className={inst.status !== 'pending' ? 'text-gray-400 line-through' : 'text-gray-800'}>{inst.serial_number}</span>
-                            </div>
+                            </li>
                         ))}
-                    </div>
+                    </ul>
                 </div>
             )}
         </div>
