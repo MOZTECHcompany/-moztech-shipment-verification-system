@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v3.0 支持国际条码
+// MOZTECH WMS 後端主程式 (index.js) - v4.0 混合模式 (SN + Barcode)
 // =================================================================
 
 // 引入必要套件
@@ -191,11 +191,8 @@ app.delete('/api/admin/users/:userId', authenticateToken, authorizeAdmin, async 
 
 // --- 核心工作流 API ---
 
-// ✅ 【修改點 1】升级订单汇入 API，使其能够读取并储存国际条码
 app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ message: '沒有上傳檔案' });
-    }
+    if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
     const client = await pool.connect();
     try {
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
@@ -209,10 +206,7 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
         const customerCell = data[2] && data[2][0] ? String(data[2][0]) : '';
         const customerMatch = customerCell.match(/收件-客戶\/供應商\s*[:：]\s*(.*)/);
         const customerName = customerMatch ? customerMatch[1].trim() : null;
-
-        if (!voucherNumber) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼" });
-        }
+        if (!voucherNumber) return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到憑證號碼" });
 
         let itemsStartRow = -1;
         let headerRow = [];
@@ -223,27 +217,26 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
                 break;
             }
         }
-        if (itemsStartRow === -1) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到包含 '品項編碼' 的標頭行" });
-        }
+        if (itemsStartRow === -1) return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到包含 '品項編碼' 的標頭行" });
 
         const barcodeIndex = headerRow.findIndex(h => String(h).includes('品項編碼'));
         const nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品項名稱'));
         const quantityIndex = headerRow.findIndex(h => String(h).includes('數量'));
+        const summaryIndex = headerRow.findIndex(h => String(h).includes('摘要'));
 
         if (barcodeIndex === -1 || nameAndSkuIndex === -1 || quantityIndex === -1) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：標頭行中找不到 '品項編碼'、'品項名稱' 或 '數量' 欄位" });
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：缺少必要的栏位" });
         }
         
         await client.query('BEGIN');
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
         if (existingOrder.rows.length > 0) {
             await client.query('ROLLBACK');
-            return res.status(409).json({ message: `訂單 ${voucherNumber} 已存在，請勿重複匯入` });
+            return res.status(409).json({ message: `訂單 ${voucherNumber} 已存在` });
         }
         const orderInsertResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status) VALUES ($1, $2, $3) RETURNING id', [voucherNumber, customerName, 'pending']);
         const orderId = orderInsertResult.rows[0].id;
-        let itemsAddedCount = 0;
+        
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
             if (!row || !row[barcodeIndex] || !row[nameAndSkuIndex] || !row[quantityIndex]) continue;
@@ -251,40 +244,50 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             const barcode = String(row[barcodeIndex]);
             const fullNameAndSku = String(row[nameAndSkuIndex]);
             const quantity = parseInt(row[quantityIndex], 10);
-            
+            const summary = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]) : '';
+
             const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
             const productCode = skuMatch ? skuMatch[1] : null;
             const productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
 
             if (barcode && productCode && productName && !isNaN(quantity) && quantity > 0) {
-                await client.query(
-                    'INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5)',
+                const itemInsertResult = await client.query(
+                    'INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5) RETURNING id',
                     [orderId, productCode, productName, quantity, barcode]
                 );
-                itemsAddedCount++;
-            }
-        }
+                const orderItemId = itemInsertResult.rows[0].id;
 
-        if (itemsAddedCount === 0) {
-             await client.query('ROLLBACK');
-             return res.status(400).json({ message: 'Excel 檔案中未找到任何有效的品項資料' });
+                if (summary) {
+                    const serialNumbers = summary.split('・').map(sn => sn.trim()).filter(sn => sn);
+                    if (serialNumbers.length > 0 && serialNumbers.length !== quantity) {
+                        await client.query('ROLLBACK');
+                        return res.status(400).json({ message: `品項 ${productCode} 的 SN 碼數量 (${serialNumbers.length}) 與訂單數量 (${quantity}) 不符。` });
+                    }
+                    for (const sn of serialNumbers) {
+                        await client.query(
+                            'INSERT INTO order_item_instances (order_item_id, serial_number) VALUES ($1, $2)',
+                            [orderItemId, sn]
+                        );
+                    }
+                }
+            }
         }
         
         await client.query('COMMIT');
         await logOperation(req.user.id, orderId, 'import', { voucherNumber });
-        const newTask = { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick' };
-        io.emit('new_task', newTask);
-        res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功，共新增 ${itemsAddedCount} 個品項`, orderId: orderId });
+        io.emit('new_task', { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick' });
+        res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, orderId: orderId });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('匯入訂單時發生嚴重錯誤:', err);
-        res.status(500).json({ message: '處理 Excel 檔案時發生伺服器內部錯誤' });
+        res.status(500).json({ message: err.message || '處理 Excel 檔案時發生伺服器內部錯誤' });
     } finally {
         client.release();
     }
 });
 
 app.get('/api/tasks', authenticateToken, async (req, res) => {
+    // This function remains unchanged, it works correctly.
     console.log(`[GET /api/tasks] 收到來自使用者 ID: ${req.user.id}, 角色: "${req.user.role}" 的任務請求`);
     const { role, id: userId } = req.user;
     const userRole = role ? role.trim() : null;
@@ -310,6 +313,7 @@ app.get('/api/tasks', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/orders/:orderId/claim', authenticateToken, async (req, res) => {
+    // This function remains unchanged.
     const { orderId } = req.params;
     const { id: userId, role, name: userName } = req.user;
     const client = await pool.connect();
@@ -342,88 +346,100 @@ app.post('/api/orders/:orderId/claim', authenticateToken, async (req, res) => {
 });
 
 app.get('/api/orders/:orderId', authenticateToken, async (req, res) => {
+    // This function is upgraded to return instances.
     try {
         const { orderId } = req.params;
         const orderResult = await pool.query('SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1;', [orderId]);
-        const itemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
         if (orderResult.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
-        res.json({ order: orderResult.rows[0], items: itemsResult.rows });
+        
+        const itemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        
+        const instancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id', [orderId]);
+
+        res.json({ order: orderResult.rows[0], items: itemsResult.rows, instances: instancesResult.rows });
     } catch (err) {
         console.error('獲取訂單詳情失敗:', err);
         res.status(500).json({ message: '伺服器內部錯誤' });
     }
 });
 
-// ✅ 【修改點 2】升级品项更新 API，使其能够接收并使用 barcode 进行查找
 app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
-    const { orderId, sku, type, amount } = req.body; // sku 现在代表 barcode
+    const { orderId, scanValue, type, amount = 1 } = req.body;
     const { id: userId, name: userName } = req.user;
     const client = await pool.connect();
+
     try {
         await client.query('BEGIN');
-        
-        // 使用 barcode (即前端传来的 sku) 进行查找
-        const itemResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND barcode = $2 FOR UPDATE', [orderId, sku]);
-        
-        if (itemResult.rows.length === 0) { 
-            await client.query('ROLLBACK'); 
-            return res.status(404).json({ message: '在訂單中找不到此產品條碼' }); 
-        }
-
-        const item = itemResult.rows[0];
         const order = (await client.query('SELECT * FROM orders WHERE id = $1', [orderId])).rows[0];
-        if (type === 'pick' && order.status === 'picking' && order.picker_id !== userId ) { await client.query('ROLLBACK'); return res.status(403).json({ message: '您不是此訂單的指定揀貨員' }); }
-        if (type === 'pack' && order.status === 'packing' && order.packer_id !== userId) { await client.query('ROLLBACK'); return res.status(403).json({ message: '您不是此訂單的指定裝箱員' }); }
         
-        let newPickedQty = item.picked_quantity;
-        let newPackedQty = item.packed_quantity;
+        // 权限检查
+        if (type === 'pick' && order.picker_id !== userId) throw new Error('您不是此訂單的指定揀貨員');
+        if (type === 'pack' && order.packer_id !== userId) throw new Error('您不是此訂單的指定裝箱員');
 
-        if (type === 'pick') {
-            newPickedQty += amount;
-            if (newPickedQty < 0 || newPickedQty > item.quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '揀貨數量無效' }); }
-            await client.query('UPDATE order_items SET picked_quantity = $1 WHERE id = $2', [newPickedQty, item.id]);
-        } else if (type === 'pack') {
-            newPackedQty += amount;
-            if (newPackedQty < 0 || newPackedQty > item.picked_quantity) { await client.query('ROLLBACK'); return res.status(400).json({ message: '裝箱數量不能超過已揀貨數量' }); }
-            await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]);
-        }
+        // 模式判断：先尝试作为 SN 码查找
+        let instanceResult = await client.query(
+            `SELECT i.id, i.status, i.order_item_id, oi.product_code 
+             FROM order_item_instances i 
+             JOIN order_items oi ON i.order_item_id = oi.id 
+             WHERE oi.order_id = $1 AND i.serial_number = $2 FOR UPDATE`,
+            [orderId, scanValue]
+        );
 
-        await client.query('UPDATE orders SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [orderId]);
-        const allItems = (await client.query('SELECT quantity, picked_quantity, packed_quantity FROM order_items WHERE order_id = $1', [orderId])).rows;
-        const currentOrderStatus = order.status;
-        const allPicked = allItems.every(i => i.picked_quantity >= i.quantity);
-        const allPacked = allItems.every(i => i.packed_quantity >= i.quantity);
-        let statusChanged = false;
-        let finalStatus = currentOrderStatus;
-        if (allPacked && currentOrderStatus !== 'completed') {
-            finalStatus = 'completed';
-            await client.query(`UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
-            statusChanged = true;
-        } else if (allPicked && currentOrderStatus === 'picking') {
-            finalStatus = 'picked';
-            await client.query(`UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
-            statusChanged = true;
+        if (instanceResult.rows.length > 0) {
+            // --- SN 码模式 ---
+            const instance = instanceResult.rows[0];
+            let newStatus = '';
+            if (type === 'pick' && instance.status === 'pending') newStatus = 'picked';
+            else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed';
+            else throw new Error(`SN 碼 ${scanValue} 狀態 (${instance.status}) 無法執行此操作`);
+            
+            await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
+            await logOperation(userId, orderId, type, { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` });
+
+        } else {
+            // --- 国际条码（数量）模式 ---
+            const itemResult = await client.query(
+                `SELECT oi.* FROM order_items oi 
+                 LEFT JOIN order_item_instances i ON oi.id = i.order_item_id
+                 WHERE oi.order_id = $1 AND oi.barcode = $2 AND i.id IS NULL FOR UPDATE`,
+                [orderId, scanValue]
+            );
+
+            if (itemResult.rows.length === 0) {
+                throw new Error(`條碼 ${scanValue} 不屬於此訂單，或該品項需要掃描 SN 碼`);
+            }
+            const item = itemResult.rows[0];
+            if (type === 'pick') {
+                const newPickedQty = item.picked_quantity + amount;
+                if (newPickedQty < 0 || newPickedQty > item.quantity) throw new Error('揀貨數量無效');
+                await client.query('UPDATE order_items SET picked_quantity = $1 WHERE id = $2', [newPickedQty, item.id]);
+            } else if (type === 'pack') {
+                const newPackedQty = item.packed_quantity + amount;
+                if (newPackedQty < 0 || newPackedQty > item.picked_quantity) throw new Error('裝箱數量不能超過已揀貨數量');
+                await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]);
+            }
+            await logOperation(userId, orderId, type, { barcode: scanValue, amount });
         }
+        
         await client.query('COMMIT');
-        await logOperation(userId, orderId, type, { sku: item.product_code, barcode: sku, amount, by: userName });
-        if (statusChanged) {
-            await logOperation(userId, orderId, 'status_change', { from: currentOrderStatus, to: finalStatus });
-            const taskResult = await pool.query('SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name, u.name as current_user FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users u ON o.packer_id = u.id WHERE o.id = $1', [orderId]);
-            io.emit('task_status_changed', { ...taskResult.rows[0] });
-        }
+        
+        // 返回最新的完整订单资料
         const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
         const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
-        res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows });
+        const updatedInstancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
+        res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows });
+
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error('更新品項數量失敗:', err);
-        res.status(500).json({ message: '伺服器內部錯誤' });
+        console.error('更新品项状态失败:', err.message);
+        res.status(400).json({ message: err.message || '伺服器内部错误' });
     } finally {
         client.release();
     }
 });
 
 app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async (req, res) => {
+    // This function remains unchanged.
     const { orderId } = req.params;
     const { reason } = req.body;
     try {
@@ -438,6 +454,7 @@ app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async 
 });
 
 app.delete('/api/orders/:orderId', authenticateToken, authorizeAdmin, async (req, res) => {
+    // This function remains unchanged.
     const { orderId } = req.params;
     const client = await pool.connect();
     try {
@@ -461,6 +478,7 @@ app.delete('/api/orders/:orderId', authenticateToken, authorizeAdmin, async (req
 
 // --- 報告相關 API (僅限管理員) ---
 app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, res) => {
+    // This function remains unchanged.
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: '必須提供開始與結束日期' });
     try {
@@ -485,7 +503,7 @@ app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, re
         const fileName = `營運報告_${startDate}_至_${endDate}.csv`;
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-        res.status(200).send('\uFEFF' + csv); // \uFEFF 是 BOM，確保 Excel 正確讀取 UTF-8
+        res.status(200).send('\uFEFF' + csv);
     } catch (error) {
         console.error('匯出報告時發生錯誤:', error);
         res.status(500).json({ message: '產生報告時發生內部伺服器錯誤' });
