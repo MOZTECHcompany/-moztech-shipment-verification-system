@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v4.3 最终修复版 (全繁體中文)
+// MOZTECH WMS 後端主程式 (index.js) - v5.0 终极修复版 (全繁體中文)
 // =================================================================
 
 // 引入必要套件
@@ -241,7 +241,7 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             const barcode = String(row[barcodeIndex]);
             const fullNameAndSku = String(row[nameAndSkuIndex]);
             const quantity = parseInt(row[quantityIndex], 10);
-            const summary = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]) : '';
+            const summary = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]).replace(/[ㆍ\s]/g, '') : '';
 
             const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
             const productCode = skuMatch ? skuMatch[1] : null;
@@ -255,10 +255,14 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
                 const orderItemId = itemInsertResult.rows[0].id;
 
                 if (summary) {
-                    const serialNumbers = summary
-                        .split('・')
-                        .map(sn => sn.replace(/[ㆍ\s]/g, '').trim())
-                        .filter(sn => sn);
+                    const snLength = 12;
+                    const serialNumbers = [];
+                    for (let j = 0; j < summary.length; j += snLength) {
+                        const sn = summary.substring(j, j + snLength);
+                        if (sn.length === snLength) {
+                            serialNumbers.push(sn);
+                        }
+                    }
 
                     for (const sn of serialNumbers) {
                         await client.query(
@@ -528,26 +532,4 @@ app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, re
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
         res.status(200).send('\uFEFF' + csv);
-    } catch (error) {
-        console.error('匯出報告時發生錯誤:', error);
-        res.status(500).json({ message: '產生報告時發生內部伺服器錯誤' });
-    }
-});
-
-
-// =================================================================
-// Socket.IO 事件監聽
-// =================================================================
-io.on('connection', (socket) => {
-  console.log('一個使用者已連線:', socket.id);
-  socket.on('disconnect', () => {
-    console.log('使用者已離線:', socket.id);
-  });
-});
-
-// =================================================================
-// 啟動伺服器
-// =================================================================
-server.listen(port, () => {
-    console.log(`伺服器正在 http://localhost:${port} 上運行`);
-});
+    } catch (
