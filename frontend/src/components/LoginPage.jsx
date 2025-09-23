@@ -22,7 +22,8 @@ export function LoginPage({ onLogin }) {
     setIsLoggingIn(true);
     
     try {
-        const response = await apiClient.post('/api/auth/login', {
+        // ✅ 【關鍵修正】: 移除了多餘的 /api 前綴，以匹配 api.js 中的 baseURL
+        const response = await apiClient.post('/auth/login', {
             username,
             password
         });
@@ -31,7 +32,6 @@ export function LoginPage({ onLogin }) {
         toast.success(`歡迎回來, ${responseData.user.name || responseData.user.username}!`);
         onLogin(responseData);
         
-        // 【關鍵修改】恢復管理員分流邏輯
         if (responseData.user.role === 'admin') {
             navigate('/admin');
         } else {
