@@ -500,8 +500,22 @@ orderRouter.delete('/:orderId', authorizeAdmin, async (req, res) => {
 app.use('/api/orders', authenticateToken, orderRouter);
 
 
+// backend/index.js
+
 app.get('/api/tasks', authenticateToken, async (req, res) => {
-    const { role, id: userId } = req.user;
+    // ✅ 【關鍵修正 #1】: 對從 token 解析出的 role 進行 trim() 清洗，去除前後空格
+    const role = req.user.role ? req.user.role.trim() : null;
+    const userId = req.user.id;
+
+    // ✅ 【關鍵修正 #2】: 添加詳細的日誌，這將會顯示在 Render 的 Logs 中
+    console.log(`[GET /api/tasks] Request received from user ID: ${userId}. Role from token: "${req.user.role}", Cleaned role: "${role}"`);
+
+    // 如果清洗後的 role 為空，直接返回錯誤
+    if (!role) {
+        console.error(`[GET /api/tasks] User ID: ${userId} has an invalid or null role.`);
+        return res.status(403).json({ message: '使用者角色無效' });
+    }
+
     try {
         const query = `
             SELECT 
@@ -529,10 +543,16 @@ app.get('/api/tasks', authenticateToken, async (req, res) => {
                 ( (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)) AND $2 IN ('admin', 'packer') )
             ORDER BY o.created_at ASC;
         `;
+        
+        // 使用清洗後的 role 進行查詢
         const result = await pool.query(query, [userId, role]);
+
+        // 添加日誌記錄查詢結果
+        console.log(`[GET /api/tasks] Query for user ID: ${userId} with role: "${role}" returned ${result.rowCount} tasks.`);
+        
         res.json(result.rows);
     } catch (error) {
-        console.error(`獲取角色 ${role} 的任務列表失敗:`, error);
+        console.error(`[GET /api/tasks] Failed to fetch tasks for user ID: ${userId}, role: "${role}". Error:`, error);
         res.status(500).json({ message: '獲取任務列表時發生錯誤' });
     }
 });
