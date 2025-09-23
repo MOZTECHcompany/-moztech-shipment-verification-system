@@ -1,4 +1,4 @@
-// frontend/src/pages/OrderWorkView.jsx - v4.0 混合模式 (SN + Barcode)
+// frontend/src/pages/OrderWorkView.jsx - v4.1 混合模式 (SN + Barcode)
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -13,22 +13,6 @@ import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
 // --- 辅助组件 ---
-const getItemStatus = (item, instances) => {
-    const hasSN = instances.length > 0;
-    if (hasSN) {
-        const packedCount = instances.filter(i => i.status === 'packed').length;
-        if (packedCount >= item.quantity) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
-        const pickedCount = instances.filter(i => i.status === 'picked' || i.status === 'packed').length;
-        if (pickedCount >= item.quantity) return { Icon: PackageCheck, color: "text-blue-500", label: "待裝箱" };
-        if (pickedCount > 0) return { Icon: Loader2, color: "text-yellow-500", label: "處理中", animate: true };
-    } else {
-        if (item.packed_quantity >= item.quantity) return { Icon: CheckCircle2, color: "text-green-500", label: "已完成" };
-        if (item.picked_quantity >= item.quantity) return { Icon: PackageCheck, color: "text-blue-500", label: "待裝箱" };
-        if (item.picked_quantity > 0 || item.packed_quantity > 0) return { Icon: Loader2, color: "text-yellow-500", label: "處理中", animate: true };
-    }
-    return { Icon: Circle, color: "text-gray-400", label: "待處理" };
-};
-
 const ProgressBar = ({ value, max, colorClass }) => {
     const percentage = max > 0 ? (value / max) * 100 : 0;
     return ( <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div className={`${colorClass} h-1.5 rounded-full transition-all duration-300`} style={{ width: `${percentage}%` }}></div></div> );
@@ -40,47 +24,69 @@ const QuantityButton = ({ onClick, icon: Icon, disabled, isUpdating }) => (
     </button>
 );
 
-const SNItemCard = ({ item, instances, orderStatus, user }) => {
+const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
+    const { totalSkus, packedSkus, totalQuantity, totalPickedQty, totalPackedQty } = stats;
+    if (totalSkus === 0) return null;
+    return (
+        <div className="bg-white p-6 rounded-xl shadow-md mb-8">
+            <div className="flex justify-between items-start">
+                 <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center"><ListChecks className="mr-2" /> 任務總覽</h2>
+                 <div className="flex items-center gap-2">
+                    {user && user.role === 'admin' && (
+                        <button onClick={onVoid} className="flex items-center text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700">作廢訂單</button>
+                    )}
+                    <button onClick={onExport} className="flex items-center text-sm px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600"><FileUp size={16} className="mr-1.5" /> 匯出本單明細</button>
+                 </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                <div className="bg-gray-50 p-4 rounded-lg"><p className="text-sm text-gray-500">品項完成度</p><p className="text-2xl font-bold text-gray-800">{packedSkus}<span className="text-lg font-normal text-gray-500">/{totalSkus}</span></p></div>
+                <div className="bg-blue-50 p-4 rounded-lg"><p className="text-sm text-blue-700">總揀貨數</p><p className="text-2xl font-bold text-blue-600">{totalPickedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div>
+                <div className="bg-green-50 p-4 rounded-lg"><p className="text-sm text-green-700">總裝箱數</p><p className="text-2xl font-bold text-green-600">{totalPackedQty}<span className="text-lg font-normal text-gray-500">/{totalQuantity}</span></p></div>
+            </div>
+        </div>
+    );
+};
+
+// --- 新增：SN 码模式的品项卡片 ---
+const SNItemCard = ({ item, instances }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const pickedInstances = instances.filter(i => i.status === 'picked' || i.status === 'packed');
     const packedInstances = instances.filter(i => i.status === 'packed');
-    const canPick = (user.role === 'admin' || user.role === 'picker') && orderStatus === 'picking';
-    const canPack = (user.role === 'admin' || user.role === 'packer') && orderStatus === 'packing';
     
     return (
-        <div className="border rounded-lg bg-white">
-            <div className="p-4 flex items-center justify-between gap-4 cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
-                <div className="flex items-center gap-4 flex-1">
+        <div className="border rounded-lg bg-white shadow-sm">
+            <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4 cursor-pointer hover:bg-gray-50" onClick={() => setIsExpanded(!isExpanded)}>
+                <div className="flex items-center gap-4 flex-1 w-full">
                     <div>
                         <p className="font-semibold text-gray-800">{item.product_name}</p>
                         <p className="text-sm text-gray-500 font-mono flex items-center gap-2 mt-1"><Tag size={14} className="text-gray-400"/>{item.product_code}</p>
                         <p className="text-sm text-blue-600 font-mono flex items-center gap-2"><Barcode size={14} className="text-gray-400"/>{item.barcode}</p>
                     </div>
                 </div>
-                <div className="flex items-center gap-4">
-                    <div className="text-center w-24">
-                        <p className='text-xs text-blue-700'>揀貨</p>
+                <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
+                    <div className="text-center w-28">
+                        <p className='text-xs text-blue-700'>已揀 (SN)</p>
                         <span className="font-bold text-lg text-blue-600">{pickedInstances.length}</span>
                         <span className="text-gray-500">/{item.quantity}</span>
                         <ProgressBar value={pickedInstances.length} max={item.quantity} colorClass="bg-blue-500" />
                     </div>
-                     <div className="text-center w-24">
-                        <p className='text-xs text-green-700'>裝箱</p>
+                     <div className="text-center w-28">
+                        <p className='text-xs text-green-700'>已裝箱 (SN)</p>
                         <span className="font-bold text-lg text-green-600">{packedInstances.length}</span>
                         <span className="text-gray-500">/{item.quantity}</span>
                         <ProgressBar value={packedInstances.length} max={item.quantity} colorClass="bg-green-500" />
                     </div>
-                    <button className="p-2">
+                    <button className="p-2 text-gray-500">
                         {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                     </button>
                 </div>
             </div>
             {isExpanded && (
-                <div className="border-t bg-gray-50 p-4 max-h-60 overflow-y-auto">
-                    <h4 className="font-semibold mb-2">序號 (SN) 列表</h4>
-                    <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 text-sm">
+                <div className="border-t bg-gray-50/50 p-4 max-h-60 overflow-y-auto">
+                    <h4 className="font-semibold mb-2 text-gray-600">序號 (SN) 列表</h4>
+                    <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 text-sm">
                         {instances.map(inst => (
-                            <li key={inst.id} className="font-mono flex items-center">
+                            <li key={inst.id} className="font-mono flex items-center" title={`狀態: ${inst.status}`}>
                                 {inst.status === 'packed' && <CheckCircle2 size={16} className="text-green-500 mr-2 flex-shrink-0" />}
                                 {inst.status === 'picked' && <PackageCheck size={16} className="text-blue-500 mr-2 flex-shrink-0" />}
                                 {inst.status === 'pending' && <Circle size={16} className="text-gray-400 mr-2 flex-shrink-0" />}
@@ -94,13 +100,14 @@ const SNItemCard = ({ item, instances, orderStatus, user }) => {
     );
 };
 
+// --- 新增：数量模式的品项卡片 ---
 const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating }) => {
     const canAdjustPick = (user.role === 'picker' || user.role === 'admin') && orderStatus === 'picking';
     const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && orderStatus === 'packing';
     
     return (
-        <div className="border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white">
-            <div className="flex items-center gap-4 flex-1">
+        <div className="border rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white shadow-sm">
+            <div className="flex items-center gap-4 flex-1 w-full">
                 <div>
                     <p className="font-semibold text-gray-800">{item.product_name}</p>
                     <p className="text-sm text-gray-500 font-mono flex items-center gap-2 mt-1"><Tag size={14} className="text-gray-400"/>{item.product_code}</p>
@@ -202,9 +209,37 @@ export function OrderWorkView({ user }) {
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
     const handleClick = () => { handleScan(); };
 
-    // ... (handleVoidOrder 和其他辅助函式保持不变)
-    const handleVoidOrder = async () => { /* ... */ };
-    const handleExportReport = () => { /* ... */ };
+    const handleVoidOrder = async () => {
+        if (!currentOrderData.order) return;
+        const { value: reason } = await MySwal.fire({ title: '確定要作廢此訂單？', text: "此操作無法復原，請輸入作廢原因：", input: 'text', showCancelButton: true, confirmButtonText: '確認作廢', cancelButtonText: '取消' });
+        if (reason) {
+            const promise = apiClient.patch(`/api/orders/${currentOrderData.order.id}/void`, { reason });
+            toast.promise(promise, {
+                loading: '正在作廢訂單...',
+                success: (res) => { navigate('/tasks'); return res.data.message; },
+                error: (err) => err.response?.data?.message || '操作失敗',
+            });
+        }
+    };
+
+    const handleExportReport = () => {
+        if (!currentOrderData.items) return;
+        const data = currentOrderData.items.map(item => ({ 
+            "國際條碼": item.barcode, 
+            "品項型號": item.product_code, 
+            "品項名稱": item.product_name, 
+            "應出數量": item.quantity, 
+            "已揀数量": item.picked_quantity, 
+            "已装箱数量": item.packed_quantity,
+            "SN列表": currentOrderData.instances.filter(i => i.order_item_id === item.id).map(i => i.serial_number).join(', ')
+        }));
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "出貨報告");
+        XLSX.writeFile(workbook, `出貨明細-${currentOrderData.order.voucher_number}.xlsx`);
+        toast.success('檔案已成功匯出');
+    };
+
     const handleReturnToTasks = () => navigate('/tasks');
 
     const progressStats = useMemo(() => {
@@ -258,8 +293,7 @@ export function OrderWorkView({ user }) {
     }
 
     return (
-        <div className={`p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen transition-colors duration-300 ${scanError ? 'bg-red-100' : ''}`}>
-            {/* Header */}
+        <div className={`p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen`}>
             <header className="flex justify-between items-center mb-8">
                 <button onClick={handleReturnToTasks} className="flex items-center text-gray-600 hover:text-gray-900 font-semibold p-2 rounded-lg hover:bg-gray-200 transition-colors">
                     <ArrowLeft className="mr-2" /> 返回任務列表
@@ -270,10 +304,8 @@ export function OrderWorkView({ user }) {
                 </div>
             </header>
 
-            {/* ProgressDashboard */}
             <ProgressDashboard stats={progressStats} onExport={handleExportReport} onVoid={handleVoidOrder} user={user} />
             
-            {/* Main Content */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1">
                     <div className="bg-white p-6 rounded-xl shadow-md sticky top-8">

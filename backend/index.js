@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v4.0 混合模式 (SN + Barcode)
+// MOZTECH WMS 後端主程式 (index.js) - v4.1 移除 SN 数量强检验
 // =================================================================
 
 // 引入必要套件
@@ -93,17 +93,17 @@ app.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'));
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
-        return res.status(400).json({ message: '请提供使用者名称和密码' });
+        return res.status(400).json({ message: '請提供使用者名稱和密碼' });
     }
     try {
         const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
         if (!user) {
-            return res.status(400).json({ message: '无效的使用者名称或密码' });
+            return res.status(400).json({ message: '無效的使用者名稱或密碼' });
         }
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) {
-            return res.status(400).json({ message: '无效的使用者名称或密码' });
+            return res.status(400).json({ message: '無效的使用者名稱或密碼' });
         }
         
         const accessToken = jwt.sign(
@@ -190,7 +190,6 @@ app.delete('/api/admin/users/:userId', authenticateToken, authorizeAdmin, async 
 
 
 // --- 核心工作流 API ---
-
 app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
     const client = await pool.connect();
@@ -259,10 +258,6 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
 
                 if (summary) {
                     const serialNumbers = summary.split('・').map(sn => sn.trim()).filter(sn => sn);
-                    if (serialNumbers.length > 0 && serialNumbers.length !== quantity) {
-                        await client.query('ROLLBACK');
-                        return res.status(400).json({ message: `品項 ${productCode} 的 SN 碼數量 (${serialNumbers.length}) 與訂單數量 (${quantity}) 不符。` });
-                    }
                     for (const sn of serialNumbers) {
                         await client.query(
                             'INSERT INTO order_item_instances (order_item_id, serial_number) VALUES ($1, $2)',
@@ -287,7 +282,6 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
 });
 
 app.get('/api/tasks', authenticateToken, async (req, res) => {
-    // This function remains unchanged, it works correctly.
     console.log(`[GET /api/tasks] 收到來自使用者 ID: ${req.user.id}, 角色: "${req.user.role}" 的任務請求`);
     const { role, id: userId } = req.user;
     const userRole = role ? role.trim() : null;
@@ -313,7 +307,6 @@ app.get('/api/tasks', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/orders/:orderId/claim', authenticateToken, async (req, res) => {
-    // This function remains unchanged.
     const { orderId } = req.params;
     const { id: userId, role, name: userName } = req.user;
     const client = await pool.connect();
@@ -346,7 +339,6 @@ app.post('/api/orders/:orderId/claim', authenticateToken, async (req, res) => {
 });
 
 app.get('/api/orders/:orderId', authenticateToken, async (req, res) => {
-    // This function is upgraded to return instances.
     try {
         const { orderId } = req.params;
         const orderResult = await pool.query('SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1;', [orderId]);
@@ -373,8 +365,8 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         const order = (await client.query('SELECT * FROM orders WHERE id = $1', [orderId])).rows[0];
         
         // 权限检查
-        if (type === 'pick' && order.picker_id !== userId) throw new Error('您不是此訂單的指定揀貨員');
-        if (type === 'pack' && order.packer_id !== userId) throw new Error('您不是此訂單的指定裝箱員');
+        if (type === 'pick' && order.picker_id !== userId && user.role !== 'admin') throw new Error('您不是此訂單的指定揀貨員');
+        if (type === 'pack' && order.packer_id !== userId && user.role !== 'admin') throw new Error('您不是此訂單的指定裝箱員');
 
         // 模式判断：先尝试作为 SN 码查找
         let instanceResult = await client.query(
@@ -423,6 +415,40 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         
         await client.query('COMMIT');
         
+        // 检查并更新整个订单的状态
+        const allItems = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
+        const allInstances = await client.query('SELECT i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
+        
+        let allPicked = true;
+        let allPacked = true;
+
+        for(const item of allItems.rows) {
+            const itemInstances = allInstances.rows.filter(inst => inst.order_item_id === item.id);
+            if (itemInstances.length > 0) {
+                if(!itemInstances.every(i => i.status === 'picked' || i.status === 'packed')) allPicked = false;
+                if(!itemInstances.every(i => i.status === 'packed')) allPacked = false;
+            } else {
+                if(item.picked_quantity < item.quantity) allPicked = false;
+                if(item.packed_quantity < item.quantity) allPacked = false;
+            }
+        }
+        
+        let statusChanged = false;
+        let finalStatus = order.status;
+        if (allPacked && order.status !== 'completed') {
+            finalStatus = 'completed';
+            statusChanged = true;
+            await client.query(`UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
+        } else if (allPicked && order.status === 'picking') {
+            finalStatus = 'picked';
+            statusChanged = true;
+            await client.query(`UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
+        }
+        
+        if (statusChanged) {
+             io.emit('task_status_changed', { orderId: parseInt(orderId), newStatus: finalStatus });
+        }
+        
         // 返回最新的完整订单资料
         const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
         const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
@@ -439,7 +465,6 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
 });
 
 app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async (req, res) => {
-    // This function remains unchanged.
     const { orderId } = req.params;
     const { reason } = req.body;
     try {
@@ -454,7 +479,6 @@ app.patch('/api/orders/:orderId/void', authenticateToken, authorizeAdmin, async 
 });
 
 app.delete('/api/orders/:orderId', authenticateToken, authorizeAdmin, async (req, res) => {
-    // This function remains unchanged.
     const { orderId } = req.params;
     const client = await pool.connect();
     try {
@@ -478,7 +502,6 @@ app.delete('/api/orders/:orderId', authenticateToken, authorizeAdmin, async (req
 
 // --- 報告相關 API (僅限管理員) ---
 app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, res) => {
-    // This function remains unchanged.
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: '必須提供開始與結束日期' });
     try {
