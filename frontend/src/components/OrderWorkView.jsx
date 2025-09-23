@@ -1,4 +1,4 @@
-// frontend/src/pages/OrderWorkView.jsx - v4.3 混合模式前端
+// frontend/src/pages/OrderWorkView.jsx - v4.3 最终修复版
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -55,7 +55,7 @@ const SNItemCard = ({ item, instances }) => {
     
     return (
         <div className="border rounded-lg bg-white shadow-sm">
-            <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4 cursor-pointer hover:bg-gray-50" onClick={() => setIsExpanded(!isExpanded)}>
+            <div className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setIsExpanded(!isExpanded)}>
                 <div className="flex items-center gap-4 flex-1 w-full">
                     <div>
                         <p className="font-semibold text-gray-800">{item.product_name}</p>
