@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v4.1 移除 SN 数量强检验
+// MOZTECH WMS 後端主程式 (index.js) - v4.2 全繁體中文
 // =================================================================
 
 // 引入必要套件
@@ -117,8 +117,8 @@ app.post('/api/auth/login', async (req, res) => {
             user: { id: user.id, username: user.username, name: user.name, role: user.role } 
         });
     } catch (err) {
-        console.error('登入失败:', err);
-        res.status(500).json({ message: '伺服器内部错误' });
+        console.error('登入失敗:', err);
+        res.status(500).json({ message: '伺服器內部錯誤' });
     }
 });
 
@@ -217,14 +217,12 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
             }
         }
         if (itemsStartRow === -1) return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到包含 '品項編碼' 的標頭行" });
-
         const barcodeIndex = headerRow.findIndex(h => String(h).includes('品項編碼'));
         const nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品項名稱'));
         const quantityIndex = headerRow.findIndex(h => String(h).includes('數量'));
         const summaryIndex = headerRow.findIndex(h => String(h).includes('摘要'));
-
         if (barcodeIndex === -1 || nameAndSkuIndex === -1 || quantityIndex === -1) {
-            return res.status(400).json({ message: "Excel 檔案格式錯誤：缺少必要的栏位" });
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：缺少必要的欄位" });
         }
         
         await client.query('BEGIN');
@@ -257,7 +255,11 @@ app.post('/api/orders/import', authenticateToken, upload.single('orderFile'), as
                 const orderItemId = itemInsertResult.rows[0].id;
 
                 if (summary) {
-                    const serialNumbers = summary.split('・').map(sn => sn.trim()).filter(sn => sn);
+                    const serialNumbers = summary
+                        .split('・')
+                        .map(sn => sn.replace(/[ㆍ\s]/g, '').trim())
+                        .filter(sn => sn);
+
                     for (const sn of serialNumbers) {
                         await client.query(
                             'INSERT INTO order_item_instances (order_item_id, serial_number) VALUES ($1, $2)',
@@ -364,11 +366,10 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         await client.query('BEGIN');
         const order = (await client.query('SELECT * FROM orders WHERE id = $1', [orderId])).rows[0];
         
-        // 权限检查
-        if (type === 'pick' && order.picker_id !== userId && user.role !== 'admin') throw new Error('您不是此訂單的指定揀貨員');
-        if (type === 'pack' && order.packer_id !== userId && user.role !== 'admin') throw new Error('您不是此訂單的指定裝箱員');
+        if ((type === 'pick' && order.picker_id !== userId && req.user.role !== 'admin') || (type === 'pack' && order.packer_id !== userId && req.user.role !== 'admin')) {
+             throw new Error('您不是此任務的指定操作員');
+        }
 
-        // 模式判断：先尝试作为 SN 码查找
         let instanceResult = await client.query(
             `SELECT i.id, i.status, i.order_item_id, oi.product_code 
              FROM order_item_instances i 
@@ -378,7 +379,6 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         );
 
         if (instanceResult.rows.length > 0) {
-            // --- SN 码模式 ---
             const instance = instanceResult.rows[0];
             let newStatus = '';
             if (type === 'pick' && instance.status === 'pending') newStatus = 'picked';
@@ -389,7 +389,6 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
             await logOperation(userId, orderId, type, { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` });
 
         } else {
-            // --- 国际条码（数量）模式 ---
             const itemResult = await client.query(
                 `SELECT oi.* FROM order_items oi 
                  LEFT JOIN order_item_instances i ON oi.id = i.order_item_id
@@ -415,15 +414,14 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         
         await client.query('COMMIT');
         
-        // 检查并更新整个订单的状态
-        const allItems = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-        const allInstances = await client.query('SELECT i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
+        const allItems = (await pool.query('SELECT * FROM order_items WHERE order_id = $1', [orderId])).rows;
+        const allInstances = (await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId])).rows;
         
         let allPicked = true;
         let allPacked = true;
 
-        for(const item of allItems.rows) {
-            const itemInstances = allInstances.rows.filter(inst => inst.order_item_id === item.id);
+        for(const item of allItems) {
+            const itemInstances = allInstances.filter(inst => inst.order_item_id === item.id);
             if (itemInstances.length > 0) {
                 if(!itemInstances.every(i => i.status === 'picked' || i.status === 'packed')) allPicked = false;
                 if(!itemInstances.every(i => i.status === 'packed')) allPacked = false;
@@ -438,18 +436,17 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
         if (allPacked && order.status !== 'completed') {
             finalStatus = 'completed';
             statusChanged = true;
-            await client.query(`UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
+            await pool.query(`UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
         } else if (allPicked && order.status === 'picking') {
             finalStatus = 'picked';
             statusChanged = true;
-            await client.query(`UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
+            await pool.query(`UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]);
         }
         
         if (statusChanged) {
              io.emit('task_status_changed', { orderId: parseInt(orderId), newStatus: finalStatus });
         }
         
-        // 返回最新的完整订单资料
         const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
         const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
         const updatedInstancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
@@ -457,8 +454,8 @@ app.post('/api/orders/update_item', authenticateToken, async (req, res) => {
 
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error('更新品项状态失败:', err.message);
-        res.status(400).json({ message: err.message || '伺服器内部错误' });
+        console.error('更新品項狀態失敗:', err.message);
+        res.status(400).json({ message: err.message || '伺服器內部錯誤' });
     } finally {
         client.release();
     }
