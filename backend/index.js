@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v5.1 最終完整修正版
+// MOZTECH WMS 後端主程式 (index.js) - v5.2 最終完整修正版
 // =================================================================
  
 // --- 核心套件引入 ---
@@ -136,7 +136,7 @@ adminRouter.put('/users/:userId', async (req, res) => {
     const { userId } = req.params;
     const { name, role, password } = req.body;
     if (!name && !role && !password) return res.status(400).json({ message: '請提供至少一項要更新的資訊' });
-    if (Number(userId) === req.user.id && role && role !== 'admin') return res.status(400).json({ message: '無法修改自己的管理員權限' });
+    if (Number(userId) === req.user.id && role && role.trim() !== 'admin') return res.status(400).json({ message: '無法修改自己的管理員權限' });
     try {
         let query = 'UPDATE users SET ';
         const values = []; let valueCount = 1;
@@ -175,7 +175,7 @@ app.use('/api/admin', authenticateToken, authorizeAdmin, adminRouter);
 // --- 核心工作流 API 路由 ---
 const orderRouter = express.Router();
 
-orderRouter.post('/import', upload.single('orderFile'), async (req, res) => {
+orderRouter.post('/import', authorizeAdmin, upload.single('orderFile'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
     const client = await pool.connect();
     try {
@@ -353,13 +353,14 @@ orderRouter.delete('/:orderId', authorizeAdmin, async (req, res) => {
 // ✅✅✅ 【核心修正 #1】: 將所有 /api/orders/... 路由應用到主 App，解決 404 問題
 app.use('/api/orders', authenticateToken, orderRouter);
 
+
 // GET /api/tasks
 app.get('/api/tasks', authenticateToken, async (req, res) => {
     // ✅ 【核心修正 #2】: 對 role 進行 trim() 清洗，解決 403 問題
     const role = req.user.role ? req.user.role.trim() : null;
     const userId = req.user.id;
 
-    console.log(`[GET /api/tasks] Request from user ID: ${userId}, Role from token: "${req.user.role}", Cleaned role: "${role}"`);
+    console.log(`[GET /api/tasks] Request from user ID: ${userId}. Role from token: "${req.user.role}", Cleaned role: "${role}"`);
     if (!role) {
         console.error(`[GET /api/tasks] User ID: ${userId} has an invalid or null role.`);
         return res.status(403).json({ message: '使用者角色無效' });
