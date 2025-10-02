@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v5.2 最終完整修正版
+// MOZTECH WMS 後端主程式 (index.js) - v5.3 最終診斷修正版
 // =================================================================
  
 // --- 核心套件引入 ---
@@ -62,8 +62,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 const authorizeAdmin = (req, res, next) => {
-    // ✅ 防禦性修正: 對 role 進行 trim() 處理
-    if (!req.user.role || req.user.role.trim() !== 'admin') {
+    if (!req.user.role || req.user.role.trim().toLowerCase() !== 'admin') {
         return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
     }
     next();
@@ -356,13 +355,15 @@ app.use('/api/orders', authenticateToken, orderRouter);
 
 // GET /api/tasks
 app.get('/api/tasks', authenticateToken, async (req, res) => {
-    // ✅ 【核心修正 #2】: 對 role 進行 trim() 清洗，解決 403 問題
-    const role = req.user.role ? req.user.role.trim() : null;
+    // ✅ 【核心修正 #2】: 對 role 進行 trim() 和 toLowerCase() 清洗，徹底解決 403 問題
+    const role = req.user.role ? req.user.role.trim().toLowerCase() : null;
     const userId = req.user.id;
 
-    console.log(`[GET /api/tasks] Request from user ID: ${userId}. Role from token: "${req.user.role}", Cleaned role: "${role}"`);
+    // ✅ 【核心修正 #3】: 添加終極日誌，方便在 Render 上追蹤問題
+    console.log(`[ULTIMATE DEBUG] /api/tasks request from user ID: ${userId}. Raw role from token: "${req.user.role}", Final role for query: "${role}"`);
+    
     if (!role) {
-        console.error(`[GET /api/tasks] User ID: ${userId} has an invalid or null role.`);
+        console.error(`[ERROR] User ID: ${userId} has an invalid or null role.`);
         return res.status(403).json({ message: '使用者角色無效' });
     }
 
@@ -381,10 +382,10 @@ app.get('/api/tasks', authenticateToken, async (req, res) => {
             ORDER BY o.created_at ASC;
         `;
         const result = await pool.query(query, [userId, role]);
-        console.log(`[GET /api/tasks] Query for user ID: ${userId} with role: "${role}" returned ${result.rowCount} tasks.`);
+        console.log(`[ULTIMATE DEBUG] Query for user ID: ${userId} with final role: "${role}" returned ${result.rowCount} tasks.`);
         res.json(result.rows);
     } catch (error) {
-        console.error(`[GET /api/tasks] Failed for user ID: ${userId}, role: "${role}". Error:`, error);
+        console.error(`[ERROR] Failed to fetch tasks for user ID: ${userId}, role: "${role}". Error:`, error);
         res.status(500).json({ message: '獲取任務列表時發生錯誤' });
     }
 });
