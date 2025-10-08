@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 後端主程式 (index.js) - v5.3 最終診斷修正版
+// MOZTECH WMS 後端主程式 (index.js) - v5.2 最終完整修正版
 // =================================================================
  
 // --- 核心套件引入 ---
@@ -49,19 +49,33 @@ const io = new Server(server, {
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
+
+    // --- 診斷日誌 ---
+    console.log('============================================================');
+    console.log('[DIAGNOSTIC] New request for:', req.path);
+    const secretFromEnv = process.env.JWT_SECRET;
+    console.log('[DIAGNOSTIC] JWT_SECRET Loaded:', secretFromEnv ? `Yes (length: ${secretFromEnv.length})` : '!!! NO / UNDEFINED !!!');
+    // --- 日誌結束 ---
+
     if (token == null) return res.status(401).json({ message: '未提供認證權杖 (Token)' });
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    jwt.verify(token, secretFromEnv, (err, user) => {
         if (err) {
-            console.error('JWT 驗證失敗:', err.message);
+            console.error('[CRITICAL ERROR] JWT Verification FAILED! Message:', err.message);
+            console.log('============================================================');
             return res.status(403).json({ message: '無效或過期的權杖' });
         }
+        
+        console.log('[DIAGNOSTIC] JWT Verification SUCCESSFUL for user:', user.username);
+        console.log('============================================================');
+
         req.user = user;
         next();
     });
 };
 
 const authorizeAdmin = (req, res, next) => {
+    // ✅ 防禦性修正: 對 role 進行 trim() 和 toLowerCase() 處理
     if (!req.user.role || req.user.role.trim().toLowerCase() !== 'admin') {
         return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
     }
@@ -135,7 +149,7 @@ adminRouter.put('/users/:userId', async (req, res) => {
     const { userId } = req.params;
     const { name, role, password } = req.body;
     if (!name && !role && !password) return res.status(400).json({ message: '請提供至少一項要更新的資訊' });
-    if (Number(userId) === req.user.id && role && role.trim() !== 'admin') return res.status(400).json({ message: '無法修改自己的管理員權限' });
+    if (Number(userId) === req.user.id && role && role.trim().toLowerCase() !== 'admin') return res.status(400).json({ message: '無法修改自己的管理員權限' });
     try {
         let query = 'UPDATE users SET ';
         const values = []; let valueCount = 1;
@@ -242,7 +256,7 @@ orderRouter.post('/update_item', async (req, res) => {
     try {
         await client.query('BEGIN');
         const order = (await client.query('SELECT * FROM orders WHERE id = $1', [orderId])).rows[0];
-        if ((type === 'pick' && order.picker_id !== userId && role.trim() !== 'admin') || (type === 'pack' && order.packer_id !== userId && role.trim() !== 'admin')) throw new Error('您不是此任務的指定操作員');
+        if ((type === 'pick' && order.picker_id !== userId && role.trim().toLowerCase() !== 'admin') || (type === 'pack' && order.packer_id !== userId && role.trim().toLowerCase() !== 'admin')) throw new Error('您不是此任務的指定操作員');
         let instanceResult = await client.query(`SELECT i.id, i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 AND i.serial_number = $2 FOR UPDATE`, [orderId, scanValue]);
         if (instanceResult.rows.length > 0) {
             const instance = instanceResult.rows[0]; let newStatus = '';
@@ -286,10 +300,10 @@ orderRouter.post('/:orderId/claim', async (req, res) => {
         const order = orderResult.rows[0];
         if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ message: '找不到該訂單' }); }
         let newStatus = '', task_type = '';
-        if ((role.trim() === 'picker' || role.trim() === 'admin') && order.status === 'pending') {
+        if ((role.trim().toLowerCase() === 'picker' || role.trim().toLowerCase() === 'admin') && order.status === 'pending') {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-        } else if ((role.trim() === 'packer' || role.trim() === 'admin') && order.status === 'picked') {
+        } else if ((role.trim().toLowerCase() === 'packer' || role.trim().toLowerCase() === 'admin') && order.status === 'picked') {
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
         } else { await client.query('ROLLBACK'); return res.status(400).json({ message: `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。` }); }
@@ -349,17 +363,14 @@ orderRouter.delete('/:orderId', authorizeAdmin, async (req, res) => {
     }
 });
 
-// ✅✅✅ 【核心修正 #1】: 將所有 /api/orders/... 路由應用到主 App，解決 404 問題
 app.use('/api/orders', authenticateToken, orderRouter);
 
 
 // GET /api/tasks
 app.get('/api/tasks', authenticateToken, async (req, res) => {
-    // ✅ 【核心修正 #2】: 對 role 進行 trim() 和 toLowerCase() 清洗，徹底解決 403 問題
     const role = req.user.role ? req.user.role.trim().toLowerCase() : null;
     const userId = req.user.id;
 
-    // ✅ 【核心修正 #3】: 添加終極日誌，方便在 Render 上追蹤問題
     console.log(`[ULTIMATE DEBUG] /api/tasks request from user ID: ${userId}. Raw role from token: "${req.user.role}", Final role for query: "${role}"`);
     
     if (!role) {
