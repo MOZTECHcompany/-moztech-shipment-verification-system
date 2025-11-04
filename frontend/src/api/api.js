@@ -24,6 +24,56 @@ const apiClient = axios.create({
 });
 
 /**
+ * 嘗試從 localStorage 中提取乾淨的 JWT。
+ *
+ * - useLocalStorage Hook 會以 JSON 字串的形式保存資料，因此這裡會優先 JSON.parse。
+ * - 若 parse 失敗，則將原始字串去除首尾引號與空白。
+ * - 如果 parse 後得到物件 (例如未來可能調整儲存結構)，
+ *   會嘗試從常見的欄位中讀取 token。
+ */
+function extractToken(rawToken) {
+    if (!rawToken) return null;
+
+    const cleanupString = (value) => {
+        const trimmed = value.trim();
+
+        if (trimmed.length >= 2) {
+            const firstChar = trimmed[0];
+            const lastChar = trimmed[trimmed.length - 1];
+
+            if ((firstChar === '"' && lastChar === '"') || (firstChar === "'" && lastChar === "'")) {
+                return trimmed.slice(1, -1);
+            }
+        }
+
+        return trimmed;
+    };
+
+    try {
+        const parsed = JSON.parse(rawToken);
+
+        if (typeof parsed === 'string') {
+            return cleanupString(parsed);
+        }
+
+        if (parsed && typeof parsed === 'object') {
+            const candidate = parsed.token || parsed.accessToken;
+            if (typeof candidate === 'string' && candidate.trim()) {
+                return cleanupString(candidate);
+            }
+        }
+
+        if (parsed !== null && parsed !== undefined) {
+            return cleanupString(String(parsed));
+        }
+    } catch (error) {
+        return cleanupString(rawToken);
+    }
+
+    return null;
+}
+
+/**
  * 設置 Axios 請求攔截器 (Request Interceptor)。
  * 這個攔截器會在每一次透過 apiClient 發送請求之前自動執行。
  * 它的核心作用是檢查本地儲存 (localStorage) 中是否存在 JWT，
@@ -32,14 +82,12 @@ const apiClient = axios.create({
  */
 apiClient.interceptors.request.use(
     (config) => {
-        // 從 localStorage 中獲取 token
-        const token = localStorage.getItem('token');
-        
-        // 如果 token 存在，則將其格式化為 "Bearer <token>" 並設置到標頭中
+        const token = extractToken(localStorage.getItem('token'));
+
         if (token) {
             config.headers['Authorization'] = `Bearer ${token}`;
         }
-        
+
         // 返回修改後的 config 物件，讓請求繼續發送
         return config;
     },
