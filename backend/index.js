@@ -1,5 +1,5 @@
 // =================================================================
-// MOZTECH WMS 后端主程式 (index.js) - v5.8 跨环境稳定版
+// MOZTECH WMS 后端主程式 (index.js) - v5.9 汇入功能强化版
 // =================================================================
  
 // --- 核心套件引入 ---
@@ -23,22 +23,16 @@ const port = process.env.PORT || 3001;
 const server = http.createServer(app);
 
 // --- 全局中介软体设定 ---
-// 🔥🔥🔥【CORS 最终解决方案】: 动态允许多个来源 (线上正式环境 + 本地开发环境) 🔥🔥🔥
 const allowedOrigins = [
     'https://moztech-shipment-verification-system.onrender.com', // 您的线上前端 URL
     'http://localhost:3000',                                     // 您本地开发时前端的 URL
-    'http://localhost:3001'                                      // (备用) 有时本地开发也需要
+    'http://localhost:3001'
 ];
 const corsOptions = {
     origin: function (origin, callback) {
-        // 允许 Postman 等没有 origin 的请求 (用于 API 测试)
-        if (!origin) return callback(null, true);
-        
-        // 如果请求的来源在我们的允许列表中，就允许它
-        if (allowedOrigins.indexOf(origin) !== -1) {
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            // 否则，拒绝它
             console.error(`CORS Error: Request from origin ${origin} is not allowed.`);
             callback(new Error('Not allowed by CORS'));
         }
@@ -57,9 +51,8 @@ const pool = new Pool({
 });
 
 // --- Socket.IO 即时通讯伺服器设定 ---
-// Socket.IO 的 CORS 设定也应该与 HTTP 的设定保持一致
 const io = new Server(server, {
-    cors: corsOptions, // 直接复用上面定义的 corsOptions
+    cors: corsOptions,
     allowEIO3: true
 });
 
@@ -115,7 +108,6 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ message: '请提供使用者名称和密码' });
     try {
-        // 🔥【登入关键修正】: 使用 LOWER() 让使用者名称比对不区分大小写
         const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
         const user = result.rows[0];
         if (!user) return res.status(400).json({ message: '无效的使用者名称或密码' });
@@ -123,7 +115,6 @@ app.post('/api/auth/login', async (req, res) => {
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) return res.status(400).json({ message: '无效的使用者名称或密码' });
 
-        // 🔥【权限关键修正】: 在生成 Token 前，对角色(role)进行清洗
         const cleanedRole = user.role ? String(user.role).trim().toLowerCase() : null;
 
         const accessToken = jwt.sign(
@@ -222,27 +213,45 @@ orderRouter.post('/import', authorizeAdmin, upload.single('orderFile'), async (r
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
-        const voucherCell = data[1]?.[0] ? String(data[1][0]) : '';
-        const voucherMatch = voucherCell.match(/凭证号码\s*[:：]\s*(.*)/);
-        const voucherNumber = voucherMatch ? voucherMatch[1].trim() : null;
-        const customerCell = data[2]?.[0] ? String(data[2][0]) : '';
-        const customerMatch = customerCell.match(/收件-客户\/供应商\s*[:：]\s*(.*)/);
-        const customerName = customerMatch ? customerMatch[1].trim() : null;
-        if (!voucherNumber) return res.status(400).json({ message: "Excel 档案格式错误：找不到凭证号码" });
+
+        // 🔥🔥🔥【凭证号码提取 关键修正】: 使用更健壮的字串处理方法 🔥🔥🔥
+        const voucherCellRaw = data[1]?.[0] ? String(data[1][0]) : '';
+        let voucherNumber = null;
+        const parts = voucherCellRaw.split(/[:：]/);
+        if (parts.length > 1) {
+            voucherNumber = parts[1].trim();
+        }
+        
+        if (!voucherNumber) {
+            console.error('Failed to extract voucher number from cell content:', voucherCellRaw);
+            return res.status(400).json({ message: "Excel 档案格式错误：找不到凭证号码。请确认 B2 储存格格式为 '凭证号码: XXX'" });
+        }
+        
+        const customerCellRaw = data[2]?.[0] ? String(data[2][0]) : '';
+        let customerName = null;
+        const customerParts = customerCellRaw.split(/[:：]/);
+        if (customerParts.length > 1) {
+            customerName = customerParts[1].trim();
+        }
+        
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
         if (existingOrder.rows.length > 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({ message: `订单 ${voucherNumber} 已存在` });
         }
+        
         const orderInsertResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status) VALUES ($1, $2, $3) RETURNING id', [voucherNumber, customerName, 'pending']);
         const orderId = orderInsertResult.rows[0].id;
+        
         let itemsStartRow = -1, headerRow = [];
         for (let i = 0; i < data.length; i++) {
             if (data[i]?.some(cell => String(cell).includes('品项编码'))) { itemsStartRow = i + 1; headerRow = data[i]; break; }
         }
         if (itemsStartRow === -1) return res.status(400).json({ message: "Excel 档案格式错误：找不到品项标头" });
+        
         const barcodeIndex = headerRow.findIndex(h => String(h).includes('品项编码')), nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品项名称')), quantityIndex = headerRow.findIndex(h => String(h).includes('数量')), summaryIndex = headerRow.findIndex(h => String(h).includes('摘要'));
         if (barcodeIndex === -1 || nameAndSkuIndex === -1 || quantityIndex === -1) return res.status(400).json({ message: "Excel 档案格式错误：缺少必要栏位" });
+        
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
             if (!row?.[barcodeIndex] || !row?.[nameAndSkuIndex] || !row?.[quantityIndex]) continue;
@@ -385,7 +394,7 @@ orderRouter.delete('/:orderId', authorizeAdmin, async (req, res) => {
 
 // --- 任务 & 报告路由 (独立路由) ---
 app.get('/api/tasks', authenticateToken, async (req, res) => {
-    const role = req.user.role; // Token 中的 role 已经被清洗过了
+    const role = req.user.role;
     const userId = req.user.id;
     if (!role) {
         console.error(`[ERROR] User ID: ${userId} has an invalid or null role.`);
@@ -413,7 +422,7 @@ app.get('/api/tasks', authenticateToken, async (req, res) => {
     }
 });
 app.get('/api/reports/export', authenticateToken, authorizeAdmin, async (req, res) => {
-    const { startDate, endDate } = req.body;
+    const { startDate, endDate } = req.query; // Changed from req.body to req.query for GET request
     if (!startDate || !endDate) return res.status(400).json({ message: '必须提供开始与结束日期' });
     try {
         const inclusiveEndDate = endDate + ' 23:59:59';
