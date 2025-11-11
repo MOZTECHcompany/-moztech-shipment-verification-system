@@ -98,14 +98,16 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ message: '請提供使用者名稱和密碼' });
     try {
-        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        // 🔥🔥🔥【關鍵修正】: 使用 LOWER() 讓使用者名稱比對不區分大小寫 🔥🔥🔥
+        // 我們將資料庫中的 username 和使用者輸入的 username 都轉換成小寫再比對。
+        const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
+        
         const user = result.rows[0];
         if (!user) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
         
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
 
-        // 🔥🔥🔥【關鍵修正 A】: 在生成 Token 前，對角色(role)進行清洗，確保格式一致 🔥🔥🔥
         const cleanedRole = user.role ? String(user.role).trim().toLowerCase() : null;
 
         const accessToken = jwt.sign(
