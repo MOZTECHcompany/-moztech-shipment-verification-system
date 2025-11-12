@@ -275,72 +275,6 @@ apiRouter.get('/tasks', async (req, res) => {
     res.json(result.rows);
 });
 
-// 數據分析端點
-apiRouter.get('/analytics', authorizeAdmin, async (req, res) => {
-    try {
-        const { range = '7d' } = req.query;
-        
-        // 計算日期範圍
-        const days = range === '7d' ? 7 : range === '30d' ? 30 : range === '90d' ? 90 : 7;
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - days);
-        
-        // 基礎統計
-        const statsQuery = `
-            SELECT 
-                COUNT(*) as total_orders,
-                COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
-                COUNT(CASE WHEN status = 'void' THEN 1 END) as void_orders,
-                COUNT(CASE WHEN status IN ('pending', 'picking', 'packing') THEN 1 END) as active_orders
-            FROM orders
-            WHERE created_at >= $1
-        `;
-        
-        // 每日訂單趨勢
-        const trendQuery = `
-            SELECT 
-                DATE(created_at) as date,
-                COUNT(*) as count,
-                COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed
-            FROM orders
-            WHERE created_at >= $1
-            GROUP BY DATE(created_at)
-            ORDER BY date DESC
-            LIMIT ${days}
-        `;
-        
-        // 員工績效
-        const performanceQuery = `
-            SELECT 
-                u.name,
-                u.role,
-                COUNT(DISTINCT ol.order_id) as orders_handled,
-                COUNT(ol.id) as total_operations
-            FROM operation_logs ol
-            JOIN users u ON ol.user_id = u.id
-            WHERE ol.created_at >= $1
-            GROUP BY u.id, u.name, u.role
-            ORDER BY orders_handled DESC
-            LIMIT 10
-        `;
-        
-        const [stats, trend, performance] = await Promise.all([
-            pool.query(statsQuery, [startDate]),
-            pool.query(trendQuery, [startDate]),
-            pool.query(performanceQuery, [startDate])
-        ]);
-        
-        res.json({
-            stats: stats.rows[0],
-            trend: trend.rows,
-            performance: performance.rows
-        });
-    } catch (error) {
-        logger.error('[/api/analytics] 查詢失敗:', error);
-        res.status(500).json({ message: '獲取分析數據失敗' });
-    }
-});
-
 // 批次操作端點
 apiRouter.post('/orders/batch-claim', async (req, res) => {
     try {
@@ -640,7 +574,15 @@ apiRouter.post('/orders/update_item', async (req, res, next) => {
             await logOperation(userId, orderId, type, { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` });
         } else {
             const itemResult = await client.query(`SELECT oi.id, oi.quantity, oi.picked_quantity, oi.packed_quantity FROM order_items oi LEFT JOIN order_item_instances i ON oi.id = i.order_item_id WHERE oi.order_id = $1 AND oi.barcode = $2 AND i.id IS NULL`, [orderId, scanValue]);
-            if (itemResult.rows.length === 0) throw new Error(`條碼 ${scanValue} 不屬於此訂單，或該品項需要掃描 SN 碼`);
+            if (itemResult.rows.length === 0) {
+                // 記錄刷錯條碼的操作
+                await logOperation(userId, orderId, 'scan_error', { 
+                    scanValue, 
+                    type, 
+                    reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' 
+                });
+                throw new Error(`條碼 ${scanValue} 不屬於此訂單，或該品項需要掃描 SN 碼`);
+            }
             const item = itemResult.rows[0];
             if (type === 'pick') { 
                 const newPickedQty = item.picked_quantity + amount; 
@@ -904,6 +846,57 @@ apiRouter.post('/orders/batch/claim', async (req, res) => {
     } catch (error) {
         logger.error('[/api/orders/batch/claim] 失敗:', error);
         res.status(500).json({ message: '批次認領失敗' });
+    }
+});
+
+// 📋 刷錯條碼記錄查詢 API
+apiRouter.get('/scan-errors', authorizeAdmin, async (req, res) => {
+    const { startDate, endDate, limit = 50 } = req.query;
+    
+    try {
+        let query = `
+            SELECT 
+                ol.id,
+                ol.created_at,
+                ol.action_type,
+                ol.details,
+                u.name as user_name,
+                u.role as user_role,
+                o.voucher_number,
+                o.customer_name
+            FROM operation_logs ol
+            JOIN users u ON ol.user_id = u.id
+            LEFT JOIN orders o ON ol.order_id = o.id
+            WHERE ol.action_type = 'scan_error'
+        `;
+        
+        const params = [];
+        let paramCount = 1;
+        
+        if (startDate) {
+            query += ` AND ol.created_at >= $${paramCount}`;
+            params.push(startDate);
+            paramCount++;
+        }
+        
+        if (endDate) {
+            query += ` AND ol.created_at <= $${paramCount}`;
+            params.push(endDate);
+            paramCount++;
+        }
+        
+        query += ` ORDER BY ol.created_at DESC LIMIT $${paramCount}`;
+        params.push(parseInt(limit));
+        
+        const result = await pool.query(query, params);
+        
+        res.json({
+            total: result.rows.length,
+            errors: result.rows
+        });
+    } catch (error) {
+        logger.error('[/api/scan-errors] 查詢失敗:', error);
+        res.status(500).json({ message: '查詢刷錯記錄失敗' });
     }
 });
 

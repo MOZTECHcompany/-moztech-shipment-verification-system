@@ -153,7 +153,7 @@ class SoundNotification {
         }
     }
 
-    // 錯誤提示 - 低沉警告音
+        // 錯誤提示 - 更刺耳的警告音
     async playError() {
         console.log('[SoundNotification] playError 被呼叫, enabled:', this.enabled);
         if (!this.enabled) {
@@ -161,8 +161,10 @@ class SoundNotification {
             return;
         }
         try {
-            await this.playTone(200, 0.15, 0);
-            await this.playTone(150, 0.2, 0.15);
+            // 三段式刺耳警告音: 高-低-高
+            await this.playTone(800, 0.1, 0);      // 高音
+            await this.playTone(200, 0.15, 0.1);   // 低音 
+            await this.playTone(800, 0.1, 0.25);   // 高音
             console.log('[SoundNotification] 錯誤音效播放完成');
         } catch (err) {
             console.error('[SoundNotification] 錯誤音效播放失敗:', err);
