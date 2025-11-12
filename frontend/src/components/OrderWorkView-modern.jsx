@@ -10,6 +10,7 @@ import {
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '../api/api';
+import { soundNotification } from '../utils/soundNotification';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
@@ -310,9 +311,25 @@ export function OrderWorkView({ user }) {
             setCurrentOrderData(response.data);
             toast.success(`掃描成功: ${scanValue}`);
         } catch (err) {
-            setScanError(err.response?.data?.message || '發生未知錯誤');
+            const errorMsg = err.response?.data?.message || '發生未知錯誤';
+            setScanError(errorMsg);
+            
+            // 播放錯誤音效
+            soundNotification.play('error');
             errorSoundRef.current?.play();
-            setTimeout(() => setScanError(null), 1500);
+            
+            // 震動提示 (如果支援)
+            if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200]);
+            }
+            
+            // 顯示 Toast 提醒
+            toast.error('條碼不符！', { 
+                description: errorMsg,
+                duration: 3000
+            });
+            
+            setTimeout(() => setScanError(null), 3000);
         } finally {
             setIsUpdating(false);
         }
@@ -331,9 +348,25 @@ export function OrderWorkView({ user }) {
         if (operationType) {
             updateItemState(scanValue, operationType, 1);
         } else {
-            setScanError(`操作錯誤：目前狀態 (${status}) 不允許此操作`);
+            const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
+            setScanError(errorMsg);
+            
+            // 播放錯誤音效
+            soundNotification.play('error');
             errorSoundRef.current?.play();
-            setTimeout(() => setScanError(null), 1500);
+            
+            // 震動提示
+            if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200]);
+            }
+            
+            // Toast 提醒
+            toast.error('操作不允許！', { 
+                description: errorMsg,
+                duration: 3000 
+            });
+            
+            setTimeout(() => setScanError(null), 3000);
         }
         setBarcodeInput('');
     };
@@ -482,7 +515,11 @@ export function OrderWorkView({ user }) {
                                     value={barcodeInput}
                                     onChange={(e) => setBarcodeInput(e.target.value)}
                                     onKeyDown={handleKeyDown}
-                                    className={`input-apple w-full ${scanError ? 'border-red-500 ring-2 ring-red-200 animate-shake' : ''}`}
+                                    className={`input-apple w-full ${
+                                        scanError 
+                                            ? 'border-red-500 ring-4 ring-red-300 bg-red-50 animate-shake' 
+                                            : ''
+                                    }`}
                                 />
                                 <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                             </div>
@@ -505,11 +542,14 @@ export function OrderWorkView({ user }) {
                 <div className="lg:col-span-2">
                     <div className="glass card-apple p-6 min-h-full relative animate-scale-in" style={{ animationDelay: '100ms' }}>
                         {scanError && (
-                            <div className="absolute inset-0 bg-white/90 backdrop-blur-xl flex flex-col justify-center items-center z-10 rounded-2xl animate-fade-in">
-                                <div className="bg-red-50 border-4 border-red-200 rounded-full p-6 mb-4 animate-scale-in">
-                                    <XCircle className="text-red-500 h-16 w-16" />
+                            <div className="absolute inset-0 bg-gradient-to-br from-red-500/95 via-red-600/95 to-red-700/95 backdrop-blur-xl flex flex-col justify-center items-center z-10 rounded-2xl animate-fade-in">
+                                <div className="bg-white rounded-full p-8 mb-6 shadow-2xl animate-bounce-slow">
+                                    <XCircle className="text-red-600 h-24 w-24 animate-pulse" strokeWidth={3} />
                                 </div>
-                                <p className="text-2xl font-bold text-red-600 text-center px-4 animate-slide-up">{scanError}</p>
+                                <div className="bg-white/90 rounded-2xl px-8 py-6 shadow-2xl max-w-md">
+                                    <p className="text-3xl font-black text-red-600 text-center mb-2 animate-pulse">⚠️ 錯誤！</p>
+                                    <p className="text-xl font-bold text-gray-800 text-center">{scanError}</p>
+                                </div>
                             </div>
                         )}
                         
