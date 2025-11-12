@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>音效測試</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        button { 
+            padding: 15px 30px; 
+            margin: 10px; 
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 8px;
+            border: 2px solid #333;
+            background: #007AFF;
+            color: white;
+        }
+        .log { 
+            margin-top: 20px; 
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔊 音效系統測試</h1>
+    
+    <div>
+        <button onclick="testInit()">1. 初始化 AudioContext</button>
+        <button onclick="testSimpleBeep()">2. 測試簡單嗶聲</button>
+        <button onclick="testError()">3. 測試錯誤音效</button>
+        <button onclick="checkStatus()">4. 檢查狀態</button>
+    </div>
+    
+    <div class="log" id="log">等待測試...</div>
+
+    <script>
+        let audioContext = null;
+        
+        function log(msg) {
+            const logDiv = document.getElementById('log');
+            logDiv.textContent += '\n' + new Date().toLocaleTimeString() + ': ' + msg;
+            console.log(msg);
+        }
+        
+        async function testInit() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('✅ AudioContext 創建成功');
+                log('   狀態: ' + audioContext.state);
+                
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                    log('   已恢復, 新狀態: ' + audioContext.state);
+                }
+            } catch (e) {
+                log('❌ 創建失敗: ' + e.message);
+            }
+        }
+        
+        function testSimpleBeep() {
+            if (!audioContext) {
+                log('❌ 請先初始化 AudioContext');
+                return;
+            }
+            
+            try {
+                const osc = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                
+                osc.connect(gain);
+                gain.connect(audioContext.destination);
+                
+                osc.frequency.value = 800;
+                gain.gain.value = 0.3;
+                
+                const now = audioContext.currentTime;
+                osc.start(now);
+                osc.stop(now + 0.2);
+                
+                log('✅ 播放 800Hz 0.2秒音效');
+            } catch (e) {
+                log('❌ 播放失敗: ' + e.message);
+            }
+        }
+        
+        function testError() {
+            if (!audioContext) {
+                log('❌ 請先初始化 AudioContext');
+                return;
+            }
+            
+            try {
+                // 低音 200Hz
+                const osc1 = audioContext.createOscillator();
+                const gain1 = audioContext.createGain();
+                osc1.connect(gain1);
+                gain1.connect(audioContext.destination);
+                osc1.frequency.value = 200;
+                gain1.gain.value = 0.3;
+                const now = audioContext.currentTime;
+                osc1.start(now);
+                osc1.stop(now + 0.15);
+                
+                // 更低音 150Hz
+                const osc2 = audioContext.createOscillator();
+                const gain2 = audioContext.createGain();
+                osc2.connect(gain2);
+                gain2.connect(audioContext.destination);
+                osc2.frequency.value = 150;
+                gain2.gain.value = 0.3;
+                osc2.start(now + 0.15);
+                osc2.stop(now + 0.35);
+                
+                log('✅ 播放錯誤音效 (200Hz + 150Hz)');
+            } catch (e) {
+                log('❌ 播放失敗: ' + e.message);
+            }
+        }
+        
+        function checkStatus() {
+            if (!audioContext) {
+                log('⚠️ AudioContext 尚未創建');
+                return;
+            }
+            
+            log('📊 AudioContext 狀態:');
+            log('   state: ' + audioContext.state);
+            log('   sampleRate: ' + audioContext.sampleRate);
+            log('   currentTime: ' + audioContext.currentTime.toFixed(2));
+            log('   baseLatency: ' + (audioContext.baseLatency || 'N/A'));
+        }
+        
+        // 頁面載入時自動檢查
+        window.addEventListener('load', () => {
+            log('頁面載入完成');
+            log('瀏覽器: ' + navigator.userAgent);
+        });
+    </script>
+</body>
+</html>

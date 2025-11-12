@@ -182,6 +182,14 @@ export function TaskDashboard({ user }) {
         const newState = !soundEnabled;
         soundNotification.setEnabled(newState);
         setSoundEnabled(newState);
+        
+        // 測試音效
+        if (newState) {
+            setTimeout(() => {
+                soundNotification.play('success');
+            }, 100);
+        }
+        
         toast.success(newState ? '🔊 音效通知已開啟' : '🔇 音效通知已關閉');
     };
 

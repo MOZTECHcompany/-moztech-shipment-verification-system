@@ -87,12 +87,16 @@ class SoundNotification {
      * @param {number} startTime - 開始時間（相對於 AudioContext.currentTime）
      */
     async playTone(frequency, duration, startTime = 0) {
+        console.log('[SoundNotification] playTone 被呼叫', { frequency, duration, enabled: this.enabled });
+        
         const ctx = await this.initAudioContext();
         
         if (!ctx || ctx.state !== 'running') {
             console.warn('[SoundNotification] AudioContext 未就緒, 狀態:', ctx?.state || 'null');
             return;
         }
+        
+        console.log('[SoundNotification] 正在播放音效', frequency + 'Hz');
         
         const now = ctx.currentTime + startTime;
         
@@ -112,6 +116,8 @@ class SoundNotification {
 
         oscillator.start(now);
         oscillator.stop(now + duration);
+        
+        console.log('[SoundNotification] 音效已啟動');
     }
 
     // 新任務到達 - 雙音提示音（叮咚）
@@ -149,12 +155,17 @@ class SoundNotification {
 
     // 錯誤提示 - 低沉警告音
     async playError() {
-        if (!this.enabled) return;
+        console.log('[SoundNotification] playError 被呼叫, enabled:', this.enabled);
+        if (!this.enabled) {
+            console.warn('[SoundNotification] 音效已關閉, 跳過播放');
+            return;
+        }
         try {
             await this.playTone(200, 0.15, 0);
             await this.playTone(150, 0.2, 0.15);
+            console.log('[SoundNotification] 錯誤音效播放完成');
         } catch (err) {
-            console.warn('錯誤音效播放失敗:', err);
+            console.error('[SoundNotification] 錯誤音效播放失敗:', err);
         }
     }
 
@@ -173,6 +184,8 @@ class SoundNotification {
      * @param {string} soundName - 音效名稱: 'newTask', 'taskClaimed', 'taskCompleted', 'error', 'success'
      */
     play(soundName) {
+        console.log('[SoundNotification] play() 被呼叫, soundName:', soundName, 'enabled:', this.enabled);
+        
         const methods = {
             newTask: () => this.playNewTask(),
             taskClaimed: () => this.playTaskClaimed(),
@@ -191,8 +204,10 @@ class SoundNotification {
 
     // 開啟/關閉音效
     setEnabled(enabled) {
+        console.log('[SoundNotification] setEnabled 被呼叫:', enabled);
         this.enabled = enabled;
         localStorage.setItem('sound_enabled', enabled.toString());
+        console.log('[SoundNotification] 音效狀態已更新:', this.enabled, 'localStorage:', localStorage.getItem('sound_enabled'));
     }
 
     // 檢查是否啟用
