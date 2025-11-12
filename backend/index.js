@@ -212,19 +212,23 @@ apiRouter.get('/tasks', async (req, res) => {
     const { id: userId, role } = req.user;
     if (!role) return res.status(403).json({ message: '使用者角色無效' });
     const query = `
-        SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
-               (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
-               (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type
-        FROM orders o
-        LEFT JOIN users p ON o.picker_id = p.id 
-        LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
-        LEFT JOIN users packer_u ON o.packer_id = packer_u.id
-        WHERE 
-            -- Picker/Admin 可見：所有 pending 任務，或自己已認領的 picking 任務
-            ( (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1)) AND $2 IN ('admin', 'picker') ) OR
-            -- Packer/Admin 可見：所有 picked 任務，或自己已認領的 packing 任務
-            ( (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)) AND $2 IN ('admin', 'packer') )
-        ORDER BY o.created_at ASC;
+        const query = `
+            SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                   (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
+                   (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type
+            FROM orders o
+            LEFT JOIN users p ON o.picker_id = p.id 
+            LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
+            LEFT JOIN users packer_u ON o.packer_id = packer_u.id
+            WHERE 
+                -- Admin 可見所有 pending/picking/picked/packing 任務
+                ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
+                -- Picker 只可見 pending 任務，或自己已認領的 picking 任務
+                ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
+                -- Packer 只可見 picked 任務，或自己已認領的 packing 任務
+                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
+            ORDER BY o.created_at ASC;
+        `;
     `;
     const result = await pool.query(query, [userId, role]);
     res.json(result.rows);
