@@ -126,43 +126,43 @@ class SoundNotification {
     }
 
     // 任務被認領 - 短促確認音
-    playTaskClaimed() {
+    async playTaskClaimed() {
         if (!this.enabled) return;
         try {
-            this.playTone(1000, 0.1, 0);
+            await this.playTone(1000, 0.1, 0);
         } catch (err) {
             console.warn('任務認領音效播放失敗:', err);
         }
     }
 
     // 任務完成 - 上升三音階（C-E-G）
-    playTaskCompleted() {
+    async playTaskCompleted() {
         if (!this.enabled) return;
         try {
-            this.playTone(523, 0.1, 0);     // C5
-            this.playTone(659, 0.1, 0.1);   // E5
-            this.playTone(784, 0.15, 0.2);  // G5
+            await this.playTone(523, 0.1, 0);     // C5
+            await this.playTone(659, 0.1, 0.1);   // E5
+            await this.playTone(784, 0.15, 0.2);  // G5
         } catch (err) {
             console.warn('任務完成音效播放失敗:', err);
         }
     }
 
     // 錯誤提示 - 低沉警告音
-    playError() {
+    async playError() {
         if (!this.enabled) return;
         try {
-            this.playTone(200, 0.15, 0);
-            this.playTone(150, 0.2, 0.15);
+            await this.playTone(200, 0.15, 0);
+            await this.playTone(150, 0.2, 0.15);
         } catch (err) {
             console.warn('錯誤音效播放失敗:', err);
         }
     }
 
     // 成功提示 - 清脆確認音
-    playSuccess() {
+    async playSuccess() {
         if (!this.enabled) return;
         try {
-            this.playTone(1200, 0.08, 0);
+            await this.playTone(1200, 0.08, 0);
         } catch (err) {
             console.warn('成功音效播放失敗:', err);
         }
