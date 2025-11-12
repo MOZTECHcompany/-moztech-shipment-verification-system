@@ -210,6 +210,7 @@ adminRouter.delete('/users/:userId', async (req, res) => {
 const apiRouter = express.Router();
 apiRouter.get('/tasks', async (req, res) => {
     const { id: userId, role } = req.user;
+    console.log(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
     if (!role) return res.status(403).json({ message: '使用者角色無效' });
     const query = `
         SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
@@ -225,7 +226,14 @@ apiRouter.get('/tasks', async (req, res) => {
             ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
         ORDER BY o.created_at ASC;
     `;
+    console.log(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
     const result = await pool.query(query, [userId, role]);
+    console.log(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
+    if (result.rows.length > 0) {
+        console.log(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
+    } else {
+        console.log(`[/api/tasks] 警告: 沒有找到任何符合條件的任務`);
+    }
     res.json(result.rows);
 });
 apiRouter.get('/reports/export', authorizeAdmin, async (req, res) => {
