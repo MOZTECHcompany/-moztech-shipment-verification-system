@@ -74,8 +74,6 @@ const _cors_mw = cors(corsOptions);
 console.log('DEBUG: cors middleware type:', typeof _cors_mw);
 if (typeof _cors_mw !== 'function') console.error('ERROR: cors(corsOptions) did not return a function', _cors_mw);
 app.use(_cors_mw);
-// 處理所有路由的預檢（OPTIONS）
-app.options('*', cors(corsOptions));
 
 app.use(express.json());
 // #endregion
