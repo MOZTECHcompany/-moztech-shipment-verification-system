@@ -7,23 +7,35 @@ class SoundNotification {
         this.volume = parseFloat(localStorage.getItem('sound_volume') || '0.3');
         this.audioContext = null;
         this.initialized = false;
+        this.userInteracted = false; // 追蹤用戶是否已互動
         
         // 延遲初始化 AudioContext（避免瀏覽器自動播放政策問題）
-        this.initAudioContext = () => {
+        this.initAudioContext = async () => {
             if (!this.audioContext) {
                 try {
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    this.initialized = true;
+                    console.log('[SoundNotification] AudioContext 已創建, 狀態:', this.audioContext.state);
                 } catch (error) {
-                    console.error('無法初始化 AudioContext:', error);
+                    console.error('[SoundNotification] 無法初始化 AudioContext:', error);
+                    return null;
                 }
             }
+            
             // 如果 AudioContext 處於 suspended 狀態，嘗試恢復
-            if (this.audioContext && this.audioContext.state === 'suspended') {
-                this.audioContext.resume().catch(err => {
-                    console.error('無法恢復 AudioContext:', err);
-                });
+            if (this.audioContext.state === 'suspended') {
+                console.log('[SoundNotification] AudioContext 處於 suspended 狀態, 嘗試恢復...');
+                try {
+                    await this.audioContext.resume();
+                    console.log('[SoundNotification] AudioContext 已恢復, 狀態:', this.audioContext.state);
+                    this.initialized = true;
+                } catch (err) {
+                    console.error('[SoundNotification] 無法恢復 AudioContext:', err);
+                    return null;
+                }
+            } else if (this.audioContext.state === 'running') {
+                this.initialized = true;
             }
+            
             return this.audioContext;
         };
         
@@ -32,16 +44,40 @@ class SoundNotification {
     }
     
     setupUserInteraction() {
-        const activate = () => {
-            this.initAudioContext();
+        const activate = async () => {
+            if (this.userInteracted) return;
+            
+            console.log('[SoundNotification] 用戶首次互動檢測到, 啟動 AudioContext...');
+            this.userInteracted = true;
+            
+            // 立即初始化並恢復 AudioContext
+            await this.initAudioContext();
+            
+            // 播放測試音效（靜音）以確保 AudioContext 真正啟動
+            if (this.audioContext && this.audioContext.state === 'running') {
+                try {
+                    const testOsc = this.audioContext.createOscillator();
+                    const testGain = this.audioContext.createGain();
+                    testGain.gain.value = 0; // 靜音測試
+                    testOsc.connect(testGain);
+                    testGain.connect(this.audioContext.destination);
+                    testOsc.start();
+                    testOsc.stop(this.audioContext.currentTime + 0.001);
+                    console.log('[SoundNotification] AudioContext 測試成功');
+                } catch (e) {
+                    console.warn('[SoundNotification] AudioContext 測試失敗:', e);
+                }
+            }
+            
+            // 移除監聽器
             document.removeEventListener('click', activate);
             document.removeEventListener('keydown', activate);
             document.removeEventListener('touchstart', activate);
         };
         
-        document.addEventListener('click', activate);
-        document.addEventListener('keydown', activate);
-        document.addEventListener('touchstart', activate);
+        document.addEventListener('click', activate, { once: true });
+        document.addEventListener('keydown', activate, { once: true });
+        document.addEventListener('touchstart', activate, { once: true });
     }
 
     /**
@@ -50,8 +86,14 @@ class SoundNotification {
      * @param {number} duration - 持續時間（秒）
      * @param {number} startTime - 開始時間（相對於 AudioContext.currentTime）
      */
-    playTone(frequency, duration, startTime = 0) {
-        const ctx = this.initAudioContext();
+    async playTone(frequency, duration, startTime = 0) {
+        const ctx = await this.initAudioContext();
+        
+        if (!ctx || ctx.state !== 'running') {
+            console.warn('[SoundNotification] AudioContext 未就緒, 狀態:', ctx?.state || 'null');
+            return;
+        }
+        
         const now = ctx.currentTime + startTime;
         
         const oscillator = ctx.createOscillator();
@@ -73,11 +115,11 @@ class SoundNotification {
     }
 
     // 新任務到達 - 雙音提示音（叮咚）
-    playNewTask() {
+    async playNewTask() {
         if (!this.enabled) return;
         try {
-            this.playTone(800, 0.15, 0);    // 高音
-            this.playTone(600, 0.2, 0.15);  // 低音
+            await this.playTone(800, 0.15, 0);    // 高音
+            await this.playTone(600, 0.2, 0.15);  // 低音
         } catch (err) {
             console.warn('新任務音效播放失敗:', err);
         }

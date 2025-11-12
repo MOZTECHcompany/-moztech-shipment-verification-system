@@ -39,7 +39,7 @@ const statusConfig = {
 };
 
 // 現代化任務卡片
-const ModernTaskCard = ({ task, onClaim, user, onDelete }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection }) => {
     const isMyTask = task.current_user;
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
@@ -530,7 +530,10 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask} 
                                             user={user} 
-                                            onDelete={handleDeleteOrder} 
+                                            onDelete={handleDeleteOrder}
+                                            batchMode={batchMode}
+                                            selectedTasks={selectedTasks}
+                                            toggleTaskSelection={toggleTaskSelection}
                                         />
                                     </div>
                                 ))
@@ -560,7 +563,7 @@ export function TaskDashboard({ user }) {
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
-                                        key={task.id}
+                                        key={task.id} 
                                         style={{ animationDelay: `${index * 50}ms` }}
                                         className="animate-fade-in"
                                     >
@@ -568,7 +571,10 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask} 
                                             user={user} 
-                                            onDelete={handleDeleteOrder} 
+                                            onDelete={handleDeleteOrder}
+                                            batchMode={batchMode}
+                                            selectedTasks={selectedTasks}
+                                            toggleTaskSelection={toggleTaskSelection}
                                         />
                                     </div>
                                 ))
