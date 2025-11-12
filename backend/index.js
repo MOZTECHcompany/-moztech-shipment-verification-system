@@ -412,23 +412,30 @@ apiRouter.post('/orders/update_item', async (req, res, next) => {
     }
 });
 apiRouter.post('/orders/:orderId/claim', async (req, res, next) => {
-    // ... (此处省略 claim 路由的完整程式码，与 v6.2 版本完全相同)
     const { orderId } = req.params;
     const { id: userId, role } = req.user;
+    console.log(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
-        if (orderResult.rows.length === 0) return res.status(404).json({ message: '找不到該訂單' });
+        if (orderResult.rows.length === 0) {
+            console.log(`[/orders/${orderId}/claim] 錯誤: 找不到訂單`);
+            return res.status(404).json({ message: '找不到該訂單' });
+        }
         const order = orderResult.rows[0];
+        console.log(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
         let newStatus = '', task_type = '';
         if ((role === 'picker' || role === 'admin') && order.status === 'pending') {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+            console.log(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
         } else if ((role === 'packer' || role === 'admin') && order.status === 'picked') {
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+            console.log(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
         } else {
+            console.log(`[/orders/${orderId}/claim] 認領失敗 - 角色: ${role}, 訂單狀態: ${order.status}`);
             return res.status(400).json({ message: `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。` });
         }
         await client.query('COMMIT');
@@ -438,6 +445,7 @@ apiRouter.post('/orders/:orderId/claim', async (req, res, next) => {
         res.status(200).json({ message: '任務認領成功' });
     } catch (error) {
         await client.query('ROLLBACK');
+        console.error(`[/orders/${orderId}/claim] 發生錯誤:`, error);
         next(error);
     } finally {
         client.release();
