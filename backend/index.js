@@ -125,9 +125,16 @@ const authenticateToken = (req, res, next) => {
 };
 
 const authorizeAdmin = (req, res, next) => {
-    if (req.user?.role !== 'admin') {
+    logger.debug(`[authorizeAdmin] 檢查權限 - user:`, req.user);
+    if (!req.user) {
+        logger.error('[authorizeAdmin] req.user 不存在');
+        return res.status(401).json({ message: '未認證的請求' });
+    }
+    if (req.user.role !== 'admin') {
+        logger.error(`[authorizeAdmin] 權限不足 - role: ${req.user.role}`);
         return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
     }
+    logger.debug('[authorizeAdmin] 權限檢查通過');
     next();
 };
 // #endregion
@@ -175,7 +182,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 // --- 公开路由 (不需要 Token) ---
 const publicRouter = express.Router();
 publicRouter.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'));
-publicRouter.post('/api/auth/login', async (req, res) => {
+
+// 獨立的認證路由 (必須在其他 /api 路由之前註冊)
+const authRouter = express.Router();
+authRouter.post('/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ message: '請提供使用者名稱和密碼' });
     const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
@@ -333,6 +343,8 @@ apiRouter.get('/operation-logs', authorizeAdmin, async (req, res) => {
         query += ` ORDER BY ol.created_at DESC LIMIT $${paramCount}`;
         params.push(parseInt(limit));
         
+        logger.debug(`[/api/operation-logs] 執行查詢:`, { query: query.substring(0, 200), params });
+        
         const result = await pool.query(query, params);
         
         logger.info(`[/api/operation-logs] 找到 ${result.rows.length} 筆操作記錄`);
@@ -342,8 +354,12 @@ apiRouter.get('/operation-logs', authorizeAdmin, async (req, res) => {
             logs: result.rows
         });
     } catch (error) {
-        logger.error('[/api/operation-logs] 查詢失敗:', error);
-        res.status(500).json({ message: '查詢操作日誌失敗' });
+        logger.error('[/api/operation-logs] 查詢失敗:', error.message);
+        logger.error('[/api/operation-logs] 錯誤堆疊:', error.stack);
+        res.status(500).json({ 
+            message: '查詢操作日誌失敗',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
@@ -642,9 +658,11 @@ apiRouter.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
 // #region 路由注册 (Router Registration)
 // =================================================================
 logger.info('Registering routers');
-app.use('/', publicRouter);
-app.use('/api/admin', authenticateToken, authorizeAdmin, adminRouter);
-app.use('/api', authenticateToken, apiRouter); // 所有 /api/* (除了/api/admin) 都需要登入
+// 重要: 公開路由必須先註冊,避免被認證中介軟體攔截
+app.use('/', publicRouter);  // 根路由
+app.use('/api/auth', authRouter);  // 認證路由 (公開,不需要 token) - 必須在 /api 之前註冊!
+app.use('/api/admin', authenticateToken, authorizeAdmin, adminRouter);  // 管理員路由 (需要認證+授權)
+app.use('/api', authenticateToken, apiRouter); // 其他 API 路由 (需要認證)
 // #endregion
 
 // =================================================================
