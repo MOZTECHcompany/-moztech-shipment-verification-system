@@ -11,6 +11,8 @@ import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '../api/api';
 import { soundNotification } from '../utils/soundNotification';
+import { voiceNotification } from '../utils/voiceNotification';
+import { desktopNotification } from '../utils/desktopNotification';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
@@ -309,6 +311,17 @@ export function OrderWorkView({ user }) {
                 amount
             });
             setCurrentOrderData(response.data);
+            
+            // 計算已掃描和剩餘數量
+            const totalScanned = response.data.items.reduce((sum, item) => 
+                sum + (type === 'pick' ? item.picked_quantity : item.packed_quantity), 0
+            );
+            const totalRequired = response.data.items.reduce((sum, item) => sum + item.quantity, 0);
+            const remaining = totalRequired - totalScanned;
+            
+            // 語音播報
+            voiceNotification.speakScanSuccess(totalScanned, remaining);
+            
             toast.success(`掃描成功: ${scanValue}`);
         } catch (err) {
             const errorMsg = err.response?.data?.message || '發生未知錯誤';
@@ -317,6 +330,12 @@ export function OrderWorkView({ user }) {
             // 播放錯誤音效
             soundNotification.play('error');
             errorSoundRef.current?.play();
+            
+            // 語音播報
+            voiceNotification.speakScanError();
+            
+            // 桌面通知
+            desktopNotification.notifyScanError(errorMsg);
             
             // 震動提示 (如果支援)
             if (navigator.vibrate) {
@@ -354,6 +373,12 @@ export function OrderWorkView({ user }) {
             // 播放錯誤音效
             soundNotification.play('error');
             errorSoundRef.current?.play();
+            
+            // 語音播報
+            voiceNotification.speakOperationError('操作不允許');
+            
+            // 桌面通知
+            desktopNotification.notifyScanError(errorMsg);
             
             // 震動提示
             if (navigator.vibrate) {

@@ -11,6 +11,8 @@ import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '../api/api';
 import { soundNotification } from '../utils/soundNotification';
+import { voiceNotification } from '../utils/voiceNotification';
+import { desktopNotification } from '../utils/desktopNotification';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
@@ -309,7 +311,14 @@ export function OrderWorkView({ user }) {
                 amount
             });
             setCurrentOrderData(response.data);
+            
+            // 計算已掃描數量和剩餘數量
+            const totalScanned = response.data.order.items.reduce((sum, item) => sum + (item.scanned_quantity || 0), 0);
+            const totalRequired = response.data.order.items.reduce((sum, item) => sum + item.quantity, 0);
+            const remaining = totalRequired - totalScanned;
+            
             toast.success(`掃描成功: ${scanValue}`);
+            voiceNotification.speakScanSuccess(totalScanned, remaining);
         } catch (err) {
             const errorMsg = err.response?.data?.message || '發生未知錯誤';
             setScanError(errorMsg);
@@ -317,6 +326,12 @@ export function OrderWorkView({ user }) {
             // 播放錯誤音效
             soundNotification.play('error');
             errorSoundRef.current?.play();
+            
+            // 語音播報錯誤
+            voiceNotification.speakScanError();
+            
+            // 桌面通知
+            desktopNotification.notifyScanError(errorMsg);
             
             // 震動提示 (如果支援)
             if (navigator.vibrate) {
@@ -354,6 +369,12 @@ export function OrderWorkView({ user }) {
             // 播放錯誤音效
             soundNotification.play('error');
             errorSoundRef.current?.play();
+            
+            // 語音播報錯誤
+            voiceNotification.speakOperationError(errorMsg);
+            
+            // 桌面通知
+            desktopNotification.notifyScanError(errorMsg);
             
             // 震動提示
             if (navigator.vibrate) {

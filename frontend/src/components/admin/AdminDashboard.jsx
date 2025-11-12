@@ -8,7 +8,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
 
 export function AdminDashboard() {
     const [dateRange, setDateRange] = useState([null, null]);
@@ -95,7 +95,7 @@ export function AdminDashboard() {
 
                 {/* 功能卡片網格 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* 數據分析 - 新增 */}
+                    {/* 數據分析 */}
                     <div className="card-apple group bg-gradient-to-br from-blue-50 to-indigo-50 animate-scale-in">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
@@ -122,6 +122,37 @@ export function AdminDashboard() {
                             >
                                 <TrendingUp size={20} />
                                 前往分析
+                            </Link>
+                        </div>
+                    </div>
+
+                    {/* 刷錯條碼分析 - 新增 */}
+                    <div className="card-apple group bg-gradient-to-br from-red-50 to-orange-50 animate-scale-in" style={{ animationDelay: '50ms' }}>
+                        <div className="p-8">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <AlertTriangle className="text-red-600" size={24} />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-900">刷錯分析</h3>
+                            </div>
+                            
+                            <p className="text-gray-600 mb-6 text-base leading-relaxed">
+                                查看掃描錯誤記錄、統計最常刷錯的條碼和員工，找出問題根源。
+                            </p>
+                            
+                            <Link 
+                                to="/admin/scan-errors" 
+                                className="
+                                    inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
+                                    bg-gradient-to-r from-red-600 to-orange-600 text-white
+                                    hover:from-red-700 hover:to-orange-700
+                                    transition-all duration-200 shadow-lg shadow-red-500/30
+                                    hover:shadow-xl hover:shadow-red-500/40
+                                    active:scale-[0.98]
+                                "
+                            >
+                                <AlertTriangle size={20} />
+                                查看錯誤
                             </Link>
                         </div>
                     </div>

@@ -6,10 +6,12 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
+import { voiceNotification } from '@/utils/voiceNotification.js';
+import { desktopNotification } from '@/utils/desktopNotification.js';
 
 const statusConfig = {
     pending: { 
@@ -173,6 +175,8 @@ export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
+    const [voiceEnabled, setVoiceEnabled] = useState(voiceNotification.isEnabled());
+    const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
     const navigate = useNavigate();
@@ -191,6 +195,39 @@ export function TaskDashboard({ user }) {
         }
         
         toast.success(newState ? '🔊 音效通知已開啟' : '🔇 音效通知已關閉');
+    };
+
+    const toggleVoice = () => {
+        const newState = !voiceEnabled;
+        voiceNotification.setEnabled(newState);
+        setVoiceEnabled(newState);
+        
+        // 測試語音
+        if (newState) {
+            setTimeout(() => {
+                voiceNotification.speak('語音播報已開啟');
+            }, 100);
+        }
+        
+        toast.success(newState ? '🗣️ 語音播報已開啟' : '🔇 語音播報已關閉');
+    };
+
+    const toggleNotification = async () => {
+        const newState = !notificationEnabled;
+        const success = await desktopNotification.setEnabled(newState);
+        
+        if (success) {
+            setNotificationEnabled(newState);
+            
+            // 測試通知
+            if (newState) {
+                desktopNotification.notifySystemMessage('通知已開啟', '您將收到新任務的桌面通知');
+            }
+            
+            toast.success(newState ? '🔔 桌面通知已開啟' : '🔕 桌面通知已關閉');
+        } else {
+            toast.error('無法開啟桌面通知，請檢查瀏覽器權限');
+        }
     };
 
     const toggleBatchMode = () => {
@@ -252,6 +289,8 @@ export function TaskDashboard({ user }) {
         const handleNewTask = (newTask) => {
             toast.info(`📦 收到新任務: ${newTask.voucher_number}`);
             soundNotification.play('newTask');
+            voiceNotification.speakNewTask(1);
+            desktopNotification.notifyNewTask(newTask);
             setTasks(currentTasks => 
                 currentTasks.some(task => task.id === newTask.id) ? currentTasks : [...currentTasks, newTask]
             );
@@ -438,6 +477,46 @@ export function TaskDashboard({ user }) {
                                 {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
                                 <span className="hidden sm:inline">
                                     {soundEnabled ? '音效開啟' : '音效關閉'}
+                                </span>
+                            </button>
+
+                            {/* 語音播報開關 */}
+                            <button
+                                onClick={toggleVoice}
+                                className={`
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    active:scale-[0.98]
+                                    ${voiceEnabled 
+                                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-blue-500/30' 
+                                        : 'bg-white text-gray-700 border border-gray-200'
+                                    }
+                                `}
+                                title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
+                            >
+                                <MessageSquare size={20} />
+                                <span className="hidden sm:inline">
+                                    {voiceEnabled ? '語音開啟' : '語音關閉'}
+                                </span>
+                            </button>
+
+                            {/* 桌面通知開關 */}
+                            <button
+                                onClick={toggleNotification}
+                                className={`
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    active:scale-[0.98]
+                                    ${notificationEnabled 
+                                        ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white shadow-purple-500/30' 
+                                        : 'bg-white text-gray-700 border border-gray-200'
+                                    }
+                                `}
+                                title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
+                            >
+                                <Bell size={20} />
+                                <span className="hidden sm:inline">
+                                    {notificationEnabled ? '通知開啟' : '通知關閉'}
                                 </span>
                             </button>
                             
