@@ -21,6 +21,7 @@ const jwt = require('jsonwebtoken');
 const Papa = require('papaparse');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const logger = require('./utils/logger'); // 引入環境感知的 logger
 
 // --- 环境设定 ---
 require('dotenv').config();
@@ -36,29 +37,30 @@ const server = http.createServer(app);
 app.use(helmet());
 app.use(morgan('dev'));
 
-// CORS allowlist - 請把你的 run.app 網域放在這裡，例如: 'https://your-app-xxxxx.run.app'
-const allowlist = [
-    'https://moztech-shipment-verification-system.onrender.com',
-    'https://moztech-wms-98684976641.us-west1.run.app', // <- 已替換為你提供的 run.app 網域
-    // 若有其他未來自訂網域，請加在下列清單中（請不要包含 < 或 >）：
-    'http://localhost:3000',
-    'http://localhost:3001'
-];
+// CORS allowlist - 根據環境動態設定
+const allowlist = process.env.NODE_ENV === 'production' 
+    ? [
+        'https://moztech-shipment-verification-system.onrender.com',
+        'https://moztech-wms-98684976641.us-west1.run.app'
+      ]
+    : [
+        'https://moztech-shipment-verification-system.onrender.com',
+        'https://moztech-wms-98684976641.us-west1.run.app',
+        'http://localhost:3000',
+        'http://localhost:3001'
+      ];
 
 const corsOptions = {
     origin: function (origin, callback) {
         // 若非瀏覽器（例如 server-to-server、curl）可能沒有 origin header，允許通過
         if (!origin) return callback(null, true);
         const allowed = allowlist.indexOf(origin) !== -1;
-        // 不再拋出錯誤，改以 boolean 回傳給 cors 套件；
-        // 若 allowed 為 false，cors 將不會設置 Access-Control-Allow-* 標頭，瀏覽器會阻擋請求，但不會產生 500。
         if (!allowed) {
-            // 減少噪音：只在開發環境下記錄被拒的來源
-            if (process.env.NODE_ENV === 'development') console.warn(`CORS: origin not allowed -> ${origin}`);
+            logger.debug(`CORS: origin not allowed -> ${origin}`);
         }
         return callback(null, allowed);
     },
-    credentials: true, // 若使用 Cookie 或 Authorization header，需要回傳 Access-Control-Allow-Credentials: true
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 };
@@ -69,10 +71,11 @@ app.use((req, res, next) => {
     next();
 });
 
-console.log('DEBUG: registering CORS middleware');
+logger.info('Registering CORS middleware');
 const _cors_mw = cors(corsOptions);
-console.log('DEBUG: cors middleware type:', typeof _cors_mw);
-if (typeof _cors_mw !== 'function') console.error('ERROR: cors(corsOptions) did not return a function', _cors_mw);
+if (typeof _cors_mw !== 'function') {
+    logger.error('ERROR: cors(corsOptions) did not return a function', _cors_mw);
+}
 app.use(_cors_mw);
 
 app.use(express.json());
@@ -88,7 +91,7 @@ const pool = new Pool({
   }
 });
 
-console.log('DEBUG: initializing Socket.IO');
+logger.info('Initializing Socket.IO');
 const io = new Server(server, {
     cors: {
         origin: corsOptions.origin,
@@ -104,18 +107,18 @@ const io = new Server(server, {
 // =================================================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    console.log('[authenticateToken] Authorization header:', authHeader);
+    logger.debugSensitive('[authenticateToken] Authorization header:', { authHeader });
     const token = authHeader && authHeader.split(' ')[1];
-    console.log('[authenticateToken] Extracted token:', token ? `${token.substring(0, 20)}...` : 'null');
+    logger.debugSensitive('[authenticateToken] Extracted token:', { token: token ? `${token.substring(0, 20)}...` : 'null' });
     if (!token) return res.status(401).json({ message: '未提供認證權杖 (Token)' });
 
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
-            console.error('JWT 驗證失敗:', err.name, err.message);
-            console.error('[authenticateToken] JWT_SECRET exists:', !!process.env.JWT_SECRET);
+            logger.error('JWT 驗證失敗:', err.name, err.message);
+            logger.debug('[authenticateToken] JWT_SECRET exists:', !!process.env.JWT_SECRET);
             return res.status(403).json({ message: '無效或過期的權杖' });
         }
-        console.log('[authenticateToken] 驗證成功 - 使用者:', user);
+        logger.debugSensitive('[authenticateToken] 驗證成功 - 使用者:', user);
         req.user = user;
         next();
     });
@@ -136,7 +139,7 @@ const logOperation = async (userId, orderId, operationType, details) => {
     try {
         await pool.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4)', [userId, orderId, operationType, JSON.stringify(details)]);
     } catch (error) {
-        console.error('記錄操作日誌失敗:', error);
+        logger.error('記錄操作日誌失敗:', error);
     }
 };
 const upload = multer({ storage: multer.memoryStorage() });
@@ -214,7 +217,7 @@ adminRouter.delete('/users/:userId', async (req, res) => {
 const apiRouter = express.Router();
 apiRouter.get('/tasks', async (req, res) => {
     const { id: userId, role } = req.user;
-    console.log(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
+    logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
     if (!role) return res.status(403).json({ message: '使用者角色無效' });
     const query = `
         SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
@@ -230,13 +233,11 @@ apiRouter.get('/tasks', async (req, res) => {
             ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
         ORDER BY o.created_at ASC;
     `;
-    console.log(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
+    logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
     const result = await pool.query(query, [userId, role]);
-    console.log(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
+    logger.info(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
     if (result.rows.length > 0) {
-        console.log(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
-    } else {
-        console.log(`[/api/tasks] 警告: 沒有找到任何符合條件的任務`);
+        logger.debug(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
     }
     res.json(result.rows);
 });
@@ -414,28 +415,28 @@ apiRouter.post('/orders/update_item', async (req, res, next) => {
 apiRouter.post('/orders/:orderId/claim', async (req, res, next) => {
     const { orderId } = req.params;
     const { id: userId, role } = req.user;
-    console.log(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);
+    logger.debug(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) {
-            console.log(`[/orders/${orderId}/claim] 錯誤: 找不到訂單`);
+            logger.warn(`[/orders/${orderId}/claim] 錯誤: 找不到訂單`);
             return res.status(404).json({ message: '找不到該訂單' });
         }
         const order = orderResult.rows[0];
-        console.log(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
+        logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
         let newStatus = '', task_type = '';
         if ((role === 'picker' || role === 'admin') && order.status === 'pending') {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-            console.log(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
+            logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
         } else if ((role === 'packer' || role === 'admin') && order.status === 'picked') {
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-            console.log(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
+            logger.info(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
         } else {
-            console.log(`[/orders/${orderId}/claim] 認領失敗 - 角色: ${role}, 訂單狀態: ${order.status}`);
+            logger.warn(`[/orders/${orderId}/claim] 認領失敗 - 角色: ${role}, 訂單狀態: ${order.status}`);
             return res.status(400).json({ message: `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。` });
         }
         await client.query('COMMIT');
@@ -445,7 +446,7 @@ apiRouter.post('/orders/:orderId/claim', async (req, res, next) => {
         res.status(200).json({ message: '任務認領成功' });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error(`[/orders/${orderId}/claim] 發生錯誤:`, error);
+        logger.error(`[/orders/${orderId}/claim] 發生錯誤:`, error);
         next(error);
     } finally {
         client.release();
@@ -480,7 +481,7 @@ apiRouter.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
 // =================================================================
 // #region 路由注册 (Router Registration)
 // =================================================================
-console.log('DEBUG: registering routers');
+logger.info('Registering routers');
 app.use('/', publicRouter);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRouter);
 app.use('/api', authenticateToken, apiRouter); // 所有 /api/* (除了/api/admin) 都需要登入
@@ -490,7 +491,7 @@ app.use('/api', authenticateToken, apiRouter); // 所有 /api/* (除了/api/admi
 // #region 统一错误处理 (Centralized Error Handling)
 // =================================================================
 app.use((err, req, res, next) => {
-    console.error('統一錯誤處理器捕獲到錯誤:\n', err);
+    logger.error('統一錯誤處理器捕獲到錯誤:\n', err);
     if (err.code === '23505') return res.status(409).json({ message: '操作失敗：資料重複。' + (err.detail || '') });
     const statusCode = err.status || 500;
     res.status(statusCode).json({ 
@@ -504,13 +505,13 @@ app.use((err, req, res, next) => {
 // #region Socket.IO & 伺服器启动
 // =================================================================
 io.on('connection', (socket) => {
-  console.log('一個使用者已連線:', socket.id);
+  logger.info('一個使用者已連線:', socket.id);
   socket.on('disconnect', () => {
-    console.log('使用者已離線:', socket.id);
+    logger.info('使用者已離線:', socket.id);
   });
 });
 
 server.listen(port, () => {
-    console.log(`伺服器正在 http://localhost:${port} 上運行`);
+    logger.info(`伺服器正在 http://localhost:${port} 上運行`);
 });
 // #endregion
