@@ -1,15 +1,24 @@
 {
-  "name": "backend",
-  "version": "1.0.0",
-  "main": "index.js",
+  "name": "moztech-wms-backend",
+  "version": "7.0.0",
+  "main": "src/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:new": "node src/server.js",
+    "dev": "nodemon index.js",
+    "dev:new": "nodemon src/server.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "migrate": "node migrations/run.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "wms",
+    "warehouse",
+    "inventory"
+  ],
+  "author": "MOZTECH",
   "license": "ISC",
-  "description": "",
+  "description": "MOZTECH 倉儲管理系統後端 API",
   "dependencies": {
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
@@ -24,5 +33,10 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.11",
+    "supertest": "^6.3.4"
   }
 }
