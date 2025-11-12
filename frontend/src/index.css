@@ -1,33 +1,50 @@
-/* frontend/src/index.css */
+/* frontend/src/index.css - Apple 風格設計系統 */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    /* 色彩系统 */
-    --background: 210 20% 98%;      /* #F8F9FA - 柔和的浅灰色背景 */
-    --foreground: 210 10% 23%;     /* #212529 - 深灰色文字 */
+    /* Apple 風格色彩系統 */
+    --background: 0 0% 98%;         /* #FAFAFA - 極淺灰背景 */
+    --foreground: 0 0% 13%;         /* #1D1D1F - Apple 深灰文字 */
     
-    --card: 0 0% 100%;             /* #FFFFFF - 卡片背景 */
-    --card-foreground: 210 10% 23%;
+    --card: 0 0% 100%;              /* #FFFFFF - 純白卡片 */
+    --card-foreground: 0 0% 13%;
     
-    --primary: 243 93% 63%;        /* #5E60CE - 更沉稳的品牌紫色 */
+    --primary: 211 100% 50%;        /* #007AFF - Apple Blue */
     --primary-foreground: 0 0% 100%;
     
-    --secondary: 210 16% 93%;      /* #E9ECEF - 次要背景/输入框背景 */
-    --secondary-foreground: 210 9% 31%; /* #495057 */
+    --secondary: 240 5% 96%;        /* #F5F5F7 - Apple 淺灰 */
+    --secondary-foreground: 0 0% 45%; /* #86868B */
 
-    --accent: 210 16% 82%;         /* #DEE2E6 - Hover 效果 */
-    --accent-foreground: 210 10% 23%;
+    --accent: 240 5% 91%;           /* #E8E8ED - Hover 效果 */
+    --accent-foreground: 0 0% 13%;
 
-    --destructive: 354 70% 54%;    /* #DC3545 - 红色 */
+    --destructive: 4 90% 58%;       /* #FF3B30 - Apple Red */
     --destructive-foreground: 0 0% 100%;
     
-    --ring: 243 93% 63%;
+    --success: 142 76% 45%;         /* #34C759 - Apple Green */
+    --warning: 35 100% 50%;         /* #FF9500 - Apple Orange */
     
-    /* 圆角 */
-    --radius: 0.75rem;
+    --ring: 211 100% 50%;
+    
+    /* 圓角 */
+    --radius: 1rem;
+  }
+
+  /* 深色模式（可選） */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: 0 0% 7%;        /* #121212 */
+      --foreground: 0 0% 98%;       /* #F5F5F7 */
+      --card: 0 0% 11%;             /* #1C1C1E */
+      --card-foreground: 0 0% 98%;
+      --secondary: 0 0% 15%;        /* #2C2C2E */
+      --secondary-foreground: 0 0% 70%;
+      --accent: 0 0% 20%;
+      --accent-foreground: 0 0% 98%;
+    }
   }
 }
 
@@ -38,23 +55,70 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: theme('fontFamily.sans');
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'kern' 1;
+    letter-spacing: -0.011em;
   }
   
-  /* 美化滚动条 */
+  /* Apple 風格滾動條 */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-secondary;
+    @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-accent rounded-full;
+    @apply bg-gray-300 rounded-full;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-gray-400;
+  }
+
+  /* 平滑過渡 */
+  * {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer components {
+  /* 毛玻璃效果 */
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-apple;
+  }
+
+  .glass-dark {
+    @apply bg-gray-900/70 backdrop-blur-xl border border-gray-700/20 shadow-apple;
+  }
+
+  /* Apple 風格按鈕 */
+  .btn-apple {
+    @apply px-6 py-3 rounded-xl font-medium transition-all duration-200 
+           shadow-apple-sm hover:shadow-apple active:scale-[0.98];
+  }
+
+  .btn-apple-primary {
+    @apply btn-apple bg-apple-blue text-white hover:bg-blue-600;
+  }
+
+  .btn-apple-secondary {
+    @apply btn-apple bg-apple-gray-100 text-gray-900 hover:bg-apple-gray-200;
+  }
+
+  /* Apple 風格卡片 */
+  .card-apple {
+    @apply bg-white rounded-2xl shadow-apple-sm hover:shadow-apple 
+           transition-all duration-300 border border-gray-100;
+  }
+
+  /* 輸入框 */
+  .input-apple {
+    @apply w-full px-4 py-3 rounded-xl bg-apple-gray-50 border border-gray-200
+           focus:border-apple-blue focus:ring-2 focus:ring-apple-blue/20 
+           outline-none transition-all duration-200;
   }
 }
