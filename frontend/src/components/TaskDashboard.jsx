@@ -5,9 +5,10 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js'; // 引入 socket
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2 } from 'lucide-react'; // ✅ 1. 引入垃圾桶圖示
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX } from 'lucide-react'; // ✅ 1. 引入垃圾桶圖示 & 音量圖示
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
+import { soundNotification } from '@/utils/soundNotification.js'; // 引入音效通知
 
 
 const statusMap = {
@@ -67,8 +68,17 @@ const TaskCard = ({ task, onClaim, user, onDelete }) => {
 export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal); // 使用 SweetAlert2
+
+    // 音效設定切換
+    const toggleSound = () => {
+        const newState = !soundEnabled;
+        soundNotification.setEnabled(newState);
+        setSoundEnabled(newState);
+        toast.success(newState ? '音效通知已開啟' : '音效通知已關閉');
+    };
 
     const fetchTasks = useCallback(async () => {
         if (user) { 
@@ -93,6 +103,7 @@ export function TaskDashboard({ user }) {
     useEffect(() => {
         const handleNewTask = (newTask) => {
             toast.info(`收到新任務: ${newTask.voucher_number}`);
+            soundNotification.play('newTask'); // 播放新任務音效
             setTasks(currentTasks => 
                 currentTasks.some(task => task.id === newTask.id) ? currentTasks : [...currentTasks, newTask]
             );
@@ -112,6 +123,10 @@ export function TaskDashboard({ user }) {
                     (updatedTask.status === 'completed') || 
                     (updatedTask.status === 'voided')
                 ) {
+                    // 任務完成時播放音效
+                    if (updatedTask.status === 'completed') {
+                        soundNotification.play('taskCompleted');
+                    }
                     return currentTasks.filter(t => t.id !== updatedTask.id);
                 }
                 
@@ -124,6 +139,7 @@ export function TaskDashboard({ user }) {
         // ✅ 2. 新增 Socket.IO 刪除事件監聽
         const handleTaskDeleted = ({ orderId }) => {
             toast.warning(`訂單已被管理員刪除`);
+            soundNotification.play('error'); // 播放錯誤音效
             setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
         };
 
@@ -148,8 +164,14 @@ export function TaskDashboard({ user }) {
         const promise = apiClient.post(`/api/orders/${orderId}/claim`);
         toast.promise(promise, {
             loading: '正在認領任務...',
-            success: () => '任務認領成功！',
-            error: (err) => err.response?.data?.message || '認領失敗',
+            success: () => {
+                soundNotification.play('taskClaimed'); // 播放認領音效
+                return '任務認領成功！';
+            },
+            error: (err) => {
+                soundNotification.play('error');
+                return err.response?.data?.message || '認領失敗';
+            },
         });
     };
 
@@ -199,12 +221,27 @@ export function TaskDashboard({ user }) {
                     <h1 className="text-4xl font-bold text-gray-800">我的任務</h1>
                     <p className="text-secondary-foreground mt-1">選擇一項任務以開始作業</p>
                 </div>
-                {user && user.role === 'admin' && (
-                    <Link to="/admin" className="flex items-center px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 transition-colors shadow-sm">
-                        <LayoutDashboard className="mr-2 h-5 w-5" />
-                        管理中心
-                    </Link>
-                )}
+                <div className="flex items-center gap-3">
+                    {/* 音效開關按鈕 */}
+                    <button
+                        onClick={toggleSound}
+                        className={`flex items-center px-4 py-2 font-semibold rounded-lg transition-all shadow-sm ${
+                            soundEnabled 
+                                ? 'bg-green-600 text-white hover:bg-green-700' 
+                                : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                        }`}
+                        title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
+                    >
+                        {soundEnabled ? <Volume2 className="mr-2 h-5 w-5" /> : <VolumeX className="mr-2 h-5 w-5" />}
+                        {soundEnabled ? '音效開啟' : '音效關閉'}
+                    </button>
+                    {user && user.role === 'admin' && (
+                        <Link to="/admin" className="flex items-center px-4 py-2 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-900 transition-colors shadow-sm">
+                            <LayoutDashboard className="mr-2 h-5 w-5" />
+                            管理中心
+                        </Link>
+                    )}
+                </div>
             </header>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
