@@ -40,8 +40,7 @@ app.use(morgan('dev'));
 const allowlist = [
     'https://moztech-shipment-verification-system.onrender.com',
     'https://moztech-wms-98684976641.us-west1.run.app', // <- 已替換為你提供的 run.app 網域
-    // 若有其他未來自訂網域，請加在下列清單中：
-    'https://<your-custom-domain.example>',
+    // 若有其他未來自訂網域，請加在下列清單中（請不要包含 < 或 >）：
     'http://localhost:3000',
     'http://localhost:3001'
 ];
@@ -70,7 +69,11 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(cors(corsOptions));
+console.log('DEBUG: registering CORS middleware');
+const _cors_mw = cors(corsOptions);
+console.log('DEBUG: cors middleware type:', typeof _cors_mw);
+if (typeof _cors_mw !== 'function') console.error('ERROR: cors(corsOptions) did not return a function', _cors_mw);
+app.use(_cors_mw);
 // 處理所有路由的預檢（OPTIONS）
 app.options('*', cors(corsOptions));
 
@@ -87,6 +90,7 @@ const pool = new Pool({
   }
 });
 
+console.log('DEBUG: initializing Socket.IO');
 const io = new Server(server, {
     cors: {
         origin: corsOptions.origin,
@@ -455,6 +459,7 @@ apiRouter.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
 // =================================================================
 // #region 路由注册 (Router Registration)
 // =================================================================
+console.log('DEBUG: registering routers');
 app.use('/', publicRouter);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRouter);
 app.use('/api', authenticateToken, apiRouter); // 所有 /api/* (除了/api/admin) 都需要登入

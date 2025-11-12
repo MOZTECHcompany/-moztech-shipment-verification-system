@@ -1,0 +1,11 @@
+const express = require('express');
+const cors = require('cors');
+const app = express();
+const allowlist = ['https://a.example','http://localhost:3000'];
+const corsOptions = { origin: function(origin, cb){ if(!origin) return cb(null,true); cb(null, allowlist.includes(origin)); }, credentials: true };
+console.log('test create middleware');
+const m = cors(corsOptions);
+console.log('middleware type:', typeof m);
+app.use(m);
+console.log('app.use succeeded');
+app.listen(3002, ()=>console.log('listening'));
