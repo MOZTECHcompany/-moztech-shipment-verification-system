@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
-import { apiClient } from '../api/api';
+import apiClient from '../api/api';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
