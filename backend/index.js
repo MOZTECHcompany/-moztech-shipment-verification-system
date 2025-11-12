@@ -104,14 +104,18 @@ const io = new Server(server, {
 // =================================================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
+    console.log('[authenticateToken] Authorization header:', authHeader);
     const token = authHeader && authHeader.split(' ')[1];
+    console.log('[authenticateToken] Extracted token:', token ? `${token.substring(0, 20)}...` : 'null');
     if (!token) return res.status(401).json({ message: '未提供認證權杖 (Token)' });
 
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
             console.error('JWT 驗證失敗:', err.name, err.message);
+            console.error('[authenticateToken] JWT_SECRET exists:', !!process.env.JWT_SECRET);
             return res.status(403).json({ message: '無效或過期的權杖' });
         }
+        console.log('[authenticateToken] 驗證成功 - 使用者:', user);
         req.user = user;
         next();
     });
