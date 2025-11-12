@@ -7,7 +7,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { LayoutDashboard, FileDown, Users, History, LayoutGrid, UploadCloud, FileSpreadsheet } from 'lucide-react';
+import { LayoutDashboard, FileDown, Users, History, LayoutGrid, UploadCloud, FileSpreadsheet, FileText } from 'lucide-react';
 
 export function AdminDashboard() {
     const [dateRange, setDateRange] = useState([null, null]);
@@ -104,12 +104,12 @@ export function AdminDashboard() {
                 </div>
                 
                 {/* 4. 操作日誌查詢 */}
-                 <div className="bg-card p-6 rounded-xl shadow-sm border opacity-60">
-                     <h3 className="text-xl font-semibold text-card-foreground mb-2 flex items-center"><History className="mr-2" />操作日誌查詢</h3>
-                     <p className="text-secondary-foreground mb-4">查詢特定訂單或人員的所有操作記錄。</p>
-                     <button className="px-4 py-2 bg-secondary text-secondary-foreground font-semibold rounded-md cursor-not-allowed">
-                        即將推出
-                     </button>
+                 <div className="bg-card p-6 rounded-xl shadow-sm border bg-gradient-to-br from-indigo-50 to-blue-50">
+                     <h3 className="text-xl font-semibold text-card-foreground mb-2 flex items-center"><FileText className="mr-2 text-indigo-600" />操作日誌查詢</h3>
+                     <p className="text-secondary-foreground mb-4">查詢特定訂單或人員的所有操作記錄，追蹤系統活動。</p>
+                     <Link to="/admin/operation-logs" className="inline-block px-4 py-2 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700 transition-colors">
+                        查看日誌
+                     </Link>
                 </div>
             </div>
         </div>

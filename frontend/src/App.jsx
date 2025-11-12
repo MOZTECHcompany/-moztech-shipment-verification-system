@@ -9,6 +9,7 @@ import { socket } from './api/socket'; // 引入我们创建的 socket 实例
 import { LoginPage } from './components/LoginPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { UserManagement } from './components/admin/UserManagement';
+import { OperationLogs } from './components/admin/OperationLogs';
 import { TaskDashboard } from './components/TaskDashboard';
 import { OrderWorkView } from './components/OrderWorkView';
 import { useLocalStorage } from './hooks/useLocalStorage';
@@ -80,6 +81,7 @@ function App() {
                         <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
                             <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/users" element={user?.role === 'admin' ? <UserManagement /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/operation-logs" element={user?.role === 'admin' ? <OperationLogs /> : <Navigate to="/tasks" />} />
                             <Route path="/tasks" element={<TaskDashboard user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
                         </Route>

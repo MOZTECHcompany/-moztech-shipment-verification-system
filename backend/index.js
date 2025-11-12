@@ -137,7 +137,30 @@ const authorizeAdmin = (req, res, next) => {
 // =================================================================
 const logOperation = async (userId, orderId, operationType, details) => {
     try {
-        await pool.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4)', [userId, orderId, operationType, JSON.stringify(details)]);
+        const result = await pool.query(
+            'INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
+            [userId, orderId, operationType, JSON.stringify(details)]
+        );
+        
+        // 發送即時通知給管理員
+        const logEntry = result.rows[0];
+        const userInfo = await pool.query('SELECT name, role FROM users WHERE id = $1', [userId]);
+        const orderInfo = await pool.query('SELECT voucher_number, customer_name FROM orders WHERE id = $1', [orderId]);
+        
+        io.emit('new_operation_log', {
+            id: logEntry.id,
+            user_id: userId,
+            user_name: userInfo.rows[0]?.name,
+            user_role: userInfo.rows[0]?.role,
+            order_id: orderId,
+            voucher_number: orderInfo.rows[0]?.voucher_number,
+            customer_name: orderInfo.rows[0]?.customer_name,
+            action_type: operationType,
+            details: details,
+            created_at: logEntry.created_at
+        });
+        
+        logger.debug(`[logOperation] 記錄操作: ${operationType} - 訂單 ${orderId}, 使用者 ${userId}`);
     } catch (error) {
         logger.error('記錄操作日誌失敗:', error);
     }
@@ -241,6 +264,143 @@ apiRouter.get('/tasks', async (req, res) => {
     }
     res.json(result.rows);
 });
+
+// 操作日誌查詢端點
+apiRouter.get('/operation-logs', authorizeAdmin, async (req, res) => {
+    const { orderId, userId, startDate, endDate, actionType, limit = 100 } = req.query;
+    
+    logger.info(`[/api/operation-logs] 查詢操作日誌 - orderId: ${orderId}, userId: ${userId}, startDate: ${startDate}, endDate: ${endDate}, actionType: ${actionType}`);
+    
+    try {
+        let query = `
+            SELECT 
+                ol.id,
+                ol.user_id,
+                ol.order_id,
+                ol.action_type,
+                ol.details,
+                ol.created_at,
+                u.name as user_name,
+                u.role as user_role,
+                o.voucher_number,
+                o.customer_name,
+                o.status as order_status
+            FROM operation_logs ol
+            LEFT JOIN users u ON ol.user_id = u.id
+            LEFT JOIN orders o ON ol.order_id = o.id
+            WHERE 1=1
+        `;
+        
+        const params = [];
+        let paramCount = 1;
+        
+        // 按訂單 ID 篩選
+        if (orderId) {
+            query += ` AND ol.order_id = $${paramCount}`;
+            params.push(parseInt(orderId));
+            paramCount++;
+        }
+        
+        // 按使用者 ID 篩選
+        if (userId) {
+            query += ` AND ol.user_id = $${paramCount}`;
+            params.push(parseInt(userId));
+            paramCount++;
+        }
+        
+        // 按操作類型篩選
+        if (actionType) {
+            query += ` AND ol.action_type = $${paramCount}`;
+            params.push(actionType);
+            paramCount++;
+        }
+        
+        // 按日期範圍篩選
+        if (startDate) {
+            query += ` AND ol.created_at >= $${paramCount}`;
+            params.push(startDate);
+            paramCount++;
+        }
+        
+        if (endDate) {
+            const inclusiveEndDate = endDate + ' 23:59:59';
+            query += ` AND ol.created_at <= $${paramCount}`;
+            params.push(inclusiveEndDate);
+            paramCount++;
+        }
+        
+        // 排序和限制
+        query += ` ORDER BY ol.created_at DESC LIMIT $${paramCount}`;
+        params.push(parseInt(limit));
+        
+        const result = await pool.query(query, params);
+        
+        logger.info(`[/api/operation-logs] 找到 ${result.rows.length} 筆操作記錄`);
+        
+        res.json({
+            total: result.rows.length,
+            logs: result.rows
+        });
+    } catch (error) {
+        logger.error('[/api/operation-logs] 查詢失敗:', error);
+        res.status(500).json({ message: '查詢操作日誌失敗' });
+    }
+});
+
+// 取得操作日誌統計資訊
+apiRouter.get('/operation-logs/stats', authorizeAdmin, async (req, res) => {
+    const { startDate, endDate } = req.query;
+    
+    try {
+        let query = `
+            SELECT 
+                action_type,
+                COUNT(*) as count,
+                COUNT(DISTINCT user_id) as unique_users,
+                COUNT(DISTINCT order_id) as unique_orders
+            FROM operation_logs
+            WHERE 1=1
+        `;
+        
+        const params = [];
+        let paramCount = 1;
+        
+        if (startDate) {
+            query += ` AND created_at >= $${paramCount}`;
+            params.push(startDate);
+            paramCount++;
+        }
+        
+        if (endDate) {
+            const inclusiveEndDate = endDate + ' 23:59:59';
+            query += ` AND created_at <= $${paramCount}`;
+            params.push(inclusiveEndDate);
+            paramCount++;
+        }
+        
+        query += ` GROUP BY action_type ORDER BY count DESC`;
+        
+        const result = await pool.query(query, params);
+        
+        // 取得總操作數
+        const totalQuery = `
+            SELECT COUNT(*) as total
+            FROM operation_logs
+            WHERE created_at >= COALESCE($1::timestamp, '-infinity')
+            AND created_at <= COALESCE($2::timestamp, 'infinity')
+        `;
+        const totalResult = await pool.query(totalQuery, [startDate, endDate ? endDate + ' 23:59:59' : null]);
+        
+        res.json({
+            total: parseInt(totalResult.rows[0].total),
+            byActionType: result.rows
+        });
+    } catch (error) {
+        logger.error('[/api/operation-logs/stats] 查詢失敗:', error);
+        res.status(500).json({ message: '查詢統計資料失敗' });
+    }
+});
+
 apiRouter.get('/reports/export', authorizeAdmin, async (req, res) => {
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) return res.status(400).json({ message: '必須提供開始與結束日期' });
