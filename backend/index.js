@@ -1,13 +1,15 @@
 // =================================================================
-// MOZTECH WMS 后端主程式 (index.js) - v6.3 移除冲突依赖最终版
+// MOZTECH WMS 後端主程式 (index.js) - v6.3 路由結構最終修正版
 //
 // 关键修正:
-// - 移除了与 Express 5 不兼容的 `express-async-errors` 套件。
-//   Express 5 已内建对 async/await 路由的错误处理。
+// - 彻底重构路由注册逻辑，确保认证中介软体 (authenticateToken)
+//   不会被错误地应用到公开的 `/api/auth/login` 路由上。
+//   这是导致 401 错误的根本原因。
 // =================================================================
  
 // --- 核心套件引入 ---
 const express = require('express');
+// Express 5 已内建 async/await 错误处理，不再需要 express-async-errors
 const http = require('http');
 const { Server } = require("socket.io");
 const { Pool } = require('pg');
@@ -28,15 +30,12 @@ const app = express();
 const port = process.env.PORT || 3001;
 const server = http.createServer(app);
 
-// ... 后续所有程式码与 v6.2 完全相同，为了简洁此处省略 ...
-// (请直接使用您本地已有的 v6.2 版本，然后只删除 require('express-async-errors'); 这一行即可)
-// 
-// 为确保完整性，我还是将完整程式码附在下方：
 // =================================================================
-
 // #region 全域中介软体 (Global Middlewares)
+// =================================================================
 app.use(helmet());
 app.use(morgan('dev'));
+
 const allowedOrigins = [
     'https://moztech-shipment-verification-system.onrender.com',
     'http://localhost:3000',
@@ -55,20 +54,25 @@ app.use(cors(corsOptions));
 app.use(express.json());
 // #endregion
 
+// =================================================================
 // #region 资料库与 Socket.IO 初始化
+// =================================================================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
   }
 });
+
 const io = new Server(server, {
     cors: corsOptions,
     allowEIO3: true
 });
 // #endregion
 
+// =================================================================
 // #region 认证与授权中介软体 (Auth Middlewares)
+// =================================================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -83,6 +87,7 @@ const authenticateToken = (req, res, next) => {
         next();
     });
 };
+
 const authorizeAdmin = (req, res, next) => {
     if (req.user?.role !== 'admin') {
         return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
@@ -91,7 +96,9 @@ const authorizeAdmin = (req, res, next) => {
 };
 // #endregion
 
+// =================================================================
 // #region 辅助函式 (Helper Functions)
+// =================================================================
 const logOperation = async (userId, orderId, operationType, details) => {
     try {
         await pool.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4)', [userId, orderId, operationType, JSON.stringify(details)]);
@@ -102,19 +109,21 @@ const logOperation = async (userId, orderId, operationType, details) => {
 const upload = multer({ storage: multer.memoryStorage() });
 // #endregion
 
-// #region API 路由 (API Routes)
-const apiRouter = express.Router();
-apiRouter.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'));
-apiRouter.post('/auth/login', async (req, res) => {
+// =================================================================
+// #region API 路由定义 (API Routes)
+// =================================================================
+
+// --- 公开路由 (不需要 Token) ---
+const publicRouter = express.Router();
+publicRouter.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'));
+publicRouter.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ message: '請提供使用者名稱和密碼' });
-
     const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
     const user = result.rows[0];
     if (!user) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) return res.status(400).json({ message: '無效的使用者名稱或密碼' });
-
     const cleanedRole = user.role ? String(user.role).trim().toLowerCase() : null;
     const accessToken = jwt.sign(
         { id: user.id, username: user.username, name: user.name, role: cleanedRole },
@@ -124,8 +133,8 @@ apiRouter.post('/auth/login', async (req, res) => {
     res.json({ accessToken, user: { id: user.id, username: user.username, name: user.name, role: cleanedRole } });
 });
 
+// --- 受保护的管理路由 (需要 Admin Token) ---
 const adminRouter = express.Router();
-adminRouter.use(authenticateToken, authorizeAdmin);
 adminRouter.post('/create-user', async (req, res) => {
     let { username, password, name, role } = req.body;
     if (!username || !password || !name || !role) return res.status(400).json({ message: '缺少必要欄位' });
@@ -168,9 +177,53 @@ adminRouter.delete('/users/:userId', async (req, res) => {
     res.status(200).json({ message: '使用者已成功刪除' });
 });
 
-const orderRouter = express.Router();
-orderRouter.use(authenticateToken);
-orderRouter.post('/import', authorizeAdmin, upload.single('orderFile'), async (req, res, next) => {
+// --- 受保护的通用路由 (需要登入 Token) ---
+const apiRouter = express.Router();
+apiRouter.get('/tasks', async (req, res) => {
+    const { id: userId, role } = req.user;
+    if (!role) return res.status(403).json({ message: '使用者角色無效' });
+    const query = `
+        SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+               (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
+               (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type
+        FROM orders o
+        LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users picker_u ON o.picker_id = picker_u.id LEFT JOIN users packer_u ON o.packer_id = packer_u.id
+        WHERE 
+            ( (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1)) AND $2 IN ('admin', 'picker') ) OR
+            ( (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)) AND $2 IN ('admin', 'packer') )
+        ORDER BY o.created_at ASC;
+    `;
+    const result = await pool.query(query, [userId, role]);
+    res.json(result.rows);
+});
+apiRouter.get('/reports/export', authorizeAdmin, async (req, res) => {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) return res.status(400).json({ message: '必須提供開始與結束日期' });
+    const inclusiveEndDate = endDate + ' 23:59:59';
+    const orderResult = await pool.query(`SELECT id, voucher_number, status, completed_at, updated_at FROM orders WHERE (status = 'completed' AND completed_at BETWEEN $1 AND $2) OR (status = 'voided' AND updated_at BETWEEN $1 AND $2) ORDER BY updated_at DESC, completed_at DESC`, [startDate, inclusiveEndDate]);
+    if (orderResult.rows.length === 0) return res.status(404).json({ message: '在指定日期範圍內找不到任何已完成或作廢的訂單' });
+    const orders = orderResult.rows;
+    const orderIds = orders.map(o => o.id);
+    const itemsResult = await pool.query(`SELECT order_id, SUM(quantity) as total_quantity FROM order_items WHERE order_id = ANY($1::int[]) GROUP BY order_id`, [orderIds]);
+    const itemCounts = itemsResult.rows.reduce((acc, row) => { acc[row.order_id] = row.total_quantity; return acc; }, {});
+    const logsResult = await pool.query(`SELECT ol.order_id, ol.action_type, ol.created_at, u.name as user_name FROM operation_logs ol JOIN users u ON ol.user_id = u.id WHERE ol.order_id = ANY($1::int[]) AND ol.action_type IN ('pick', 'pack', 'void')`, [orderIds]);
+    const logsByOrderId = logsResult.rows.reduce((acc, log) => { if (!acc[log.order_id]) acc[log.order_id] = []; acc[log.order_id].push(log); return acc; }, {});
+    const reportData = orders.map(order => {
+        const orderLogs = logsByOrderId[order.id] || [];
+        const pickers = [...new Set(orderLogs.filter(l => l.action_type === 'pick').map(l => l.user_name))].join(', ');
+        const packers = [...new Set(orderLogs.filter(l => l.action_type === 'pack').map(l => l.user_name))].join(', ');
+        const voidLog = orderLogs.find(l => l.action_type === 'void');
+        const formatTime = (date) => date ? new Date(date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '';
+        return { "訂單編號": order.voucher_number, "訂單狀態": order.status === 'completed' ? '已完成' : '已作廢', "出貨總件數": itemCounts[order.id] || 0, "揀貨人員": pickers || '無紀錄', "裝箱人員": packers || '無紀錄', "出貨完成時間": order.status === 'completed' ? formatTime(order.completed_at) : '', "作廢人員": voidLog ? voidLog.user_name : '', "作廢時間": voidLog ? formatTime(voidLog.created_at) : '' };
+    });
+    const csv = Papa.unparse(reportData);
+    const fileName = `營運報告_${startDate}_至_${endDate}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.status(200).send('\uFEFF' + csv);
+});
+apiRouter.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async (req, res, next) => {
+    // ... (此处省略 import 路由的完整程式码以保持简洁，它与 v6.2 版本完全相同)
     if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
     const client = await pool.connect();
     try {
@@ -241,7 +294,8 @@ orderRouter.post('/import', authorizeAdmin, upload.single('orderFile'), async (r
         client.release();
     }
 });
-orderRouter.post('/update_item', async (req, res, next) => {
+apiRouter.post('/orders/update_item', async (req, res, next) => {
+    // ... (此处省略 update_item 路由的完整程式码，与 v6.2 版本完全相同)
     const { orderId, scanValue, type, amount = 1 } = req.body;
     const { id: userId, role } = req.user;
     const client = await pool.connect();
@@ -313,7 +367,8 @@ orderRouter.post('/update_item', async (req, res, next) => {
         client.release();
     }
 });
-orderRouter.post('/:orderId/claim', async (req, res, next) => {
+apiRouter.post('/orders/:orderId/claim', async (req, res, next) => {
+    // ... (此处省略 claim 路由的完整程式码，与 v6.2 版本完全相同)
     const { orderId } = req.params;
     const { id: userId, role } = req.user;
     const client = await pool.connect();
@@ -344,7 +399,7 @@ orderRouter.post('/:orderId/claim', async (req, res, next) => {
         client.release();
     }
 });
-orderRouter.get('/:orderId', async (req, res) => {
+apiRouter.get('/orders/:orderId', async (req, res) => {
     const { orderId } = req.params;
     const orderResult = await pool.query('SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1;', [orderId]);
     if (orderResult.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
@@ -352,7 +407,7 @@ orderRouter.get('/:orderId', async (req, res) => {
     const instancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id', [orderId]);
     res.json({ order: orderResult.rows[0], items: itemsResult.rows, instances: instancesResult.rows });
 });
-orderRouter.patch('/:orderId/void', authorizeAdmin, async (req, res) => {
+apiRouter.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const { reason } = req.body;
     const result = await pool.query("UPDATE orders SET status = 'voided', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId]);
@@ -361,66 +416,21 @@ orderRouter.patch('/:orderId/void', authorizeAdmin, async (req, res) => {
     io.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'voided' });
     res.json({ message: `訂單 ${result.rows[0].voucher_number} 已成功作廢` });
 });
-orderRouter.delete('/:orderId', authorizeAdmin, async (req, res) => {
+apiRouter.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const result = await pool.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
     if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的訂單' });
     io.emit('task_deleted', { orderId: parseInt(orderId, 10) });
     res.status(200).json({ message: `訂單 ${result.rows[0].voucher_number} 已被永久刪除` });
 });
+// #endregion
 
-const generalRouter = express.Router();
-generalRouter.use(authenticateToken);
-generalRouter.get('/tasks', async (req, res) => {
-    const { id: userId, role } = req.user;
-    if (!role) return res.status(403).json({ message: '使用者角色無效' });
-    const query = `
-        SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
-               (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
-               (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type
-        FROM orders o
-        LEFT JOIN users p ON o.picker_id = p.id
-        LEFT JOIN users picker_u ON o.picker_id = picker_u.id
-        LEFT JOIN users packer_u ON o.packer_id = packer_u.id
-        WHERE 
-            ( (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1)) AND $2 IN ('admin', 'picker') ) OR
-            ( (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)) AND $2 IN ('admin', 'packer') )
-        ORDER BY o.created_at ASC;
-    `;
-    const result = await pool.query(query, [userId, role]);
-    res.json(result.rows);
-});
-generalRouter.get('/reports/export', authorizeAdmin, async (req, res) => {
-    const { startDate, endDate } = req.query;
-    if (!startDate || !endDate) return res.status(400).json({ message: '必須提供開始與結束日期' });
-    const inclusiveEndDate = endDate + ' 23:59:59';
-    const orderResult = await pool.query(`SELECT id, voucher_number, status, completed_at, updated_at FROM orders WHERE (status = 'completed' AND completed_at BETWEEN $1 AND $2) OR (status = 'voided' AND updated_at BETWEEN $1 AND $2) ORDER BY updated_at DESC, completed_at DESC`, [startDate, inclusiveEndDate]);
-    if (orderResult.rows.length === 0) return res.status(404).json({ message: '在指定日期範圍內找不到任何已完成或作廢的訂單' });
-    const orders = orderResult.rows;
-    const orderIds = orders.map(o => o.id);
-    const itemsResult = await pool.query(`SELECT order_id, SUM(quantity) as total_quantity FROM order_items WHERE order_id = ANY($1::int[]) GROUP BY order_id`, [orderIds]);
-    const itemCounts = itemsResult.rows.reduce((acc, row) => { acc[row.order_id] = row.total_quantity; return acc; }, {});
-    const logsResult = await pool.query(`SELECT ol.order_id, ol.action_type, ol.created_at, u.name as user_name FROM operation_logs ol JOIN users u ON ol.user_id = u.id WHERE ol.order_id = ANY($1::int[]) AND ol.action_type IN ('pick', 'pack', 'void')`, [orderIds]);
-    const logsByOrderId = logsResult.rows.reduce((acc, log) => { if (!acc[log.order_id]) acc[log.order_id] = []; acc[log.order_id].push(log); return acc; }, {});
-    const reportData = orders.map(order => {
-        const orderLogs = logsByOrderId[order.id] || [];
-        const pickers = [...new Set(orderLogs.filter(l => l.action_type === 'pick').map(l => l.user_name))].join(', ');
-        const packers = [...new Set(orderLogs.filter(l => l.action_type === 'pack').map(l => l.user_name))].join(', ');
-        const voidLog = orderLogs.find(l => l.action_type === 'void');
-        const formatTime = (date) => date ? new Date(date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '';
-        return { "訂單編號": order.voucher_number, "訂單狀態": order.status === 'completed' ? '已完成' : '已作廢', "出貨總件數": itemCounts[order.id] || 0, "揀貨人員": pickers || '無紀錄', "裝箱人員": packers || '無紀錄', "出貨完成時間": order.status === 'completed' ? formatTime(order.completed_at) : '', "作廢人員": voidLog ? voidLog.user_name : '', "作廢時間": voidLog ? formatTime(voidLog.created_at) : '' };
-    });
-    const csv = Papa.unparse(reportData);
-    const fileName = `營運報告_${startDate}_至_${endDate}.csv`;
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-    res.status(200).send('\uFEFF' + csv);
-});
-
-app.use('/', apiRouter);
-app.use('/api/admin', adminRouter);
-app.use('/api/orders', orderRouter);
-app.use('/api', generalRouter);
+// =================================================================
+// #region 路由注册 (Router Registration)
+// =================================================================
+app.use('/', publicRouter);
+app.use('/api/admin', authenticateToken, authorizeAdmin, adminRouter);
+app.use('/api', authenticateToken, apiRouter); // 所有 /api/* (除了/api/admin) 都需要登入
 // #endregion
 
 // =================================================================
@@ -429,12 +439,13 @@ app.use('/api', generalRouter);
 app.use((err, req, res, next) => {
     console.error('統一錯誤處理器捕獲到錯誤:\n', err);
     if (err.code === '23505') return res.status(409).json({ message: '操作失敗：資料重複。' + (err.detail || '') });
-    const statusCode = err.statusCode || 500;
+    const statusCode = err.status || 500;
     res.status(statusCode).json({ 
         message: err.message || '伺服器發生未知錯誤',
         stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
 });
+// #endregion
 
 // =================================================================
 // #region Socket.IO & 伺服器启动
