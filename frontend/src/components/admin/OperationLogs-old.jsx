@@ -1,24 +1,24 @@
 // frontend/src/components/admin/OperationLogs.jsx
-// 操作日誌查詢與顯示頁面 - Apple 風格現代化版本
+// 操作日誌查詢與顯示頁面
 
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
 import { 
     FileText, Search, Filter, Download, RefreshCw, 
-    User, Package, Calendar, Activity, TrendingUp, ArrowLeft
+    User, Package, Calendar, Activity, TrendingUp 
 } from 'lucide-react';
 
 // 操作類型的中文對照和顏色
 const actionTypeMap = {
-    import: { label: '匯入訂單', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: '📥' },
-    claim: { label: '認領任務', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: '✋' },
-    pick: { label: '揀貨操作', color: 'bg-gradient-to-br from-yellow-50 to-yellow-100 text-yellow-800 border-yellow-200', icon: '📦' },
-    pack: { label: '裝箱操作', color: 'bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800 border-purple-200', icon: '📮' },
-    void: { label: '作廢訂單', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: '❌' },
-    complete: { label: '完成訂單', color: 'bg-gradient-to-br from-emerald-50 to-emerald-100 text-emerald-800 border-emerald-200', icon: '✅' }
+    import: { label: '匯入訂單', color: 'bg-blue-100 text-blue-800', icon: '📥' },
+    claim: { label: '認領任務', color: 'bg-green-100 text-green-800', icon: '✋' },
+    pick: { label: '揀貨操作', color: 'bg-yellow-100 text-yellow-800', icon: '📦' },
+    pack: { label: '裝箱操作', color: 'bg-purple-100 text-purple-800', icon: '📮' },
+    void: { label: '作廢訂單', color: 'bg-red-100 text-red-800', icon: '❌' },
+    complete: { label: '完成訂單', color: 'bg-emerald-100 text-emerald-800', icon: '✅' }
 };
 
 export function OperationLogs() {
@@ -172,63 +172,48 @@ export function OperationLogs() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-4 md:p-8">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6">
             <div className="max-w-7xl mx-auto">
                 {/* 標題 */}
-                <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
-                    <div className="flex items-center gap-4">
-                        <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl shadow-apple-lg">
-                            <FileText className="w-8 h-8 text-white" />
-                        </div>
+                <div className="mb-6 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <FileText className="w-8 h-8 text-indigo-600" />
                         <div>
-                            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                                操作日誌查詢
-                            </h1>
-                            <p className="text-sm text-gray-600 mt-1">追蹤系統中所有操作記錄</p>
+                            <h1 className="text-3xl font-bold text-gray-900">操作日誌查詢</h1>
+                            <p className="text-sm text-gray-500 mt-1">追蹤系統中所有操作記錄</p>
                         </div>
                     </div>
-                    <div className="flex gap-2">
-                        <Link to="/admin" 
-                            className="btn-apple bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white flex items-center gap-2 shadow-apple-lg">
-                            <ArrowLeft size={18} />
-                            返回
-                        </Link>
-                        <button
-                            onClick={fetchLogs}
-                            disabled={loading}
-                            className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white flex items-center gap-2 shadow-apple-lg disabled:opacity-50"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                            重新整理
-                        </button>
-                    </div>
+                    <button
+                        onClick={fetchLogs}
+                        disabled={loading}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        重新整理
+                    </button>
                 </div>
 
                 {/* 統計卡片 */}
                 {stats && (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                        <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div className="bg-white rounded-lg shadow p-4">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-gray-600 font-medium mb-1">總操作數</p>
-                                    <p className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{stats.total}</p>
+                                    <p className="text-sm text-gray-500">總操作數</p>
+                                    <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
                                 </div>
-                                <div className="p-3 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl">
-                                    <Activity className="w-6 h-6 text-blue-600" />
-                                </div>
+                                <Activity className="w-8 h-8 text-blue-500" />
                             </div>
                         </div>
                         {stats.byActionType.slice(0, 3).map((item, index) => (
-                            <div key={index} className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: `${(index + 2) * 100}ms` }}>
+                            <div key={index} className="bg-white rounded-lg shadow p-4">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <p className="text-sm text-gray-600 font-medium mb-1">{actionTypeMap[item.action_type]?.label || item.action_type}</p>
-                                        <p className="text-3xl font-bold text-gray-900">{item.count}</p>
-                                        <p className="text-xs text-gray-500 mt-1">{item.unique_users} 位使用者</p>
+                                        <p className="text-sm text-gray-500">{actionTypeMap[item.action_type]?.label || item.action_type}</p>
+                                        <p className="text-2xl font-bold text-gray-900">{item.count}</p>
+                                        <p className="text-xs text-gray-400">{item.unique_users} 位使用者</p>
                                     </div>
-                                    <div className="p-3 bg-gradient-to-br from-green-100 to-green-200 rounded-xl">
-                                        <TrendingUp className="w-6 h-6 text-green-600" />
-                                    </div>
+                                    <TrendingUp className="w-8 h-8 text-green-500" />
                                 </div>
                             </div>
                         ))}
@@ -236,12 +221,10 @@ export function OperationLogs() {
                 )}
 
                 {/* 篩選區域 */}
-                <div className="glass card-apple p-6 mb-8 animate-scale-in" style={{ animationDelay: '200ms' }}>
-                    <div className="flex items-center gap-2 mb-6">
-                        <div className="p-2 bg-gradient-to-br from-purple-100 to-purple-200 rounded-xl">
-                            <Filter className="w-5 h-5 text-purple-600" />
-                        </div>
-                        <h2 className="text-xl font-bold text-gray-900">篩選條件</h2>
+                <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                    <div className="flex items-center gap-2 mb-4">
+                        <Filter className="w-5 h-5 text-gray-600" />
+                        <h2 className="text-lg font-semibold text-gray-900">篩選條件</h2>
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -250,7 +233,7 @@ export function OperationLogs() {
                             placeholder="訂單 ID"
                             value={filters.orderId}
                             onChange={(e) => handleFilterChange('orderId', e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         />
                         
                         <input
@@ -258,13 +241,13 @@ export function OperationLogs() {
                             placeholder="使用者 ID"
                             value={filters.userId}
                             onChange={(e) => handleFilterChange('userId', e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         />
                         
                         <select
                             value={filters.actionType}
                             onChange={(e) => handleFilterChange('actionType', e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         >
                             <option value="">所有操作類型</option>
                             {Object.entries(actionTypeMap).map(([key, value]) => (
@@ -276,20 +259,20 @@ export function OperationLogs() {
                             type="date"
                             value={filters.startDate}
                             onChange={(e) => handleFilterChange('startDate', e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         />
                         
                         <input
                             type="date"
                             value={filters.endDate}
                             onChange={(e) => handleFilterChange('endDate', e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         />
                         
                         <select
                             value={filters.limit}
                             onChange={(e) => handleFilterChange('limit', e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         >
                             <option value="50">50 筆</option>
                             <option value="100">100 筆</option>
@@ -298,10 +281,10 @@ export function OperationLogs() {
                         </select>
                     </div>
                     
-                    <div className="flex flex-wrap gap-3 mt-6">
+                    <div className="flex gap-3 mt-4">
                         <button
                             onClick={handleSearch}
-                            className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white flex items-center gap-2 shadow-apple-lg"
+                            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                         >
                             <Search className="w-4 h-4" />
                             搜尋
@@ -309,7 +292,7 @@ export function OperationLogs() {
                         
                         <button
                             onClick={handleReset}
-                            className="btn-apple bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600 text-white shadow-apple-lg"
+                            className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
                         >
                             重置
                         </button>
@@ -317,7 +300,7 @@ export function OperationLogs() {
                         <button
                             onClick={handleExport}
                             disabled={logs.length === 0}
-                            className="btn-apple bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white flex items-center gap-2 shadow-apple-lg disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+                            className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
                         >
                             <Download className="w-4 h-4" />
                             匯出 CSV
@@ -326,24 +309,24 @@ export function OperationLogs() {
                 </div>
 
                 {/* 日誌列表 */}
-                <div className="glass card-apple overflow-hidden animate-scale-in" style={{ animationDelay: '300ms' }}>
+                <div className="bg-white rounded-lg shadow-md overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="w-full">
-                            <thead className="bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
+                            <thead className="bg-gray-50 border-b border-gray-200">
                                 <tr>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">時間</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">訂單資訊</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">操作類型</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">操作人員</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">詳細資訊</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">時間</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">訂單資訊</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作類型</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作人員</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">詳細資訊</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
                                 {loading ? (
                                     <tr>
                                         <td colSpan="5" className="px-6 py-12 text-center">
-                                            <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-500 mb-2" />
-                                            <p className="text-gray-600 font-medium">載入中...</p>
+                                            <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
+                                            <p className="text-gray-500">載入中...</p>
                                         </td>
                                     </tr>
                                 ) : logs.length === 0 ? (
@@ -353,8 +336,8 @@ export function OperationLogs() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    logs.map((log, index) => (
-                                        <tr key={log.id} className="hover:bg-blue-50/50 transition-all duration-200 animate-slide-up" style={{ animationDelay: `${index * 20}ms` }}>
+                                    logs.map((log) => (
+                                        <tr key={log.id} className="hover:bg-gray-50 transition-colors">
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex items-center gap-2 text-sm text-gray-900">
                                                     <Calendar className="w-4 h-4 text-gray-400" />
@@ -363,9 +346,9 @@ export function OperationLogs() {
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-2">
-                                                    <Package className="w-4 h-4 text-blue-500" />
+                                                    <Package className="w-4 h-4 text-gray-400" />
                                                     <div>
-                                                        <div className="text-sm font-semibold text-gray-900">
+                                                        <div className="text-sm font-medium text-gray-900">
                                                             {log.voucher_number || '-'}
                                                         </div>
                                                         <div className="text-xs text-gray-500">
@@ -375,18 +358,15 @@ export function OperationLogs() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className={`px-3 py-1.5 inline-flex items-center gap-1 text-xs font-semibold rounded-xl border ${actionTypeMap[log.action_type]?.color || 'bg-gray-100 text-gray-800 border-gray-200'} shadow-sm`}>
-                                                    <span>{actionTypeMap[log.action_type]?.icon}</span>
-                                                    <span>{actionTypeMap[log.action_type]?.label || log.action_type}</span>
+                                                <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${actionTypeMap[log.action_type]?.color || 'bg-gray-100 text-gray-800'}`}>
+                                                    {actionTypeMap[log.action_type]?.icon} {actionTypeMap[log.action_type]?.label || log.action_type}
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-2 bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg">
-                                                        <User className="w-3 h-3 text-purple-600" />
-                                                    </div>
+                                                    <User className="w-4 h-4 text-gray-400" />
                                                     <div>
-                                                        <div className="text-sm font-semibold text-gray-900">
+                                                        <div className="text-sm font-medium text-gray-900">
                                                             {log.user_name || '-'}
                                                         </div>
                                                         <div className="text-xs text-gray-500">
