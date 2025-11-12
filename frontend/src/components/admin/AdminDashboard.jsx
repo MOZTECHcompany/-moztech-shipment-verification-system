@@ -95,6 +95,37 @@ export function AdminDashboard() {
 
                 {/* 功能卡片網格 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* 數據分析 - 新增 */}
+                    <div className="card-apple group bg-gradient-to-br from-blue-50 to-indigo-50 animate-scale-in">
+                        <div className="p-8">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <TrendingUp className="text-blue-600" size={24} />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-900">數據分析</h3>
+                            </div>
+                            
+                            <p className="text-gray-600 mb-6 text-base leading-relaxed">
+                                查看訂單趨勢、員工績效、營運數據分析，提升管理效率。
+                            </p>
+                            
+                            <Link 
+                                to="/admin/analytics" 
+                                className="
+                                    inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
+                                    bg-gradient-to-r from-blue-600 to-indigo-600 text-white
+                                    hover:from-blue-700 hover:to-indigo-700
+                                    transition-all duration-200 shadow-lg shadow-blue-500/30
+                                    hover:shadow-xl hover:shadow-blue-500/40
+                                    active:scale-[0.98]
+                                "
+                            >
+                                <TrendingUp size={20} />
+                                前往分析
+                            </Link>
+                        </div>
+                    </div>
+
                     {/* 1. 建立新任務 */}
                     <div className="card-apple group animate-scale-in">
                         <div className="p-8">

@@ -275,6 +275,100 @@ apiRouter.get('/tasks', async (req, res) => {
     res.json(result.rows);
 });
 
+// 數據分析端點
+apiRouter.get('/analytics', authorizeAdmin, async (req, res) => {
+    try {
+        const { range = '7d' } = req.query;
+        
+        // 計算日期範圍
+        const days = range === '7d' ? 7 : range === '30d' ? 30 : range === '90d' ? 90 : 7;
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+        
+        // 基礎統計
+        const statsQuery = `
+            SELECT 
+                COUNT(*) as total_orders,
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
+                COUNT(CASE WHEN status = 'void' THEN 1 END) as void_orders,
+                COUNT(CASE WHEN status IN ('pending', 'picking', 'packing') THEN 1 END) as active_orders
+            FROM orders
+            WHERE created_at >= $1
+        `;
+        
+        // 每日訂單趨勢
+        const trendQuery = `
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count,
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed
+            FROM orders
+            WHERE created_at >= $1
+            GROUP BY DATE(created_at)
+            ORDER BY date DESC
+            LIMIT ${days}
+        `;
+        
+        // 員工績效
+        const performanceQuery = `
+            SELECT 
+                u.name,
+                u.role,
+                COUNT(DISTINCT ol.order_id) as orders_handled,
+                COUNT(ol.id) as total_operations
+            FROM operation_logs ol
+            JOIN users u ON ol.user_id = u.id
+            WHERE ol.created_at >= $1
+            GROUP BY u.id, u.name, u.role
+            ORDER BY orders_handled DESC
+            LIMIT 10
+        `;
+        
+        const [stats, trend, performance] = await Promise.all([
+            pool.query(statsQuery, [startDate]),
+            pool.query(trendQuery, [startDate]),
+            pool.query(performanceQuery, [startDate])
+        ]);
+        
+        res.json({
+            stats: stats.rows[0],
+            trend: trend.rows,
+            performance: performance.rows
+        });
+    } catch (error) {
+        logger.error('[/api/analytics] 查詢失敗:', error);
+        res.status(500).json({ message: '獲取分析數據失敗' });
+    }
+});
+
+// 批次操作端點
+apiRouter.post('/orders/batch-claim', async (req, res) => {
+    try {
+        const { orderIds } = req.body;
+        const userId = req.user.id;
+        
+        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+            return res.status(400).json({ message: '請提供訂單ID列表' });
+        }
+        
+        const result = await pool.query(
+            `UPDATE orders 
+             SET picker_id = $1, status = 'picking', updated_at = NOW()
+             WHERE id = ANY($2) AND status = 'pending'
+             RETURNING id, voucher_number`,
+            [userId, orderIds]
+        );
+        
+        res.json({ 
+            message: `成功認領 ${result.rows.length} 個訂單`,
+            orders: result.rows
+        });
+    } catch (error) {
+        logger.error('[/api/orders/batch-claim] 批次認領失敗:', error);
+        res.status(500).json({ message: '批次認領失敗' });
+    }
+});
+
 // 操作日誌查詢端點
 apiRouter.get('/operation-logs', authorizeAdmin, async (req, res) => {
     const { orderId, userId, startDate, endDate, actionType, limit = 100 } = req.query;
@@ -659,6 +753,185 @@ apiRouter.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
     if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的訂單' });
     io.emit('task_deleted', { orderId: parseInt(orderId, 10) });
     res.status(200).json({ message: `訂單 ${result.rows[0].voucher_number} 已被永久刪除` });
+});
+
+// 📊 數據分析 API
+apiRouter.get('/analytics', authorizeAdmin, async (req, res) => {
+    const { range = '7days' } = req.query;
+    
+    // 計算日期範圍
+    const daysMap = { '7days': 7, '30days': 30, '90days': 90 };
+    const days = daysMap[range] || 7;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    
+    try {
+        // 1. 總覽數據
+        const overviewQuery = await pool.query(`
+            SELECT 
+                COUNT(*) as total_orders,
+                COUNT(*) FILTER (WHERE status = 'completed') as completed_orders,
+                COUNT(*) FILTER (WHERE status = 'voided') as voided_orders,
+                AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/60) FILTER (WHERE status = 'picking' OR status = 'packing' OR status = 'completed') as avg_processing_time
+            FROM orders
+            WHERE created_at >= $1
+        `, [startDate]);
+
+        // 2. 員工績效排行
+        const userPerformanceQuery = await pool.query(`
+            SELECT 
+                u.id as user_id,
+                u.name as user_name,
+                u.role,
+                COUNT(DISTINCT ol.order_id) as completed_orders,
+                AVG(EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/60) as avg_time
+            FROM users u
+            LEFT JOIN operation_logs ol ON u.id = ol.user_id
+            LEFT JOIN orders o ON ol.order_id = o.id
+            WHERE ol.created_at >= $1 AND ol.action_type IN ('pick', 'pack', 'complete')
+            GROUP BY u.id, u.name, u.role
+            HAVING COUNT(DISTINCT ol.order_id) > 0
+            ORDER BY completed_orders DESC
+            LIMIT 20
+        `, [startDate]);
+
+        // 3. 熱門商品
+        const topProductsQuery = await pool.query(`
+            SELECT 
+                oi.product_name,
+                oi.barcode,
+                oi.product_code,
+                SUM(oi.quantity) as total_quantity,
+                COUNT(DISTINCT oi.order_id) as order_count
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.created_at >= $1
+            GROUP BY oi.product_name, oi.barcode, oi.product_code
+            ORDER BY total_quantity DESC
+            LIMIT 20
+        `, [startDate]);
+
+        // 4. 訂單趨勢 (每日統計)
+        const orderTrendsQuery = await pool.query(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                COUNT(*) FILTER (WHERE status = 'voided') as voided
+            FROM orders
+            WHERE created_at >= $1
+            GROUP BY DATE(created_at)
+            ORDER BY date DESC
+        `, [startDate]);
+
+        const overview = overviewQuery.rows[0];
+        
+        res.json({
+            overview: {
+                totalOrders: parseInt(overview.total_orders),
+                completedOrders: parseInt(overview.completed_orders),
+                voidedOrders: parseInt(overview.voided_orders),
+                avgPickingTime: parseFloat(overview.avg_processing_time) * 0.4 || 0, // 估計揀貨佔 40%
+                avgPackingTime: parseFloat(overview.avg_processing_time) * 0.3 || 0, // 估計裝箱佔 30%
+                errorRate: parseInt(overview.voided_orders) / parseInt(overview.total_orders) || 0
+            },
+            userPerformance: userPerformanceQuery.rows,
+            topProducts: topProductsQuery.rows,
+            orderTrends: orderTrendsQuery.rows
+        });
+        
+        logger.info(`[/api/analytics] 成功返回 ${range} 分析數據`);
+    } catch (error) {
+        logger.error('[/api/analytics] 查詢失敗:', error);
+        res.status(500).json({ message: '獲取分析數據失敗' });
+    }
+});
+
+// ⚡ 批次操作 API
+apiRouter.post('/orders/batch/claim', async (req, res) => {
+    const { orderIds } = req.body;
+    const { id: userId, role } = req.user;
+    
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ message: '請提供訂單 ID 列表' });
+    }
+    
+    try {
+        const results = { success: [], failed: [] };
+        
+        for (const orderId of orderIds) {
+            try {
+                const result = await pool.query(
+                    'SELECT id, status FROM orders WHERE id = $1',
+                    [orderId]
+                );
+                
+                if (result.rows.length === 0) {
+                    results.failed.push({ orderId, reason: '訂單不存在' });
+                    continue;
+                }
+                
+                const order = result.rows[0];
+                
+                if (order.status === 'pending' && (role === 'picker' || role === 'admin')) {
+                    await pool.query(
+                        "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                        [userId, orderId]
+                    );
+                    await logOperation(userId, orderId, 'claim', { previous_status: 'pending', new_status: 'picking' });
+                    io.emit('task_status_changed', { orderId, newStatus: 'picking' });
+                    results.success.push(orderId);
+                } else if (order.status === 'picking' && (role === 'packer' || role === 'admin')) {
+                    await pool.query(
+                        "UPDATE orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                        [userId, orderId]
+                    );
+                    await logOperation(userId, orderId, 'claim', { previous_status: 'picking', new_status: 'packing' });
+                    io.emit('task_status_changed', { orderId, newStatus: 'packing' });
+                    results.success.push(orderId);
+                } else {
+                    results.failed.push({ orderId, reason: '訂單狀態不符或權限不足' });
+                }
+            } catch (error) {
+                results.failed.push({ orderId, reason: error.message });
+            }
+        }
+        
+        res.json({
+            message: `批次認領完成: 成功 ${results.success.length} 筆, 失敗 ${results.failed.length} 筆`,
+            results
+        });
+    } catch (error) {
+        logger.error('[/api/orders/batch/claim] 失敗:', error);
+        res.status(500).json({ message: '批次認領失敗' });
+    }
+});
+
+apiRouter.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
+    const { orderIds } = req.body;
+    
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ message: '請提供訂單 ID 列表' });
+    }
+    
+    try {
+        const result = await pool.query(
+            'DELETE FROM orders WHERE id = ANY($1) RETURNING id, voucher_number',
+            [orderIds]
+        );
+        
+        result.rows.forEach(order => {
+            io.emit('task_deleted', { orderId: order.id });
+        });
+        
+        res.json({
+            message: `成功刪除 ${result.rowCount} 筆訂單`,
+            deletedOrders: result.rows
+        });
+    } catch (error) {
+        logger.error('[/api/orders/batch/delete] 失敗:', error);
+        res.status(500).json({ message: '批次刪除失敗' });
+    }
 });
 // #endregion
 

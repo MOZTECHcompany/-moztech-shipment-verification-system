@@ -6,14 +6,42 @@ class SoundNotification {
         this.enabled = localStorage.getItem('sound_enabled') !== 'false'; // 預設開啟
         this.volume = parseFloat(localStorage.getItem('sound_volume') || '0.3');
         this.audioContext = null;
+        this.initialized = false;
         
         // 延遲初始化 AudioContext（避免瀏覽器自動播放政策問題）
         this.initAudioContext = () => {
             if (!this.audioContext) {
-                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    this.initialized = true;
+                } catch (error) {
+                    console.error('無法初始化 AudioContext:', error);
+                }
+            }
+            // 如果 AudioContext 處於 suspended 狀態，嘗試恢復
+            if (this.audioContext && this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(err => {
+                    console.error('無法恢復 AudioContext:', err);
+                });
             }
             return this.audioContext;
         };
+        
+        // 監聽用戶首次互動以啟動 AudioContext
+        this.setupUserInteraction();
+    }
+    
+    setupUserInteraction() {
+        const activate = () => {
+            this.initAudioContext();
+            document.removeEventListener('click', activate);
+            document.removeEventListener('keydown', activate);
+            document.removeEventListener('touchstart', activate);
+        };
+        
+        document.addEventListener('click', activate);
+        document.addEventListener('keydown', activate);
+        document.addEventListener('touchstart', activate);
     }
 
     /**

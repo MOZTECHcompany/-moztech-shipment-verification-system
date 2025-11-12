@@ -10,6 +10,7 @@ import { LoginPage } from './components/LoginPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { UserManagement } from './components/admin/UserManagement';
 import { OperationLogs } from './components/admin/OperationLogs';
+import { Analytics } from './components/admin/Analytics';
 import { TaskDashboard } from './components/TaskDashboard';
 import { OrderWorkView } from './components/OrderWorkView';
 import { useLocalStorage } from './hooks/useLocalStorage';
@@ -82,6 +83,7 @@ function App() {
                             <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/users" element={user?.role === 'admin' ? <UserManagement /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={user?.role === 'admin' ? <OperationLogs /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/analytics" element={user?.role === 'admin' ? <Analytics /> : <Navigate to="/tasks" />} />
                             <Route path="/tasks" element={<TaskDashboard user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
                         </Route>

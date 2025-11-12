@@ -6,7 +6,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2 } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
@@ -59,6 +59,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete }) => {
                 ? 'ring-2 ring-green-500 shadow-apple-lg' 
                 : 'shadow-apple-sm border border-gray-100'
             }
+            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500' : ''}
             animate-scale-in
         `}>
             {/* 背景漸變裝飾 */}
@@ -67,13 +68,23 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete }) => {
             <div className="p-6">
                 {/* 標題列 */}
                 <div className="flex justify-between items-start mb-4">
-                    <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-xl text-gray-900 truncate mb-1">
-                            {task.voucher_number}
-                        </h3>
-                        <div className="flex items-center text-sm text-gray-500">
-                            <User size={14} className="mr-1.5 flex-shrink-0" />
-                            <span className="truncate">{task.customer_name}</span>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                        {batchMode && (
+                            <input
+                                type="checkbox"
+                                checked={selectedTasks.includes(task.id)}
+                                onChange={() => toggleTaskSelection(task.id)}
+                                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                            />
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-xl text-gray-900 truncate mb-1">
+                                {task.voucher_number}
+                            </h3>
+                            <div className="flex items-center text-sm text-gray-500">
+                                <User size={14} className="mr-1.5 flex-shrink-0" />
+                                <span className="truncate">{task.customer_name}</span>
+                            </div>
                         </div>
                     </div>
                     
@@ -162,6 +173,8 @@ export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
+    const [selectedTasks, setSelectedTasks] = useState([]);
+    const [batchMode, setBatchMode] = useState(false);
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
 
@@ -170,6 +183,41 @@ export function TaskDashboard({ user }) {
         soundNotification.setEnabled(newState);
         setSoundEnabled(newState);
         toast.success(newState ? '🔊 音效通知已開啟' : '🔇 音效通知已關閉');
+    };
+
+    const toggleBatchMode = () => {
+        setBatchMode(!batchMode);
+        setSelectedTasks([]);
+        toast.info(batchMode ? '退出批次模式' : '進入批次模式');
+    };
+
+    const toggleTaskSelection = (taskId) => {
+        setSelectedTasks(prev => 
+            prev.includes(taskId) 
+                ? prev.filter(id => id !== taskId)
+                : [...prev, taskId]
+        );
+    };
+
+    const handleBatchClaim = async () => {
+        if (selectedTasks.length === 0) {
+            toast.error('請至少選擇一個任務');
+            return;
+        }
+
+        try {
+            const response = await apiClient.post('/api/orders/batch-claim', {
+                orderIds: selectedTasks
+            });
+            toast.success(response.data.message);
+            setSelectedTasks([]);
+            setBatchMode(false);
+            fetchTasks();
+        } catch (error) {
+            toast.error('批次認領失敗', { 
+                description: error.response?.data?.message 
+            });
+        }
     };
 
     const fetchTasks = useCallback(async () => {
@@ -326,6 +374,45 @@ export function TaskDashboard({ user }) {
                         
                         {/* 操作按鈕組 */}
                         <div className="flex items-center gap-3">
+                            {/* 批次模式開關 */}
+                            <button
+                                onClick={toggleBatchMode}
+                                className={`
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    active:scale-[0.98]
+                                    ${batchMode 
+                                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-blue-500/30' 
+                                        : 'bg-white text-gray-700 border border-gray-200'
+                                    }
+                                `}
+                                title={batchMode ? '退出批次模式' : '進入批次模式'}
+                            >
+                                <ListChecks size={20} />
+                                <span className="hidden sm:inline">
+                                    {batchMode ? '批次模式' : '批次操作'}
+                                </span>
+                            </button>
+
+                            {/* 批次認領按鈕 */}
+                            {batchMode && selectedTasks.length > 0 && (
+                                <button
+                                    onClick={handleBatchClaim}
+                                    className="
+                                        flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                        bg-gradient-to-r from-green-500 to-emerald-600 text-white
+                                        hover:from-green-600 hover:to-emerald-700
+                                        transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                        shadow-green-500/30
+                                        active:scale-[0.98]
+                                        animate-scale-in
+                                    "
+                                >
+                                    <CheckCircle2 size={20} />
+                                    <span>認領 {selectedTasks.length} 個任務</span>
+                                </button>
+                            )}
+
                             {/* 音效開關 */}
                             <button
                                 onClick={toggleSound}
