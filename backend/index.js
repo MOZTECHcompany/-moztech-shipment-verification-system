@@ -36,21 +36,44 @@ const server = http.createServer(app);
 app.use(helmet());
 app.use(morgan('dev'));
 
-const allowedOrigins = [
+// CORS allowlist - 請把你的 run.app 網域放在這裡，例如: 'https://your-app-xxxxx.run.app'
+const allowlist = [
     'https://moztech-shipment-verification-system.onrender.com',
+    'https://moztech-wms-98684976641.us-west1.run.app', // <- 已替換為你提供的 run.app 網域
+    // 若有其他未來自訂網域，請加在下列清單中：
+    'https://<your-custom-domain.example>',
     'http://localhost:3000',
     'http://localhost:3001'
 ];
+
 const corsOptions = {
     origin: function (origin, callback) {
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error(`CORS 錯誤: 來源 ${origin} 不被允許`));
+        // 若非瀏覽器（例如 server-to-server、curl）可能沒有 origin header，允許通過
+        if (!origin) return callback(null, true);
+        const allowed = allowlist.indexOf(origin) !== -1;
+        // 不再拋出錯誤，改以 boolean 回傳給 cors 套件；
+        // 若 allowed 為 false，cors 將不會設置 Access-Control-Allow-* 標頭，瀏覽器會阻擋請求，但不會產生 500。
+        if (!allowed) {
+            // 減少噪音：只在開發環境下記錄被拒的來源
+            if (process.env.NODE_ENV === 'development') console.warn(`CORS: origin not allowed -> ${origin}`);
         }
-    }
+        return callback(null, allowed);
+    },
+    credentials: true, // 若使用 Cookie 或 Authorization header，需要回傳 Access-Control-Allow-Credentials: true
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 };
+
+// 回傳 Vary: Origin 讓 proxy / CDN 能正確快取不同 Origin 的回應
+app.use((req, res, next) => {
+    res.header('Vary', 'Origin');
+    next();
+});
+
 app.use(cors(corsOptions));
+// 處理所有路由的預檢（OPTIONS）
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 // #endregion
 
@@ -65,7 +88,11 @@ const pool = new Pool({
 });
 
 const io = new Server(server, {
-    cors: corsOptions,
+    cors: {
+        origin: corsOptions.origin,
+        methods: corsOptions.methods,
+        credentials: corsOptions.credentials
+    },
     allowEIO3: true
 });
 // #endregion
