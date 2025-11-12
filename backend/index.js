@@ -304,10 +304,18 @@ apiRouter.get('/operation-logs', authorizeAdmin, async (req, res) => {
         const params = [];
         let paramCount = 1;
         
-        // 按訂單 ID 篩選
+        // 按訂單 ID 或訂單號碼篩選
         if (orderId) {
-            query += ` AND ol.order_id = $${paramCount}`;
-            params.push(parseInt(orderId));
+            // 判斷是數字 ID 還是訂單號碼
+            if (/^\d+$/.test(orderId)) {
+                // 純數字,按 order_id 搜尋
+                query += ` AND ol.order_id = $${paramCount}`;
+                params.push(parseInt(orderId));
+            } else {
+                // 包含字母或符號,按 voucher_number 搜尋 (模糊搜尋)
+                query += ` AND o.voucher_number ILIKE $${paramCount}`;
+                params.push(`%${orderId}%`);
+            }
             paramCount++;
         }
         

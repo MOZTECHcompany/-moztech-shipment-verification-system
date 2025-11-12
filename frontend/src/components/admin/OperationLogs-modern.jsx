@@ -247,7 +247,7 @@ export function OperationLogs() {
                     <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                         <input
                             type="text"
-                            placeholder="訂單 ID"
+                            placeholder="訂單編號 (如: 20250807-33)"
                             value={filters.orderId}
                             onChange={(e) => handleFilterChange('orderId', e.target.value)}
                             className="input-apple"
