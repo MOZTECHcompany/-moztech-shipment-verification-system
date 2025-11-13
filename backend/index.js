@@ -936,12 +936,19 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
         }
 
         // 主要查詢：依 created_at 遞增，支援 after 游標（ISO 時間）
+        // 構建參數順序：$1=orderId, $2(可選)=after, $X=userId, $Y=limit
         const params = [orderId];
         let where = 'c.order_id = $1';
         if (after) {
-            params.push(new Date(after));
-            where += ` AND c.created_at > $${params.length}`;
+            const afterDate = new Date(after);
+            if (!isNaN(afterDate.getTime())) {
+                params.push(afterDate);
+                where += ` AND c.created_at > $${params.length}`;
+            }
         }
+        const userParamIndex = params.length + 1;
+        params.push(req.user.id);
+        const limitParamIndex = params.length + 1;
         params.push(pageSize);
 
         const comments = await client.query(
@@ -961,12 +968,12 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
             JOIN users u ON c.user_id = u.id
             LEFT JOIN task_mentions tm 
               ON tm.comment_id = c.id 
-             AND tm.mentioned_user_id = $2
+             AND tm.mentioned_user_id = $${userParamIndex}
             WHERE ${where}
             ORDER BY c.created_at ASC
-            LIMIT $${params.length}
+            LIMIT $${limitParamIndex}
             `,
-            [...params, req.user.id]
+            params
         );
 
         // 組織成樹狀結構（父評論和回覆）
