@@ -77,10 +77,11 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const listRef = useRef(null);
     const shouldScrollBottomRef = useRef(false);
     const sizeMapRef = useRef({});
-    const getSize = (index) => sizeMapRef.current[index] ?? 140;
+    const getSize = (index) => sizeMapRef.current[index] ?? 180;
     const setSize = (index, size) => {
-        if (sizeMapRef.current[index] !== size) {
-            sizeMapRef.current[index] = size;
+        const next = Math.max(120, Math.ceil(size));
+        if (sizeMapRef.current[index] !== next) {
+            sizeMapRef.current[index] = next;
             listRef.current?.resetAfterIndex(index);
         }
     };
@@ -586,8 +587,13 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                     <div style={style}>
                                         <div
                                             ref={(el) => {
-                                                if (el) setSize(index, el.getBoundingClientRect().height);
+                                                if (el) {
+                                                    // 使用 scrollHeight 量測真實內容高度，額外加上間距補正
+                                                    const measured = el.scrollHeight + 12;
+                                                    setSize(index, measured);
+                                                }
                                             }}
+                                            style={{ width: '100%' }}
                                         >
                                             {renderComment(normalList[index], false, false)}
                                         </div>
