@@ -174,6 +174,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [currentView, setCurrentView] = useState('tasks'); // 'tasks' 或 'my-tasks'
     const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
     const [voiceEnabled, setVoiceEnabled] = useState(voiceNotification.isEnabled());
     const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
