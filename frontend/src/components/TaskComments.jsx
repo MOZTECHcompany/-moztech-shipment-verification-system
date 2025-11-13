@@ -68,6 +68,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const [filterPriority, setFilterPriority] = useState('all');
     const [filterUnread, setFilterUnread] = useState(false);
     const [pinnedComments, setPinnedComments] = useState([]);
+    const [inlineStatus, setInlineStatus] = useState(null); // {type:'success'|'error', message:string}
+    const lastPayloadRef = useRef(null);
     
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
@@ -194,23 +196,24 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             };
             addOptimistic(draft);
 
-            await apiClient.post(`/api/tasks/${orderId}/comments`, {
+            const payload = {
                 content: newComment,
                 parent_id: replyTo?.id || null,
                 priority: priority
-            });
+            };
+            lastPayloadRef.current = payload;
+            await apiClient.post(`/api/tasks/${orderId}/comments`, payload);
             
             setNewComment('');
             setReplyTo(null);
             setPriority('normal');
             await invalidate();
-            toast.success('評論已發送');
+            setInlineStatus({ type: 'success', message: '已發送評論' });
+            setTimeout(() => setInlineStatus(null), 1600);
         } catch (error) {
             // 還原暫時卡片
             await invalidate();
-            toast.error('發送評論失敗', {
-                description: error.message || error.response?.data?.message || '請稍後再試'
-            });
+            setInlineStatus({ type: 'error', message: error.message || '發送失敗，請重試' });
         } finally {
             setLoading(false);
         }
@@ -548,6 +551,34 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* 輸入區域 */}
             <div className="glass-card p-4 border-t border-gray-200">
+                {/* 內嵌狀態提示 */}
+                {inlineStatus && (
+                    <div className={`mb-3 px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${inlineStatus.type==='success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`} role="status" aria-live="polite">
+                        <span>{inlineStatus.message}</span>
+                        {inlineStatus.type==='error' && lastPayloadRef.current && (
+                            <button
+                                type="button"
+                                onClick={async ()=>{
+                                    if (loading) return;
+                                    try {
+                                        setLoading(true);
+                                        await apiClient.post(`/api/tasks/${orderId}/comments`, lastPayloadRef.current);
+                                        setInlineStatus({ type: 'success', message: '已發送評論' });
+                                        setTimeout(() => setInlineStatus(null), 1600);
+                                        setNewComment(''); setReplyTo(null); setPriority('normal');
+                                        await invalidate();
+                                    } catch (e) {
+                                        setInlineStatus({ type: 'error', message: e.message || '重試仍失敗' });
+                                    } finally { setLoading(false); }
+                                }}
+                                className="ml-auto px-3 py-1.5 text-xs bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50"
+                                aria-label="重試發送評論"
+                            >
+                                重試
+                            </button>
+                        )}
+                    </div>
+                )}
                 {/* 回覆提示 */}
                 {replyTo && (
                     <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-apple-blue/10 rounded-lg text-sm">
