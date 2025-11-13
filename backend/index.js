@@ -1097,6 +1097,50 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
     }
 });
 
+// 撤回評論（作者或管理員）- 將內容替換為已撤回占位。
+apiRouter.patch('/tasks/:orderId/comments/:commentId/retract', async (req, res) => {
+    const { orderId, commentId } = req.params;
+    const requester = req.user;
+    try {
+        const info = await pool.query('SELECT user_id FROM task_comments WHERE id = $1 AND order_id = $2', [commentId, orderId]);
+        if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
+        const ownerId = info.rows[0].user_id;
+        const isOwner = Number(ownerId) === Number(requester.id);
+        const isAdmin = String(requester.role || '').toLowerCase() === 'admin';
+        if (!isOwner && !isAdmin) return res.status(403).json({ code: 'FORBIDDEN', message: '無權撤回此評論', requestId: req.requestId });
+
+        await pool.query('UPDATE task_comments SET content = $1, updated_at = NOW() WHERE id = $2', ['[已撤回]', commentId]);
+
+        io.emit('comment_retracted', { orderId, commentId });
+        res.json({ message: '評論已撤回' });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/comments/:commentId/retract] 失敗:', error);
+        res.status(500).json({ code: 'COMMENTS_RETRACT_FAILED', message: '撤回評論失敗', requestId: req.requestId });
+    }
+});
+
+// 刪除評論（作者或管理員）。若為父評論，回覆會因外鍵設定而一併刪除。
+apiRouter.delete('/tasks/:orderId/comments/:commentId', async (req, res) => {
+    const { orderId, commentId } = req.params;
+    const requester = req.user;
+    try {
+        const info = await pool.query('SELECT user_id FROM task_comments WHERE id = $1 AND order_id = $2', [commentId, orderId]);
+        if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
+        const ownerId = info.rows[0].user_id;
+        const isOwner = Number(ownerId) === Number(requester.id);
+        const isAdmin = String(requester.role || '').toLowerCase() === 'admin';
+        if (!isOwner && !isAdmin) return res.status(403).json({ code: 'FORBIDDEN', message: '無權刪除此評論', requestId: req.requestId });
+
+        await pool.query('DELETE FROM task_comments WHERE id = $1', [commentId]);
+
+        io.emit('comment_deleted', { orderId, commentId });
+        res.json({ message: '評論已刪除' });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/comments/:commentId] 刪除失敗:', error);
+        res.status(500).json({ code: 'COMMENTS_DELETE_FAILED', message: '刪除評論失敗', requestId: req.requestId });
+    }
+});
+
 // 更新活動會話（即時協作指示器）
 apiRouter.post('/tasks/:orderId/session', async (req, res) => {
     const { orderId } = req.params;

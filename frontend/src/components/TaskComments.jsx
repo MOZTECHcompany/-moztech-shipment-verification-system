@@ -1,7 +1,7 @@
 // frontend/src/components/TaskComments.jsx
 // 任務評論系統 - 優化版（優先級、置頂、搜尋、未讀提示）
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { socket } from '@/api/socket';
 import { VariableSizeList as List } from 'react-window';
 import { formatDistanceToNow } from 'date-fns';
@@ -82,7 +82,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         const next = Math.max(120, Math.ceil(size));
         if (sizeMapRef.current[index] !== next) {
             sizeMapRef.current[index] = next;
-            listRef.current?.resetAfterIndex(index);
+            // 避免整個清單強制更新，降低輸入時抖動
+            listRef.current?.resetAfterIndex(index, false);
         }
     };
 
@@ -422,13 +423,49 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                         <Reply className="w-4 h-4" />
                                     </button>
                                 )}
+                                {/* 撤回/刪除（作者或管理員） */}
+                                {((currentUser?.id && currentUser.id === comment.user_id) || (currentUser?.role === 'admin')) && (
+                                    <>
+                                        <button
+                                            onClick={async () => {
+                                                try {
+                                                    await apiClient.patch(`/api/tasks/${orderId}/comments/${comment.id}/retract`);
+                                                    toast.success('已撤回評論');
+                                                    await invalidate();
+                                                } catch (e) { toast.error(e.message || '撤回失敗'); }
+                                            }}
+                                            className="p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 rounded-lg"
+                                            title="撤回"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={async () => {
+                                                if (!confirm('確定要刪除這則評論嗎？（回覆也會一併刪除）')) return;
+                                                try {
+                                                    await apiClient.delete(`/api/tasks/${orderId}/comments/${comment.id}`);
+                                                    toast.success('已刪除評論');
+                                                    await invalidate();
+                                                } catch (e) { toast.error(e.message || '刪除失敗'); }
+                                            }}
+                                            className="p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 rounded-lg"
+                                            title="刪除"
+                                        >
+                                            <TrashIcon />
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
 
                         {/* 評論內容 */}
-                        <div className="text-gray-700 leading-relaxed break-words">
-                            {highlightMentions(comment.content)}
-                        </div>
+                        {comment.content === '[已撤回]' ? (
+                            <div className="text-gray-400 italic">此評論已撤回</div>
+                        ) : (
+                            <div className="text-gray-700 leading-relaxed break-words">
+                                {highlightMentions(comment.content)}
+                            </div>
+                        )}
 
                         {/* 回覆列表 */}
                         {!isReply && comment.replies && comment.replies.length > 0 && (
@@ -441,6 +478,17 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             </div>
         );
     };
+
+    // 輕量 TrashIcon（避免額外引入整個套件）
+    const TrashIcon = () => (
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+            <path d="M10 11v6"></path>
+            <path d="M14 11v6"></path>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+        </svg>
+    );
 
     return (
         <div className="flex flex-col h-full bg-gradient-to-br from-gray-50 to-white">
@@ -582,22 +630,16 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                 itemCount={normalList.length}
                                 itemSize={getSize}
                                 width={'100%'}
+                                overscanCount={5}
                             >
                                 {({ index, style }) => (
-                                    <div style={style}>
-                                        <div
-                                            ref={(el) => {
-                                                if (el) {
-                                                    // 使用 scrollHeight 量測真實內容高度，額外加上間距補正
-                                                    const measured = el.scrollHeight + 12;
-                                                    setSize(index, measured);
-                                                }
-                                            }}
-                                            style={{ width: '100%' }}
-                                        >
-                                            {renderComment(normalList[index], false, false)}
-                                        </div>
-                                    </div>
+                                    <Row
+                                        style={style}
+                                        index={index}
+                                        item={normalList[index]}
+                                        measure={(h) => setSize(index, h)}
+                                        render={renderComment}
+                                    />
                                 )}
                             </List>
                         )}
@@ -772,3 +814,27 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         </div>
     );
 }
+
+// 單列組件：避免不相關狀態變動造成整列重渲染
+const Row = React.memo(function Row({ style, index, item, measure, render }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+        if (!ref.current) return;
+        const el = ref.current;
+        const ro = new ResizeObserver(() => {
+            const h = el.scrollHeight + 12;
+            measure(h);
+        });
+        ro.observe(el);
+        // 初次量測
+        measure(el.scrollHeight + 12);
+        return () => ro.disconnect();
+    }, [item, measure]);
+    return (
+        <div style={style}>
+            <div ref={ref} style={{ width: '100%' }}>
+                {render(item, false, false)}
+            </div>
+        </div>
+    );
+});
