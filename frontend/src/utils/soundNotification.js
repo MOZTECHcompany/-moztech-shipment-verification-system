@@ -78,6 +78,12 @@ class SoundNotification {
         document.addEventListener('click', activate, { once: true });
         document.addEventListener('keydown', activate, { once: true });
         document.addEventListener('touchstart', activate, { once: true });
+        // 畫面從背景回來時，嘗試恢復（避免某些瀏覽器暫停 AudioContext）
+        document.addEventListener('visibilitychange', async () => {
+            if (!document.hidden) {
+                await this.initAudioContext();
+            }
+        });
     }
 
     /**

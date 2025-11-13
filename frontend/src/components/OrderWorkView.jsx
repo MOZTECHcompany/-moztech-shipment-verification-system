@@ -332,9 +332,7 @@ export function OrderWorkView({ user }) {
     const [allUsers, setAllUsers] = useState([]);
 
     const barcodeInputRef = useRef(null);
-    const errorSoundRef = useRef(null);
-
-    useEffect(() => { errorSoundRef.current = new Audio('/sounds/error.mp3'); }, []);
+    // 移除對外部 mp3 的依賴，統一使用 WebAudio 產生提示音，避免 404 或自動播放限制
     useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrderData.order]);
 
     // 載入所有用戶（用於評論@功能）
@@ -447,9 +445,8 @@ export function OrderWorkView({ user }) {
             const errorMsg = err.response?.data?.message || '發生未知錯誤';
             setScanError(errorMsg);
             
-            // 播放錯誤音效
+            // 播放錯誤音效（WebAudio）
             soundNotification.play('error');
-            errorSoundRef.current?.play();
             
             // 語音播報
             voiceNotification.speakScanError();
@@ -490,9 +487,8 @@ export function OrderWorkView({ user }) {
             const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
             setScanError(errorMsg);
             
-            // 播放錯誤音效
+            // 播放錯誤音效（WebAudio）
             soundNotification.play('error');
-            errorSoundRef.current?.play();
             
             // 語音播報
             voiceNotification.speakOperationError('操作不允許');
