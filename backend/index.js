@@ -984,7 +984,7 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
                 (tm.id IS NOT NULL) AS mentioned_me,
                 COALESCE(tm.is_read, FALSE) AS mention_is_read
             FROM task_comments c
-            JOIN users u ON c.user_id = u.id
+            LEFT JOIN users u ON c.user_id = u.id
             LEFT JOIN task_mentions tm 
               ON tm.comment_id = c.id 
              AND tm.mentioned_user_id = $${userParamIndex}
@@ -1008,6 +1008,9 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
             if (comment.parent_id) {
                 if (commentMap[comment.parent_id]) {
                     commentMap[comment.parent_id].replies.push(comment);
+                } else {
+                    // 父評論不在本頁（或已刪除），仍將其作為根節點顯示，避免整則回覆被隱藏
+                    rootComments.push(comment);
                 }
             } else {
                 rootComments.push(comment);
@@ -1080,8 +1083,9 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
         
         const commentId = result.rows[0].id;
         
-        // 檢測 @ 提及
-        const mentionRegex = /@(\w+)/g;
+        // 檢測 @ 提及（支援常見字元並忽略大小寫比對）
+        // 允許字元: 英數、底線、點、連字號
+        const mentionRegex = /@([A-Za-z0-9._-]+)/g;
         const mentions = content.match(mentionRegex);
         
         if (mentions) {
@@ -1089,7 +1093,7 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
             
             for (const username of usernames) {
                 const userResult = await client.query(
-                    'SELECT id FROM users WHERE username = $1',
+                    'SELECT id FROM users WHERE LOWER(username) = LOWER($1)',
                     [username]
                 );
                 
