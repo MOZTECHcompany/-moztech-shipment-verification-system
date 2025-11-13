@@ -16,27 +16,27 @@ import { desktopNotification } from '@/utils/desktopNotification.js';
 const statusConfig = {
     pending: { 
         text: '待揀貨', 
-        color: 'bg-gradient-to-r from-amber-50 to-yellow-50 text-amber-700 border border-amber-200',
+        color: 'bg-gradient-to-r from-amber-50/80 to-yellow-50/80 text-amber-700 border border-amber-200/50',
         icon: Clock,
-        dot: 'bg-amber-500'
+        dot: 'bg-amber-500/80'
     },
     picking: { 
         text: '揀貨中', 
-        color: 'bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-700 border border-blue-200',
+        color: 'bg-gradient-to-r from-apple-blue/10 to-cyan-50/80 text-apple-blue border border-apple-blue/30',
         icon: Package,
-        dot: 'bg-blue-500 animate-pulse'
+        dot: 'bg-apple-blue animate-pulse'
     },
     picked: { 
         text: '待裝箱', 
-        color: 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 border border-indigo-200',
+        color: 'bg-gradient-to-r from-apple-purple/10 to-purple-50/80 text-apple-purple border border-apple-purple/30',
         icon: Box,
-        dot: 'bg-indigo-500'
+        dot: 'bg-apple-purple'
     },
     packing: { 
         text: '裝箱中', 
-        color: 'bg-gradient-to-r from-cyan-50 to-teal-50 text-cyan-700 border border-cyan-200',
+        color: 'bg-gradient-to-r from-apple-green/10 to-teal-50/80 text-apple-green border border-apple-green/30',
         icon: Box,
-        dot: 'bg-cyan-500 animate-pulse'
+        dot: 'bg-apple-green animate-pulse'
     },
 };
 
@@ -398,26 +398,26 @@ export function TaskDashboard({ user }) {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-gray-50">
+            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-gray-50 to-gray-100">
                 <div className="text-center">
-                    <Loader2 className="animate-spin text-blue-500 mx-auto mb-4" size={56} />
-                    <p className="text-gray-500 font-medium">載入中...</p>
+                    <Loader2 className="animate-spin text-apple-blue mx-auto mb-4" size={56} />
+                    <p className="text-gray-600 font-semibold text-lg">載入中...</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+            <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto">
                 {/* 現代化標題列 */}
-                <header className="mb-10 animate-fade-in">
+                <header className="mb-8 animate-fade-in">
                     <div className="flex justify-between items-start mb-6">
                         <div>
-                                                        <h1 className="text-5xl font-bold text-gray-900 mb-2">
+                            <h1 className="text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
                                 {currentView === 'tasks' ? '📋 任務看板' : '🔍 我的任務'}
                             </h1>
-                            <p className="text-gray-500 text-lg">選擇一項任務以開始作業</p>
+                            <p className="text-gray-500 text-base font-medium">選擇一項任務以開始作業</p>
                         </div>
                         
                         {/* 操作按鈕組 */}

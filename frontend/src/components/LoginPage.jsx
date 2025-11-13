@@ -57,7 +57,12 @@ export function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="relative flex items-center justify-center min-h-screen p-4 overflow-hidden bg-gray-50">
+    <div className="relative flex items-center justify-center min-h-screen p-4 overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-100">
+      {/* 背景裝飾 */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-apple-blue/5 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-apple-purple/5 rounded-full blur-3xl"></div>
+      </div>
 
       {/* 登入卡片 */}
       <div
@@ -65,36 +70,36 @@ export function LoginPage({ onLogin }) {
         onKeyDown={handleKeyDown}
       >
         {/* 主卡片 */}
-        <div className="glass rounded-3xl p-10 shadow-apple-xl border border-white/30">
+        <div className="glass-card rounded-3xl p-12 shadow-apple-xl">
           {/* Logo 和標題 */}
-          <div className="flex flex-col items-center mb-10 animate-fade-in">
-            <div className="relative mb-6">
+          <div className="flex flex-col items-center mb-12 animate-fade-in">
+            <div className="relative mb-8">
+              <div className="absolute inset-0 bg-apple-blue/10 rounded-3xl blur-2xl"></div>
               <img 
                 src="/MOZTECH-002.png" 
                 alt="MOZTECH Logo" 
-                className="relative h-28 w-28 object-contain" 
+                className="relative h-24 w-24 object-contain" 
               />
             </div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">
+            <h1 className="text-3xl font-semibold text-gray-900 mb-3 tracking-tight">
               倉儲作業系統
             </h1>
-            <p className="text-gray-500 text-sm flex items-center gap-1">
-              <Sparkles size={14} className="text-blue-500" />
+            <p className="text-gray-500 text-sm font-medium">
               現代化智能管理平台
             </p>
           </div>
 
           {/* 輸入欄位 */}
-          <div className="space-y-5 mb-6">
+          <div className="space-y-4 mb-8">
             {/* 使用者名稱 */}
             <div className="animate-slide-up" style={{ animationDelay: '100ms' }}>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-gray-700 mb-2.5">
                 使用者名稱
               </label>
               <div className="relative group">
                 <User className={`
-                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-colors duration-200
-                  ${focusedField === 'username' ? 'text-blue-600' : 'text-gray-400'}
+                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-all duration-200
+                  ${focusedField === 'username' ? 'text-apple-blue scale-110' : 'text-gray-400'}
                 `} />
                 <input 
                   type="text" 
@@ -108,9 +113,10 @@ export function LoginPage({ onLogin }) {
                     bg-white
                     border-2 border-gray-200
                     rounded-xl 
-                    focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10
+                    focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10
                     outline-none transition-all duration-200
                     text-gray-900 placeholder-gray-400
+                    font-medium
                   " 
                 />
               </div>
@@ -118,13 +124,13 @@ export function LoginPage({ onLogin }) {
 
             {/* 密碼 */}
             <div className="animate-slide-up" style={{ animationDelay: '200ms' }}>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-gray-700 mb-2.5">
                 密碼
               </label>
               <div className="relative group">
                 <Lock className={`
-                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-colors duration-200
-                  ${focusedField === 'password' ? 'text-blue-600' : 'text-gray-400'}
+                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-all duration-200
+                  ${focusedField === 'password' ? 'text-apple-blue scale-110' : 'text-gray-400'}
                 `} />
                 <input 
                   type="password" 
@@ -138,9 +144,10 @@ export function LoginPage({ onLogin }) {
                     bg-white
                     border-2 border-gray-200
                     rounded-xl 
-                    focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10
+                    focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10
                     outline-none transition-all duration-200
                     text-gray-900 placeholder-gray-400
+                    font-medium
                   " 
                 />
               </div>
@@ -149,8 +156,8 @@ export function LoginPage({ onLogin }) {
 
           {/* 錯誤訊息 */}
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl animate-shake">
-              <p className="text-sm text-red-600 text-center">{error}</p>
+            <div className="mb-6 p-4 bg-red-50/80 border-2 border-red-200/80 rounded-xl animate-shake backdrop-blur-sm">
+              <p className="text-sm font-medium text-red-600 text-center">{error}</p>
             </div>
           )}
 
@@ -160,15 +167,17 @@ export function LoginPage({ onLogin }) {
             disabled={isLoggingIn}
             className="
               w-full py-4 px-6
-              bg-blue-500 hover:bg-blue-600
-              disabled:bg-gray-400
+              bg-apple-blue/90 hover:bg-apple-blue
+              disabled:bg-gray-300 disabled:cursor-not-allowed
               text-white font-semibold text-lg
               rounded-xl
+              shadow-apple-sm hover:shadow-apple
               active:scale-[0.98]
               transition-all duration-200
               flex items-center justify-center gap-2
               group
               animate-slide-up
+              backdrop-blur-sm
             "
             style={{ animationDelay: '300ms' }}
           >
@@ -187,7 +196,7 @@ export function LoginPage({ onLogin }) {
 
           {/* 底部提示 */}
           <div className="mt-8 text-center animate-fade-in" style={{ animationDelay: '400ms' }}>
-            <p className="text-sm text-gray-500">
+            <p className="text-xs text-gray-400 font-medium">
               © 2025 MOZTECH 倉儲管理系統
             </p>
           </div>

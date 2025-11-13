@@ -59,21 +59,21 @@ export function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+            <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto">
                 {/* 現代化標題列 */}
-                <header className="mb-10 animate-fade-in">
+                <header className="mb-8 animate-fade-in">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                         <div>
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className="w-12 h-12 rounded-2xl bg-blue-500 flex items-center justify-center">
-                                    <LayoutDashboard className="text-white" size={24} />
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue to-apple-indigo flex items-center justify-center shadow-apple-sm">
+                                    <LayoutDashboard className="text-white" size={26} />
                                 </div>
-                                <h1 className="text-5xl font-bold text-gray-900">
+                                <h1 className="text-4xl font-semibold text-gray-900 tracking-tight">
                                     管理中心
                                 </h1>
                             </div>
-                            <p className="text-gray-500 text-lg ml-15">在這裡匯入訂單與管理系統</p>
+                            <p className="text-gray-500 text-base font-medium ml-17">在這裡匯入訂單與管理系統</p>
                         </div>
                         
                         <Link 
