@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>資料庫遷移工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .migration-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .migration-card h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        
+        .migration-card p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+        
+        .migration-card ul {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .migration-card li {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            display: block;
+        }
+        
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            display: block;
+        }
+        
+        .result.info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+            display: block;
+        }
+        
+        .icon {
+            font-size: 48px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #856404;
+            font-size: 14px;
+        }
+        
+        .warning strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🔧</div>
+        <h1>資料庫遷移工具</h1>
+        <p class="subtitle">為任務評論系統添加優先級功能</p>
+        
+        <div class="warning">
+            <strong>⚠️ 注意事項</strong>
+            此操作需要管理員權限，執行前請確保您已登入管理員帳號。
+        </div>
+        
+        <div class="migration-card">
+            <h3>📊 遷移內容</h3>
+            <p>此遷移將為 task_comments 表添加 priority 欄位，包含：</p>
+            <ul>
+                <li>添加 priority 欄位（VARCHAR(20)）</li>
+                <li>設定預設值為 'normal'</li>
+                <li>添加檢查約束（normal, important, urgent）</li>
+                <li>創建優化索引</li>
+            </ul>
+        </div>
+        
+        <button id="migrateBtn" onclick="runMigration()">
+            執行資料庫遷移
+        </button>
+        
+        <div id="result" class="result"></div>
+    </div>
+    
+    <script>
+        async function runMigration() {
+            const btn = document.getElementById('migrateBtn');
+            const result = document.getElementById('result');
+            
+            // 重置狀態
+            result.className = 'result';
+            result.style.display = 'none';
+            
+            // 設置按鈕為載入狀態
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span>執行中...';
+            
+            try {
+                // 從 localStorage 獲取 token
+                const token = localStorage.getItem('token');
+                
+                if (!token) {
+                    throw new Error('請先登入管理員帳號');
+                }
+                
+                const response = await fetch('/api/admin/migrate/add-priority', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || '遷移執行失敗');
+                }
+                
+                // 顯示成功結果
+                if (data.alreadyExists) {
+                    result.className = 'result info';
+                    result.innerHTML = `
+                        <strong>ℹ️ ${data.message}</strong>
+                        <p>系統已具備優先級功能，無需再次執行遷移。</p>
+                    `;
+                } else {
+                    result.className = 'result success';
+                    result.innerHTML = `
+                        <strong>✅ ${data.message}</strong>
+                        <p>評論總數: ${data.totalComments}</p>
+                        <p>您現在可以使用任務討論的優先級功能了！</p>
+                    `;
+                }
+                
+                btn.innerHTML = '✅ 遷移完成';
+                
+            } catch (error) {
+                console.error('Migration error:', error);
+                
+                result.className = 'result error';
+                result.innerHTML = `
+                    <strong>❌ 錯誤</strong>
+                    <p>${error.message}</p>
+                    <p style="margin-top: 10px; font-size: 12px;">
+                        請確保：<br>
+                        1. 已使用管理員帳號登入<br>
+                        2. 後端服務正常運行<br>
+                        3. 資料庫連接正常
+                    </p>
+                `;
+                
+                btn.disabled = false;
+                btn.innerHTML = '重試';
+            }
+        }
+        
+        // 頁面載入時檢查登入狀態
+        window.addEventListener('load', () => {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                document.getElementById('result').className = 'result error';
+                document.getElementById('result').innerHTML = `
+                    <strong>❌ 未登入</strong>
+                    <p>請先前往系統登入頁面使用管理員帳號登入，然後再返回此頁面。</p>
+                    <p style="margin-top: 10px;">
+                        <a href="/" style="color: #667eea; text-decoration: underline;">前往登入頁面</a>
+                    </p>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

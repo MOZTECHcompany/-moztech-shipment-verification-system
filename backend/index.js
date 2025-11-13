@@ -1163,6 +1163,91 @@ apiRouter.post('/tasks/:orderId/transfer', async (req, res) => {
     }
 });
 
+// 資料庫遷移 API（僅管理員）
+apiRouter.post('/admin/migrate/add-priority', authorizeAdmin, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        logger.info('[Migration] 開始添加 priority 欄位...');
+        
+        // 檢查欄位是否存在
+        const checkColumn = await client.query(`
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'task_comments' AND column_name = 'priority'
+        `);
+        
+        if (checkColumn.rows.length > 0) {
+            logger.info('[Migration] priority 欄位已存在');
+            return res.json({ 
+                success: true, 
+                message: 'priority 欄位已存在，無需添加',
+                alreadyExists: true
+            });
+        }
+        
+        await client.query('BEGIN');
+        
+        // 添加欄位
+        await client.query(`
+            ALTER TABLE task_comments 
+            ADD COLUMN priority VARCHAR(20) DEFAULT 'normal'
+        `);
+        logger.info('[Migration] priority 欄位添加成功');
+        
+        // 添加檢查約束（如果不存在）
+        await client.query(`
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'check_priority'
+                ) THEN
+                    ALTER TABLE task_comments 
+                    ADD CONSTRAINT check_priority 
+                    CHECK (priority IN ('normal', 'important', 'urgent'));
+                END IF;
+            END $$;
+        `);
+        logger.info('[Migration] 優先級約束添加成功');
+        
+        // 創建索引
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_task_comments_priority 
+            ON task_comments(priority)
+        `);
+        
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_task_comments_order_priority 
+            ON task_comments(order_id, priority)
+        `);
+        logger.info('[Migration] 索引創建成功');
+        
+        await client.query('COMMIT');
+        
+        // 統計資訊
+        const stats = await client.query('SELECT COUNT(*) as count FROM task_comments');
+        
+        logger.info(`[Migration] 資料庫更新完成，評論總數: ${stats.rows[0].count}`);
+        
+        res.json({ 
+            success: true, 
+            message: '資料庫遷移成功',
+            totalComments: stats.rows[0].count,
+            alreadyExists: false
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        logger.error('[Migration] 執行失敗:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: '資料庫遷移失敗',
+            error: error.message 
+        });
+    } finally {
+        client.release();
+    }
+});
+
 // #endregion
 
 apiRouter.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
