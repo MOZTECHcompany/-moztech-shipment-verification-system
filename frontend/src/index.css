@@ -97,7 +97,7 @@
   }
 
   .glass-card {
-    @apply bg-white/90 backdrop-blur-xl border border-gray-100/80 shadow-apple;
+    @apply bg-white/90 backdrop-blur-xl border border-gray-100/80 shadow-apple rounded-2xl;
   }
 
   /* Apple 風格按鈕 */

@@ -190,7 +190,7 @@ export function ScanErrors() {
 
                 {/* 統計卡片 */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    <div className="glass card-apple p-6">
+                    <div className="glass-card p-6">
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-sm text-gray-500 mb-1">總錯誤次數</p>
@@ -202,7 +202,7 @@ export function ScanErrors() {
                         </div>
                     </div>
 
-                    <div className="glass card-apple p-6">
+                    <div className="glass-card p-6">
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-sm text-gray-500 mb-1">最常刷錯的人</p>
@@ -219,7 +219,7 @@ export function ScanErrors() {
                         </div>
                     </div>
 
-                    <div className="glass card-apple p-6">
+                    <div className="glass-card p-6">
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-sm text-gray-500 mb-1">最常刷錯的條碼</p>
@@ -236,7 +236,7 @@ export function ScanErrors() {
                         </div>
                     </div>
 
-                    <div className="glass card-apple p-6">
+                    <div className="glass-card p-6">
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-sm text-gray-500 mb-1">平均每天</p>
@@ -255,7 +255,7 @@ export function ScanErrors() {
                 {/* 排行榜 */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                     {/* 員工錯誤排行 */}
-                    <div className="glass card-apple p-6">
+                    <div className="glass-card p-6">
                         <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
                             <User size={20} className="text-orange-600" />
                             員工錯誤排行 TOP 10
@@ -285,7 +285,7 @@ export function ScanErrors() {
                     </div>
 
                     {/* 條碼錯誤排行 */}
-                    <div className="glass card-apple p-6">
+                    <div className="glass-card p-6">
                         <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
                             <Package size={20} className="text-yellow-600" />
                             條碼錯誤排行 TOP 10
@@ -316,7 +316,7 @@ export function ScanErrors() {
                 </div>
 
                 {/* 搜尋框 */}
-                <div className="glass card-apple p-6 mb-6">
+                <div className="glass-card p-6 mb-6">
                     <div className="relative">
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                         <input
@@ -330,7 +330,7 @@ export function ScanErrors() {
                 </div>
 
                 {/* 錯誤列表 */}
-                <div className="glass card-apple p-6">
+                <div className="glass-card p-6">
                     <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
                         <AlertTriangle size={20} className="text-red-600" />
                         刷錯記錄明細 ({filteredErrors.length})

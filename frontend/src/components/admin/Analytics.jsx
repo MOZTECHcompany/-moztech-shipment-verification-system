@@ -99,18 +99,20 @@ export function Analytics() {
 
                 {/* Overview Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-                    <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '100ms' }}>
                         <div className="flex items-center justify-between mb-3">
-                            <p className="text-sm text-gray-600 font-medium">總訂單數</p>
-                            <Package className="text-blue-500" size={20} />
+                            <p className="text-sm text-gray-600 font-semibold">總訂單數</p>
+                            <div className="w-10 h-10 rounded-xl bg-apple-blue/10 flex items-center justify-center">
+                                <Package className="text-apple-blue" size={20} />
+                            </div>
                         </div>
                         <p className="text-3xl font-bold text-gray-900">{analytics.overview.totalOrders}</p>
-                        <p className="text-xs text-gray-500 mt-2">
+                        <p className="text-xs text-gray-500 mt-2 font-medium">
                             完成率: {formatPercentage(analytics.overview.completedOrders / analytics.overview.totalOrders || 0)}
                         </p>
                     </div>
 
-                    <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '200ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '200ms' }}>
                         <div className="flex items-center justify-between mb-3">
                             <p className="text-sm text-gray-600 font-medium">平均揀貨時間</p>
                             <Clock className="text-cyan-500" size={20} />
@@ -118,7 +120,7 @@ export function Analytics() {
                         <p className="text-2xl font-bold text-gray-900">{formatTime(analytics.overview.avgPickingTime)}</p>
                     </div>
 
-                    <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '300ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '300ms' }}>
                         <div className="flex items-center justify-between mb-3">
                             <p className="text-sm text-gray-600 font-medium">平均裝箱時間</p>
                             <Clock className="text-green-500" size={20} />
@@ -126,7 +128,7 @@ export function Analytics() {
                         <p className="text-2xl font-bold text-gray-900">{formatTime(analytics.overview.avgPackingTime)}</p>
                     </div>
 
-                    <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '400ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '400ms' }}>
                         <div className="flex items-center justify-between mb-3">
                             <p className="text-sm text-gray-600 font-medium">準確率</p>
                             <Target className="text-purple-500" size={20} />
@@ -139,7 +141,7 @@ export function Analytics() {
                         </p>
                     </div>
 
-                    <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '500ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '500ms' }}>
                         <div className="flex items-center justify-between mb-3">
                             <p className="text-sm text-gray-600 font-medium">活躍人數</p>
                             <Users className="text-indigo-500" size={20} />
@@ -150,7 +152,7 @@ export function Analytics() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* User Performance Ranking */}
-                    <div className="glass card-apple p-6 animate-scale-in" style={{ animationDelay: '600ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '600ms' }}>
                         <div className="flex items-center gap-3 mb-6">
                             <Award className="text-yellow-500" size={24} />
                             <h2 className="text-xl font-bold text-gray-900">員工績效排行</h2>
@@ -181,7 +183,7 @@ export function Analytics() {
                     </div>
 
                     {/* Top Products */}
-                    <div className="glass card-apple p-6 animate-scale-in" style={{ animationDelay: '700ms' }}>
+                    <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '700ms' }}>
                         <div className="flex items-center gap-3 mb-6">
                             <TrendingUp className="text-green-500" size={24} />
                             <h2 className="text-xl font-bold text-gray-900">熱門商品 TOP 10</h2>

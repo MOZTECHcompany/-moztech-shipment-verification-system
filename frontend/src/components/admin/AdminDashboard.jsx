@@ -95,10 +95,10 @@ export function AdminDashboard() {
                 {/* 功能卡片網格 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* 數據分析 */}
-                    <div className="glass-card group animate-scale-in">
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <TrendingUp className="text-apple-blue" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">數據分析</h3>
@@ -125,10 +125,10 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 刷錯條碼分析 - 新增 */}
-                    <div className="glass-card group animate-scale-in" style={{ animationDelay: '50ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '50ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-apple-orange/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-orange/10 to-apple-orange/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <AlertTriangle className="text-apple-orange" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">刷錯分析</h3>
@@ -155,10 +155,10 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 1. 建立新任務 */}
-                    <div className="glass-card group animate-scale-in">
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-12 h-12 rounded-xl bg-apple-purple/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-purple/10 to-apple-purple/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <UploadCloud className="text-apple-purple" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">建立新任務</h3>
@@ -196,10 +196,10 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 2. 匯出營運報告 */}
-                    <div className="glass-card group animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '100ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-12 h-12 rounded-xl bg-apple-green/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-green/10 to-apple-green/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <FileDown className="text-apple-green" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">匯出營運報告</h3>
@@ -251,10 +251,10 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 3. 使用者管理 */}
-                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '200ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '200ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <Users className="text-blue-600" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">使用者管理</h3>
@@ -280,10 +280,10 @@ export function AdminDashboard() {
                     </div>
                     
                     {/* 4. 操作日誌查詢 */}
-                    <div className="glass-card group animate-scale-in" style={{ animationDelay: '300ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '300ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-apple-pink/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-indigo/10 to-apple-indigo/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <FileText className="text-apple-pink" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">操作日誌查詢</h3>
