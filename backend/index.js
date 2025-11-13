@@ -1031,6 +1031,13 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         logger.error('[/api/tasks/:orderId/comments] 新增評論失敗:', error);
+        // 42703: undefined_column（多半是資料庫尚未加入 priority 欄位）
+        if (error && (error.code === '42703' || /column\s+"?priority"?/i.test(error.message || ''))) {
+            return res.status(500).json({
+                message: '發送評論失敗：資料庫缺少 task_comments.priority 欄位，請先執行遷移。',
+                hint: '請以管理員身份呼叫 /api/admin/migrate/add-priority 或使用前端 migrate.html 執行遷移'
+            });
+        }
         res.status(500).json({ message: '發送評論失敗' });
     } finally {
         client.release();

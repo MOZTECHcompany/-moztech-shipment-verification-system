@@ -198,6 +198,15 @@
     </div>
     
     <script>
+        // 可以在瀏覽器 console 設定 localStorage.api_base 覆蓋後端位址
+        // 例如：localStorage.setItem('api_base', 'https://moztech-wms-api.onrender.com')
+        const API_BASE = localStorage.getItem('api_base') || 'https://moztech-wms-api.onrender.com';
+
+        function isJsonResponse(res) {
+            const ct = res.headers.get('content-type') || '';
+            return ct.includes('application/json');
+        }
+
         async function runMigration() {
             const btn = document.getElementById('migrateBtn');
             const result = document.getElementById('result');
@@ -211,22 +220,29 @@
             btn.innerHTML = '<span class="loading"></span>執行中...';
             
             try {
-                // 從 localStorage 獲取 token
-                const token = localStorage.getItem('token');
+                // 從 localStorage 獲取 token（與前台 axios 一致：wms_token）
+                const raw = localStorage.getItem('wms_token');
+                const token = raw ? JSON.parse(raw) : null;
                 
                 if (!token) {
                     throw new Error('請先登入管理員帳號');
                 }
                 
-                const response = await fetch('/api/admin/migrate/add-priority', {
+                const response = await fetch(`${API_BASE}/api/admin/migrate/add-priority`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     }
                 });
-                
-                const data = await response.json();
+                let data = {};
+                if (isJsonResponse(response)) {
+                    data = await response.json();
+                } else {
+                    // 顯示回傳的純文字（多半是 HTML/錯誤頁）以利除錯
+                    const text = await response.text();
+                    throw new Error(`伺服器未回傳 JSON。內容預覽: ${text.slice(0, 120)}...`);
+                }
                 
                 if (!response.ok) {
                     throw new Error(data.message || '遷移執行失敗');
@@ -272,7 +288,7 @@
         
         // 頁面載入時檢查登入狀態
         window.addEventListener('load', () => {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('wms_token');
             if (!token) {
                 document.getElementById('result').className = 'result error';
                 document.getElementById('result').innerHTML = `

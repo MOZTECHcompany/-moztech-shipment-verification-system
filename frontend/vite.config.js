@@ -15,6 +15,23 @@ export default defineConfig({
       ],
     },
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://moztech-wms-api.onrender.com',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      },
+      // socket.io (若前端以相對路徑連線)
+      '/socket.io': {
+        target: 'https://moztech-wms-api.onrender.com',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      },
+    },
+  },
   // ✨ 2. 新增 (或加回) resolve.alias 设定
   resolve: {
     alias: {
