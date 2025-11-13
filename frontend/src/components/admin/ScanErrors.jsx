@@ -170,7 +170,7 @@ export function ScanErrors() {
                         <select
                             value={dateRange}
                             onChange={(e) => setDateRange(e.target.value)}
-                            className="input-apple"
+                            className="px-4 py-3 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all duration-200 text-gray-900 font-medium"
                         >
                             <option value="7days">近 7 天</option>
                             <option value="30days">近 30 天</option>
@@ -180,7 +180,7 @@ export function ScanErrors() {
                         {/* 匯出按鈕 */}
                         <button
                             onClick={exportToCSV}
-                            className="btn-apple bg-gradient-to-r from-green-500 to-emerald-600 text-white"
+                            className="flex items-center gap-2 px-6 py-3 rounded-xl font-semibold bg-apple-green/90 text-white hover:bg-apple-green shadow-apple-sm hover:shadow-apple backdrop-blur-sm transition-all duration-200 active:scale-[0.98]"
                         >
                             <Download size={20} />
                             匯出 CSV
@@ -190,63 +190,63 @@ export function ScanErrors() {
 
                 {/* 統計卡片 */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    <div className="glass-card p-6">
+                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm text-gray-500 mb-1">總錯誤次數</p>
-                                <p className="text-3xl font-bold text-red-600">{stats.totalErrors}</p>
+                                <p className="text-sm text-gray-500 mb-1 font-semibold">總錯誤次數</p>
+                                <p className="text-3xl font-bold text-apple-orange">{stats.totalErrors}</p>
                             </div>
-                            <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
-                                <AlertTriangle className="text-red-600" size={24} />
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-orange/10 to-apple-orange/5 flex items-center justify-center">
+                                <AlertTriangle className="text-apple-orange" size={24} />
                             </div>
                         </div>
                     </div>
 
-                    <div className="glass-card p-6">
+                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in" style={{ animationDelay: '100ms' }}>
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm text-gray-500 mb-1">最常刷錯的人</p>
+                                <p className="text-sm text-gray-500 mb-1 font-semibold">最常刷錯的人</p>
                                 <p className="text-xl font-bold text-gray-800">
                                     {stats.topUsers[0]?.name || '-'}
                                 </p>
-                                <p className="text-xs text-gray-400">
+                                <p className="text-xs text-gray-500 mt-1 font-medium">
                                     {stats.topUsers[0]?.count || 0} 次
                                 </p>
                             </div>
-                            <div className="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center">
-                                <User className="text-orange-600" size={24} />
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center">
+                                <User className="text-apple-blue" size={24} />
                             </div>
                         </div>
                     </div>
 
-                    <div className="glass-card p-6">
+                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in" style={{ animationDelay: '200ms' }}>
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm text-gray-500 mb-1">最常刷錯的條碼</p>
+                                <p className="text-sm text-gray-500 mb-1 font-semibold">最常刷錯的條碼</p>
                                 <p className="text-sm font-bold text-gray-800 truncate max-w-[120px]">
                                     {stats.topBarcodes[0]?.barcode || '-'}
                                 </p>
-                                <p className="text-xs text-gray-400">
+                                <p className="text-xs text-gray-500 font-medium">
                                     {stats.topBarcodes[0]?.count || 0} 次
                                 </p>
                             </div>
-                            <div className="w-12 h-12 rounded-xl bg-yellow-100 flex items-center justify-center">
-                                <Package className="text-yellow-600" size={24} />
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-500/5 flex items-center justify-center">
+                                <Package className="text-amber-600" size={24} />
                             </div>
                         </div>
                     </div>
 
-                    <div className="glass-card p-6">
+                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in" style={{ animationDelay: '300ms' }}>
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm text-gray-500 mb-1">平均每天</p>
-                                <p className="text-3xl font-bold text-blue-600">
+                                <p className="text-sm text-gray-500 mb-1 font-semibold">平均每天</p>
+                                <p className="text-3xl font-bold text-apple-indigo">
                                     {Math.round(stats.totalErrors / parseInt(dateRange.replace('days', '')) || 0)}
                                 </p>
-                                <p className="text-xs text-gray-400">次錯誤</p>
+                                <p className="text-xs text-gray-500 mt-1 font-medium">次錯誤</p>
                             </div>
-                            <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                                <TrendingUp className="text-blue-600" size={24} />
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-indigo/10 to-apple-indigo/5 flex items-center justify-center">
+                                <TrendingUp className="text-apple-indigo" size={24} />
                             </div>
                         </div>
                     </div>
