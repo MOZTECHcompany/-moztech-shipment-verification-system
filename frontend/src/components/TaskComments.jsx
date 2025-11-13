@@ -93,6 +93,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     useEffect(() => {
+        // 初始化讀取本地置頂清單，避免重新整理後遺失
+        try {
+            const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
+            setPinnedComments(Array.isArray(pinned) ? pinned : []);
+        } catch { setPinnedComments([]); }
+    }, [orderId]);
+
+    useEffect(() => {
         // 降低備援輪詢頻率（主要依賴 WebSocket）
         const interval = setInterval(() => invalidate(), 60000);
 
@@ -381,13 +389,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const renderComment = (comment, isReply = false, isPinned = false) => {
         const commentPriority = PRIORITIES[comment.priority || 'normal'];
         const PriorityIcon = commentPriority.icon;
+        const shouldAnimate = !!comment.__optimistic; // 僅在樂觀新增時套動畫，避免輸入時抖動
         
         return (
             <div 
                 key={comment.id} 
                 id={`comment-${comment.id}`}
                 className={`
-                    glass-card p-4 animate-scale-in transition-all duration-200
+                    glass-card p-4 ${shouldAnimate ? 'animate-scale-in' : ''} transition-all duration-200
                     ${isReply ? 'ml-12 mt-2 border-l-2 border-l-apple-blue/30' : 'mb-3'}
                     ${isPinned ? 'ring-1 ring-amber-300 shadow-md' : ''}
                     ${commentPriority.bgGlow}
