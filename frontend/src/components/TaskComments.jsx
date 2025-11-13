@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { socket } from '@/api/socket';
-import { FixedSizeList as List } from 'react-window';
+import { VariableSizeList as List } from 'react-window';
 import { formatDistanceToNow } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
 import { 
@@ -74,8 +74,16 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
     const commentsEndRef = useRef(null);
-    const listContainerRef = useRef(null);
+    const listRef = useRef(null);
     const shouldScrollBottomRef = useRef(false);
+    const sizeMapRef = useRef({});
+    const getSize = (index) => sizeMapRef.current[index] ?? 140;
+    const setSize = (index, size) => {
+        if (sizeMapRef.current[index] !== size) {
+            sizeMapRef.current[index] = size;
+            listRef.current?.resetAfterIndex(index);
+        }
+    };
 
     useEffect(() => {
         // 降低備援輪詢頻率（主要依賴 WebSocket）
@@ -115,9 +123,10 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     // 僅在需要時才自動滾動到底（例如送出成功後）
     useEffect(() => {
         if (shouldScrollBottomRef.current) {
-            const el = listContainerRef.current;
-            if (el) {
-                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+            if (listRef.current && typeof listRef.current.scrollToItem === 'function') {
+                // 嘗試捲到一般留言的最後一筆
+                const lastIndex = Math.max(0, normalList.length - 1);
+                listRef.current.scrollToItem(lastIndex, 'end');
             } else {
                 commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             }
@@ -274,22 +283,21 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     });
 
     // 分離置頂和普通評論
-    const pinnedList = filteredComments.filter(c => pinnedComments.includes(c.id) && !c.parent_id);
-    const normalList = filteredComments.filter(c => !pinnedComments.includes(c.id) && !c.parent_id);
-    // 合併後去重，避免分頁重疊造成的重複顯示
-    const displayList = (() => {
-        const merged = [...pinnedList.map(c => ({ ...c, __pinned: true })), ...normalList];
-        const seen = new Set();
-        const deduped = [];
-        for (const item of merged) {
-            const key = item.id;
-            if (key && !seen.has(key)) {
-                seen.add(key);
-                deduped.push(item);
-            }
-        }
-        return deduped;
-    })();
+    const pinnedListRaw = filteredComments.filter(c => pinnedComments.includes(c.id) && !c.parent_id);
+    const normalListRaw = filteredComments.filter(c => !pinnedComments.includes(c.id) && !c.parent_id);
+    // 各自去重（避免跨頁重複）
+    const pinnedSeen = new Set();
+    const pinnedList = pinnedListRaw.filter(c => {
+        if (!c?.id || pinnedSeen.has(c.id)) return false;
+        pinnedSeen.add(c.id);
+        return true;
+    }).map(c => ({ ...c, __pinned: true }));
+    const normalSeen = new Set();
+    const normalList = normalListRaw.filter(c => {
+        if (!c?.id || normalSeen.has(c.id)) return false;
+        normalSeen.add(c.id);
+        return true;
+    });
 
     // 未讀計數
     const unreadCount = comments.filter(c => {
@@ -526,7 +534,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             </div>
 
             {/* 評論列表 */}
-            <div ref={listContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {isLoading && (
                     <div className="space-y-3">
                         {Array.from({ length: 3 }).map((_, i) => (
@@ -538,7 +546,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         ))}
                     </div>
                 )}
-                {displayList.length === 0 ? (
+                {pinnedList.length + normalList.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                         <MessageSquare className="w-12 h-12 mb-3 opacity-50" />
                         <p className="text-sm">
@@ -556,13 +564,38 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         </div>
                     </div>
                 ) : (
-                    <List height={420} itemCount={displayList.length} itemSize={136} width={'100%'}>
-                        {({ index, style }) => (
-                            <div style={style}>
-                                {renderComment(displayList[index], false, !!displayList[index].__pinned)}
+                    <>
+                        {/* 置頂區塊（非虛擬化） */}
+                        {pinnedList.length > 0 && (
+                            <div className="space-y-2">
+                                {pinnedList.map(c => (
+                                    <div key={c.id}>{renderComment(c, false, true)}</div>
+                                ))}
                             </div>
                         )}
-                    </List>
+                        {/* 一般留言（虛擬化，可變高度） */}
+                        {normalList.length > 0 && (
+                            <List
+                                ref={listRef}
+                                height={420}
+                                itemCount={normalList.length}
+                                itemSize={getSize}
+                                width={'100%'}
+                            >
+                                {({ index, style }) => (
+                                    <div style={style}>
+                                        <div
+                                            ref={(el) => {
+                                                if (el) setSize(index, el.getBoundingClientRect().height);
+                                            }}
+                                        >
+                                            {renderComment(normalList[index], false, false)}
+                                        </div>
+                                    </div>
+                                )}
+                            </List>
+                        )}
+                    </>
                 )}
                 {hasNextPage && (
                     <div className="flex justify-center py-3">
