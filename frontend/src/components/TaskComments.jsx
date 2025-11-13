@@ -75,6 +75,9 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const mentionPulseRef = useRef(new Set());
     const notifierRef = useRef(null);
     const soundRef = useRef(null);
+    const [mentionsOpen, setMentionsOpen] = useState(false);
+    const [mentions, setMentions] = useState([]);
+    const [mentionsUnread, setMentionsUnread] = useState(0);
     
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
@@ -110,6 +113,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             const onNewComment = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
+                    fetchMentions();
                 }
             };
             const onNewMention = (payload) => {
@@ -128,14 +132,25 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         soundRef.current.play('newTask');
                     } catch {}
                     invalidate();
+                    fetchMentions();
                 }
+            };
+            const onCommentDeleted = (payload) => {
+                if (String(payload.orderId) === String(orderId)) { invalidate(); fetchMentions(); }
+            };
+            const onCommentRetracted = (payload) => {
+                if (String(payload.orderId) === String(orderId)) { invalidate(); fetchMentions(); }
             };
             socket.on('new_comment', onNewComment);
             socket.on('new_mention', onNewMention);
+            socket.on('comment_deleted', onCommentDeleted);
+            socket.on('comment_retracted', onCommentRetracted);
             return () => {
                 clearInterval(interval);
                 socket.off('new_comment', onNewComment);
                 socket.off('new_mention', onNewMention);
+                socket.off('comment_deleted', onCommentDeleted);
+                socket.off('comment_retracted', onCommentRetracted);
             };
         } catch (e) {
             // 若 socket 初始化失敗，不影響頁面其它功能
@@ -175,6 +190,16 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
         setPinnedComments(pinned);
     };
+
+    const fetchMentions = async () => {
+        try {
+            const res = await apiClient.get(`/api/tasks/${orderId}/mentions?status=unread&limit=20`);
+            setMentions(res.data.items || []);
+            setMentionsUnread(res.data.total || 0);
+        } catch (e) { /* ignore */ }
+    };
+
+    useEffect(() => { fetchMentions(); }, [orderId]);
 
     const handleInputChange = (e) => {
         const value = e.target.value;
@@ -582,6 +607,15 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                             </p>
                         </div>
                     </div>
+                    {/* 提及收件匣按鈕 */}
+                    <button onClick={() => setMentionsOpen(!mentionsOpen)} className="relative px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm flex items-center gap-1">
+                        <AtSign className="w-4 h-4" /> 提及
+                        {mentionsUnread > 0 && (
+                            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold">
+                                {mentionsUnread}
+                            </span>
+                        )}
+                    </button>
                 </div>
 
                 {/* 搜尋和篩選欄 */}
@@ -651,6 +685,28 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     </button>
                 </div>
             </div>
+            {/* 提及收件匣面板 */}
+            {mentionsOpen && (
+                <div className="absolute z-50 right-4 top-20 w-80 max-h-96 overflow-auto bg-white border border-gray-200 rounded-xl shadow-apple-xl">
+                    <div className="px-3 py-2 text-sm font-medium text-gray-700 border-b">提及收件匣</div>
+                    {mentions.length === 0 ? (
+                        <div className="p-4 text-sm text-gray-500">沒有未讀提及</div>
+                    ) : (
+                        <div className="divide-y">
+                            {mentions.map((m) => (
+                                <button
+                                    key={m.comment_id}
+                                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                                    onClick={() => { setMentionsOpen(false); jumpToCommentId(m.comment_id); }}
+                                >
+                                    <div className="text-xs text-gray-500">@{m.username} • {formatDistanceToNow(new Date(m.comment_created_at || m.created_at), { addSuffix: true, locale: zhTW })}</div>
+                                    <div className="text-sm text-gray-800 line-clamp-2">{m.content}</div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* 評論列表 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">

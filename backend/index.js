@@ -920,14 +920,22 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
     const pageSize = Math.min(Math.max(parseInt(limit || '50', 10), 1), 200);
     const client = await pool.connect();
     try {
-        // 先計算資源摘要，若 ETag 相同則回 304
+        // 先計算資源摘要，若 ETag 相同則回 304（包含使用者的未讀提及數，讓讀取狀態也影響 ETag）
         const agg = await client.query(
             `SELECT COUNT(*)::int AS total, MAX(updated_at) AS latest FROM task_comments WHERE order_id = $1`,
             [orderId]
         );
         const total = agg.rows[0]?.total || 0;
         const latest = agg.rows[0]?.latest || null;
-        const etag = `W/"comments:${orderId}:${total}:${latest ? new Date(latest).getTime() : 0}"`;
+        const unreadAgg = await client.query(
+            `SELECT COUNT(*)::int AS unread
+               FROM task_mentions tm
+               JOIN task_comments c ON c.id = tm.comment_id
+              WHERE c.order_id = $1 AND tm.mentioned_user_id = $2 AND tm.is_read = FALSE`,
+            [orderId, req.user.id]
+        );
+        const unreadMentions = unreadAgg.rows[0]?.unread || 0;
+        const etag = `W/"comments:${orderId}:u${req.user.id}:${total}:${latest ? new Date(latest).getTime() : 0}:unread:${unreadMentions}"`;
         res.setHeader('ETag', etag);
 
         const ifNoneMatch = req.headers['if-none-match'];
@@ -999,7 +1007,7 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
             ? comments.rows[comments.rows.length - 1].created_at
             : null;
 
-        res.json({ items: rootComments, nextCursor, total });
+        res.json({ items: rootComments, nextCursor, total, unreadMentions });
     } catch (error) {
         logger.error('[/api/tasks/:orderId/comments] 獲取評論失敗:', error);
         res.status(500).json({ code: 'COMMENTS_FETCH_FAILED', message: '獲取評論失敗', requestId: req.requestId });
@@ -1148,6 +1156,32 @@ apiRouter.patch('/tasks/:orderId/mentions/:commentId/read', async (req, res) => 
     } catch (error) {
         logger.error('[/api/tasks/:orderId/mentions/:commentId/read] 標記已讀失敗:', error);
         res.status(500).json({ code: 'MENTION_MARK_READ_FAILED', message: '標記提及為已讀失敗', requestId: req.requestId });
+    }
+});
+
+// 取得當前使用者在此訂單的提及列表（預設未讀）
+apiRouter.get('/tasks/:orderId/mentions', async (req, res) => {
+    const { orderId } = req.params;
+    const { status = 'unread', limit = 20 } = req.query;
+    const pageSize = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+    try {
+        const rows = await pool.query(
+            `SELECT tm.comment_id, tm.is_read, tm.created_at,
+                    c.content, c.created_at AS comment_created_at,
+                    u.username
+               FROM task_mentions tm
+               JOIN task_comments c ON c.id = tm.comment_id
+               JOIN users u ON c.user_id = u.id
+              WHERE c.order_id = $1 AND tm.mentioned_user_id = $2
+                ${status === 'unread' ? 'AND tm.is_read = FALSE' : ''}
+              ORDER BY tm.created_at DESC
+              LIMIT $3`,
+            [orderId, req.user.id, pageSize]
+        );
+        res.json({ items: rows.rows, total: rows.rows.length });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/mentions] 取得提及列表失敗:', error);
+        res.status(500).json({ code: 'MENTIONS_LIST_FAILED', message: '取得提及列表失敗', requestId: req.requestId });
     }
 });
 
