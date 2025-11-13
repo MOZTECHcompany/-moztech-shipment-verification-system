@@ -2,6 +2,8 @@
 // 任務評論系統 - 優化版（優先級、置頂、搜尋、未讀提示）
 
 import React, { useState, useEffect, useRef } from 'react';
+import { socket } from '@/api/socket';
+import { FixedSizeList as List } from 'react-window';
 import { formatDistanceToNow } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
 import { 
@@ -72,9 +74,26 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     useEffect(() => {
         fetchComments();
         
-        // 每30秒自動刷新
-        const interval = setInterval(fetchComments, 30000);
-        return () => clearInterval(interval);
+        // 降低備援輪詢頻率（主要依賴 WebSocket）
+        const interval = setInterval(fetchComments, 60000);
+
+        // 啟用 WebSocket 監聽新評論
+        try {
+            if (!socket.connected) socket.connect();
+            const onNewComment = (data) => {
+                if (String(data.orderId) === String(orderId)) {
+                    fetchComments();
+                }
+            };
+            socket.on('new_comment', onNewComment);
+            return () => {
+                clearInterval(interval);
+                socket.off('new_comment', onNewComment);
+            };
+        } catch (e) {
+            // 若 socket 初始化失敗，不影響頁面其它功能
+            return () => clearInterval(interval);
+        }
     }, [orderId]);
 
     useEffect(() => {
@@ -163,6 +182,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             return;
         }
 
+        if (loading) return; // 防重複點擊
         setLoading(true);
         try {
             await apiClient.post(`/api/tasks/${orderId}/comments`, {
@@ -178,7 +198,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             toast.success('評論已發送');
         } catch (error) {
             toast.error('發送評論失敗', {
-                description: error.response?.data?.message || '請稍後再試'
+                description: error.message || error.response?.data?.message || '請稍後再試'
             });
         } finally {
             setLoading(false);
@@ -230,6 +250,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     // 分離置頂和普通評論
     const pinnedList = filteredComments.filter(c => pinnedComments.includes(c.id) && !c.parent_id);
     const normalList = filteredComments.filter(c => !pinnedComments.includes(c.id) && !c.parent_id);
+    const displayList = [...pinnedList.map(c => ({ ...c, __pinned: true })), ...normalList];
 
     // 未讀計數
     const unreadCount = comments.filter(c => {
@@ -467,33 +488,24 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* 評論列表 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {/* 置頂評論區 */}
-                {pinnedList.length > 0 && (
-                    <div className="mb-6">
-                        <div className="flex items-center gap-2 mb-3 text-amber-600">
-                            <Pin className="w-4 h-4 fill-current" />
-                            <span className="text-sm font-semibold">置頂評論</span>
-                        </div>
-                        {pinnedList.map(comment => renderComment(comment, false, true))}
-                        <div className="h-px bg-gradient-to-r from-transparent via-amber-300 to-transparent my-4" />
-                    </div>
-                )}
-
-                {/* 普通評論區 */}
-                {normalList.length > 0 ? (
-                    normalList.map(comment => renderComment(comment))
-                ) : (
+                {displayList.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                         <MessageSquare className="w-12 h-12 mb-3 opacity-50" />
                         <p className="text-sm">
                             {searchTerm || filterPriority !== 'all' || filterUnread
                                 ? '沒有符合條件的評論'
-                                : '尚無評論，開始第一則討論吧！'
-                            }
+                                : '尚無評論，開始第一則討論吧！'}
                         </p>
                     </div>
+                ) : (
+                    <List height={420} itemCount={displayList.length} itemSize={120} width={'100%'}>
+                        {({ index, style }) => (
+                            <div style={style}>
+                                {renderComment(displayList[index], false, !!displayList[index].__pinned)}
+                            </div>
+                        )}
+                    </List>
                 )}
-                
                 <div ref={commentsEndRef} />
             </div>
 

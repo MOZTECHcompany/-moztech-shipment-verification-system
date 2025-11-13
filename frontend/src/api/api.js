@@ -1,5 +1,6 @@
 // src/api/api.js
 import axios from 'axios';
+import { toast } from 'sonner';
 
 // 1. 建立一個自訂的 axios 實例
 const apiClient = axios.create({
@@ -36,3 +37,29 @@ apiClient.interceptors.request.use(
 );
 
 export default apiClient;
+
+// 3. 全域回應攔截器：標準化錯誤並提示
+apiClient.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        const { response } = error || {};
+        const requestId = response?.headers?.['x-request-id'] || response?.headers?.['X-Request-Id'];
+        const status = response?.status;
+        const data = response?.data || {};
+        const code = data.code || (status === 401 ? 'AUTH_REQUIRED' : status === 403 ? 'FORBIDDEN' : undefined);
+        const message = data.message || error.message || '發生未知錯誤';
+
+        // 視情況提示（避免對某些頁面重複彈出可在呼叫端關閉）
+        if (status >= 500 || status === 401 || status === 403) {
+            toast.error(message, {
+                description: requestId ? `Request ID: ${requestId}` : undefined,
+            });
+        }
+
+        // 將標準欄位附加回錯誤物件，給呼叫端使用
+        error.requestId = requestId;
+        error.code = code;
+        error.message = message;
+        return Promise.reject(error);
+    }
+);

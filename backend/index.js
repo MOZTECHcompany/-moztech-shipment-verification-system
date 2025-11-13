@@ -104,19 +104,28 @@ const io = new Server(server, {
 
 // =================================================================
 // #region 认证与授权中介软体 (Auth Middlewares)
+// 為每個請求產生 requestId，方便追蹤
+app.use((req, res, next) => {
+    try {
+        const id = (require('crypto').randomUUID && require('crypto').randomUUID()) || Math.random().toString(36).slice(2);
+        req.requestId = id;
+        res.setHeader('X-Request-Id', id);
+    } catch (e) {}
+    next();
+});
 // =================================================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     logger.debugSensitive('[authenticateToken] Authorization header:', { authHeader });
     const token = authHeader && authHeader.split(' ')[1];
     logger.debugSensitive('[authenticateToken] Extracted token:', { token: token ? `${token.substring(0, 20)}...` : 'null' });
-    if (!token) return res.status(401).json({ message: '未提供認證權杖 (Token)' });
+    if (!token) return res.status(401).json({ code: 'AUTH_MISSING_TOKEN', message: '未提供認證權杖 (Token)' });
 
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
             logger.error('JWT 驗證失敗:', err.name, err.message);
             logger.debug('[authenticateToken] JWT_SECRET exists:', !!process.env.JWT_SECRET);
-            return res.status(403).json({ message: '無效或過期的權杖' });
+            return res.status(403).json({ code: 'AUTH_INVALID_TOKEN', message: '無效或過期的權杖' });
         }
         logger.debugSensitive('[authenticateToken] 驗證成功 - 使用者:', user);
         req.user = user;
@@ -128,11 +137,11 @@ const authorizeAdmin = (req, res, next) => {
     logger.debug(`[authorizeAdmin] 檢查權限 - user:`, req.user);
     if (!req.user) {
         logger.error('[authorizeAdmin] req.user 不存在');
-        return res.status(401).json({ message: '未認證的請求' });
+        return res.status(401).json({ code: 'AUTH_REQUIRED', message: '未認證的請求' });
     }
     if (req.user.role !== 'admin') {
         logger.error(`[authorizeAdmin] 權限不足 - role: ${req.user.role}`);
-        return res.status(403).json({ message: '權限不足，此操作需要管理員權限' });
+        return res.status(403).json({ code: 'FORBIDDEN', message: '權限不足，此操作需要管理員權限' });
     }
     logger.debug('[authorizeAdmin] 權限檢查通過');
     next();
@@ -948,7 +957,7 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
         res.json(rootComments);
     } catch (error) {
         logger.error('[/api/tasks/:orderId/comments] 獲取評論失敗:', error);
-        res.status(500).json({ message: '獲取評論失敗' });
+        res.status(500).json({ code: 'COMMENTS_FETCH_FAILED', message: '獲取評論失敗', requestId: req.requestId });
     }
 });
 
@@ -959,18 +968,25 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
     const { id: userId } = req.user;
     
     if (!content || !content.trim()) {
-        return res.status(400).json({ message: '評論內容不能為空' });
+        return res.status(400).json({ code: 'VALIDATION_ERROR', message: '評論內容不能為空', requestId: req.requestId });
     }
 
     // 驗證優先級
     const validPriorities = ['normal', 'important', 'urgent'];
     if (!validPriorities.includes(priority)) {
-        return res.status(400).json({ message: '無效的優先級' });
+        return res.status(400).json({ code: 'INVALID_PRIORITY', message: '無效的優先級', requestId: req.requestId });
     }
     
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+
+        // 確認訂單存在
+        const orderExist = await client.query('SELECT id FROM orders WHERE id = $1', [orderId]);
+        if (orderExist.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ code: 'ORDER_NOT_FOUND', message: '找不到指定的訂單', requestId: req.requestId });
+        }
         
         // 新增評論
         const result = await client.query(`
@@ -1035,10 +1051,12 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
         if (error && (error.code === '42703' || /column\s+"?priority"?/i.test(error.message || ''))) {
             return res.status(500).json({
                 message: '發送評論失敗：資料庫缺少 task_comments.priority 欄位，請先執行遷移。',
-                hint: '請以管理員身份呼叫 /api/admin/migrate/add-priority 或使用前端 migrate.html 執行遷移'
+                code: 'SCHEMA_MISSING_COLUMN',
+                hint: '請以管理員身份呼叫 /api/admin/migrate/add-priority 或使用前端 migrate.html 執行遷移',
+                requestId: req.requestId
             });
         }
-        res.status(500).json({ message: '發送評論失敗' });
+        res.status(500).json({ code: 'COMMENTS_CREATE_FAILED', message: '發送評論失敗', requestId: req.requestId });
     } finally {
         client.release();
     }
@@ -1389,7 +1407,9 @@ app.use((err, req, res, next) => {
     if (err.code === '23505') return res.status(409).json({ message: '操作失敗：資料重複。' + (err.detail || '') });
     const statusCode = err.status || 500;
     res.status(statusCode).json({ 
+        code: err.code || 'INTERNAL_ERROR',
         message: err.message || '伺服器發生未知錯誤',
+        requestId: req.requestId,
         stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
 });

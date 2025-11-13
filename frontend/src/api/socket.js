@@ -8,8 +8,9 @@ const SOCKET_URL = import.meta.env.VITE_API_BASE_URL || 'https://moztech-wms-api
 
 // 创建一个 socket 实例，但先不连接
 export const socket = io(SOCKET_URL, {
-    autoConnect: false, // 我们将手动控制连接时机
+    autoConnect: false, // 手動控制連線時機
     reconnectionAttempts: 5,
+    transports: ['websocket'],
 });
 
 // 可以在这里监听一些全局事件，方便调试
