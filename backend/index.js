@@ -954,14 +954,19 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
                 c.updated_at,
                 u.id as user_id,
                 u.username,
-                u.name as user_name
+                u.name as user_name,
+                (tm.id IS NOT NULL) AS mentioned_me,
+                COALESCE(tm.is_read, FALSE) AS mention_is_read
             FROM task_comments c
             JOIN users u ON c.user_id = u.id
+            LEFT JOIN task_mentions tm 
+              ON tm.comment_id = c.id 
+             AND tm.mentioned_user_id = $2
             WHERE ${where}
             ORDER BY c.created_at ASC
             LIMIT $${params.length}
             `,
-            params
+            [...params, req.user.id]
         );
 
         // 組織成樹狀結構（父評論和回覆）
@@ -1116,6 +1121,26 @@ apiRouter.patch('/tasks/:orderId/comments/:commentId/retract', async (req, res) 
     } catch (error) {
         logger.error('[/api/tasks/:orderId/comments/:commentId/retract] 失敗:', error);
         res.status(500).json({ code: 'COMMENTS_RETRACT_FAILED', message: '撤回評論失敗', requestId: req.requestId });
+    }
+});
+
+// 標記某條提及為已讀（當前使用者）
+apiRouter.patch('/tasks/:orderId/mentions/:commentId/read', async (req, res) => {
+    const { orderId, commentId } = req.params;
+    const userId = req.user.id;
+    try {
+        // 確認評論屬於該訂單
+        const chk = await pool.query('SELECT 1 FROM task_comments WHERE id = $1 AND order_id = $2', [commentId, orderId]);
+        if (chk.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
+        const result = await pool.query(
+            `UPDATE task_mentions SET is_read = TRUE 
+              WHERE comment_id = $1 AND mentioned_user_id = $2`,
+            [commentId, userId]
+        );
+        res.json({ message: '已標記為已讀', updated: result.rowCount });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/mentions/:commentId/read] 標記已讀失敗:', error);
+        res.status(500).json({ code: 'MENTION_MARK_READ_FAILED', message: '標記提及為已讀失敗', requestId: req.requestId });
     }
 });
 

@@ -15,6 +15,8 @@ import {
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
 import { useComments } from '@/api/useComments';
+import DesktopNotification from '@/utils/desktopNotification';
+import SoundNotification from '@/utils/soundNotification';
 
 // 優先級配置
 const PRIORITIES = {
@@ -70,6 +72,9 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const [pinnedComments, setPinnedComments] = useState([]);
     const [inlineStatus, setInlineStatus] = useState(null); // {type:'success'|'error', message:string}
     const lastPayloadRef = useRef(null);
+    const mentionPulseRef = useRef(new Set());
+    const notifierRef = useRef(null);
+    const soundRef = useRef(null);
     
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
@@ -99,10 +104,30 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     invalidate();
                 }
             };
+            const onNewMention = (payload) => {
+                if (String(payload.orderId) === String(orderId) && Number(payload.userId) === Number(currentUser.id)) {
+                    mentionPulseRef.current.add(payload.commentId);
+                    try {
+                        if (!notifierRef.current) notifierRef.current = new DesktopNotification();
+                        notifierRef.current.show('有人提及了你', {
+                            body: payload.content || '新提及',
+                            duration: 4000,
+                            onClick: () => jumpToCommentId(payload.commentId)
+                        });
+                    } catch {}
+                    try {
+                        if (!soundRef.current) soundRef.current = new SoundNotification();
+                        soundRef.current.play('newTask');
+                    } catch {}
+                    invalidate();
+                }
+            };
             socket.on('new_comment', onNewComment);
+            socket.on('new_mention', onNewMention);
             return () => {
                 clearInterval(interval);
                 socket.off('new_comment', onNewComment);
+                socket.off('new_mention', onNewMention);
             };
         } catch (e) {
             // 若 socket 初始化失敗，不影響頁面其它功能
@@ -329,6 +354,30 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         });
     };
 
+    const markMentionRead = async (commentId) => {
+        try {
+            await apiClient.patch(`/api/tasks/${orderId}/mentions/${commentId}/read`);
+            mentionPulseRef.current.delete(commentId);
+            await invalidate();
+        } catch {}
+    };
+
+    const jumpToCommentId = (commentId) => {
+        // 嘗試捲到 pinned
+        const pinnedEl = document.getElementById(`comment-${commentId}`);
+        if (pinnedEl) {
+            pinnedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            markMentionRead(commentId);
+            return;
+        }
+        const idx = normalList.findIndex(c => c.id === commentId);
+        if (idx >= 0) {
+            listRef.current?.scrollToItem(idx, 'center');
+            // 等待渲染後再標記
+            setTimeout(() => markMentionRead(commentId), 300);
+        }
+    };
+
     const renderComment = (comment, isReply = false, isPinned = false) => {
         const commentPriority = PRIORITIES[comment.priority || 'normal'];
         const PriorityIcon = commentPriority.icon;
@@ -336,6 +385,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         return (
             <div 
                 key={comment.id} 
+                id={`comment-${comment.id}`}
                 className={`
                     glass-card p-4 animate-scale-in transition-all duration-200
                     ${isReply ? 'ml-12 mt-2 border-l-2 border-l-apple-blue/30' : 'mb-3'}
@@ -379,6 +429,17 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                             <Pin className="w-3 h-3" />
                                             已置頂
                                         </span>
+                                    )}
+                                    {/* 被提及你 */}
+                                    {comment.mentioned_me && !comment.mention_is_read && (
+                                        <button
+                                            type="button"
+                                            onClick={(e)=>{ e.stopPropagation(); jumpToCommentId(comment.id); }}
+                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50 ${mentionPulseRef.current.has(comment.id) ? 'animate-pulse ring-2 ring-blue-300' : ''}`}
+                                            title="有人提及了你，點擊跳轉"
+                                        >
+                                            <AtSign className="w-3 h-3" /> 提及你
+                                        </button>
                                     )}
                                 </div>
                                 
