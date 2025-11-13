@@ -74,6 +74,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
     const commentsEndRef = useRef(null);
+    const listContainerRef = useRef(null);
+    const shouldScrollBottomRef = useRef(false);
 
     useEffect(() => {
         // 降低備援輪詢頻率（主要依賴 WebSocket）
@@ -110,9 +112,17 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
+    // 僅在需要時才自動滾動到底（例如送出成功後）
     useEffect(() => {
-        // 滾動到底部（新評論時）
-        commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        if (shouldScrollBottomRef.current) {
+            const el = listContainerRef.current;
+            if (el) {
+                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+            } else {
+                commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
+            shouldScrollBottomRef.current = false;
+        }
     }, [comments]);
 
     const fetchComments = async () => {
@@ -208,6 +218,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             setReplyTo(null);
             setPriority('normal');
             await invalidate();
+            // 發送成功後再捲到底，避免背景重新整理時誤觸頁面跳動
+            shouldScrollBottomRef.current = true;
             setInlineStatus({ type: 'success', message: '已發送評論' });
             setTimeout(() => setInlineStatus(null), 1600);
         } catch (error) {
@@ -264,7 +276,20 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     // 分離置頂和普通評論
     const pinnedList = filteredComments.filter(c => pinnedComments.includes(c.id) && !c.parent_id);
     const normalList = filteredComments.filter(c => !pinnedComments.includes(c.id) && !c.parent_id);
-    const displayList = [...pinnedList.map(c => ({ ...c, __pinned: true })), ...normalList];
+    // 合併後去重，避免分頁重疊造成的重複顯示
+    const displayList = (() => {
+        const merged = [...pinnedList.map(c => ({ ...c, __pinned: true })), ...normalList];
+        const seen = new Set();
+        const deduped = [];
+        for (const item of merged) {
+            const key = item.id;
+            if (key && !seen.has(key)) {
+                seen.add(key);
+                deduped.push(item);
+            }
+        }
+        return deduped;
+    })();
 
     // 未讀計數
     const unreadCount = comments.filter(c => {
@@ -304,7 +329,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 className={`
                     glass-card p-4 animate-scale-in transition-all duration-200
                     ${isReply ? 'ml-12 mt-2 border-l-2 border-l-apple-blue/30' : 'mb-3'}
-                    ${isPinned ? 'ring-2 ring-amber-400 shadow-lg' : ''}
+                    ${isPinned ? 'ring-1 ring-amber-300 shadow-md' : ''}
                     ${commentPriority.bgGlow}
                     hover:shadow-apple-md
                 `}
@@ -501,7 +526,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             </div>
 
             {/* 評論列表 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div ref={listContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
                 {isLoading && (
                     <div className="space-y-3">
                         {Array.from({ length: 3 }).map((_, i) => (
@@ -531,7 +556,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         </div>
                     </div>
                 ) : (
-                    <List height={420} itemCount={displayList.length} itemSize={120} width={'100%'}>
+                    <List height={420} itemCount={displayList.length} itemSize={136} width={'100%'}>
                         {({ index, style }) => (
                             <div style={style}>
                                 {renderComment(displayList[index], false, !!displayList[index].__pinned)}
