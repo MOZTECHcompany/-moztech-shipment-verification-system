@@ -5,14 +5,18 @@ import * as XLSX from 'xlsx';
 import { 
     Loader2, ArrowLeft, Check, ScanLine, Barcode, Tag, Package, 
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
-    ChevronUp, ShoppingCart, Box
+    ChevronUp, ShoppingCart, Box, Camera, MessageSquare, Printer, Users
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '../api/api';
+import { socket } from '../api/socket';
 import { soundNotification } from '../utils/soundNotification';
 import { voiceNotification } from '../utils/voiceNotification';
 import { desktopNotification } from '../utils/desktopNotification';
+import { CameraScanner } from './CameraScanner';
+import { TaskComments } from './TaskComments';
+import { ShippingLabel, PickingList } from './LabelPrinter';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
@@ -50,25 +54,68 @@ const StatusBadge = ({ status }) => {
 };
 
 // --- 进度仪表板 ---
-const ProgressDashboard = ({ stats, onExport, onVoid, user }) => {
+const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, onToggleComments, activeSessions, order, items }) => {
     const completionPercentage = stats.totalSkus > 0 ? (stats.packedSkus / stats.totalSkus) * 100 : 0;
     
     return (
         <div className="glass card-apple mb-8 p-6 animate-fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-2">
-                    <Package className="text-blue-600" size={28} />
-                    任務總覽
-                </h2>
-                <div className="flex gap-2">
-                    <button onClick={onExport} className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white flex items-center gap-2 shadow-apple-lg">
-                        <FileDown size={18} />
-                        匯出報告
+                <div>
+                    <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-2">
+                        <Package className="text-blue-600" size={28} />
+                        任務總覽
+                    </h2>
+                    {/* 即時協作指示器 */}
+                    {activeSessions.length > 0 && (
+                        <div className="flex items-center gap-2 mt-2">
+                            <Users size={14} className="text-apple-green" />
+                            <span className="text-sm text-gray-600">
+                                {activeSessions.map(s => s.name).join(', ')} 正在查看
+                            </span>
+                            <span className="w-2 h-2 bg-apple-green rounded-full animate-pulse"></span>
+                        </div>
+                    )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {/* 相機掃描按鈕 */}
+                    <button 
+                        onClick={onOpenCamera}
+                        className="btn-apple bg-apple-indigo/90 hover:bg-apple-indigo text-white flex items-center gap-2 shadow-apple-lg"
+                    >
+                        <Camera size={18} />
+                        <span className="hidden sm:inline">相機掃描</span>
                     </button>
+                    
+                    {/* 評論按鈕 */}
+                    <button 
+                        onClick={onToggleComments}
+                        className="btn-apple bg-apple-purple/90 hover:bg-apple-purple text-white flex items-center gap-2 shadow-apple-lg"
+                    >
+                        <MessageSquare size={18} />
+                        <span className="hidden sm:inline">討論</span>
+                    </button>
+                    
+                    {/* 列印標籤 */}
+                    <ShippingLabel order={order} items={items} />
+                    <PickingList order={order} items={items} />
+                    
+                    {/* 匯出報告 */}
+                    <button 
+                        onClick={onExport} 
+                        className="btn-apple bg-apple-blue/90 hover:bg-apple-blue text-white flex items-center gap-2 shadow-apple-lg"
+                    >
+                        <FileDown size={18} />
+                        <span className="hidden sm:inline">匯出</span>
+                    </button>
+                    
+                    {/* 作廢訂單 */}
                     {user.role === 'admin' && (
-                        <button onClick={onVoid} className="btn-apple bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white flex items-center gap-2 shadow-apple-lg">
+                        <button 
+                            onClick={onVoid} 
+                            className="btn-apple bg-red-500/90 hover:bg-red-600 text-white flex items-center gap-2 shadow-apple-lg"
+                        >
                             <XCircle size={18} />
-                            作廢訂單
+                            <span className="hidden sm:inline">作廢</span>
                         </button>
                     )}
                 </div>
@@ -277,12 +324,68 @@ export function OrderWorkView({ user }) {
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
+    
+    // 新功能狀態
+    const [showCameraScanner, setShowCameraScanner] = useState(false);
+    const [showComments, setShowComments] = useState(false);
+    const [activeSessions, setActiveSessions] = useState([]);
+    const [allUsers, setAllUsers] = useState([]);
 
     const barcodeInputRef = useRef(null);
     const errorSoundRef = useRef(null);
 
     useEffect(() => { errorSoundRef.current = new Audio('/sounds/error.mp3'); }, []);
     useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrderData.order]);
+
+    // 載入所有用戶（用於評論@功能）
+    useEffect(() => {
+        const fetchUsers = async () => {
+            try {
+                const response = await apiClient.get('/api/admin/users');
+                setAllUsers(response.data);
+            } catch (error) {
+                console.error('載入用戶列表失敗:', error);
+            }
+        };
+        fetchUsers();
+    }, []);
+
+    // 即時協作功能
+    useEffect(() => {
+        if (!orderId) return;
+
+        // 更新當前會話狀態
+        const updateSession = () => {
+            apiClient.post(`/api/tasks/${orderId}/session`, {
+                session_type: 'viewing'
+            }).catch(err => console.error('更新會話失敗:', err));
+        };
+
+        // 立即更新一次
+        updateSession();
+        
+        // 每30秒更新一次心跳
+        const interval = setInterval(updateSession, 30000);
+
+        // 監聽即時協作事件
+        socket.on('active_sessions_update', (data) => {
+            if (data.orderId === parseInt(orderId)) {
+                setActiveSessions(data.sessions.filter(s => s.user_id !== user.id));
+            }
+        });
+
+        socket.on('new_comment', (data) => {
+            if (data.orderId === parseInt(orderId)) {
+                toast.info('💬 新評論', { description: '有人發表了新評論' });
+            }
+        });
+
+        return () => {
+            clearInterval(interval);
+            socket.off('active_sessions_update');
+            socket.off('new_comment');
+        };
+    }, [orderId, user.id]);
 
     const fetchOrderDetails = useCallback(async (id) => {
         if (!id) return;
@@ -415,6 +518,12 @@ export function OrderWorkView({ user }) {
 
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
     const handleClick = () => { handleScan(); };
+    
+    // 相機掃描處理
+    const handleCameraScan = (code) => {
+        setBarcodeInput(code);
+        setTimeout(() => handleScan(), 100);
+    };
 
     const handleVoidOrder = async () => {
         if (!currentOrderData.order) return;
@@ -538,7 +647,28 @@ export function OrderWorkView({ user }) {
                 </div>
             </header>
 
-            <ProgressDashboard stats={progressStats} onExport={handleExportReport} onVoid={handleVoidOrder} user={user} />
+            <ProgressDashboard 
+                stats={progressStats} 
+                onExport={handleExportReport} 
+                onVoid={handleVoidOrder} 
+                user={user}
+                onOpenCamera={() => setShowCameraScanner(true)}
+                onToggleComments={() => setShowComments(!showComments)}
+                activeSessions={activeSessions}
+                order={currentOrderData.order}
+                items={currentOrderData.items}
+            />
+
+            {/* 評論區塊 */}
+            {showComments && (
+                <div className="mb-8 animate-slide-up">
+                    <TaskComments 
+                        orderId={orderId}
+                        currentUser={user}
+                        allUsers={allUsers}
+                    />
+                </div>
+            )}
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Scan Area */}
@@ -632,6 +762,15 @@ export function OrderWorkView({ user }) {
                     </div>
                 </div>
             </div>
+            
+            {/* 相機掃描器 */}
+            {showCameraScanner && (
+                <CameraScanner
+                    onScan={handleCameraScan}
+                    onClose={() => setShowCameraScanner(false)}
+                    mode="single"
+                />
+            )}
         </div>
     );
 }

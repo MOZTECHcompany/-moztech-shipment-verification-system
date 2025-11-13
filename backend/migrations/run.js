@@ -17,15 +17,21 @@ async function runMigration() {
     console.log('🚀 開始執行資料庫遷移...\n');
     
     try {
-        // 讀取 SQL 檔案
-        const sqlPath = path.join(__dirname, '001_add_indexes.sql');
-        const sql = fs.readFileSync(sqlPath, 'utf8');
+        // 讀取所有 SQL 檔案
+        const migrationFiles = fs.readdirSync(__dirname)
+            .filter(file => file.endsWith('.sql'))
+            .sort();
         
-        console.log('📄 讀取遷移檔案:', sqlPath);
-        console.log('📊 開始建立索引...\n');
-        
-        // 執行 SQL
-        await pool.query(sql);
+        for (const file of migrationFiles) {
+            const sqlPath = path.join(__dirname, file);
+            const sql = fs.readFileSync(sqlPath, 'utf8');
+            
+            console.log(`📄 執行遷移檔案: ${file}`);
+            
+            // 執行 SQL
+            await pool.query(sql);
+            console.log(`✅ ${file} 執行成功\n`);
+        }
         
         console.log('✅ 遷移執行成功！');
         console.log('\n索引已建立完成。資料庫查詢效能應該會有顯著提升。\n');

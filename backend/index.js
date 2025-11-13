@@ -900,6 +900,262 @@ apiRouter.get('/scan-errors', authorizeAdmin, async (req, res) => {
     }
 });
 
+// =================================================================
+// #region 協作功能 API (Collaboration Features)
+// =================================================================
+
+// 獲取任務評論
+apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
+    const { orderId } = req.params;
+    
+    try {
+        const comments = await pool.query(`
+            SELECT 
+                c.id,
+                c.content,
+                c.parent_id,
+                c.created_at,
+                c.updated_at,
+                u.id as user_id,
+                u.username,
+                u.name as user_name
+            FROM task_comments c
+            JOIN users u ON c.user_id = u.id
+            WHERE c.order_id = $1
+            ORDER BY c.created_at ASC
+        `, [orderId]);
+        
+        // 組織成樹狀結構（父評論和回覆）
+        const commentMap = {};
+        const rootComments = [];
+        
+        comments.rows.forEach(comment => {
+            comment.replies = [];
+            commentMap[comment.id] = comment;
+        });
+        
+        comments.rows.forEach(comment => {
+            if (comment.parent_id) {
+                if (commentMap[comment.parent_id]) {
+                    commentMap[comment.parent_id].replies.push(comment);
+                }
+            } else {
+                rootComments.push(comment);
+            }
+        });
+        
+        res.json(rootComments);
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/comments] 獲取評論失敗:', error);
+        res.status(500).json({ message: '獲取評論失敗' });
+    }
+});
+
+// 新增評論
+apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
+    const { orderId } = req.params;
+    const { content, parent_id } = req.body;
+    const { id: userId } = req.user;
+    
+    if (!content || !content.trim()) {
+        return res.status(400).json({ message: '評論內容不能為空' });
+    }
+    
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // 新增評論
+        const result = await client.query(`
+            INSERT INTO task_comments (order_id, user_id, content, parent_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, created_at
+        `, [orderId, userId, content, parent_id]);
+        
+        const commentId = result.rows[0].id;
+        
+        // 檢測 @ 提及
+        const mentionRegex = /@(\w+)/g;
+        const mentions = content.match(mentionRegex);
+        
+        if (mentions) {
+            const usernames = [...new Set(mentions.map(m => m.slice(1)))];
+            
+            for (const username of usernames) {
+                const userResult = await client.query(
+                    'SELECT id FROM users WHERE username = $1',
+                    [username]
+                );
+                
+                if (userResult.rows.length > 0) {
+                    await client.query(`
+                        INSERT INTO task_mentions (comment_id, mentioned_user_id)
+                        VALUES ($1, $2)
+                    `, [commentId, userResult.rows[0].id]);
+                    
+                    // 發送即時通知
+                    io.emit('new_mention', {
+                        userId: userResult.rows[0].id,
+                        orderId,
+                        commentId,
+                        content: content.slice(0, 100)
+                    });
+                }
+            }
+        }
+        
+        await client.query('COMMIT');
+        
+        // 廣播新評論
+        io.emit('new_comment', {
+            orderId,
+            commentId,
+            userId,
+            content
+        });
+        
+        res.status(201).json({
+            message: '評論已發送',
+            id: commentId,
+            created_at: result.rows[0].created_at
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        logger.error('[/api/tasks/:orderId/comments] 新增評論失敗:', error);
+        res.status(500).json({ message: '發送評論失敗' });
+    } finally {
+        client.release();
+    }
+});
+
+// 更新活動會話（即時協作指示器）
+apiRouter.post('/tasks/:orderId/session', async (req, res) => {
+    const { orderId } = req.params;
+    const { session_type } = req.body; // 'viewing' 或 'editing'
+    const { id: userId } = req.user;
+    
+    try {
+        await pool.query(`
+            INSERT INTO active_sessions (order_id, user_id, session_type, last_activity)
+            VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+            ON CONFLICT (order_id, user_id, session_type)
+            DO UPDATE SET last_activity = CURRENT_TIMESTAMP
+        `, [orderId, userId, session_type || 'viewing']);
+        
+        // 廣播活動狀態
+        const activeSessions = await pool.query(`
+            SELECT 
+                s.user_id,
+                s.session_type,
+                s.last_activity,
+                u.username,
+                u.name
+            FROM active_sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.order_id = $1 
+            AND s.last_activity > NOW() - INTERVAL '5 minutes'
+        `, [orderId]);
+        
+        io.emit('active_sessions_update', {
+            orderId,
+            sessions: activeSessions.rows
+        });
+        
+        res.json({ message: '會話已更新' });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/session] 更新會話失敗:', error);
+        res.status(500).json({ message: '更新會話失敗' });
+    }
+});
+
+// 獲取活動會話
+apiRouter.get('/tasks/:orderId/sessions', async (req, res) => {
+    const { orderId } = req.params;
+    
+    try {
+        const result = await pool.query(`
+            SELECT 
+                s.user_id,
+                s.session_type,
+                s.last_activity,
+                u.username,
+                u.name
+            FROM active_sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.order_id = $1 
+            AND s.last_activity > NOW() - INTERVAL '5 minutes'
+            ORDER BY s.last_activity DESC
+        `, [orderId]);
+        
+        res.json(result.rows);
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/sessions] 獲取會話失敗:', error);
+        res.status(500).json({ message: '獲取會話失敗' });
+    }
+});
+
+// 任務交接
+apiRouter.post('/tasks/:orderId/transfer', async (req, res) => {
+    const { orderId } = req.params;
+    const { to_user_id, task_type, reason } = req.body;
+    const { id: fromUserId } = req.user;
+    
+    if (!to_user_id || !task_type) {
+        return res.status(400).json({ message: '缺少必要參數' });
+    }
+    
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // 記錄交接
+        await client.query(`
+            INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason)
+            VALUES ($1, $2, $3, $4, $5)
+        `, [orderId, fromUserId, to_user_id, task_type, reason]);
+        
+        // 更新訂單的操作員
+        if (task_type === 'pick') {
+            await client.query(
+                'UPDATE orders SET picker_id = $1 WHERE id = $2',
+                [to_user_id, orderId]
+            );
+        } else if (task_type === 'pack') {
+            await client.query(
+                'UPDATE orders SET packer_id = $1 WHERE id = $2',
+                [to_user_id, orderId]
+            );
+        }
+        
+        await client.query('COMMIT');
+        
+        // 記錄操作日誌
+        await logOperation(fromUserId, orderId, 'transfer', {
+            to_user_id,
+            task_type,
+            reason
+        });
+        
+        // 廣播任務轉移
+        io.emit('task_transferred', {
+            orderId,
+            from_user_id: fromUserId,
+            to_user_id,
+            task_type
+        });
+        
+        res.json({ message: '任務已成功轉移' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        logger.error('[/api/tasks/:orderId/transfer] 任務轉移失敗:', error);
+        res.status(500).json({ message: '任務轉移失敗' });
+    } finally {
+        client.release();
+    }
+});
+
+// #endregion
+
 apiRouter.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
     const { orderIds } = req.body;
     
