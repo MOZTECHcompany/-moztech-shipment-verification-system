@@ -339,10 +339,18 @@ export function OrderWorkView({ user }) {
     useEffect(() => {
         const fetchUsers = async () => {
             try {
-                const response = await apiClient.get('/api/admin/users');
-                setAllUsers(response.data);
+                // 優先使用非管理員也可取得的精簡清單
+                const response = await apiClient.get('/api/users/basic');
+                setAllUsers(response.data || []);
             } catch (error) {
-                console.error('載入用戶列表失敗:', error);
+                // 舊後台端點作為備援（若目前使用者為管理員）
+                try {
+                    const fallback = await apiClient.get('/api/admin/users');
+                    setAllUsers(fallback.data || []);
+                } catch (e) {
+                    console.error('載入用戶列表失敗:', e);
+                    setAllUsers([]);
+                }
             }
         };
         fetchUsers();

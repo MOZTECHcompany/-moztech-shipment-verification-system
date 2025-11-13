@@ -284,6 +284,17 @@ apiRouter.get('/tasks', async (req, res) => {
     res.json(result.rows);
 });
 
+// 提供基本使用者清單（非管理員也可存取）
+apiRouter.get('/users/basic', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, username, name FROM users ORDER BY id ASC');
+        res.json(result.rows);
+    } catch (error) {
+        logger.error('[/api/users/basic] 取得使用者清單失敗:', error);
+        res.status(500).json({ message: '取得使用者清單失敗' });
+    }
+});
+
 // 批次操作端點
 apiRouter.post('/orders/batch-claim', async (req, res) => {
     try {
@@ -1017,6 +1028,17 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
 });
 
 // 新增評論
+// 簡易速率限制（每使用者每分鐘最多 20 次建立、5 次撤回/刪除）
+const _rateMap = new Map();
+function rateLimit(key, limit, windowMs = 60_000) {
+    const now = Date.now();
+    const rec = _rateMap.get(key) || { count: 0, windowStart: now };
+    if (now - rec.windowStart > windowMs) { rec.count = 0; rec.windowStart = now; }
+    rec.count++;
+    _rateMap.set(key, rec);
+    return rec.count <= limit;
+}
+
 apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
     const { orderId } = req.params;
     const { content, parent_id, priority = 'normal' } = req.body;
@@ -1024,6 +1046,12 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
     
     if (!content || !content.trim()) {
         return res.status(400).json({ code: 'VALIDATION_ERROR', message: '評論內容不能為空', requestId: req.requestId });
+    }
+    if (content.length > 2000) {
+        return res.status(413).json({ code: 'CONTENT_TOO_LONG', message: '評論內容過長（最大 2000 字）', requestId: req.requestId });
+    }
+    if (!rateLimit(`comment:create:${userId}`, 20)) {
+        return res.status(429).json({ code: 'RATE_LIMITED', message: '發送太頻繁，請稍後再試', requestId: req.requestId });
     }
 
     // 驗證優先級
@@ -1121,6 +1149,9 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
 apiRouter.patch('/tasks/:orderId/comments/:commentId/retract', async (req, res) => {
     const { orderId, commentId } = req.params;
     const requester = req.user;
+    if (!rateLimit(`comment:retract:${requester.id}`, 5)) {
+        return res.status(429).json({ code: 'RATE_LIMITED', message: '操作太頻繁，請稍後再試', requestId: req.requestId });
+    }
     try {
         const info = await pool.query('SELECT user_id FROM task_comments WHERE id = $1 AND order_id = $2', [commentId, orderId]);
         if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
@@ -1185,10 +1216,60 @@ apiRouter.get('/tasks/:orderId/mentions', async (req, res) => {
     }
 });
 
+// 置頂雲端化：使用者對評論的置頂狀態
+async function ensurePinsTable(client) {
+    await client.query(`CREATE TABLE IF NOT EXISTS task_comment_pins (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        comment_id INTEGER NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(order_id, user_id, comment_id)
+    )`);
+}
+
+// 取得置頂清單
+apiRouter.get('/tasks/:orderId/pins', async (req, res) => {
+    const { orderId } = req.params;
+    const userId = req.user.id;
+    const client = await pool.connect();
+    try {
+        await ensurePinsTable(client);
+        const rows = await client.query('SELECT comment_id FROM task_comment_pins WHERE order_id = $1 AND user_id = $2', [orderId, userId]);
+        res.json({ pinned: rows.rows.map(r => r.comment_id) });
+    } catch (e) {
+        logger.error('[/api/tasks/:orderId/pins] 取得置頂清單失敗:', e);
+        res.status(500).json({ message: '取得置頂清單失敗' });
+    } finally { client.release(); }
+});
+
+// 設定/取消置頂
+apiRouter.put('/tasks/:orderId/pins/:commentId', async (req, res) => {
+    const { orderId, commentId } = req.params;
+    const { pinned } = req.body; // true/false
+    const userId = req.user.id;
+    const client = await pool.connect();
+    try {
+        await ensurePinsTable(client);
+        if (pinned) {
+            await client.query('INSERT INTO task_comment_pins (order_id, user_id, comment_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [orderId, userId, commentId]);
+        } else {
+            await client.query('DELETE FROM task_comment_pins WHERE order_id = $1 AND user_id = $2 AND comment_id = $3', [orderId, userId, commentId]);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        logger.error('[/api/tasks/:orderId/pins/:commentId] 更新置頂失敗:', e);
+        res.status(500).json({ message: '更新置頂狀態失敗' });
+    } finally { client.release(); }
+});
+
 // 刪除評論（作者或管理員）。若為父評論，回覆會因外鍵設定而一併刪除。
 apiRouter.delete('/tasks/:orderId/comments/:commentId', async (req, res) => {
     const { orderId, commentId } = req.params;
     const requester = req.user;
+    if (!rateLimit(`comment:delete:${requester.id}`, 5)) {
+        return res.status(429).json({ code: 'RATE_LIMITED', message: '操作太頻繁，請稍後再試', requestId: req.requestId });
+    }
     try {
         const info = await pool.query('SELECT user_id FROM task_comments WHERE id = $1 AND order_id = $2', [commentId, orderId]);
         if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });

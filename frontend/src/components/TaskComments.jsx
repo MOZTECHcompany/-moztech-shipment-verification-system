@@ -96,11 +96,23 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     useEffect(() => {
-        // 初始化讀取本地置頂清單，避免重新整理後遺失
+        // 初始化：先讀本地，盡快呈現；再從雲端同步覆蓋
         try {
             const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
             setPinnedComments(Array.isArray(pinned) ? pinned : []);
         } catch { setPinnedComments([]); }
+
+        // 從伺服器同步置頂清單（雲端化）
+        (async () => {
+            try {
+                const res = await apiClient.get(`/api/tasks/${orderId}/pins`);
+                const list = Array.isArray(res?.data?.pinned) ? res.data.pinned : [];
+                setPinnedComments(list);
+                localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(list));
+            } catch (e) {
+                // 失敗不影響本地行為
+            }
+        })();
     }, [orderId]);
 
     useEffect(() => {
@@ -300,17 +312,25 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         }
     };
 
-    const togglePin = (commentId) => {
-        const newPinned = pinnedComments.includes(commentId)
-            ? pinnedComments.filter(id => id !== commentId)
-            : [...pinnedComments, commentId];
-        
-        setPinnedComments(newPinned);
-        localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(newPinned));
-        
-        toast.success(
-            pinnedComments.includes(commentId) ? '已取消置頂' : '已置頂評論'
-        );
+    const togglePin = async (commentId) => {
+        const willPin = !pinnedComments.includes(commentId);
+        const optimistic = willPin
+            ? [...pinnedComments, commentId]
+            : pinnedComments.filter(id => id !== commentId);
+        setPinnedComments(optimistic);
+        localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(optimistic));
+        try {
+            await apiClient.put(`/api/tasks/${orderId}/pins/${commentId}`, { pinned: willPin });
+            toast.success(willPin ? '已置頂評論' : '已取消置頂');
+        } catch (e) {
+            // 還原
+            const reverted = !willPin
+                ? [...pinnedComments, commentId]
+                : pinnedComments.filter(id => id !== commentId);
+            setPinnedComments(reverted);
+            localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(reverted));
+            toast.error(e?.message || '更新置頂狀態失敗');
+        }
     };
 
     const filteredUsers = allUsers.filter(user => 
