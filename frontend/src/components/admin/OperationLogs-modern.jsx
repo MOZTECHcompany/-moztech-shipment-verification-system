@@ -207,7 +207,7 @@ export function OperationLogs() {
                 {/* 統計卡片 */}
                 {stats && (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                        <div className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: '100ms' }}>
+                        <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '100ms' }}>
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-gray-600 font-medium mb-1">總操作數</p>
@@ -219,7 +219,7 @@ export function OperationLogs() {
                             </div>
                         </div>
                         {stats.byActionType.slice(0, 3).map((item, index) => (
-                            <div key={index} className="glass card-apple p-5 animate-scale-in" style={{ animationDelay: `${(index + 2) * 100}ms` }}>
+                            <div key={index} className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: `${(index + 2) * 100}ms` }}>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <p className="text-sm text-gray-600 font-medium mb-1">{actionTypeMap[item.action_type]?.label || item.action_type}</p>
@@ -236,7 +236,7 @@ export function OperationLogs() {
                 )}
 
                 {/* 篩選區域 */}
-                <div className="glass card-apple p-6 mb-8 animate-scale-in" style={{ animationDelay: '200ms' }}>
+                <div className="glass-card p-6 mb-8 animate-scale-in" style={{ animationDelay: '200ms' }}>
                     <div className="flex items-center gap-2 mb-6">
                         <div className="p-2 bg-gradient-to-br from-purple-100 to-purple-200 rounded-xl">
                             <Filter className="w-5 h-5 text-purple-600" />
@@ -326,7 +326,7 @@ export function OperationLogs() {
                 </div>
 
                 {/* 日誌列表 */}
-                <div className="glass card-apple overflow-hidden animate-scale-in" style={{ animationDelay: '300ms' }}>
+                <div className="glass-card overflow-hidden animate-scale-in shadow-apple-lg" style={{ animationDelay: '300ms' }}>
                     <div className="overflow-x-auto">
                         <table className="w-full">
                             <thead className="bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">

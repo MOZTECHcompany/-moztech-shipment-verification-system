@@ -43,7 +43,7 @@ const UserFormModal = ({ user, onClose, onSave }) => {
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center animate-fade-in" onClick={onClose}>
-            <div className="glass card-apple w-full max-w-md shadow-apple-xl animate-scale-in" onClick={e => e.stopPropagation()}>
+            <div className="glass-card w-full max-w-md shadow-apple-xl animate-scale-in" onClick={e => e.stopPropagation()}>
                 <form onSubmit={handleSubmit}>
                     <div className="p-6 border-b border-gray-200">
                         <h3 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -247,7 +247,7 @@ export function UserManagement() {
                     <p className="text-gray-600 font-medium">載入使用者列表中...</p>
                 </div>
             ) : (
-                <div className="glass card-apple overflow-hidden animate-scale-in">
+                <div className="glass-card overflow-hidden animate-scale-in shadow-apple-lg">
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
                             <thead className="bg-gradient-to-r from-gray-50 to-purple-50 border-b border-gray-200">

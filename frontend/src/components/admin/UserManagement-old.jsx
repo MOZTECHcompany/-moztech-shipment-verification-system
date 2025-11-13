@@ -1,10 +1,11 @@
 // frontend/src/components/admin/UserManagement.jsx
+// 使用者管理頁面 - Apple 風格現代化版本
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { Users, PlusCircle, Edit, Trash2, ArrowLeft, Loader2, AlertTriangle } from 'lucide-react';
+import { Users, PlusCircle, Edit, Trash2, ArrowLeft, Loader2, Shield, User as UserIcon } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
@@ -41,37 +42,79 @@ const UserFormModal = ({ user, onClose, onSave }) => {
     };
 
     return (
-        <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center" onClick={onClose}>
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center animate-fade-in" onClick={onClose}>
+            <div className="glass-card w-full max-w-md shadow-apple-xl animate-scale-in" onClick={e => e.stopPropagation()}>
                 <form onSubmit={handleSubmit}>
-                    <div className="p-6">
-                        <h3 className="text-xl font-semibold text-gray-800">{isEditMode ? '編輯使用者' : '新增使用者'}</h3>
-                        <div className="mt-4 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">使用者名稱</label>
-                                <input type="text" name="username" value={formData.username} onChange={handleChange} required disabled={isEditMode} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm disabled:bg-gray-100"/>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">姓名</label>
-                                <input type="text" name="name" value={formData.name} onChange={handleChange} required className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm"/>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">密碼</label>
-                                <input type="password" name="password" value={formData.password} onChange={handleChange} placeholder={isEditMode ? '留空表示不變更' : ''} required={!isEditMode} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm"/>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">角色</label>
-                                <select name="role" value={formData.role} onChange={handleChange} required className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm">
-                                    <option value="picker">揀貨員</option>
-                                    <option value="packer">裝箱員</option>
-                                    <option value="admin">管理員</option>
-                                </select>
-                            </div>
+                    <div className="p-6 border-b border-gray-200">
+                        <h3 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                            {isEditMode ? '編輯使用者' : '新增使用者'}
+                        </h3>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">使用者名稱</label>
+                            <input 
+                                type="text" 
+                                name="username" 
+                                value={formData.username} 
+                                onChange={handleChange} 
+                                required 
+                                disabled={isEditMode} 
+                                className="input-apple w-full disabled:bg-gray-100 disabled:cursor-not-allowed"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">姓名</label>
+                            <input 
+                                type="text" 
+                                name="name" 
+                                value={formData.name} 
+                                onChange={handleChange} 
+                                required 
+                                className="input-apple w-full"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">密碼</label>
+                            <input 
+                                type="password" 
+                                name="password" 
+                                value={formData.password} 
+                                onChange={handleChange} 
+                                placeholder={isEditMode ? '留空表示不變更' : ''} 
+                                required={!isEditMode} 
+                                className="input-apple w-full"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">角色</label>
+                            <select 
+                                name="role" 
+                                value={formData.role} 
+                                onChange={handleChange} 
+                                required 
+                                className="input-apple w-full"
+                            >
+                                <option value="picker">揀貨員</option>
+                                <option value="packer">裝箱員</option>
+                                <option value="admin">管理員</option>
+                            </select>
                         </div>
                     </div>
-                    <div className="bg-gray-50 px-6 py-3 flex justify-end gap-3 rounded-b-lg">
-                        <button type="button" onClick={onClose} disabled={isSaving} className="px-4 py-2 bg-white border rounded-md text-sm font-medium">取消</button>
-                        <button type="submit" disabled={isSaving} className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2">
+                    <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-6 py-4 flex justify-end gap-3 rounded-b-2xl border-t border-gray-200">
+                        <button 
+                            type="button" 
+                            onClick={onClose} 
+                            disabled={isSaving} 
+                            className="btn-apple bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600 text-white shadow-apple-lg"
+                        >
+                            取消
+                        </button>
+                        <button 
+                            type="submit" 
+                            disabled={isSaving} 
+                            className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-apple-lg flex items-center gap-2 disabled:opacity-50"
+                        >
                             {isSaving && <Loader2 className="animate-spin h-4 w-4"/>}
                             {isEditMode ? '儲存變更' : '建立使用者'}
                         </button>
@@ -139,10 +182,15 @@ export function UserManagement() {
             text: "此操作無法復原！",
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonColor: '#d33',
-            cancelButtonColor: '#3085d6',
+            confirmButtonColor: '#EF4444',
+            cancelButtonColor: '#6B7280',
             confirmButtonText: '確認刪除',
             cancelButtonText: '取消',
+            customClass: {
+                popup: 'glass card-apple',
+                confirmButton: 'btn-apple',
+                cancelButton: 'btn-apple'
+            }
         }).then((result) => {
             if (result.isConfirmed) {
                 const promise = apiClient.delete(`/api/admin/users/${user.id}`);
@@ -158,61 +206,115 @@ export function UserManagement() {
         });
     };
 
-    const roleMap = { admin: '管理員', picker: '揀貨員', packer: '裝箱員' };
+    const roleMap = { 
+        admin: { label: '管理員', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: Shield },
+        picker: { label: '揀貨員', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: UserIcon },
+        packer: { label: '裝箱員', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: UserIcon }
+    };
 
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto bg-background min-h-screen">
-            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-800 flex items-center">
-                        <Users className="mr-3 text-primary" />
-                        使用者管理
-                    </h1>
-                    <p className="text-secondary-foreground mt-1">新增、檢視、編輯或刪除系統操作員</p>
+        <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gradient-to-br from-gray-50 to-purple-50/30 min-h-screen">
+            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4 animate-fade-in">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-gradient-to-br from-purple-500 to-pink-600 rounded-2xl shadow-apple-lg">
+                        <Users className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                        <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                            使用者管理
+                        </h1>
+                        <p className="text-gray-600 mt-1">新增、檢視、編輯或刪除系統操作員</p>
+                    </div>
                 </div>
-                <div className="flex gap-4">
-                    <Link to="/admin" className="flex-shrink-0 flex items-center px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors">
-                        <ArrowLeft className="mr-2 h-4 w-4" />
+                <div className="flex gap-3">
+                    <Link to="/admin" 
+                        className="btn-apple bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white flex items-center gap-2 shadow-apple-lg">
+                        <ArrowLeft className="h-4 w-4" />
                         返回管理中心
                     </Link>
-                    <button onClick={() => handleOpenModal()} className="flex-shrink-0 flex items-center px-4 py-2 bg-primary text-primary-foreground font-semibold rounded-lg hover:bg-primary/90 transition-colors">
-                        <PlusCircle className="mr-2 h-4 w-4" />
+                    <button 
+                        onClick={() => handleOpenModal()} 
+                        className="btn-apple bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white flex items-center gap-2 shadow-apple-lg">
+                        <PlusCircle className="h-4 w-4" />
                         新增使用者
                     </button>
                 </div>
             </header>
             
             {loading ? (
-                <div className="flex justify-center items-center py-20"><Loader2 className="animate-spin text-primary" size={48} /></div>
+                <div className="flex flex-col justify-center items-center py-20">
+                    <Loader2 className="animate-spin text-purple-500 mb-4" size={48} />
+                    <p className="text-gray-600 font-medium">載入使用者列表中...</p>
+                </div>
             ) : (
-                <div className="bg-card border rounded-lg shadow-sm overflow-hidden">
-                    <table className="w-full text-sm text-left text-gray-500">
-                        <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
-                            <tr>
-                                <th scope="col" className="px-6 py-3">ID</th>
-                                <th scope="col" className="px-6 py-3">使用者名稱</th>
-                                <th scope="col" className="px-6 py-3">姓名</th>
-                                <th scope="col" className="px-6 py-3">角色</th>
-                                <th scope="col" className="px-6 py-3">建立時間</th>
-                                <th scope="col" className="px-6 py-3 text-right">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {users.map(user => (
-                                <tr key={user.id} className="bg-white border-b hover:bg-gray-50">
-                                    <td className="px-6 py-4">{user.id}</td>
-                                    <td className="px-6 py-4 font-medium text-gray-900">{user.username}</td>
-                                    <td className="px-6 py-4">{user.name}</td>
-                                    <td className="px-6 py-4">{roleMap[user.role] || user.role}</td>
-                                    <td className="px-6 py-4">{new Date(user.created_at).toLocaleDateString('zh-TW')}</td>
-                                    <td className="px-6 py-4 text-right">
-                                        <button onClick={() => handleOpenModal(user)} className="font-medium text-blue-600 hover:underline mr-4"><Edit size={16}/></button>
-                                        <button onClick={() => handleDeleteUser(user)} className="font-medium text-red-600 hover:underline"><Trash2 size={16}/></button>
-                                    </td>
+                <div className="glass-card overflow-hidden animate-scale-in shadow-apple-lg">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-gradient-to-r from-gray-50 to-purple-50 border-b border-gray-200">
+                                <tr>
+                                    <th scope="col" className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">ID</th>
+                                    <th scope="col" className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">使用者名稱</th>
+                                    <th scope="col" className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">姓名</th>
+                                    <th scope="col" className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">角色</th>
+                                    <th scope="col" className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">建立時間</th>
+                                    <th scope="col" className="px-6 py-4 text-xs font-bold text-gray-700 uppercase text-right">操作</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                                {users.map((user, index) => {
+                                    const RoleIcon = roleMap[user.role]?.icon || UserIcon;
+                                    return (
+                                        <tr key={user.id} className="hover:bg-purple-50/50 transition-all duration-200 animate-slide-up" style={{ animationDelay: `${index * 50}ms` }}>
+                                            <td className="px-6 py-4">
+                                                <span className="font-mono text-sm text-gray-600">{user.id}</span>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="p-2 bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg">
+                                                        <UserIcon className="w-4 h-4 text-blue-600" />
+                                                    </div>
+                                                    <span className="font-semibold text-gray-900">{user.username}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className="text-gray-700">{user.name}</span>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-3 py-1.5 inline-flex items-center gap-2 text-xs font-semibold rounded-xl border ${roleMap[user.role]?.color || 'bg-gray-100 text-gray-800 border-gray-200'} shadow-sm`}>
+                                                    <RoleIcon className="w-3 h-3" />
+                                                    {roleMap[user.role]?.label || user.role}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className="text-sm text-gray-600">{new Date(user.created_at).toLocaleDateString('zh-TW')}</span>
+                                            </td>
+                                            <td className="px-6 py-4 text-right">
+                                                <button 
+                                                    onClick={() => handleOpenModal(user)} 
+                                                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-xs font-medium rounded-lg shadow-md hover:shadow-lg transition-all duration-200 mr-2">
+                                                    <Edit size={14}/>
+                                                    編輯
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDeleteUser(user)} 
+                                                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-xs font-medium rounded-lg shadow-md hover:shadow-lg transition-all duration-200">
+                                                    <Trash2 size={14}/>
+                                                    刪除
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    {users.length === 0 && (
+                        <div className="text-center py-12">
+                            <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                            <p className="text-gray-500 text-lg">目前沒有使用者</p>
+                        </div>
+                    )}
                 </div>
             )}
 

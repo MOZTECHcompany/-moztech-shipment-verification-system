@@ -312,13 +312,34 @@ export function OrderWorkView({ user }) {
             });
             setCurrentOrderData(response.data);
             
-            // 計算已掃描數量和剩餘數量
-            const totalScanned = response.data.order.items.reduce((sum, item) => sum + (item.scanned_quantity || 0), 0);
-            const totalRequired = response.data.order.items.reduce((sum, item) => sum + item.quantity, 0);
+            // 正確計算已掃描和剩餘數量（包含 instances）
+            let totalScanned = 0;
+            let totalRequired = 0;
+            
+            response.data.items.forEach(item => {
+                totalRequired += item.quantity;
+                
+                // 檢查是否有 instances
+                const itemInstances = response.data.instances.filter(i => i.order_item_id === item.id);
+                if (itemInstances.length > 0) {
+                    // 有 SN 碼的商品，計算已掃描的 instances
+                    if (type === 'pick') {
+                        totalScanned += itemInstances.filter(i => i.status === 'picked' || i.status === 'packed').length;
+                    } else if (type === 'pack') {
+                        totalScanned += itemInstances.filter(i => i.status === 'packed').length;
+                    }
+                } else {
+                    // 無 SN 碼的商品，使用 picked_quantity 或 packed_quantity
+                    totalScanned += (type === 'pick' ? item.picked_quantity : item.packed_quantity);
+                }
+            });
+            
             const remaining = totalRequired - totalScanned;
             
-            toast.success(`掃描成功: ${scanValue}`);
+            // 語音播報
             voiceNotification.speakScanSuccess(totalScanned, remaining);
+            
+            toast.success(`掃描成功: ${scanValue}`);
         } catch (err) {
             const errorMsg = err.response?.data?.message || '發生未知錯誤';
             setScanError(errorMsg);
@@ -327,7 +348,7 @@ export function OrderWorkView({ user }) {
             soundNotification.play('error');
             errorSoundRef.current?.play();
             
-            // 語音播報錯誤
+            // 語音播報
             voiceNotification.speakScanError();
             
             // 桌面通知
@@ -370,8 +391,8 @@ export function OrderWorkView({ user }) {
             soundNotification.play('error');
             errorSoundRef.current?.play();
             
-            // 語音播報錯誤
-            voiceNotification.speakOperationError(errorMsg);
+            // 語音播報
+            voiceNotification.speakOperationError('操作不允許');
             
             // 桌面通知
             desktopNotification.notifyScanError(errorMsg);

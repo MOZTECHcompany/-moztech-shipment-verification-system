@@ -1,8 +1,9 @@
-// frontend/src/components/LoginPage.jsx
+// frontend/src/components/LoginPage-modern.jsx
+// Apple 風格現代化登入頁面
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, User, Lock } from 'lucide-react';
+import { Loader2, User, Lock, ArrowRight, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api';
 
@@ -12,10 +13,12 @@ export function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [focusedField, setFocusedField] = useState(null);
 
   const handleLoginClick = async () => {
     if (!username || !password) {
         setError('請提供使用者名稱和密碼');
+        toast.error('請填寫完整登入資訊');
         return;
     }
     setError('');
@@ -28,10 +31,9 @@ export function LoginPage({ onLogin }) {
         });
         
         const responseData = response.data;
-        toast.success(`歡迎回來, ${responseData.user.name || responseData.user.username}!`);
+        toast.success(`🎉 歡迎回來，${responseData.user.name || responseData.user.username}！`);
         onLogin(responseData);
         
-        // 【關鍵修改】恢復管理員分流邏輯
         if (responseData.user.role === 'admin') {
             navigate('/admin');
         } else {
@@ -42,6 +44,7 @@ export function LoginPage({ onLogin }) {
         console.error("登入失敗", err);
         const errorMessage = err.response?.data?.message || '登入時發生錯誤，請稍後再試。';
         setError(errorMessage);
+        toast.error(errorMessage);
     } finally {
         setIsLoggingIn(false);
     }
@@ -54,47 +57,153 @@ export function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen p-4 font-sans bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100">
+    <div className="relative flex items-center justify-center min-h-screen p-4 overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-100">
+      {/* 背景裝飾 */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-apple-blue/5 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-apple-purple/5 rounded-full blur-3xl"></div>
+      </div>
+
+      {/* 登入卡片 */}
       <div
-        className="w-full max-w-sm p-8 bg-white/60 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20"
+        className="relative w-full max-w-md animate-scale-in"
         onKeyDown={handleKeyDown}
       >
-        <div className="flex flex-col items-center mb-8">
-          <img src="/MOZTECH-002.png" alt="MOZTECH Logo" className="h-24 w-24 mb-4 object-contain" />
-          <h1 className="text-3xl font-bold text-gray-800">倉儲作業系統</h1>
-        </div>
-        <div className="space-y-6">
-          <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input 
-              type="text" 
-              placeholder="使用者名稱" 
-              value={username} 
-              onChange={(e) => setUsername(e.target.value)} 
-              className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" 
-            />
+        {/* 主卡片 */}
+        <div className="glass-card rounded-3xl p-12 shadow-apple-xl">
+          {/* Logo 和標題 */}
+          <div className="flex flex-col items-center mb-12 animate-fade-in">
+            <div className="relative mb-8">
+              <div className="absolute inset-0 bg-apple-blue/10 rounded-3xl blur-2xl"></div>
+              <img 
+                src="/MOZTECH-002.png" 
+                alt="MOZTECH Logo" 
+                className="relative h-24 w-24 object-contain" 
+              />
+            </div>
+            <h1 className="text-3xl font-semibold text-gray-900 mb-3 tracking-tight">
+              倉儲作業系統
+            </h1>
+            <p className="text-gray-500 text-sm font-medium">
+              現代化智能管理平台
+            </p>
           </div>
-          <div className="relative">
-             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input 
-              type="password" 
-              placeholder="密碼" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-              className="pl-10 w-full px-4 py-3 bg-white/80 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" 
-            />
+
+          {/* 輸入欄位 */}
+          <div className="space-y-4 mb-8">
+            {/* 使用者名稱 */}
+            <div className="animate-slide-up" style={{ animationDelay: '100ms' }}>
+              <label className="block text-sm font-semibold text-gray-700 mb-2.5">
+                使用者名稱
+              </label>
+              <div className="relative group">
+                <User className={`
+                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-all duration-200
+                  ${focusedField === 'username' ? 'text-apple-blue scale-110' : 'text-gray-400'}
+                `} />
+                <input 
+                  type="text" 
+                  placeholder="請輸入使用者名稱" 
+                  value={username} 
+                  onChange={(e) => setUsername(e.target.value)}
+                  onFocus={() => setFocusedField('username')}
+                  onBlur={() => setFocusedField(null)}
+                  className="
+                    relative w-full pl-12 pr-4 py-4 
+                    bg-white
+                    border-2 border-gray-200
+                    rounded-xl 
+                    focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10
+                    outline-none transition-all duration-200
+                    text-gray-900 placeholder-gray-400
+                    font-medium
+                  " 
+                />
+              </div>
+            </div>
+
+            {/* 密碼 */}
+            <div className="animate-slide-up" style={{ animationDelay: '200ms' }}>
+              <label className="block text-sm font-semibold text-gray-700 mb-2.5">
+                密碼
+              </label>
+              <div className="relative group">
+                <Lock className={`
+                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-all duration-200
+                  ${focusedField === 'password' ? 'text-apple-blue scale-110' : 'text-gray-400'}
+                `} />
+                <input 
+                  type="password" 
+                  placeholder="請輸入密碼" 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setFocusedField('password')}
+                  onBlur={() => setFocusedField(null)}
+                  className="
+                    relative w-full pl-12 pr-4 py-4 
+                    bg-white
+                    border-2 border-gray-200
+                    rounded-xl 
+                    focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10
+                    outline-none transition-all duration-200
+                    text-gray-900 placeholder-gray-400
+                    font-medium
+                  " 
+                />
+              </div>
+            </div>
           </div>
-        </div>
-        {error && <p className="mt-4 text-center text-red-500 text-sm">{error}</p>}
-        <div className="mt-6">
+
+          {/* 錯誤訊息 */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50/80 border-2 border-red-200/80 rounded-xl animate-shake backdrop-blur-sm">
+              <p className="text-sm font-medium text-red-600 text-center">{error}</p>
+            </div>
+          )}
+
+          {/* 登入按鈕 */}
           <button 
             onClick={handleLoginClick} 
-            disabled={!username || !password || isLoggingIn} 
-            className="w-full flex items-center justify-center gap-2 text-white font-bold py-3 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 transition-transform duration-200 hover:scale-105 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100"
+            disabled={isLoggingIn}
+            className="
+              w-full py-4 px-6
+              bg-apple-blue/90 hover:bg-apple-blue
+              disabled:bg-gray-300 disabled:cursor-not-allowed
+              text-white font-semibold text-lg
+              rounded-xl
+              shadow-apple-sm hover:shadow-apple
+              active:scale-[0.98]
+              transition-all duration-200
+              flex items-center justify-center gap-2
+              group
+              animate-slide-up
+              backdrop-blur-sm
+            "
+            style={{ animationDelay: '300ms' }}
           >
-            {isLoggingIn ? <><Loader2 className="animate-spin h-5 w-5" />登入中...</> : '安全登入'}
+            {isLoggingIn ? (
+              <>
+                <Loader2 className="animate-spin" size={22} />
+                登入中...
+              </>
+            ) : (
+              <>
+                登入
+                <ArrowRight size={22} className="group-hover:translate-x-1 transition-transform" />
+              </>
+            )}
           </button>
+
+          {/* 底部提示 */}
+          <div className="mt-8 text-center animate-fade-in" style={{ animationDelay: '400ms' }}>
+            <p className="text-xs text-gray-400 font-medium">
+              © 2025 MOZTECH 倉儲管理系統
+            </p>
+          </div>
         </div>
+
+        {/* 裝飾性卡片陰影 */}
+        <div className="absolute -inset-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-3xl blur-2xl -z-10" />
       </div>
     </div>
   );

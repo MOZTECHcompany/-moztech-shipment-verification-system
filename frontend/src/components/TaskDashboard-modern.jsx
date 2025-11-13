@@ -6,40 +6,42 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2 } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
+import { voiceNotification } from '@/utils/voiceNotification.js';
+import { desktopNotification } from '@/utils/desktopNotification.js';
 
 const statusConfig = {
     pending: { 
         text: '待揀貨', 
-        color: 'bg-gradient-to-r from-amber-50 to-yellow-50 text-amber-700 border border-amber-200',
+        color: 'bg-gradient-to-r from-amber-50/80 to-yellow-50/80 text-amber-700 border border-amber-200/50',
         icon: Clock,
-        dot: 'bg-amber-500'
+        dot: 'bg-amber-500/80'
     },
     picking: { 
         text: '揀貨中', 
-        color: 'bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-700 border border-blue-200',
+        color: 'bg-gradient-to-r from-apple-blue/10 to-cyan-50/80 text-apple-blue border border-apple-blue/30',
         icon: Package,
-        dot: 'bg-blue-500 animate-pulse'
+        dot: 'bg-apple-blue animate-pulse'
     },
     picked: { 
         text: '待裝箱', 
-        color: 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 border border-indigo-200',
+        color: 'bg-gradient-to-r from-apple-purple/10 to-purple-50/80 text-apple-purple border border-apple-purple/30',
         icon: Box,
-        dot: 'bg-indigo-500'
+        dot: 'bg-apple-purple'
     },
     packing: { 
         text: '裝箱中', 
-        color: 'bg-gradient-to-r from-cyan-50 to-teal-50 text-cyan-700 border border-cyan-200',
+        color: 'bg-gradient-to-r from-apple-green/10 to-teal-50/80 text-apple-green border border-apple-green/30',
         icon: Box,
-        dot: 'bg-cyan-500 animate-pulse'
+        dot: 'bg-apple-green animate-pulse'
     },
 };
 
 // 現代化任務卡片
-const ModernTaskCard = ({ task, onClaim, user, onDelete }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection }) => {
     const isMyTask = task.current_user;
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
@@ -59,21 +61,32 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete }) => {
                 ? 'ring-2 ring-green-500 shadow-apple-lg' 
                 : 'shadow-apple-sm border border-gray-100'
             }
+            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500' : ''}
             animate-scale-in
         `}>
             {/* 背景漸變裝飾 */}
-            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-50 to-purple-50 rounded-full blur-3xl opacity-30 -z-10" />
+
             
             <div className="p-6">
                 {/* 標題列 */}
                 <div className="flex justify-between items-start mb-4">
-                    <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-xl text-gray-900 truncate mb-1">
-                            {task.voucher_number}
-                        </h3>
-                        <div className="flex items-center text-sm text-gray-500">
-                            <User size={14} className="mr-1.5 flex-shrink-0" />
-                            <span className="truncate">{task.customer_name}</span>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                        {batchMode && (
+                            <input
+                                type="checkbox"
+                                checked={selectedTasks.includes(task.id)}
+                                onChange={() => toggleTaskSelection(task.id)}
+                                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                            />
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-xl text-gray-900 truncate mb-1">
+                                {task.voucher_number}
+                            </h3>
+                            <div className="flex items-center text-sm text-gray-500">
+                                <User size={14} className="mr-1.5 flex-shrink-0" />
+                                <span className="truncate">{task.customer_name}</span>
+                            </div>
                         </div>
                     </div>
                     
@@ -161,7 +174,12 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete }) => {
 export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [currentView, setCurrentView] = useState('tasks'); // 'tasks' 或 'my-tasks'
     const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
+    const [voiceEnabled, setVoiceEnabled] = useState(voiceNotification.isEnabled());
+    const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
+    const [selectedTasks, setSelectedTasks] = useState([]);
+    const [batchMode, setBatchMode] = useState(false);
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
 
@@ -169,7 +187,83 @@ export function TaskDashboard({ user }) {
         const newState = !soundEnabled;
         soundNotification.setEnabled(newState);
         setSoundEnabled(newState);
+        
+        // 測試音效
+        if (newState) {
+            setTimeout(() => {
+                soundNotification.play('success');
+            }, 100);
+        }
+        
         toast.success(newState ? '🔊 音效通知已開啟' : '🔇 音效通知已關閉');
+    };
+
+    const toggleVoice = () => {
+        const newState = !voiceEnabled;
+        voiceNotification.setEnabled(newState);
+        setVoiceEnabled(newState);
+        
+        // 測試語音
+        if (newState) {
+            setTimeout(() => {
+                voiceNotification.speak('語音播報已開啟');
+            }, 100);
+        }
+        
+        toast.success(newState ? '🗣️ 語音播報已開啟' : '🔇 語音播報已關閉');
+    };
+
+    const toggleNotification = async () => {
+        const newState = !notificationEnabled;
+        const success = await desktopNotification.setEnabled(newState);
+        
+        if (success) {
+            setNotificationEnabled(newState);
+            
+            // 測試通知
+            if (newState) {
+                desktopNotification.notifySystemMessage('通知已開啟', '您將收到新任務的桌面通知');
+            }
+            
+            toast.success(newState ? '🔔 桌面通知已開啟' : '🔕 桌面通知已關閉');
+        } else {
+            toast.error('無法開啟桌面通知，請檢查瀏覽器權限');
+        }
+    };
+
+    const toggleBatchMode = () => {
+        setBatchMode(!batchMode);
+        setSelectedTasks([]);
+        toast.info(batchMode ? '退出批次模式' : '進入批次模式');
+    };
+
+    const toggleTaskSelection = (taskId) => {
+        setSelectedTasks(prev => 
+            prev.includes(taskId) 
+                ? prev.filter(id => id !== taskId)
+                : [...prev, taskId]
+        );
+    };
+
+    const handleBatchClaim = async () => {
+        if (selectedTasks.length === 0) {
+            toast.error('請至少選擇一個任務');
+            return;
+        }
+
+        try {
+            const response = await apiClient.post('/api/orders/batch-claim', {
+                orderIds: selectedTasks
+            });
+            toast.success(response.data.message);
+            setSelectedTasks([]);
+            setBatchMode(false);
+            fetchTasks();
+        } catch (error) {
+            toast.error('批次認領失敗', { 
+                description: error.response?.data?.message 
+            });
+        }
     };
 
     const fetchTasks = useCallback(async () => {
@@ -196,6 +290,8 @@ export function TaskDashboard({ user }) {
         const handleNewTask = (newTask) => {
             toast.info(`📦 收到新任務: ${newTask.voucher_number}`);
             soundNotification.play('newTask');
+            voiceNotification.speakNewTask(1);
+            desktopNotification.notifyNewTask(newTask);
             setTasks(currentTasks => 
                 currentTasks.some(task => task.id === newTask.id) ? currentTasks : [...currentTasks, newTask]
             );
@@ -302,30 +398,67 @@ export function TaskDashboard({ user }) {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-gray-50 to-gray-100">
                 <div className="text-center">
-                    <Loader2 className="animate-spin text-blue-500 mx-auto mb-4" size={56} />
-                    <p className="text-gray-500 font-medium">載入中...</p>
+                    <Loader2 className="animate-spin text-apple-blue mx-auto mb-4" size={56} />
+                    <p className="text-gray-600 font-semibold text-lg">載入中...</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-purple-50/50">
-            <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+            <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto">
                 {/* 現代化標題列 */}
-                <header className="mb-10 animate-fade-in">
+                <header className="mb-8 animate-fade-in">
                     <div className="flex justify-between items-start mb-6">
                         <div>
-                            <h1 className="text-5xl font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-700 bg-clip-text text-transparent mb-2">
-                                我的任務
+                            <h1 className="text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
+                                {currentView === 'tasks' ? '📋 任務看板' : '🔍 我的任務'}
                             </h1>
-                            <p className="text-gray-500 text-lg">選擇一項任務以開始作業</p>
+                            <p className="text-gray-500 text-base font-medium">選擇一項任務以開始作業</p>
                         </div>
                         
                         {/* 操作按鈕組 */}
                         <div className="flex items-center gap-3">
+                            {/* 批次模式開關 */}
+                            <button
+                                onClick={toggleBatchMode}
+                                className={`
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    transition-all duration-200
+                                    active:scale-[0.98]
+                                    ${batchMode 
+                                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                    }
+                                `}
+                                title={batchMode ? '退出批次模式' : '進入批次模式'}
+                            >
+                                <ListChecks size={20} />
+                                <span className="hidden sm:inline">
+                                    {batchMode ? '批次模式' : '批次操作'}
+                                </span>
+                            </button>
+
+                            {/* 批次認領按鈕 */}
+                            {batchMode && selectedTasks.length > 0 && (
+                                <button
+                                    onClick={handleBatchClaim}
+                                    className="
+                                        flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                        bg-green-500 text-white hover:bg-green-600
+                                        transition-all duration-200
+                                        active:scale-[0.98]
+                                        animate-scale-in
+                                    "
+                                >
+                                    <CheckCircle2 size={20} />
+                                    <span>認領 {selectedTasks.length} 個任務</span>
+                                </button>
+                            )}
+
                             {/* 音效開關 */}
                             <button
                                 onClick={toggleSound}
@@ -334,8 +467,8 @@ export function TaskDashboard({ user }) {
                                     transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${soundEnabled 
-                                        ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-green-500/30' 
-                                        : 'bg-white text-gray-700 border border-gray-200'
+                                        ? 'bg-apple-green/90 text-white hover:bg-apple-green backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
                                     }
                                 `}
                                 title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
@@ -345,6 +478,46 @@ export function TaskDashboard({ user }) {
                                     {soundEnabled ? '音效開啟' : '音效關閉'}
                                 </span>
                             </button>
+
+                            {/* 語音播報開關 */}
+                            <button
+                                onClick={toggleVoice}
+                                className={`
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    active:scale-[0.98]
+                                    ${voiceEnabled 
+                                        ? 'bg-apple-blue/90 text-white hover:bg-apple-blue backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
+                                    }
+                                `}
+                                title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
+                            >
+                                <MessageSquare size={20} />
+                                <span className="hidden sm:inline">
+                                    {voiceEnabled ? '語音開啟' : '語音關閉'}
+                                </span>
+                            </button>
+
+                            {/* 桌面通知開關 */}
+                            <button
+                                onClick={toggleNotification}
+                                className={`
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    active:scale-[0.98]
+                                    ${notificationEnabled 
+                                        ? 'bg-apple-purple/90 text-white hover:bg-apple-purple backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
+                                    }
+                                `}
+                                title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
+                            >
+                                <Bell size={20} />
+                                <span className="hidden sm:inline">
+                                    {notificationEnabled ? '通知開啟' : '通知關閉'}
+                                </span>
+                            </button>
                             
                             {/* 管理中心 */}
                             {user && user.role === 'admin' && (
@@ -352,9 +525,9 @@ export function TaskDashboard({ user }) {
                                     to="/admin" 
                                     className="
                                         flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                        bg-gradient-to-r from-gray-800 to-gray-900 text-white
-                                        hover:from-gray-900 hover:to-black
-                                        transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                        bg-gray-800/90 text-white hover:bg-gray-900
+                                        shadow-apple-sm hover:shadow-apple backdrop-blur-sm
+                                        transition-all duration-200
                                         active:scale-[0.98]
                                     "
                                 >
@@ -389,22 +562,22 @@ export function TaskDashboard({ user }) {
                                 </div>
                             </div>
                         </div>
-                        <div className="glass rounded-2xl p-4 border border-white/20">
+                        <div className="glass-card rounded-2xl p-4">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-gray-600 mb-1">總任務</p>
                                     <p className="text-3xl font-bold text-gray-900">{tasks.length}</p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                                    <LayoutDashboard className="text-blue-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center">
+                                    <LayoutDashboard className="text-apple-blue" size={24} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass rounded-2xl p-4 border border-white/20">
+                        <div className="glass-card rounded-2xl p-4">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-gray-600 mb-1">我的任務</p>
-                                    <p className="text-3xl font-bold text-green-600">
+                                    <p className="text-3xl font-bold text-apple-green">
                                         {tasks.filter(t => t.current_user).length}
                                     </p>
                                 </div>
@@ -443,7 +616,10 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask} 
                                             user={user} 
-                                            onDelete={handleDeleteOrder} 
+                                            onDelete={handleDeleteOrder}
+                                            batchMode={batchMode}
+                                            selectedTasks={selectedTasks}
+                                            toggleTaskSelection={toggleTaskSelection}
                                         />
                                     </div>
                                 ))
@@ -473,7 +649,7 @@ export function TaskDashboard({ user }) {
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
-                                        key={task.id}
+                                        key={task.id} 
                                         style={{ animationDelay: `${index * 50}ms` }}
                                         className="animate-fade-in"
                                     >
@@ -481,7 +657,10 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask} 
                                             user={user} 
-                                            onDelete={handleDeleteOrder} 
+                                            onDelete={handleDeleteOrder}
+                                            batchMode={batchMode}
+                                            selectedTasks={selectedTasks}
+                                            toggleTaskSelection={toggleTaskSelection}
                                         />
                                     </div>
                                 ))

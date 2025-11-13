@@ -8,7 +8,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
 
 export function AdminDashboard() {
     const [dateRange, setDateRange] = useState([null, null]);
@@ -59,31 +59,30 @@ export function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-purple-50/50">
-            <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+            <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto">
                 {/* 現代化標題列 */}
-                <header className="mb-10 animate-fade-in">
+                <header className="mb-8 animate-fade-in">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                         <div>
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                                    <LayoutDashboard className="text-white" size={24} />
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue to-apple-indigo flex items-center justify-center shadow-apple-sm">
+                                    <LayoutDashboard className="text-white" size={26} />
                                 </div>
-                                <h1 className="text-5xl font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-700 bg-clip-text text-transparent">
+                                <h1 className="text-4xl font-semibold text-gray-900 tracking-tight">
                                     管理中心
                                 </h1>
                             </div>
-                            <p className="text-gray-500 text-lg ml-15">在這裡匯入訂單與管理系統</p>
+                            <p className="text-gray-500 text-base font-medium ml-17">在這裡匯入訂單與管理系統</p>
                         </div>
                         
                         <Link 
                             to="/tasks" 
                             className="
                                 flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                bg-gradient-to-r from-blue-600 to-indigo-600 text-white
-                                hover:from-blue-700 hover:to-indigo-700
-                                transition-all duration-200 shadow-lg shadow-blue-500/30
-                                hover:shadow-xl hover:shadow-blue-500/40
+                                bg-apple-blue/90 text-white hover:bg-apple-blue
+                                shadow-apple-sm hover:shadow-apple backdrop-blur-sm
+                                transition-all duration-200
                                 active:scale-[0.98]
                             "
                         >
@@ -95,12 +94,72 @@ export function AdminDashboard() {
 
                 {/* 功能卡片網格 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* 數據分析 */}
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300">
+                        <div className="p-8">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <TrendingUp className="text-apple-blue" size={24} />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-900">數據分析</h3>
+                            </div>
+                            
+                            <p className="text-gray-600 mb-6 text-base leading-relaxed">
+                                查看訂單趋勢、員工績效、營運數據分析，提升管理效率。
+                            </p>
+                            
+                            <Link 
+                                to="/admin/analytics" 
+                                className="
+                                    inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
+                                    bg-apple-blue/90 text-white hover:bg-apple-blue
+                                    shadow-apple-sm hover:shadow-apple backdrop-blur-sm
+                                    transition-all duration-200
+                                    active:scale-[0.98]
+                                "
+                            >
+                                <TrendingUp size={20} />
+                                前往分析
+                            </Link>
+                        </div>
+                    </div>
+
+                    {/* 刷錯條碼分析 - 新增 */}
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '50ms' }}>
+                        <div className="p-8">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-orange/10 to-apple-orange/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <AlertTriangle className="text-apple-orange" size={24} />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-900">刷錯分析</h3>
+                            </div>
+                            
+                            <p className="text-gray-600 mb-6 text-base leading-relaxed">
+                                查看掃描錯誤記錄、統計最常刷錯的條碼和員工，找出問題根源。
+                            </p>
+                            
+                            <Link 
+                                to="/admin/scan-errors" 
+                                className="
+                                    inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
+                                    bg-apple-orange/90 text-white hover:bg-apple-orange
+                                    shadow-apple-sm hover:shadow-apple backdrop-blur-sm
+                                    transition-all duration-200
+                                    active:scale-[0.98]
+                                "
+                            >
+                                <AlertTriangle size={20} />
+                                查看錯誤
+                            </Link>
+                        </div>
+                    </div>
+
                     {/* 1. 建立新任務 */}
-                    <div className="card-apple group animate-scale-in">
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <UploadCloud className="text-purple-600" size={24} />
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-purple/10 to-apple-purple/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <UploadCloud className="text-apple-purple" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">建立新任務</h3>
                             </div>
@@ -108,21 +167,21 @@ export function AdminDashboard() {
                             <div 
                                 className="
                                     glass p-8 rounded-2xl border-2 border-dashed border-gray-300
-                                    hover:border-purple-400 hover:bg-purple-50/50
+                                    hover:border-apple-purple/50 hover:bg-apple-purple/5
                                     cursor-pointer transition-all duration-300
                                     group/upload
                                 " 
                                 onClick={() => fileInputRef.current?.click()}
                             >
                                 <div className="text-center">
-                                    <FileSpreadsheet className="mx-auto h-16 w-16 text-gray-400 group-hover/upload:text-purple-500 transition-colors mb-4" />
+                                    <FileSpreadsheet className="mx-auto h-16 w-16 text-gray-400 group-hover/upload:text-apple-purple transition-colors mb-4" />
                                     <p className="text-lg font-semibold text-gray-900 mb-2">
-                                        <span className="text-purple-600">點擊此處</span> 上傳出貨單
+                                        <span className="text-apple-purple">點擊此處</span> 上傳出貨單
                                     </p>
                                     <p className="text-sm text-gray-500">支援 .xlsx, .xls 格式</p>
-                                    <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-purple-100 rounded-lg">
-                                        <Sparkles size={16} className="text-purple-600" />
-                                        <span className="text-sm text-purple-700 font-medium">拖放檔案或點擊選擇</span>
+                                    <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-apple-purple/10 rounded-lg">
+                                        <Sparkles size={16} className="text-apple-purple" />
+                                        <span className="text-sm text-apple-purple font-medium">拖放檔案或點擊選擇</span>
                                     </div>
                                 </div>
                             </div>
@@ -137,11 +196,11 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 2. 匯出營運報告 */}
-                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '100ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <FileDown className="text-green-600" size={24} />
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-green/10 to-apple-green/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <FileDown className="text-apple-green" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">匯出營運報告</h3>
                             </div>
@@ -162,7 +221,7 @@ export function AdminDashboard() {
                                             className="
                                                 w-full px-4 py-4 rounded-xl
                                                 bg-white border-2 border-gray-200
-                                                focus:border-green-500 focus:ring-4 focus:ring-green-500/10
+                                                focus:border-apple-green focus:ring-4 focus:ring-apple-green/10
                                                 outline-none transition-all duration-200
                                                 text-gray-900
                                             "
@@ -176,11 +235,9 @@ export function AdminDashboard() {
                                     disabled={!startDate || !endDate}
                                     className="
                                         w-full px-6 py-4 rounded-xl font-semibold text-lg
-                                        bg-gradient-to-r from-green-500 to-emerald-600 text-white
-                                        hover:from-green-600 hover:to-emerald-700
-                                        disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed
-                                        shadow-lg shadow-green-500/30
-                                        hover:shadow-xl hover:shadow-green-500/40
+                                        bg-apple-green/90 text-white hover:bg-apple-green
+                                        shadow-apple-sm hover:shadow-apple backdrop-blur-sm
+                                        disabled:bg-gray-300 disabled:cursor-not-allowed
                                         active:scale-[0.98]
                                         transition-all duration-200
                                         flex items-center justify-center gap-2
@@ -194,10 +251,10 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 3. 使用者管理 */}
-                    <div className="card-apple group bg-gradient-to-br from-blue-50 to-cyan-50 animate-scale-in" style={{ animationDelay: '200ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '200ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <Users className="text-blue-600" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">使用者管理</h3>
@@ -211,10 +268,7 @@ export function AdminDashboard() {
                                 to="/admin/users" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-gradient-to-r from-blue-500 to-cyan-600 text-white
-                                    hover:from-blue-600 hover:to-cyan-700
-                                    shadow-lg shadow-blue-500/30
-                                    hover:shadow-xl hover:shadow-blue-500/40
+                                    bg-blue-500 text-white hover:bg-blue-600
                                     active:scale-[0.98]
                                     transition-all duration-200
                                 "
@@ -226,11 +280,11 @@ export function AdminDashboard() {
                     </div>
                     
                     {/* 4. 操作日誌查詢 */}
-                    <div className="card-apple group bg-gradient-to-br from-indigo-50 to-purple-50 animate-scale-in" style={{ animationDelay: '300ms' }}>
+                    <div className="glass-card group animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '300ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <FileText className="text-indigo-600" size={24} />
+                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-indigo/10 to-apple-indigo/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <FileText className="text-apple-pink" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">操作日誌查詢</h3>
                             </div>
@@ -243,10 +297,8 @@ export function AdminDashboard() {
                                 to="/admin/operation-logs" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-gradient-to-r from-indigo-500 to-purple-600 text-white
-                                    hover:from-indigo-600 hover:to-purple-700
-                                    shadow-lg shadow-indigo-500/30
-                                    hover:shadow-xl hover:shadow-indigo-500/40
+                                    bg-apple-pink/90 text-white hover:bg-apple-pink
+                                    shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                     active:scale-[0.98]
                                     transition-all duration-200
                                 "
