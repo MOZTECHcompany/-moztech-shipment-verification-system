@@ -80,7 +80,8 @@ export function AdminDashboard() {
                             to="/tasks" 
                             className="
                                 flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                bg-blue-500 text-white hover:bg-blue-600
+                                bg-apple-blue/90 text-white hover:bg-apple-blue
+                                shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                 transition-all duration-200
                                 active:scale-[0.98]
                             "
@@ -94,11 +95,11 @@ export function AdminDashboard() {
                 {/* 功能卡片網格 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* 數據分析 */}
-                    <div className="card-apple group animate-scale-in">
+                    <div className="glass-card group animate-scale-in">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <TrendingUp className="text-blue-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <TrendingUp className="text-apple-blue" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">數據分析</h3>
                             </div>
@@ -111,7 +112,8 @@ export function AdminDashboard() {
                                 to="/admin/analytics" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-blue-500 text-white hover:bg-blue-600
+                                    bg-apple-blue/90 text-white hover:bg-apple-blue
+                                    shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                     transition-all duration-200
                                     active:scale-[0.98]
                                 "
@@ -123,11 +125,11 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 刷錯條碼分析 - 新增 */}
-                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '50ms' }}>
+                    <div className="glass-card group animate-scale-in" style={{ animationDelay: '50ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <AlertTriangle className="text-red-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-orange/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <AlertTriangle className="text-apple-orange" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">刷錯分析</h3>
                             </div>
@@ -140,7 +142,8 @@ export function AdminDashboard() {
                                 to="/admin/scan-errors" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-red-500 text-white hover:bg-red-600
+                                    bg-apple-orange/90 text-white hover:bg-apple-orange
+                                    shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                     transition-all duration-200
                                     active:scale-[0.98]
                                 "
@@ -152,11 +155,11 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 1. 建立新任務 */}
-                    <div className="card-apple group animate-scale-in">
+                    <div className="glass-card group animate-scale-in">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <UploadCloud className="text-purple-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-purple/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <UploadCloud className="text-apple-purple" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">建立新任務</h3>
                             </div>
@@ -164,21 +167,21 @@ export function AdminDashboard() {
                             <div 
                                 className="
                                     glass p-8 rounded-2xl border-2 border-dashed border-gray-300
-                                    hover:border-purple-400 hover:bg-purple-50/50
+                                    hover:border-apple-purple/50 hover:bg-apple-purple/5
                                     cursor-pointer transition-all duration-300
                                     group/upload
                                 " 
                                 onClick={() => fileInputRef.current?.click()}
                             >
                                 <div className="text-center">
-                                    <FileSpreadsheet className="mx-auto h-16 w-16 text-gray-400 group-hover/upload:text-purple-500 transition-colors mb-4" />
+                                    <FileSpreadsheet className="mx-auto h-16 w-16 text-gray-400 group-hover/upload:text-apple-purple transition-colors mb-4" />
                                     <p className="text-lg font-semibold text-gray-900 mb-2">
-                                        <span className="text-purple-600">點擊此處</span> 上傳出貨單
+                                        <span className="text-apple-purple">點擊此處</span> 上傳出貨單
                                     </p>
                                     <p className="text-sm text-gray-500">支援 .xlsx, .xls 格式</p>
-                                    <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-purple-100 rounded-lg">
-                                        <Sparkles size={16} className="text-purple-600" />
-                                        <span className="text-sm text-purple-700 font-medium">拖放檔案或點擊選擇</span>
+                                    <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-apple-purple/10 rounded-lg">
+                                        <Sparkles size={16} className="text-apple-purple" />
+                                        <span className="text-sm text-apple-purple font-medium">拖放檔案或點擊選擇</span>
                                     </div>
                                 </div>
                             </div>
@@ -193,11 +196,11 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 2. 匯出營運報告 */}
-                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="glass-card group animate-scale-in" style={{ animationDelay: '100ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <FileDown className="text-green-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-green/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <FileDown className="text-apple-green" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">匯出營運報告</h3>
                             </div>
@@ -218,7 +221,7 @@ export function AdminDashboard() {
                                             className="
                                                 w-full px-4 py-4 rounded-xl
                                                 bg-white border-2 border-gray-200
-                                                focus:border-green-500 focus:ring-4 focus:ring-green-500/10
+                                                focus:border-apple-green focus:ring-4 focus:ring-apple-green/10
                                                 outline-none transition-all duration-200
                                                 text-gray-900
                                             "
@@ -232,7 +235,8 @@ export function AdminDashboard() {
                                     disabled={!startDate || !endDate}
                                     className="
                                         w-full px-6 py-4 rounded-xl font-semibold text-lg
-                                        bg-green-500 text-white hover:bg-green-600
+                                        bg-apple-green/90 text-white hover:bg-apple-green
+                                        shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                         disabled:bg-gray-300 disabled:cursor-not-allowed
                                         active:scale-[0.98]
                                         transition-all duration-200
@@ -276,11 +280,11 @@ export function AdminDashboard() {
                     </div>
                     
                     {/* 4. 操作日誌查詢 */}
-                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '300ms' }}>
+                    <div className="glass-card group animate-scale-in" style={{ animationDelay: '300ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <FileText className="text-indigo-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-pink/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <FileText className="text-apple-pink" size={24} />
                                 </div>
                                 <h3 className="text-2xl font-bold text-gray-900">操作日誌查詢</h3>
                             </div>
@@ -293,7 +297,8 @@ export function AdminDashboard() {
                                 to="/admin/operation-logs" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-purple-500 text-white hover:bg-purple-600
+                                    bg-apple-pink/90 text-white hover:bg-apple-pink
+                                    shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                     active:scale-[0.98]
                                     transition-all duration-200
                                 "

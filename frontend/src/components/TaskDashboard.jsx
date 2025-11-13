@@ -463,11 +463,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleSound}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${soundEnabled 
-                                        ? 'bg-green-500 text-white hover:bg-green-600' 
-                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                        ? 'bg-apple-green/90 text-white hover:bg-apple-green backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
                                     }
                                 `}
                                 title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
@@ -483,11 +483,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleVoice}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${voiceEnabled 
-                                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                        ? 'bg-apple-blue/90 text-white hover:bg-apple-blue backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
                                     }
                                 `}
                                 title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
@@ -503,11 +503,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleNotification}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${notificationEnabled 
-                                        ? 'bg-purple-500 text-white hover:bg-purple-600' 
-                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                        ? 'bg-apple-purple/90 text-white hover:bg-apple-purple backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
                                     }
                                 `}
                                 title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
@@ -524,7 +524,8 @@ export function TaskDashboard({ user }) {
                                     to="/admin" 
                                     className="
                                         flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                        bg-gray-900 text-white hover:bg-black
+                                        bg-gray-800/90 text-white hover:bg-gray-900
+                                        shadow-apple-sm hover:shadow-apple backdrop-blur-sm
                                         transition-all duration-200
                                         active:scale-[0.98]
                                     "
@@ -560,22 +561,22 @@ export function TaskDashboard({ user }) {
                                 </div>
                             </div>
                         </div>
-                        <div className="glass rounded-2xl p-4 border border-white/20">
+                        <div className="glass-card rounded-2xl p-4">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-gray-600 mb-1">總任務</p>
                                     <p className="text-3xl font-bold text-gray-900">{tasks.length}</p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                                    <LayoutDashboard className="text-blue-600" size={24} />
+                                <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center">
+                                    <LayoutDashboard className="text-apple-blue" size={24} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass rounded-2xl p-4 border border-white/20">
+                        <div className="glass-card rounded-2xl p-4">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-gray-600 mb-1">我的任務</p>
-                                    <p className="text-3xl font-bold text-green-600">
+                                    <p className="text-3xl font-bold text-apple-green">
                                         {tasks.filter(t => t.current_user).length}
                                     </p>
                                 </div>

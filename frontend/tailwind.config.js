@@ -25,24 +25,26 @@ export default {
         'accent-foreground': 'hsl(var(--accent-foreground))',
         destructive: 'hsl(var(--destructive))',
         'destructive-foreground': 'hsl(var(--destructive-foreground))',
-        // Apple 風格色彩
+        // Apple 風格色彩 - 低飽和度高級感
         apple: {
-          blue: '#007AFF',
-          green: '#34C759',
-          orange: '#FF9500',
-          red: '#FF3B30',
-          purple: '#AF52DE',
+          blue: '#5E9FDB',      // 降低飽和度的藍
+          green: '#6BBF8D',     // 柔和的綠
+          orange: '#E8A87C',    // 柔和的橙
+          red: '#E57373',       // 柔和的紅
+          purple: '#B39DDB',    // 柔和的紫
+          pink: '#D4A5C5',      // 柔和的粉
+          indigo: '#7986CB',    // 柔和的靛
           gray: {
-            50: '#F2F2F7',
-            100: '#E5E5EA',
-            200: '#D1D1D6',
-            300: '#C7C7CC',
-            400: '#AEAEB2',
-            500: '#8E8E93',
-            600: '#636366',
-            700: '#48484A',
-            800: '#3A3A3C',
-            900: '#2C2C2E',
+            50: '#FAFAFA',
+            100: '#F5F5F5',
+            200: '#EEEEEE',
+            300: '#E0E0E0',
+            400: '#BDBDBD',
+            500: '#9E9E9E',
+            600: '#757575',
+            700: '#616161',
+            800: '#424242',
+            900: '#212121',
           }
         }
       },
@@ -55,12 +57,13 @@ export default {
         '2xl': '1.5rem',
         '3xl': '2rem',
       },
-      // 陰影系統 - Apple 風格
+      // 陰影系統 - Apple 風格，更柔和細緻
       boxShadow: {
-        'apple-sm': '0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px 0 rgba(0, 0, 0, 0.04)',
-        'apple': '0 4px 12px 0 rgba(0, 0, 0, 0.08), 0 2px 4px 0 rgba(0, 0, 0, 0.04)',
-        'apple-lg': '0 10px 40px 0 rgba(0, 0, 0, 0.12), 0 4px 8px 0 rgba(0, 0, 0, 0.06)',
-        'apple-xl': '0 20px 60px 0 rgba(0, 0, 0, 0.15), 0 8px 16px 0 rgba(0, 0, 0, 0.08)',
+        'apple-sm': '0 2px 8px -2px rgba(0, 0, 0, 0.1), 0 1px 4px -1px rgba(0, 0, 0, 0.06)',
+        'apple': '0 4px 16px -4px rgba(0, 0, 0, 0.12), 0 2px 8px -2px rgba(0, 0, 0, 0.08)',
+        'apple-lg': '0 12px 32px -8px rgba(0, 0, 0, 0.15), 0 4px 16px -4px rgba(0, 0, 0, 0.1)',
+        'apple-xl': '0 24px 48px -12px rgba(0, 0, 0, 0.18), 0 8px 24px -6px rgba(0, 0, 0, 0.12)',
+        'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.15)',
       },
       // 動畫系統
       keyframes: {

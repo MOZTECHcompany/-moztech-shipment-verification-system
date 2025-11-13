@@ -86,13 +86,17 @@
 }
 
 @layer components {
-  /* 毛玻璃效果 */
+  /* 毛玻璃效果 - 更柔和細緻 */
   .glass {
-    @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-apple;
+    @apply bg-white/80 backdrop-blur-2xl border border-gray-200/50 shadow-glass;
   }
 
   .glass-dark {
-    @apply bg-gray-900/70 backdrop-blur-xl border border-gray-700/20 shadow-apple;
+    @apply bg-gray-900/80 backdrop-blur-2xl border border-gray-700/30 shadow-glass;
+  }
+
+  .glass-card {
+    @apply bg-white/90 backdrop-blur-xl border border-gray-100/80 shadow-apple;
   }
 
   /* Apple 風格按鈕 */
