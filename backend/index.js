@@ -913,13 +913,39 @@ apiRouter.get('/scan-errors', authorizeAdmin, async (req, res) => {
 // #region 協作功能 API (Collaboration Features)
 // =================================================================
 
-// 獲取任務評論
+// 獲取任務評論（支援分頁與 ETag）
 apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
     const { orderId } = req.params;
-    
+    const { after, limit } = req.query;
+    const pageSize = Math.min(Math.max(parseInt(limit || '50', 10), 1), 200);
+    const client = await pool.connect();
     try {
-        const comments = await pool.query(`
-            SELECT 
+        // 先計算資源摘要，若 ETag 相同則回 304
+        const agg = await client.query(
+            `SELECT COUNT(*)::int AS total, MAX(updated_at) AS latest FROM task_comments WHERE order_id = $1`,
+            [orderId]
+        );
+        const total = agg.rows[0]?.total || 0;
+        const latest = agg.rows[0]?.latest || null;
+        const etag = `W/"comments:${orderId}:${total}:${latest ? new Date(latest).getTime() : 0}"`;
+        res.setHeader('ETag', etag);
+
+        const ifNoneMatch = req.headers['if-none-match'];
+        if (ifNoneMatch && ifNoneMatch === etag && !after) {
+            return res.status(304).end();
+        }
+
+        // 主要查詢：依 created_at 遞增，支援 after 游標（ISO 時間）
+        const params = [orderId];
+        let where = 'c.order_id = $1';
+        if (after) {
+            params.push(new Date(after));
+            where += ` AND c.created_at > $${params.length}`;
+        }
+        params.push(pageSize);
+
+        const comments = await client.query(
+            `SELECT 
                 c.id,
                 c.content,
                 c.parent_id,
@@ -931,19 +957,22 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
                 u.name as user_name
             FROM task_comments c
             JOIN users u ON c.user_id = u.id
-            WHERE c.order_id = $1
+            WHERE ${where}
             ORDER BY c.created_at ASC
-        `, [orderId]);
-        
+            LIMIT $${params.length}
+            `,
+            params
+        );
+
         // 組織成樹狀結構（父評論和回覆）
         const commentMap = {};
         const rootComments = [];
-        
+
         comments.rows.forEach(comment => {
             comment.replies = [];
             commentMap[comment.id] = comment;
         });
-        
+
         comments.rows.forEach(comment => {
             if (comment.parent_id) {
                 if (commentMap[comment.parent_id]) {
@@ -953,11 +982,17 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
                 rootComments.push(comment);
             }
         });
-        
-        res.json(rootComments);
+
+        const nextCursor = comments.rows.length > 0
+            ? comments.rows[comments.rows.length - 1].created_at
+            : null;
+
+        res.json({ items: rootComments, nextCursor, total });
     } catch (error) {
         logger.error('[/api/tasks/:orderId/comments] 獲取評論失敗:', error);
         res.status(500).json({ code: 'COMMENTS_FETCH_FAILED', message: '獲取評論失敗', requestId: req.requestId });
+    } finally {
+        client.release();
     }
 });
 

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
+import { useComments } from '@/api/useComments';
 
 // 優先級配置
 const PRIORITIES = {
@@ -53,7 +54,8 @@ const QUICK_REPLIES = [
 ];
 
 export function TaskComments({ orderId, currentUser, allUsers }) {
-    const [comments, setComments] = useState([]);
+    const { data, isLoading, fetchNextPage, hasNextPage, addOptimistic, invalidate } = useComments(orderId);
+    const comments = (data?.pages || []).flatMap(p => p.items ?? []);
     const [newComment, setNewComment] = useState('');
     const [replyTo, setReplyTo] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -72,17 +74,15 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const commentsEndRef = useRef(null);
 
     useEffect(() => {
-        fetchComments();
-        
         // 降低備援輪詢頻率（主要依賴 WebSocket）
-        const interval = setInterval(fetchComments, 60000);
+        const interval = setInterval(() => invalidate(), 60000);
 
         // 啟用 WebSocket 監聽新評論
         try {
             if (!socket.connected) socket.connect();
             const onNewComment = (data) => {
                 if (String(data.orderId) === String(orderId)) {
-                    fetchComments();
+                    invalidate();
                 }
             };
             socket.on('new_comment', onNewComment);
@@ -114,16 +114,10 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     }, [comments]);
 
     const fetchComments = async () => {
-        try {
-            const response = await apiClient.get(`/api/tasks/${orderId}/comments`);
-            setComments(response.data);
-            
-            // 從localStorage讀取置頂評論
-            const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
-            setPinnedComments(pinned);
-        } catch (error) {
-            console.error('載入評論失敗:', error);
-        }
+        // 已改由 React Query 管理；這個函數保留舊呼叫點
+        await invalidate();
+        const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
+        setPinnedComments(pinned);
     };
 
     const handleInputChange = (e) => {
@@ -185,6 +179,21 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         if (loading) return; // 防重複點擊
         setLoading(true);
         try {
+            const draft = {
+                id: `temp_${Date.now()}`,
+                content: newComment,
+                parent_id: replyTo?.id || null,
+                priority,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                user_id: currentUser.id,
+                username: currentUser.username,
+                user_name: currentUser.name,
+                replies: [],
+                __optimistic: true,
+            };
+            addOptimistic(draft);
+
             await apiClient.post(`/api/tasks/${orderId}/comments`, {
                 content: newComment,
                 parent_id: replyTo?.id || null,
@@ -194,9 +203,11 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             setNewComment('');
             setReplyTo(null);
             setPriority('normal');
-            await fetchComments();
+            await invalidate();
             toast.success('評論已發送');
         } catch (error) {
+            // 還原暫時卡片
+            await invalidate();
             toast.error('發送評論失敗', {
                 description: error.message || error.response?.data?.message || '請稍後再試'
             });
@@ -488,6 +499,17 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* 評論列表 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {isLoading && (
+                    <div className="space-y-3">
+                        {Array.from({ length: 3 }).map((_, i) => (
+                            <div key={i} className="animate-pulse p-4 bg-white border border-gray-200 rounded-xl">
+                                <div className="h-3 bg-gray-200 rounded w-1/3 mb-3" />
+                                <div className="h-3 bg-gray-200 rounded w-full mb-2" />
+                                <div className="h-3 bg-gray-200 rounded w-2/3" />
+                            </div>
+                        ))}
+                    </div>
+                )}
                 {displayList.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                         <MessageSquare className="w-12 h-12 mb-3 opacity-50" />
@@ -496,6 +518,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                 ? '沒有符合條件的評論'
                                 : '尚無評論，開始第一則討論吧！'}
                         </p>
+                        {/* 快捷建議 chips */}
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            {QUICK_REPLIES.slice(0,4).map((r,idx) => (
+                                <button key={idx} aria-label={`插入 ${r.text}`} onClick={() => useQuickReply(r)} className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg text-xs text-gray-700 transition-all hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-apple-blue/50">
+                                    {r.text}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 ) : (
                     <List height={420} itemCount={displayList.length} itemSize={120} width={'100%'}>
@@ -505,6 +535,13 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                             </div>
                         )}
                     </List>
+                )}
+                {hasNextPage && (
+                    <div className="flex justify-center py-3">
+                        <button onClick={() => fetchNextPage()} className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50" aria-label="載入更多評論">
+                            載入更多
+                        </button>
+                    </div>
                 )}
                 <div ref={commentsEndRef} />
             </div>
