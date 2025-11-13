@@ -177,26 +177,26 @@ export function OperationLogs() {
                 {/* 標題 */}
                 <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
                     <div className="flex items-center gap-4">
-                        <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl shadow-apple-lg">
-                            <FileText className="w-8 h-8 text-white" />
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-indigo/10 flex items-center justify-center">
+                            <FileText className="w-7 h-7 text-apple-blue" />
                         </div>
                         <div>
-                            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                                操作日誌查詢
+                            <h1 className="text-4xl font-semibold tracking-tight text-gray-900">
+                                📋 操作日誌查詢
                             </h1>
-                            <p className="text-sm text-gray-600 mt-1">追蹤系統中所有操作記錄</p>
+                            <p className="text-gray-500 mt-1 font-medium">追蹤系統中所有操作記錄</p>
                         </div>
                     </div>
                     <div className="flex gap-2">
                         <Link to="/admin" 
-                            className="btn-apple bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white flex items-center gap-2 shadow-apple-lg">
+                            className="btn-apple bg-white/90 backdrop-blur-xl border-2 border-gray-200 hover:border-gray-300 text-gray-700 hover:bg-white flex items-center gap-2 shadow-apple">
                             <ArrowLeft size={18} />
                             返回
                         </Link>
                         <button
                             onClick={fetchLogs}
                             disabled={loading}
-                            className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white flex items-center gap-2 shadow-apple-lg disabled:opacity-50"
+                            className="btn-apple bg-apple-blue/90 backdrop-blur-xl hover:bg-apple-blue text-white flex items-center gap-2 shadow-apple-lg disabled:opacity-50"
                         >
                             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                             重新整理

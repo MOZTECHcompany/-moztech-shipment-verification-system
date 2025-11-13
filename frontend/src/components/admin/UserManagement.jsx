@@ -216,25 +216,25 @@ export function UserManagement() {
         <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gradient-to-br from-gray-50 to-purple-50/30 min-h-screen">
             <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4 animate-fade-in">
                 <div className="flex items-center gap-4">
-                    <div className="p-3 bg-gradient-to-br from-purple-500 to-pink-600 rounded-2xl shadow-apple-lg">
-                        <Users className="w-8 h-8 text-white" />
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-purple/10 to-apple-pink/10 flex items-center justify-center">
+                        <Users className="w-7 h-7 text-apple-purple" />
                     </div>
                     <div>
-                        <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                            使用者管理
+                        <h1 className="text-4xl font-semibold tracking-tight text-gray-900">
+                            👤 使用者管理
                         </h1>
-                        <p className="text-gray-600 mt-1">新增、檢視、編輯或刪除系統操作員</p>
+                        <p className="text-gray-500 mt-1 font-medium">新增、檢視、編輯或刪除系統操作員</p>
                     </div>
                 </div>
                 <div className="flex gap-3">
                     <Link to="/admin" 
-                        className="btn-apple bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white flex items-center gap-2 shadow-apple-lg">
+                        className="btn-apple bg-white/90 backdrop-blur-xl border-2 border-gray-200 hover:border-gray-300 text-gray-700 hover:bg-white flex items-center gap-2 shadow-apple">
                         <ArrowLeft className="h-4 w-4" />
                         返回管理中心
                     </Link>
                     <button 
                         onClick={() => handleOpenModal()} 
-                        className="btn-apple bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white flex items-center gap-2 shadow-apple-lg">
+                        className="btn-apple bg-apple-purple/90 backdrop-blur-xl hover:bg-apple-purple text-white flex items-center gap-2 shadow-apple-lg">
                         <PlusCircle className="h-4 w-4" />
                         新增使用者
                     </button>

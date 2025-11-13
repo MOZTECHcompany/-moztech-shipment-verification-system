@@ -426,12 +426,12 @@ export function TaskDashboard({ user }) {
                             <button
                                 onClick={toggleBatchMode}
                                 className={`
-                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200
+                                    flex items-center gap-2 px-5 py-3 rounded-xl font-semibold
+                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${batchMode 
-                                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                        ? 'bg-apple-blue/90 text-white hover:bg-apple-blue backdrop-blur-sm' 
+                                        : 'bg-white/90 text-gray-700 border-2 border-gray-200 hover:border-gray-300 hover:bg-white backdrop-blur-sm'
                                     }
                                 `}
                                 title={batchMode ? '退出批次模式' : '進入批次模式'}
@@ -447,8 +447,9 @@ export function TaskDashboard({ user }) {
                                 <button
                                     onClick={handleBatchClaim}
                                     className="
-                                        flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                        bg-green-500 text-white hover:bg-green-600
+                                        flex items-center gap-2 px-5 py-3 rounded-xl font-semibold
+                                        bg-apple-green/90 text-white hover:bg-apple-green backdrop-blur-sm
+                                        shadow-apple-sm hover:shadow-apple
                                         transition-all duration-200
                                         active:scale-[0.98]
                                         animate-scale-in
@@ -524,9 +525,9 @@ export function TaskDashboard({ user }) {
                                 <Link 
                                     to="/admin" 
                                     className="
-                                        flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                        bg-gray-800/90 text-white hover:bg-gray-900
-                                        shadow-apple-sm hover:shadow-apple backdrop-blur-sm
+                                        flex items-center gap-2 px-5 py-3 rounded-xl font-semibold
+                                        bg-gray-700/90 text-white hover:bg-gray-800 backdrop-blur-sm
+                                        shadow-apple-sm hover:shadow-apple
                                         transition-all duration-200
                                         active:scale-[0.98]
                                     "
