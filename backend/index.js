@@ -914,6 +914,7 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
                 c.id,
                 c.content,
                 c.parent_id,
+                c.priority,
                 c.created_at,
                 c.updated_at,
                 u.id as user_id,
@@ -954,11 +955,17 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
 // 新增評論
 apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
     const { orderId } = req.params;
-    const { content, parent_id } = req.body;
+    const { content, parent_id, priority = 'normal' } = req.body;
     const { id: userId } = req.user;
     
     if (!content || !content.trim()) {
         return res.status(400).json({ message: '評論內容不能為空' });
+    }
+
+    // 驗證優先級
+    const validPriorities = ['normal', 'important', 'urgent'];
+    if (!validPriorities.includes(priority)) {
+        return res.status(400).json({ message: '無效的優先級' });
     }
     
     const client = await pool.connect();
@@ -967,10 +974,10 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
         
         // 新增評論
         const result = await client.query(`
-            INSERT INTO task_comments (order_id, user_id, content, parent_id)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO task_comments (order_id, user_id, content, parent_id, priority)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id, created_at
-        `, [orderId, userId, content, parent_id]);
+        `, [orderId, userId, content, parent_id, priority]);
         
         const commentId = result.rows[0].id;
         
@@ -998,7 +1005,8 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
                         userId: userResult.rows[0].id,
                         orderId,
                         commentId,
-                        content: content.slice(0, 100)
+                        content: content.slice(0, 100),
+                        priority
                     });
                 }
             }
@@ -1011,7 +1019,8 @@ apiRouter.post('/tasks/:orderId/comments', async (req, res) => {
             orderId,
             commentId,
             userId,
-            content
+            content,
+            priority
         });
         
         res.status(201).json({

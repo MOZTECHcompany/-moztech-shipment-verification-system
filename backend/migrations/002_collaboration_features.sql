@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS task_comments (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
     parent_id INTEGER REFERENCES task_comments(id) ON DELETE CASCADE, -- 支援回覆評論
+    priority VARCHAR(20) DEFAULT 'normal' CHECK (priority IN ('normal', 'important', 'urgent')), -- 優先級
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
