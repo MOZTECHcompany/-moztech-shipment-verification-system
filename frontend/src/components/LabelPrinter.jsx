@@ -10,10 +10,10 @@ import { toast } from 'sonner';
 
 // 出貨標籤組件
 export function ShippingLabel({ order, items }) {
-    const componentRef = useRef();
+    const componentRef = useRef(null);
 
     const handlePrint = useReactToPrint({
-        content: () => componentRef.current,
+        contentRef: componentRef,
         documentTitle: `出貨標籤-${order.voucher_number}`,
         onAfterPrint: () => toast.success('列印完成'),
     });
@@ -151,10 +151,10 @@ export function ShippingLabel({ order, items }) {
 
 // 揀貨單組件
 export function PickingList({ order, items }) {
-    const componentRef = useRef();
+    const componentRef = useRef(null);
 
     const handlePrint = useReactToPrint({
-        content: () => componentRef.current,
+        contentRef: componentRef,
         documentTitle: `揀貨單-${order.voucher_number}`,
         onAfterPrint: () => toast.success('列印完成'),
     });
