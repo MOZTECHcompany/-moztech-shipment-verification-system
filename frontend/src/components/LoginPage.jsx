@@ -57,13 +57,7 @@ export function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="relative flex items-center justify-center min-h-screen p-4 overflow-hidden bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      {/* 背景裝飾 */}
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-20 w-72 h-72 bg-blue-400/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-20 right-20 w-96 h-96 bg-purple-400/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-pink-400/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-      </div>
+    <div className="relative flex items-center justify-center min-h-screen p-4 overflow-hidden bg-gray-50">
 
       {/* 登入卡片 */}
       <div
@@ -75,14 +69,13 @@ export function LoginPage({ onLogin }) {
           {/* Logo 和標題 */}
           <div className="flex flex-col items-center mb-10 animate-fade-in">
             <div className="relative mb-6">
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-3xl blur-xl opacity-30 animate-pulse" />
               <img 
                 src="/MOZTECH-002.png" 
                 alt="MOZTECH Logo" 
-                className="relative h-28 w-28 object-contain drop-shadow-2xl" 
+                className="relative h-28 w-28 object-contain" 
               />
             </div>
-            <h1 className="text-4xl font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-700 bg-clip-text text-transparent mb-2">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">
               倉儲作業系統
             </h1>
             <p className="text-gray-500 text-sm flex items-center gap-1">
@@ -99,13 +92,6 @@ export function LoginPage({ onLogin }) {
                 使用者名稱
               </label>
               <div className="relative group">
-                <div className={`
-                  absolute inset-0 rounded-xl transition-all duration-300
-                  ${focusedField === 'username' 
-                    ? 'bg-gradient-to-r from-blue-500 to-purple-600 opacity-20 blur-md' 
-                    : 'opacity-0'
-                  }
-                `} />
                 <User className={`
                   absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-colors duration-200
                   ${focusedField === 'username' ? 'text-blue-600' : 'text-gray-400'}
@@ -119,7 +105,7 @@ export function LoginPage({ onLogin }) {
                   onBlur={() => setFocusedField(null)}
                   className="
                     relative w-full pl-12 pr-4 py-4 
-                    bg-white/80 backdrop-blur-sm
+                    bg-white
                     border-2 border-gray-200
                     rounded-xl 
                     focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10
@@ -136,13 +122,6 @@ export function LoginPage({ onLogin }) {
                 密碼
               </label>
               <div className="relative group">
-                <div className={`
-                  absolute inset-0 rounded-xl transition-all duration-300
-                  ${focusedField === 'password' 
-                    ? 'bg-gradient-to-r from-blue-500 to-purple-600 opacity-20 blur-md' 
-                    : 'opacity-0'
-                  }
-                `} />
                 <Lock className={`
                   absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-colors duration-200
                   ${focusedField === 'password' ? 'text-blue-600' : 'text-gray-400'}
@@ -156,7 +135,7 @@ export function LoginPage({ onLogin }) {
                   onBlur={() => setFocusedField(null)}
                   className="
                     relative w-full pl-12 pr-4 py-4 
-                    bg-white/80 backdrop-blur-sm
+                    bg-white
                     border-2 border-gray-200
                     rounded-xl 
                     focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10
@@ -181,13 +160,10 @@ export function LoginPage({ onLogin }) {
             disabled={isLoggingIn}
             className="
               w-full py-4 px-6
-              bg-gradient-to-r from-blue-600 to-purple-600
-              hover:from-blue-700 hover:to-purple-700
-              disabled:from-gray-400 disabled:to-gray-500
+              bg-blue-500 hover:bg-blue-600
+              disabled:bg-gray-400
               text-white font-semibold text-lg
               rounded-xl
-              shadow-lg shadow-blue-500/30
-              hover:shadow-xl hover:shadow-blue-500/40
               active:scale-[0.98]
               transition-all duration-200
               flex items-center justify-center gap-2

@@ -59,17 +59,17 @@ export function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-purple-50/50">
+        <div className="min-h-screen bg-gray-50">
             <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
                 {/* 現代化標題列 */}
                 <header className="mb-10 animate-fade-in">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                         <div>
                             <div className="flex items-center gap-3 mb-2">
-                                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                                <div className="w-12 h-12 rounded-2xl bg-blue-500 flex items-center justify-center">
                                     <LayoutDashboard className="text-white" size={24} />
                                 </div>
-                                <h1 className="text-5xl font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-700 bg-clip-text text-transparent">
+                                <h1 className="text-5xl font-bold text-gray-900">
                                     管理中心
                                 </h1>
                             </div>
@@ -80,10 +80,8 @@ export function AdminDashboard() {
                             to="/tasks" 
                             className="
                                 flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                bg-gradient-to-r from-blue-600 to-indigo-600 text-white
-                                hover:from-blue-700 hover:to-indigo-700
-                                transition-all duration-200 shadow-lg shadow-blue-500/30
-                                hover:shadow-xl hover:shadow-blue-500/40
+                                bg-blue-500 text-white hover:bg-blue-600
+                                transition-all duration-200
                                 active:scale-[0.98]
                             "
                         >
@@ -96,7 +94,7 @@ export function AdminDashboard() {
                 {/* 功能卡片網格 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* 數據分析 */}
-                    <div className="card-apple group bg-gradient-to-br from-blue-50 to-indigo-50 animate-scale-in">
+                    <div className="card-apple group animate-scale-in">
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
                                 <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -106,17 +104,15 @@ export function AdminDashboard() {
                             </div>
                             
                             <p className="text-gray-600 mb-6 text-base leading-relaxed">
-                                查看訂單趨勢、員工績效、營運數據分析，提升管理效率。
+                                查看訂單趋勢、員工績效、營運數據分析，提升管理效率。
                             </p>
                             
                             <Link 
                                 to="/admin/analytics" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-gradient-to-r from-blue-600 to-indigo-600 text-white
-                                    hover:from-blue-700 hover:to-indigo-700
-                                    transition-all duration-200 shadow-lg shadow-blue-500/30
-                                    hover:shadow-xl hover:shadow-blue-500/40
+                                    bg-blue-500 text-white hover:bg-blue-600
+                                    transition-all duration-200
                                     active:scale-[0.98]
                                 "
                             >
@@ -127,7 +123,7 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 刷錯條碼分析 - 新增 */}
-                    <div className="card-apple group bg-gradient-to-br from-red-50 to-orange-50 animate-scale-in" style={{ animationDelay: '50ms' }}>
+                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '50ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
                                 <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -144,10 +140,8 @@ export function AdminDashboard() {
                                 to="/admin/scan-errors" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-gradient-to-r from-red-600 to-orange-600 text-white
-                                    hover:from-red-700 hover:to-orange-700
-                                    transition-all duration-200 shadow-lg shadow-red-500/30
-                                    hover:shadow-xl hover:shadow-red-500/40
+                                    bg-red-500 text-white hover:bg-red-600
+                                    transition-all duration-200
                                     active:scale-[0.98]
                                 "
                             >
@@ -238,11 +232,8 @@ export function AdminDashboard() {
                                     disabled={!startDate || !endDate}
                                     className="
                                         w-full px-6 py-4 rounded-xl font-semibold text-lg
-                                        bg-gradient-to-r from-green-500 to-emerald-600 text-white
-                                        hover:from-green-600 hover:to-emerald-700
-                                        disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed
-                                        shadow-lg shadow-green-500/30
-                                        hover:shadow-xl hover:shadow-green-500/40
+                                        bg-green-500 text-white hover:bg-green-600
+                                        disabled:bg-gray-300 disabled:cursor-not-allowed
                                         active:scale-[0.98]
                                         transition-all duration-200
                                         flex items-center justify-center gap-2
@@ -256,7 +247,7 @@ export function AdminDashboard() {
                     </div>
 
                     {/* 3. 使用者管理 */}
-                    <div className="card-apple group bg-gradient-to-br from-blue-50 to-cyan-50 animate-scale-in" style={{ animationDelay: '200ms' }}>
+                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '200ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
                                 <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -273,10 +264,7 @@ export function AdminDashboard() {
                                 to="/admin/users" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-gradient-to-r from-blue-500 to-cyan-600 text-white
-                                    hover:from-blue-600 hover:to-cyan-700
-                                    shadow-lg shadow-blue-500/30
-                                    hover:shadow-xl hover:shadow-blue-500/40
+                                    bg-blue-500 text-white hover:bg-blue-600
                                     active:scale-[0.98]
                                     transition-all duration-200
                                 "
@@ -288,7 +276,7 @@ export function AdminDashboard() {
                     </div>
                     
                     {/* 4. 操作日誌查詢 */}
-                    <div className="card-apple group bg-gradient-to-br from-indigo-50 to-purple-50 animate-scale-in" style={{ animationDelay: '300ms' }}>
+                    <div className="card-apple group animate-scale-in" style={{ animationDelay: '300ms' }}>
                         <div className="p-8">
                             <div className="flex items-center gap-3 mb-4">
                                 <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -305,10 +293,7 @@ export function AdminDashboard() {
                                 to="/admin/operation-logs" 
                                 className="
                                     inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium
-                                    bg-gradient-to-r from-indigo-500 to-purple-600 text-white
-                                    hover:from-indigo-600 hover:to-purple-700
-                                    shadow-lg shadow-indigo-500/30
-                                    hover:shadow-xl hover:shadow-indigo-500/40
+                                    bg-purple-500 text-white hover:bg-purple-600
                                     active:scale-[0.98]
                                     transition-all duration-200
                                 "

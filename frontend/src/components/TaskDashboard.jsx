@@ -65,7 +65,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             animate-scale-in
         `}>
             {/* 背景漸變裝飾 */}
-            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-50 to-purple-50 rounded-full blur-3xl opacity-30 -z-10" />
+
             
             <div className="p-6">
                 {/* 標題列 */}
@@ -397,7 +397,7 @@ export function TaskDashboard({ user }) {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+            <div className="flex justify-center items-center h-screen bg-gray-50">
                 <div className="text-center">
                     <Loader2 className="animate-spin text-blue-500 mx-auto mb-4" size={56} />
                     <p className="text-gray-500 font-medium">載入中...</p>
@@ -407,14 +407,14 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-purple-50/50">
+        <div className="min-h-screen bg-gray-50">
             <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
                 {/* 現代化標題列 */}
                 <header className="mb-10 animate-fade-in">
                     <div className="flex justify-between items-start mb-6">
                         <div>
-                            <h1 className="text-5xl font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-700 bg-clip-text text-transparent mb-2">
-                                我的任務
+                                                        <h1 className="text-5xl font-bold text-gray-900 mb-2">
+                                {currentView === 'tasks' ? '📋 任務看板' : '🔍 我的任務'}
                             </h1>
                             <p className="text-gray-500 text-lg">選擇一項任務以開始作業</p>
                         </div>
@@ -426,11 +426,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleBatchMode}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    transition-all duration-200
                                     active:scale-[0.98]
                                     ${batchMode 
-                                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-blue-500/30' 
-                                        : 'bg-white text-gray-700 border border-gray-200'
+                                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
                                     }
                                 `}
                                 title={batchMode ? '退出批次模式' : '進入批次模式'}
@@ -447,10 +447,8 @@ export function TaskDashboard({ user }) {
                                     onClick={handleBatchClaim}
                                     className="
                                         flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                        bg-gradient-to-r from-green-500 to-emerald-600 text-white
-                                        hover:from-green-600 hover:to-emerald-700
-                                        transition-all duration-200 shadow-apple-sm hover:shadow-apple
-                                        shadow-green-500/30
+                                        bg-green-500 text-white hover:bg-green-600
+                                        transition-all duration-200
                                         active:scale-[0.98]
                                         animate-scale-in
                                     "
@@ -465,11 +463,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleSound}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    transition-all duration-200
                                     active:scale-[0.98]
                                     ${soundEnabled 
-                                        ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-green-500/30' 
-                                        : 'bg-white text-gray-700 border border-gray-200'
+                                        ? 'bg-green-500 text-white hover:bg-green-600' 
+                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
                                     }
                                 `}
                                 title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
@@ -485,11 +483,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleVoice}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    transition-all duration-200
                                     active:scale-[0.98]
                                     ${voiceEnabled 
-                                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-blue-500/30' 
-                                        : 'bg-white text-gray-700 border border-gray-200'
+                                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
                                     }
                                 `}
                                 title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
@@ -505,11 +503,11 @@ export function TaskDashboard({ user }) {
                                 onClick={toggleNotification}
                                 className={`
                                     flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                    transition-all duration-200
                                     active:scale-[0.98]
                                     ${notificationEnabled 
-                                        ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white shadow-purple-500/30' 
-                                        : 'bg-white text-gray-700 border border-gray-200'
+                                        ? 'bg-purple-500 text-white hover:bg-purple-600' 
+                                        : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
                                     }
                                 `}
                                 title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
@@ -526,9 +524,8 @@ export function TaskDashboard({ user }) {
                                     to="/admin" 
                                     className="
                                         flex items-center gap-2 px-5 py-3 rounded-xl font-medium
-                                        bg-gradient-to-r from-gray-800 to-gray-900 text-white
-                                        hover:from-gray-900 hover:to-black
-                                        transition-all duration-200 shadow-apple-sm hover:shadow-apple
+                                        bg-gray-900 text-white hover:bg-black
+                                        transition-all duration-200
                                         active:scale-[0.98]
                                     "
                                 >
