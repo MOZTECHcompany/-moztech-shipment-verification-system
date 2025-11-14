@@ -652,12 +652,13 @@ export function OrderWorkView({ user }) {
     }
 
     return (
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20 min-h-screen">
-            {/* iOS 風格 Header */}
-            <header className="mb-6 animate-fade-in">
-                <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6">
-                    {/* 背景裝飾 */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
+        <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
+            <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+                {/* iOS 風格 Header */}
+                <header className="mb-6 animate-fade-in">
+                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6">
+                        {/* 背景裝飾 */}
+                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
                     
                     <div className="relative z-10 space-y-4">
                         {/* 返回按鈕 + 標題 */}
@@ -830,6 +831,7 @@ export function OrderWorkView({ user }) {
                     mode="single"
                 />
             )}
+            </div>
         </div>
     );
 }
