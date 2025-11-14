@@ -258,60 +258,74 @@ adminRouter.delete('/users/:userId', async (req, res) => {
 // --- 受保护的通用路由 (需要登入 Token) ---
 const apiRouter = express.Router();
 apiRouter.get('/tasks', async (req, res) => {
-    const { id: userId, role } = req.user;
-    logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
-    if (!role) return res.status(403).json({ message: '使用者角色無效' });
-    
-    const query = `
-        SELECT 
-            o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
-            (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
-            (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
-            COALESCE(o.is_urgent, FALSE) as is_urgent,
-            -- 評論統計
-            COUNT(DISTINCT tc.id) as total_comments,
-            COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_comments,
-            COUNT(DISTINCT CASE 
-                WHEN NOT EXISTS (
-                    SELECT 1 FROM task_comment_reads tcr 
-                    WHERE tcr.comment_id = tc.id AND tcr.user_id = $1
-                ) AND tc.user_id != $1
-                THEN tc.id 
-            END) as unread_comments,
-            -- 最新評論
-            (SELECT json_build_object(
-                'content', content,
-                'user_name', u.name,
-                'priority', priority,
-                'created_at', created_at
-            ) FROM task_comments tc2
-            LEFT JOIN users u ON tc2.user_id = u.id
-            WHERE tc2.order_id = o.id
-            ORDER BY tc2.created_at DESC
-            LIMIT 1) as latest_comment
-        FROM orders o
-        LEFT JOIN users p ON o.picker_id = p.id 
-        LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
-        LEFT JOIN users packer_u ON o.packer_id = packer_u.id
-        LEFT JOIN task_comments tc ON tc.order_id = o.id
-        WHERE 
-            ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
-            ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
-            ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
-        GROUP BY o.id, o.voucher_number, o.customer_name, o.status, p.name, picker_u.name, packer_u.name
-        ORDER BY 
-            COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
-            COALESCE(o.is_urgent, FALSE) DESC, 
-            o.created_at ASC;
-    `;
-    
-    logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
-    const result = await pool.query(query, [userId, role]);
-    logger.info(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
-    if (result.rows.length > 0) {
-        logger.debug(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
+    try {
+        const { id: userId, role } = req.user;
+        logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
+        if (!role) return res.status(403).json({ message: '使用者角色無效' });
+        
+        const query = `
+            SELECT 
+                o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
+                (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
+                COALESCE(o.is_urgent, FALSE) as is_urgent,
+                -- 評論統計
+                COUNT(DISTINCT tc.id) as total_comments,
+                COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_comments,
+                COUNT(DISTINCT CASE 
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM task_comment_reads tcr 
+                        WHERE tcr.comment_id = tc.id AND tcr.user_id = $1
+                    ) AND tc.user_id != $1
+                    THEN tc.id 
+                END) as unread_comments,
+                -- 最新評論
+                (SELECT json_build_object(
+                    'content', content,
+                    'user_name', u.name,
+                    'priority', priority,
+                    'created_at', created_at
+                ) FROM task_comments tc2
+                LEFT JOIN users u ON tc2.user_id = u.id
+                WHERE tc2.order_id = o.id
+                ORDER BY tc2.created_at DESC
+                LIMIT 1) as latest_comment
+            FROM orders o
+            LEFT JOIN users p ON o.picker_id = p.id 
+            LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
+            LEFT JOIN users packer_u ON o.packer_id = packer_u.id
+            LEFT JOIN task_comments tc ON tc.order_id = o.id
+            WHERE 
+                ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
+                ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
+                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
+            GROUP BY o.id, o.voucher_number, o.customer_name, o.status, p.name, picker_u.name, packer_u.name
+            ORDER BY 
+                COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
+                COALESCE(o.is_urgent, FALSE) DESC, 
+                o.created_at ASC;
+        `;
+        
+        logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
+        const result = await pool.query(query, [userId, role]);
+        logger.info(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
+        if (result.rows.length > 0) {
+            logger.debug(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
+        }
+        res.json(result.rows);
+    } catch (error) {
+        logger.error('[/api/tasks] 獲取任務失敗:', error);
+        logger.error('[/api/tasks] 錯誤詳情:', {
+            message: error.message,
+            stack: error.stack,
+            code: error.code
+        });
+        res.status(500).json({ 
+            message: '獲取任務失敗', 
+            error: error.message,
+            hint: error.code === '42P01' ? '資料表不存在，請執行資料庫遷移' : undefined
+        });
     }
-    res.json(result.rows);
 });
 
 // 提供基本使用者清單（非管理員也可存取）
