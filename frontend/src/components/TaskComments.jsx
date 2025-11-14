@@ -606,32 +606,26 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     );
 
     return (
-        <div className="flex flex-col h-full bg-gradient-to-br from-gray-50 to-white">
+        <div className="flex flex-col h-full">
             {/* 標題欄 */}
-            <div className="glass-card p-4 border-b border-gray-200">
+            <div className="p-4 border-b border-indigo-100/50">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-gradient-to-br from-apple-purple/20 to-apple-blue/20 rounded-xl">
-                            <MessageSquare className="w-5 h-5 text-apple-purple" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-semibold text-gray-900">任務討論</h3>
-                            <p className="text-sm text-gray-500">
-                                {comments.length} 則評論
-                                {unreadCount > 0 && (
-                                    <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-600 rounded-full text-xs font-medium">
-                                        <Bell className="w-3 h-3" />
-                                        {unreadCount} 則未讀
-                                    </span>
-                                )}
-                            </p>
+                        <div className="text-sm text-indigo-600 font-medium">
+                            {comments.length} 則評論
+                            {unreadCount > 0 && (
+                                <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-600 rounded-full text-xs font-medium">
+                                    <Bell className="w-3 h-3" />
+                                    {unreadCount} 則未讀
+                                </span>
+                            )}
                         </div>
                     </div>
                     {/* 提及收件匣按鈕 */}
-                    <button onClick={() => setMentionsOpen(!mentionsOpen)} className="relative px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm flex items-center gap-1">
+                    <button onClick={() => setMentionsOpen(!mentionsOpen)} className="relative px-3 py-1.5 rounded-lg border border-indigo-200 bg-white/80 hover:bg-indigo-50 text-sm flex items-center gap-1 font-medium text-indigo-600 transition-all">
                         <AtSign className="w-4 h-4" /> 提及
                         {mentionsUnread > 0 && (
-                            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold">
+                            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[11px] font-semibold">
                                 {mentionsUnread}
                             </span>
                         )}
@@ -642,18 +636,18 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 <div className="mt-4 flex items-center gap-2 flex-wrap">
                     {/* 搜尋框 */}
                     <div className="flex-1 min-w-[200px] relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400" />
                         <input
                             type="text"
                             placeholder="搜尋評論..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-white/80 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-apple-blue/50 focus:border-apple-blue transition-all"
+                            className="w-full pl-10 pr-4 py-2 bg-white/80 backdrop-blur-sm border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-all"
                         />
                         {searchTerm && (
                             <button
                                 onClick={() => setSearchTerm('')}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-600"
                             >
                                 <X className="w-4 h-4" />
                             </button>
@@ -661,13 +655,13 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     </div>
 
                     {/* 優先級篩選 */}
-                    <div className="flex items-center gap-1 bg-white/80 border border-gray-300 rounded-xl p-1">
+                    <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-indigo-200 rounded-xl p-1">
                         <button
                             onClick={() => setFilterPriority('all')}
                             className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
                                 filterPriority === 'all'
-                                    ? 'bg-apple-blue text-white shadow-sm'
-                                    : 'text-gray-600 hover:bg-gray-100'
+                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                    : 'text-gray-600 hover:bg-indigo-50'
                             }`}
                         >
                             全部
@@ -681,7 +675,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                     className={`px-3 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
                                         filterPriority === key
                                             ? config.color.replace('100', '200')
-                                            : 'text-gray-600 hover:bg-gray-100'
+                                            : 'text-gray-600 hover:bg-indigo-50'
                                     }`}
                                     title={config.label}
                                 >
@@ -697,7 +691,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         className={`px-3 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 border ${
                             filterUnread
                                 ? 'bg-red-100 text-red-600 border-red-300'
-                                : 'bg-white/80 text-gray-600 border-gray-300 hover:bg-gray-100'
+                                : 'bg-white/80 backdrop-blur-sm text-gray-600 border-indigo-200 hover:bg-indigo-50'
                         }`}
                     >
                         <Bell className="w-3 h-3" />

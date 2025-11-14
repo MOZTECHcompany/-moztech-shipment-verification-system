@@ -26,7 +26,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
     
-    const { comments, loading, sendComment, deleteComment, markAsRead } = useComments(orderId);
+    // 使用 useComments hook 獲取評論數據
+    const { data, isLoading, invalidate } = useComments(orderId);
+    const comments = (data?.pages || []).flatMap(p => p.items ?? []);
+    const loading = isLoading;
 
     // 獲取用戶列表
     useEffect(() => {
@@ -48,7 +51,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
 
     // 標記所有評論為已讀
     useEffect(() => {
-        if (!isMinimized && comments.length > 0) {
+        if (!isMinimized && comments && comments.length > 0) {
             markAllAsRead();
         }
     }, [comments, isMinimized]);
@@ -136,16 +139,23 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
         if (!message.trim()) return;
         
         try {
-            await sendComment({
+            // 直接使用 apiClient 發送評論
+            await apiClient.post(`/api/tasks/${orderId}/comments`, {
                 content: message,
-                priority: priority
+                priority: priority,
+                parent_id: null
             });
+            
             setMessage('');
             setPriority('normal');
+            
+            // 重新獲取評論列表
+            await invalidate();
+            
             toast.success('消息已發送');
         } catch (error) {
             toast.error('發送失敗', {
-                description: error.response?.data?.message
+                description: error.response?.data?.message || error.message
             });
         }
     };
@@ -159,10 +169,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
         textareaRef.current.focus();
     };
 
-    // 過濾用戶列表
-    const filteredUsers = users.filter(u => 
-        u.username.toLowerCase().includes(mentionSearch.toLowerCase()) ||
-        u.name.toLowerCase().includes(mentionSearch.toLowerCase())
+    // 過濾用戶列表 - 添加安全檢查
+    const filteredUsers = (users || []).filter(u => 
+        u.username?.toLowerCase().includes(mentionSearch.toLowerCase()) ||
+        u.name?.toLowerCase().includes(mentionSearch.toLowerCase())
     ).slice(0, 5);
 
     // 最小化時的樣式
@@ -182,7 +192,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                     <MessageSquare size={20} className="text-blue-600" />
                     <div>
                         <div className="font-semibold text-sm">{voucherNumber}</div>
-                        {comments.length > 0 && (
+                        {comments && comments.length > 0 && (
                             <div className="text-xs text-gray-500">
                                 {comments.length} 則對話
                             </div>
@@ -247,7 +257,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
                 {loading ? (
                     <div className="text-center text-gray-500 py-8">載入中...</div>
-                ) : comments.length === 0 ? (
+                ) : !comments || comments.length === 0 ? (
                     <div className="text-center text-gray-400 py-8">
                         <MessageSquare size={48} className="mx-auto mb-2 opacity-50" />
                         <p>還沒有對話，開始第一則留言吧！</p>
