@@ -261,21 +261,50 @@ apiRouter.get('/tasks', async (req, res) => {
     const { id: userId, role } = req.user;
     logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
     if (!role) return res.status(403).json({ message: '使用者角色無效' });
+    
     const query = `
-        SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
-               (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
-               (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
-               COALESCE(o.is_urgent, FALSE) as is_urgent
+        SELECT 
+            o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+            (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
+            (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
+            COALESCE(o.is_urgent, FALSE) as is_urgent,
+            -- 評論統計
+            COUNT(DISTINCT tc.id) as total_comments,
+            COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_comments,
+            COUNT(DISTINCT CASE 
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM task_comment_reads tcr 
+                    WHERE tcr.comment_id = tc.id AND tcr.user_id = $1
+                ) AND tc.user_id != $1
+                THEN tc.id 
+            END) as unread_comments,
+            -- 最新評論
+            (SELECT json_build_object(
+                'content', content,
+                'user_name', u.name,
+                'priority', priority,
+                'created_at', created_at
+            ) FROM task_comments tc2
+            LEFT JOIN users u ON tc2.user_id = u.id
+            WHERE tc2.order_id = o.id
+            ORDER BY tc2.created_at DESC
+            LIMIT 1) as latest_comment
         FROM orders o
         LEFT JOIN users p ON o.picker_id = p.id 
         LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
         LEFT JOIN users packer_u ON o.packer_id = packer_u.id
+        LEFT JOIN task_comments tc ON tc.order_id = o.id
         WHERE 
             ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
             ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
             ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
-        ORDER BY COALESCE(o.is_urgent, FALSE) DESC, o.created_at ASC;
+        GROUP BY o.id, o.voucher_number, o.customer_name, o.status, p.name, picker_u.name, packer_u.name
+        ORDER BY 
+            COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
+            COALESCE(o.is_urgent, FALSE) DESC, 
+            o.created_at ASC;
     `;
+    
     logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
     const result = await pool.query(query, [userId, role]);
     logger.info(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
@@ -1230,6 +1259,115 @@ apiRouter.patch('/tasks/:orderId/mentions/:commentId/read', async (req, res) => 
     } catch (error) {
         logger.error('[/api/tasks/:orderId/mentions/:commentId/read] 標記已讀失敗:', error);
         res.status(500).json({ code: 'MENTION_MARK_READ_FAILED', message: '標記提及為已讀失敗', requestId: req.requestId });
+    }
+});
+
+// 標記評論為已讀
+apiRouter.post('/tasks/:orderId/comments/:commentId/read', async (req, res) => {
+    const { orderId, commentId } = req.params;
+    const userId = req.user.id;
+    
+    try {
+        // 確認評論存在
+        const chk = await pool.query('SELECT 1 FROM task_comments WHERE id = $1 AND order_id = $2', [commentId, orderId]);
+        if (chk.rowCount === 0) {
+            return res.status(404).json({ message: '找不到評論' });
+        }
+        
+        // 插入或更新已讀記錄
+        await pool.query(`
+            INSERT INTO task_comment_reads (comment_id, user_id, read_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (comment_id, user_id) 
+            DO UPDATE SET read_at = NOW()
+        `, [commentId, userId]);
+        
+        res.json({ message: '已標記為已讀' });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/comments/:commentId/read] 標記已讀失敗:', error);
+        res.status(500).json({ message: '標記已讀失敗' });
+    }
+});
+
+// 批次標記訂單所有評論為已讀
+apiRouter.post('/tasks/:orderId/comments/mark-all-read', async (req, res) => {
+    const { orderId } = req.params;
+    const userId = req.user.id;
+    
+    try {
+        // 獲取該訂單所有評論 ID
+        const comments = await pool.query(
+            'SELECT id FROM task_comments WHERE order_id = $1',
+            [orderId]
+        );
+        
+        if (comments.rows.length === 0) {
+            return res.json({ message: '沒有評論需要標記', count: 0 });
+        }
+        
+        // 批次插入已讀記錄
+        const values = comments.rows.map((c, idx) => 
+            `($${idx * 2 + 1}, $${idx * 2 + 2}, NOW())`
+        ).join(',');
+        
+        const params = comments.rows.flatMap(c => [c.id, userId]);
+        
+        await pool.query(`
+            INSERT INTO task_comment_reads (comment_id, user_id, read_at)
+            VALUES ${values}
+            ON CONFLICT (comment_id, user_id) 
+            DO UPDATE SET read_at = NOW()
+        `, params);
+        
+        res.json({ 
+            message: `已標記 ${comments.rows.length} 則評論為已讀`,
+            count: comments.rows.length 
+        });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/comments/mark-all-read] 批次標記已讀失敗:', error);
+        res.status(500).json({ message: '批次標記已讀失敗' });
+    }
+});
+
+// 獲取用戶的所有未讀評論統計
+apiRouter.get('/comments/unread-summary', async (req, res) => {
+    const userId = req.user.id;
+    
+    try {
+        const result = await pool.query(`
+            SELECT 
+                o.id as order_id,
+                o.voucher_number,
+                o.customer_name,
+                COUNT(DISTINCT tc.id) as unread_count,
+                COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_count,
+                MAX(tc.created_at) as latest_comment_time
+            FROM orders o
+            INNER JOIN task_comments tc ON tc.order_id = o.id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM task_comment_reads tcr 
+                WHERE tcr.comment_id = tc.id AND tcr.user_id = $1
+            )
+            AND tc.user_id != $1
+            AND o.status IN ('pending', 'picking', 'picked', 'packing')
+            GROUP BY o.id, o.voucher_number, o.customer_name
+            HAVING COUNT(DISTINCT tc.id) > 0
+            ORDER BY 
+                COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
+                MAX(tc.created_at) DESC
+        `, [userId]);
+        
+        const totalUnread = result.rows.reduce((sum, row) => sum + parseInt(row.unread_count), 0);
+        const totalUrgent = result.rows.reduce((sum, row) => sum + parseInt(row.urgent_count), 0);
+        
+        res.json({
+            total_unread: totalUnread,
+            total_urgent: totalUrgent,
+            orders: result.rows
+        });
+    } catch (error) {
+        logger.error('[/api/comments/unread-summary] 獲取未讀統計失敗:', error);
+        res.status(500).json({ message: '獲取未讀統計失敗' });
     }
 });
 
