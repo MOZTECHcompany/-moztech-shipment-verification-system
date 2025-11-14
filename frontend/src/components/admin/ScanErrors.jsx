@@ -359,14 +359,22 @@ export function ScanErrors() {
                             </THead>
                             <TBody>
                                 {loading ? (
-                                    <TR>
-                                        <TD colSpan={5} className="py-16">
-                                            <div className="flex flex-col items-center">
-                                                <Skeleton className="h-8 w-8 rounded-full mb-4" />
-                                                <p className="text-gray-500 text-sm">載入中...</p>
-                                            </div>
-                                        </TD>
-                                    </TR>
+                                    <>
+                                        {Array.from({ length: 5 }).map((_, i) => (
+                                            <TR key={i}>
+                                                <TD><Skeleton className="h-4 w-28" /></TD>
+                                                <TD>
+                                                    <div className="flex items-center gap-2">
+                                                        <Skeleton className="h-4 w-24" />
+                                                        <Skeleton className="h-4 w-12 rounded-full" />
+                                                    </div>
+                                                </TD>
+                                                <TD><Skeleton className="h-4 w-24" /></TD>
+                                                <TD><Skeleton className="h-6 w-36 rounded" /></TD>
+                                                <TD><Skeleton className="h-4 w-40" /></TD>
+                                            </TR>
+                                        ))}
+                                    </>
                                 ) : filteredErrors.length === 0 ? (
                                     <TR>
                                         <TD colSpan={5} className="py-12">

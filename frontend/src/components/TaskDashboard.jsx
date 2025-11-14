@@ -6,7 +6,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell, Flame, AlertTriangle } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell, Flame, AlertTriangle, Pin } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
@@ -14,7 +14,7 @@ import { voiceNotification } from '@/utils/voiceNotification.js';
 import { desktopNotification } from '@/utils/desktopNotification.js';
 import FloatingChatPanel from './FloatingChatPanel';
 import NotificationCenter from './NotificationCenter';
-import { PageHeader, FilterBar, Button } from '@/ui';
+import { PageHeader, FilterBar, Button, Skeleton, SkeletonText } from '@/ui';
 
 const statusConfig = {
     pending: { 
@@ -44,7 +44,7 @@ const statusConfig = {
 };
 
 // 現代化任務卡片
-const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin }) => {
     const isMyTask = task.current_user;
     const isUrgent = task.is_urgent || false;
     const hasComments = task.total_comments > 0;
@@ -132,7 +132,15 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                     
                     <div className="flex flex-col items-end gap-2 ml-2 sm:ml-3 flex-shrink-0">
-                        {/* 緊急標記 - 優化 */}
+                        {/* 置頂/緊急標記 - 優化 */}
+                        {isPinned && (
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-900 text-white flex items-center gap-1 shadow-sm">
+                                <Pin size={12} />
+                                <span className="hidden xs:inline">置頂</span>
+                            </span>
+                        )}
+                        
+                        {/* 緊急標記 */}
                         {isUrgent && (
                             <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#FF3B30] text-white flex items-center gap-1 shadow-sm">
                                 <Flame size={12} />
@@ -152,8 +160,17 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <span className="hidden xs:inline">{statusInfo.text}</span>
                         </div>
                         
-                        {/* 管理員按鈕組 */}
+                        {/* 工具按鈕組（置頂對所有角色開放；緊急/刪除限管理員） */}
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }}
+                                className={`p-2 rounded-lg transition-all duration-200 ${
+                                    isPinned ? 'text-gray-900 bg-gray-200 hover:bg-gray-300' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                                } hover:scale-110`}
+                                title={isPinned ? '取消置頂' : '置頂'}
+                            >
+                                <Pin size={16} className="sm:w-[18px] sm:h-[18px]" />
+                            </button>
                             {user && user.role === 'admin' && (
                                 <>
                                     <button
@@ -280,12 +297,54 @@ export function TaskDashboard({ user }) {
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
     const [search, setSearch] = useState('');
+    const [pinnedTaskIds, setPinnedTaskIds] = useState([]);
     
     // 浮動聊天面板狀態
     const [openChats, setOpenChats] = useState([]);
     
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
+
+    // 置頂任務：雲端同步（團隊共享），以 localStorage 作快取
+    const pinStorageKey = useMemo(() => `pinned_tasks_team_cache`, []);
+    const fetchPinnedTasks = useCallback(async () => {
+        try {
+            const res = await apiClient.get('/api/tasks/pins');
+            const list = Array.isArray(res?.data?.pinned) ? res.data.pinned : [];
+            setPinnedTaskIds(list);
+            localStorage.setItem(pinStorageKey, JSON.stringify(list));
+        } catch (e) {
+            try {
+                const cached = JSON.parse(localStorage.getItem(pinStorageKey) || '[]');
+                setPinnedTaskIds(Array.isArray(cached) ? cached : []);
+            } catch { setPinnedTaskIds([]); }
+        }
+    }, [pinStorageKey]);
+
+    useEffect(() => {
+        fetchPinnedTasks();
+    }, [fetchPinnedTasks]);
+
+    const togglePinTask = useCallback(async (taskId) => {
+        const willPin = !pinnedTaskIds.includes(taskId);
+        // 樂觀更新
+        setPinnedTaskIds(prev => {
+            const next = willPin ? [...prev, taskId] : prev.filter(id => id !== taskId);
+            localStorage.setItem(pinStorageKey, JSON.stringify(next));
+            return next;
+        });
+        try {
+            await apiClient.put(`/api/tasks/pins/${taskId}`, { pinned: willPin });
+        } catch (e) {
+            // 還原
+            setPinnedTaskIds(prev => {
+                const next = willPin ? prev.filter(id => id !== taskId) : [...prev, taskId];
+                localStorage.setItem(pinStorageKey, JSON.stringify(next));
+                return next;
+            });
+            toast.error('更新置頂狀態失敗');
+        }
+    }, [pinnedTaskIds, pinStorageKey]);
 
     // 打開聊天面板
     const handleOpenChat = (orderId, voucherNumber) => {
@@ -453,6 +512,11 @@ export function TaskDashboard({ user }) {
             toast.warning('⚠️ 訂單已被管理員刪除');
             soundNotification.play('error');
             setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
+            setPinnedTaskIds(prev => {
+                const next = prev.filter(id => id !== orderId);
+                if (next.length !== prev.length) localStorage.setItem(pinStorageKey, JSON.stringify(next));
+                return next;
+            });
         };
 
         const handleUrgentChanged = ({ orderId, isUrgent, voucherNumber }) => {
@@ -482,6 +546,15 @@ export function TaskDashboard({ user }) {
         socket.on('task_status_changed', handleTaskUpdate);
         socket.on('task_deleted', handleTaskDeleted);
         socket.on('task_urgent_changed', handleUrgentChanged);
+        const handleTaskPinChanged = ({ orderId, pinned }) => {
+            setPinnedTaskIds(prev => {
+                const exists = prev.includes(orderId);
+                const next = pinned ? (exists ? prev : [...prev, orderId]) : prev.filter(id => id !== orderId);
+                localStorage.setItem(pinStorageKey, JSON.stringify(next));
+                return next;
+            });
+        };
+        socket.on('task_pin_changed', handleTaskPinChanged);
         
         return () => {
             socket.off('new_task', handleNewTask);
@@ -489,8 +562,20 @@ export function TaskDashboard({ user }) {
             socket.off('task_status_changed', handleTaskUpdate);
             socket.off('task_deleted', handleTaskDeleted);
             socket.off('task_urgent_changed', handleUrgentChanged);
+            socket.off('task_pin_changed', handleTaskPinChanged);
         };
     }, [user]);
+
+    // 當任務列表變動時，清理已不存在的置頂 ID
+    useEffect(() => {
+        const currentIds = new Set(tasks.map(t => t.id));
+        setPinnedTaskIds(prev => {
+            const next = prev.filter(id => currentIds.has(id));
+            if (next.length !== prev.length) localStorage.setItem(pinStorageKey, JSON.stringify(next));
+            return next;
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tasks]);
 
     const handleClaimTask = async (orderId, isContinue) => {
         if (isContinue) {
@@ -552,15 +637,54 @@ export function TaskDashboard({ user }) {
         });
     }, [tasks, normalizedSearch]);
 
-    const pickTasks = visibleTasks.filter(t => t.task_type === 'pick');
-    const packTasks = visibleTasks.filter(t => t.task_type === 'pack');
+    // 依置頂/緊急排序後，再切分揀貨/裝箱
+    const sortedVisibleTasks = useMemo(() => {
+        const arr = [...visibleTasks];
+        arr.sort((a, b) => {
+            const aScore = (pinnedTaskIds.includes(a.id) ? 2 : 0) + (a.is_urgent ? 1 : 0);
+            const bScore = (pinnedTaskIds.includes(b.id) ? 2 : 0) + (b.is_urgent ? 1 : 0);
+            return bScore - aScore;
+        });
+        return arr;
+    }, [visibleTasks, pinnedTaskIds]);
+
+    const pickTasks = sortedVisibleTasks.filter(t => t.task_type === 'pick');
+    const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-secondary">
-                <div className="text-center">
-                    <Loader2 className="animate-spin text-apple-blue mx-auto mb-4" size={56} />
-                    <p className="text-gray-600 font-semibold text-lg">載入中...</p>
+            <div className="min-h-screen bg-secondary dark:bg-background/95">
+                <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+                    {/* Header Skeleton */}
+                    <div className="mb-4">
+                        <Skeleton className="h-8 w-48 mb-2" />
+                        <Skeleton className="h-4 w-72" />
+                    </div>
+                    {/* FilterBar Skeleton */}
+                    <div className="mb-6">
+                        <Skeleton className="h-10 w-full rounded-xl" />
+                    </div>
+                    {/* Stats Skeleton */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-2 mb-6">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                            <div key={i} className="bg-white rounded-2xl p-5 border border-gray-200">
+                                <Skeleton className="h-6 w-24 mb-3" />
+                                <Skeleton className="h-8 w-16" />
+                            </div>
+                        ))}
+                    </div>
+                    {/* Cards Skeleton */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <div key={i} className="bg-white rounded-2xl p-6 border border-gray-200">
+                                <Skeleton className="h-6 w-40 mb-4" />
+                                <SkeletonText lines={3} />
+                                <div className="mt-6">
+                                    <Skeleton className="h-11 w-full rounded-xl" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </div>
         );
@@ -672,6 +796,8 @@ export function TaskDashboard({ user }) {
                                             selectedTasks={selectedTasks}
                                             toggleTaskSelection={toggleTaskSelection}
                                             onOpenChat={handleOpenChat}
+                                            isPinned={pinnedTaskIds.includes(task.id)}
+                                            onTogglePin={togglePinTask}
                                         />
                                     </div>
                                 ))
@@ -727,6 +853,8 @@ export function TaskDashboard({ user }) {
                                             selectedTasks={selectedTasks}
                                             toggleTaskSelection={toggleTaskSelection}
                                             onOpenChat={handleOpenChat}
+                                            isPinned={pinnedTaskIds.includes(task.id)}
+                                            onTogglePin={togglePinTask}
                                         />
                                     </div>
                                 ))

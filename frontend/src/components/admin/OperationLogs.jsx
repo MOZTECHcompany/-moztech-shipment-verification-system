@@ -324,14 +324,33 @@ export function OperationLogs() {
                             </THead>
                             <TBody>
                                 {loading ? (
-                                    <TR>
-                                        <TD colSpan={5} className="py-12">
-                                            <div className="flex flex-col items-center justify-center">
-                                                <RefreshCw className="h-8 w-8 animate-spin text-blue-500 mb-3" />
-                                                <p className="text-gray-600 text-sm">載入中...</p>
-                                            </div>
-                                        </TD>
-                                    </TR>
+                                    <>
+                                        {Array.from({ length: 5 }).map((_, i) => (
+                                            <TR key={i}>
+                                                <TD><Skeleton className="h-4 w-28" /></TD>
+                                                <TD>
+                                                    <div className="flex items-center gap-2">
+                                                        <Skeleton className="h-4 w-4 rounded" />
+                                                        <div className="space-y-1">
+                                                            <Skeleton className="h-4 w-32" />
+                                                            <Skeleton className="h-3 w-24" />
+                                                        </div>
+                                                    </div>
+                                                </TD>
+                                                <TD><Skeleton className="h-5 w-24 rounded-full" /></TD>
+                                                <TD>
+                                                    <div className="flex items-center gap-2">
+                                                        <Skeleton className="h-5 w-5 rounded-lg" />
+                                                        <div className="space-y-1">
+                                                            <Skeleton className="h-4 w-24" />
+                                                            <Skeleton className="h-3 w-16" />
+                                                        </div>
+                                                    </div>
+                                                </TD>
+                                                <TD><Skeleton className="h-4 w-40" /></TD>
+                                            </TR>
+                                        ))}
+                                    </>
                                 ) : logs.length === 0 ? (
                                     <TR>
                                         <TD colSpan={5} className="py-10">

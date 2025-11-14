@@ -1423,6 +1423,50 @@ async function ensurePinsTable(client) {
     )`);
 }
 
+// 任務置頂（團隊共享）
+async function ensureTaskPinsTable(client) {
+    await client.query(`CREATE TABLE IF NOT EXISTS task_pins (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE UNIQUE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+}
+
+// 取得所有置頂任務（團隊共享）
+apiRouter.get('/tasks/pins', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await ensureTaskPinsTable(client);
+        const rows = await client.query('SELECT order_id FROM task_pins');
+        res.json({ pinned: rows.rows.map(r => r.order_id) });
+    } catch (e) {
+        logger.error('[/api/tasks/pins] 取得置頂任務失敗:', e);
+        res.status(500).json({ message: '取得置頂任務失敗' });
+    } finally { client.release(); }
+});
+
+// 設定/取消任務置頂（團隊共享）
+apiRouter.put('/tasks/pins/:orderId', async (req, res) => {
+    const { orderId } = req.params;
+    const { pinned } = req.body; // true/false
+    const userId = req.user?.id || null;
+    const client = await pool.connect();
+    try {
+        await ensureTaskPinsTable(client);
+        if (pinned) {
+            await client.query('INSERT INTO task_pins (order_id, created_by) VALUES ($1, $2) ON CONFLICT (order_id) DO NOTHING', [orderId, userId]);
+        } else {
+            await client.query('DELETE FROM task_pins WHERE order_id = $1', [orderId]);
+        }
+        try { io.emit('task_pin_changed', { orderId: Number(orderId), pinned: !!pinned }); } catch (e) {}
+        res.json({ success: true });
+    } catch (e) {
+        logger.error('[/api/tasks/pins/:orderId] 更新任務置頂失敗:', e);
+        res.status(500).json({ message: '更新置頂狀態失敗' });
+    } finally { client.release(); }
+});
+
 // 取得置頂清單
 apiRouter.get('/tasks/:orderId/pins', async (req, res) => {
     const { orderId } = req.params;
