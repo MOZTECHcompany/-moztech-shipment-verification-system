@@ -81,187 +81,209 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     return (
         <div className={`
             group relative overflow-hidden
-            bg-white rounded-xl sm:rounded-2xl 
-            transition-all duration-300 ease-out
-            hover:shadow-apple-lg hover:-translate-y-1
+            bg-white/90 backdrop-blur-sm rounded-xl sm:rounded-2xl 
+            transition-all duration-500 ease-out
+            hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.02]
             ${isMyTask 
-                ? 'ring-2 ring-green-500 shadow-apple-lg' 
+                ? 'ring-2 ring-green-500 shadow-2xl shadow-green-500/20 bg-gradient-to-br from-green-50/50 to-emerald-50/30' 
                 : isUrgent
-                ? 'ring-2 ring-red-500 shadow-lg shadow-red-100'
-                : 'shadow-apple-sm border border-gray-100'
+                ? 'ring-2 ring-red-500 shadow-2xl shadow-red-500/30 bg-gradient-to-br from-red-50/30 to-orange-50/20'
+                : 'shadow-lg border border-gray-100 hover:border-blue-200'
             }
-            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500' : ''}
+            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500 scale-[0.98]' : ''}
             animate-scale-in
         `}>
-            {/* 背景漸變裝飾 */}
+            {/* 背景裝飾元素 */}
+            <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700"></div>
+            
+            {/* 緊急任務頂部標記 */}
             {isUrgent && (
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-orange-500 to-red-500 animate-pulse" />
+                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-red-500 via-orange-500 to-red-500 animate-pulse">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent animate-shimmer"></div>
+                </div>
             )}
 
             
-            <div className="p-4 sm:p-5 md:p-6">
-                {/* 標題列 */}
-                <div className="flex justify-between items-start mb-3 sm:mb-4">
+            <div className="relative z-10 p-4 sm:p-5 md:p-6">
+                {/* 標題列 - 優化 */}
+                <div className="flex justify-between items-start mb-4">
                     <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
                         {batchMode && (
                             <input
                                 type="checkbox"
                                 checked={selectedTasks.includes(task.id)}
                                 onChange={() => toggleTaskSelection(task.id)}
-                                className="w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                                className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 cursor-pointer transition-all flex-shrink-0"
                             />
                         )}
                         <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-lg sm:text-xl text-gray-900 truncate mb-1">
+                            <h3 className="font-black text-lg sm:text-xl text-gray-900 truncate mb-1.5 group-hover:text-blue-600 transition-colors">
                                 {task.voucher_number}
                             </h3>
                             <div className="flex items-center text-xs sm:text-sm text-gray-500">
-                                <User size={12} className="mr-1 sm:mr-1.5 flex-shrink-0 sm:w-3.5 sm:h-3.5" />
-                                <span className="truncate">{task.customer_name}</span>
+                                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-lg">
+                                    <User size={12} className="flex-shrink-0 sm:w-3.5 sm:h-3.5" />
+                                    <span className="truncate font-medium">{task.customer_name}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
                     
-                    <div className="flex items-center gap-1.5 sm:gap-2 ml-2 sm:ml-3 flex-shrink-0">
-                        {/* 緊急標記 */}
+                    <div className="flex flex-col items-end gap-2 ml-2 sm:ml-3 flex-shrink-0">
+                        {/* 緊急標記 - 優化 */}
                         {isUrgent && (
-                            <div className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl text-xs font-bold
-                                bg-gradient-to-r from-red-500 to-orange-500 text-white
-                                flex items-center gap-1 sm:gap-1.5 shadow-md animate-pulse">
-                                <Flame size={12} className="sm:w-3.5 sm:h-3.5" />
-                                <span className="hidden xs:inline">緊急</span>
+                            <div className="relative group/badge">
+                                <div className="absolute inset-0 bg-gradient-to-r from-red-500 to-orange-500 rounded-xl blur-md opacity-60 animate-pulse"></div>
+                                <div className="relative px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-black
+                                    bg-gradient-to-r from-red-500 via-orange-500 to-red-500 text-white
+                                    flex items-center gap-1.5 shadow-lg">
+                                    <Flame size={14} className="sm:w-4 sm:h-4 animate-bounce" />
+                                    <span className="hidden xs:inline">緊急</span>
+                                </div>
                             </div>
                         )}
                         
-                        {/* 狀態標籤 */}
+                        {/* 狀態標籤 - 優化 */}
                         <div className={`
-                            px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl text-xs font-semibold
-                            flex items-center gap-1 sm:gap-1.5
+                            relative px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold
+                            flex items-center gap-1.5 shadow-md
                             ${statusInfo.color}
+                            group-hover:scale-105 transition-transform
                         `}>
-                            <span className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full ${statusInfo.dot}`} />
-                            <StatusIcon size={10} className="sm:w-3 sm:h-3" />
+                            <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${statusInfo.dot}`} />
+                            <StatusIcon size={12} className="sm:w-3.5 sm:h-3.5" />
                             <span className="hidden xs:inline">{statusInfo.text}</span>
                         </div>
                         
-                        {/* 緊急按鈕（僅管理員） */}
-                        {user && user.role === 'admin' && (
-                            <button
-                                onClick={handleSetUrgent}
-                                className={`
-                                    p-1.5 sm:p-2 rounded-lg sm:rounded-xl transition-all duration-200
-                                    ${isUrgent 
-                                        ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' 
-                                        : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50'
-                                    }
-                                    opacity-0 group-hover:opacity-100
-                                `}
-                                title={isUrgent ? '取消緊急標記' : '標記為緊急'}
-                            >
-                                <AlertTriangle size={14} className="sm:w-4 sm:h-4" />
-                            </button>
-                        )}
-                        
-                        {/* 刪除按鈕（僅管理員） */}
-                        {user && user.role === 'admin' && (
-                            <button
-                                onClick={() => onDelete(task.id, task.voucher_number)}
-                                className="
-                                    p-1.5 sm:p-2 text-red-500 hover:bg-red-50 rounded-lg sm:rounded-xl 
-                                    transition-all duration-200
-                                    opacity-0 group-hover:opacity-100
-                                "
-                                title="永久刪除此訂單"
-                            >
-                                <Trash2 size={14} className="sm:w-4 sm:h-4" />
-                            </button>
-                        )}
+                        {/* 管理員按鈕組 */}
+                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                            {user && user.role === 'admin' && (
+                                <>
+                                    <button
+                                        onClick={handleSetUrgent}
+                                        className={`
+                                            p-2 rounded-lg transition-all duration-200
+                                            ${isUrgent 
+                                                ? 'text-orange-600 bg-orange-100 hover:bg-orange-200' 
+                                                : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50'
+                                            }
+                                            hover:scale-110
+                                        `}
+                                        title={isUrgent ? '取消緊急標記' : '標記為緊急'}
+                                    >
+                                        <AlertTriangle size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                    </button>
+                                    
+                                    <button
+                                        onClick={() => onDelete(task.id, task.voucher_number)}
+                                        className="
+                                            p-2 text-red-500 hover:bg-red-50 rounded-lg 
+                                            transition-all duration-200
+                                            hover:scale-110 hover:rotate-12
+                                        "
+                                        title="永久刪除此訂單"
+                                    >
+                                        <Trash2 size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                    </button>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
 
-                {/* 額外資訊 */}
+                {/* 額外資訊 - 優化 */}
                 {task.task_type === 'pack' && task.picker_name && (
-                    <div className="mb-3 sm:mb-4 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-blue-50 rounded-lg border border-blue-100">
-                        <p className="text-xs text-blue-700">
-                            <CheckCircle2 size={10} className="inline mr-1 sm:w-3 sm:h-3" />
-                            由 <span className="font-semibold">{task.picker_name}</span> 完成揀貨
+                    <div className="mb-3 sm:mb-4 px-3 sm:px-4 py-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200/50 shadow-sm">
+                        <p className="text-xs sm:text-sm text-blue-700 font-medium flex items-center gap-2">
+                            <CheckCircle2 size={14} className="text-blue-600 flex-shrink-0" />
+                            由 <span className="font-bold">{task.picker_name}</span> 完成揀貨
                         </p>
                     </div>
                 )}
 
-                {/* 評論預覽區域 */}
+                {/* 評論預覽區域 - 全新設計 */}
                 {hasComments && (
-                    <div className="mb-3 sm:mb-4">
+                    <div className="mb-4">
                         <button
                             onClick={handleOpenChat}
-                            className="w-full px-2.5 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 rounded-lg transition-all group"
+                            className="w-full group/comment relative px-3 sm:px-4 py-3 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 hover:from-blue-100 hover:via-indigo-100 hover:to-purple-100 border-2 border-blue-200/50 hover:border-blue-400/50 rounded-xl sm:rounded-2xl transition-all duration-300 overflow-hidden shadow-md hover:shadow-xl"
                         >
-                            <div className="flex items-start gap-1.5 sm:gap-2">
-                                <MessageSquare size={14} className="text-blue-600 flex-shrink-0 mt-0.5 sm:w-4 sm:h-4" />
+                            {/* 閃光效果 */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover/comment:translate-x-full transition-transform duration-1000"></div>
+                            
+                            <div className="relative flex items-start gap-2 sm:gap-3">
+                                <div className="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg group-hover/comment:scale-110 transition-transform">
+                                    <MessageSquare size={16} className="text-white sm:w-5 sm:h-5" />
+                                </div>
                                 <div className="flex-1 text-left min-w-0">
                                     {latestComment && (
-                                        <p className="text-xs text-gray-700 truncate mb-0.5 sm:mb-1">
-                                            <span className="font-semibold">{latestComment.user_name}:</span> {latestComment.content}
+                                        <p className="text-xs sm:text-sm text-gray-700 truncate mb-2 font-medium">
+                                            <span className="font-bold text-blue-700">{latestComment.user_name}:</span> {latestComment.content}
                                         </p>
                                     )}
-                                    <div className="flex items-center gap-1.5 sm:gap-2 text-xs">
+                                    <div className="flex flex-wrap items-center gap-2">
                                         {hasUnread && (
-                                            <span className="bg-red-500 text-white px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold animate-pulse">
-                                                {task.unread_comments} 未讀
+                                            <span className="relative inline-flex items-center bg-red-500 text-white px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-black shadow-lg">
+                                                <span className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-75"></span>
+                                                <span className="relative">{task.unread_comments} 未讀</span>
                                             </span>
                                         )}
                                         {hasUrgentComments && (
-                                            <span className="bg-red-100 text-red-600 px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium flex items-center gap-0.5 sm:gap-1">
-                                                <AlertTriangle size={8} className="sm:w-2.5 sm:h-2.5" />
+                                            <span className="bg-gradient-to-r from-red-500 to-orange-500 text-white px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-lg">
+                                                <AlertTriangle size={10} className="animate-pulse" />
                                                 {task.urgent_comments} 緊急
                                             </span>
                                         )}
-                                        <span className="text-gray-500 text-[10px] sm:text-xs">
+                                        <span className="text-gray-500 text-[10px] sm:text-xs font-semibold flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
                                             {task.total_comments} 則對話
                                         </span>
                                     </div>
                                 </div>
-                                <ArrowRight size={14} className="text-blue-600 opacity-0 group-hover:opacity-100 transition flex-shrink-0 sm:w-4 sm:h-4" />
+                                <ArrowRight size={16} className="text-blue-600 flex-shrink-0 opacity-0 group-hover/comment:opacity-100 group-hover/comment:translate-x-1 transition-all sm:w-5 sm:h-5" />
                             </div>
                         </button>
                     </div>
                 )}
 
-                {/* 操作按鈕 */}
+                {/* 操作按鈕 - 全新設計 */}
                 {isMyTask ? (
                     <button
                         onClick={() => onClaim(task.id, true)}
                         className="
-                            w-full px-3 sm:px-4 py-2.5 sm:py-3 
-                            bg-gradient-to-r from-green-500 to-emerald-600
-                            text-white text-sm sm:text-base font-semibold rounded-lg sm:rounded-xl
-                            hover:from-green-600 hover:to-emerald-700
-                            active:scale-[0.98]
-                            transition-all duration-200
-                            shadow-lg shadow-green-500/30
-                            flex items-center justify-center gap-1.5 sm:gap-2
+                            group/btn relative w-full px-4 py-3.5 sm:py-4
+                            bg-gradient-to-r from-green-500 via-emerald-500 to-green-600
+                            text-white text-sm sm:text-base font-black rounded-xl sm:rounded-2xl
+                            hover:from-green-600 hover:via-emerald-600 hover:to-green-700
+                            active:scale-[0.97]
+                            transition-all duration-300
+                            shadow-2xl shadow-green-500/50 hover:shadow-green-500/60
+                            flex items-center justify-center gap-2
+                            overflow-hidden
                         "
                     >
-                        繼續作業
-                        <ArrowRight size={16} className="sm:w-[18px] sm:h-[18px]" />
+                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/25 to-white/0 -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"></div>
+                        <span className="relative z-10">繼續作業</span>
+                        <ArrowRight size={18} className="relative z-10 group-hover/btn:translate-x-1 transition-transform sm:w-5 sm:h-5" />
                     </button>
                 ) : (
                     <button
                         onClick={() => onClaim(task.id, false)}
                         className="
-                            w-full px-3 sm:px-4 py-2.5 sm:py-3
-                            bg-gradient-to-r from-blue-500 to-indigo-600
-                            text-white text-sm sm:text-base font-semibold rounded-lg sm:rounded-xl
-                            hover:from-blue-600 hover:to-indigo-700
-                            active:scale-[0.98]
-                            transition-all duration-200
-                            shadow-lg shadow-blue-500/30
-                            flex items-center justify-center gap-1.5 sm:gap-2
-                            group/btn
+                            group/btn relative w-full px-4 py-3.5 sm:py-4
+                            bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600
+                            text-white text-sm sm:text-base font-black rounded-xl sm:rounded-2xl
+                            hover:from-blue-600 hover:via-indigo-600 hover:to-purple-700
+                            active:scale-[0.97]
+                            transition-all duration-300
+                            shadow-2xl shadow-blue-500/50 hover:shadow-indigo-500/60
+                            flex items-center justify-center gap-2
+                            overflow-hidden
                         "
                     >
-                        {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}
-                        <ArrowRight size={16} className="group-hover/btn:translate-x-1 transition-transform sm:w-[18px] sm:h-[18px]" />
+                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/25 to-white/0 -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"></div>
+                        <span className="relative z-10">{task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}</span>
+                        <ArrowRight size={18} className="relative z-10 group-hover/btn:translate-x-2 transition-transform sm:w-5 sm:h-5" />
                     </button>
                 )}
             </div>
@@ -556,206 +578,274 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/40 to-purple-50/30">
             <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
-                {/* 現代化標題列 */}
+                {/* 優化的標頭區 */}
                 <header className="mb-6 sm:mb-8 animate-fade-in">
-                    <div className="flex flex-col gap-4 sm:gap-6 mb-6">
-                        <div>
-                            <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
-                                {currentView === 'tasks' ? '📋 任務看板' : '🔍 我的任務'}
-                            </h1>
-                            <p className="text-sm sm:text-base text-gray-500 font-medium">選擇一項任務以開始作業</p>
-                        </div>
-                        
-                        {/* 操作按鈕組 */}
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                            {/* 批次模式開關 */}
-                            <button
-                                onClick={toggleBatchMode}
-                                className={`
-                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-semibold text-sm sm:text-base
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
-                                    active:scale-[0.98]
-                                    ${batchMode 
-                                        ? 'bg-apple-blue/90 text-white hover:bg-apple-blue backdrop-blur-sm' 
-                                        : 'bg-white/90 text-gray-700 border-2 border-gray-200 hover:border-gray-300 hover:bg-white backdrop-blur-sm'
-                                    }
-                                `}
-                                title={batchMode ? '退出批次模式' : '進入批次模式'}
-                            >
-                                <ListChecks size={16} className="sm:w-5 sm:h-5" />
-                                <span className="hidden xs:inline">
-                                    {batchMode ? '批次模式' : '批次操作'}
-                                </span>
-                            </button>
+                    {/* 玻璃擬態容器 */}
+                    <div className="glass rounded-2xl sm:rounded-3xl p-5 sm:p-6 md:p-8 border border-white/50 shadow-2xl backdrop-blur-xl bg-white/60">
+                        <div className="flex flex-col gap-5 sm:gap-6">
+                            {/* 頂部標題與歡迎訊息 */}
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                                <div className="flex items-start gap-3 sm:gap-4">
+                                    {/* 動態圖標 */}
+                                    <div className="relative">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-blue-400 to-purple-600 rounded-2xl blur-xl opacity-60 animate-pulse"></div>
+                                        <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-blue-500 via-blue-600 to-purple-600 flex items-center justify-center shadow-2xl transform hover:scale-110 transition-all duration-300">
+                                            <Package className="text-white" size={28} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent mb-1 sm:mb-2">
+                                            任務看板
+                                        </h1>
+                                        <p className="text-xs sm:text-sm text-gray-500 font-medium flex items-center gap-2">
+                                            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                                            {currentView === 'tasks' ? '全部任務' : '我的任務'}
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                {/* 通知中心 - 移到右上角 */}
+                                <div className="flex items-center gap-2">
+                                    <NotificationCenter onOpenChat={handleOpenChat} />
+                                </div>
+                            </div>
+                            
+                            {/* 功能按鈕組 - 重新設計 */}
+                            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                                {/* 批次模式開關（僅管理員） */}
+                                {user && user.role === 'admin' && (
+                                    <button
+                                        onClick={toggleBatchMode}
+                                        className={`
+                                            group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-xs sm:text-sm
+                                            transition-all duration-300 shadow-lg hover:shadow-xl
+                                            active:scale-95 overflow-hidden
+                                            ${batchMode 
+                                                ? 'bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 text-white ring-2 ring-blue-300' 
+                                                : 'bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 hover:border-blue-300'
+                                            }
+                                        `}
+                                    >
+                                        <div className={`absolute inset-0 bg-gradient-to-r from-blue-400 to-purple-500 opacity-0 group-hover:opacity-20 transition-opacity duration-300 ${batchMode ? 'opacity-10' : ''}`}></div>
+                                        <ListChecks size={16} className="sm:w-5 sm:h-5 relative z-10" />
+                                        <span className="hidden xs:inline relative z-10">
+                                            {batchMode ? '✓ 批次模式' : '批次操作'}
+                                        </span>
+                                    </button>
+                                )}
 
-                            {/* 批次認領按鈕 */}
-                            {batchMode && selectedTasks.length > 0 && (
-                                <button
-                                    onClick={handleBatchClaim}
-                                    className="
-                                        flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-semibold text-sm sm:text-base
-                                        bg-apple-green/90 text-white hover:bg-apple-green backdrop-blur-sm
-                                        shadow-apple-sm hover:shadow-apple
-                                        transition-all duration-200
-                                        active:scale-[0.98]
-                                        animate-scale-in
-                                    "
-                                >
-                                    <CheckCircle2 size={16} className="sm:w-5 sm:h-5" />
-                                    <span className="hidden xs:inline">認領 {selectedTasks.length} 個</span>
-                                    <span className="xs:hidden">({selectedTasks.length})</span>
-                                </button>
-                            )}
+                                {/* 批次認領按鈕 */}
+                                {batchMode && selectedTasks.length > 0 && (
+                                    <button
+                                        onClick={handleBatchClaim}
+                                        className="
+                                            group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-bold text-xs sm:text-sm
+                                            bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 text-white
+                                            shadow-lg hover:shadow-2xl shadow-green-500/50 hover:shadow-green-500/60
+                                            transition-all duration-300
+                                            active:scale-95 overflow-hidden
+                                            animate-scale-in
+                                        "
+                                    >
+                                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
+                                        <CheckCircle2 size={16} className="sm:w-5 sm:h-5 relative z-10" />
+                                        <span className="hidden xs:inline relative z-10">認領 {selectedTasks.length} 個</span>
+                                        <span className="xs:hidden relative z-10">({selectedTasks.length})</span>
+                                    </button>
+                                )}
 
-                            {/* 音效開關 */}
+                            {/* 音效開關 - 優化設計 */}
                             <button
                                 onClick={toggleSound}
                                 className={`
-                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-medium text-sm sm:text-base
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
-                                    active:scale-[0.98]
+                                    group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-xs sm:text-sm
+                                    transition-all duration-300 shadow-lg hover:shadow-xl
+                                    active:scale-95 overflow-hidden
                                     ${soundEnabled 
-                                        ? 'bg-apple-green/90 text-white hover:bg-apple-green backdrop-blur-sm' 
-                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
+                                        ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white ring-2 ring-green-300' 
+                                        : 'bg-white text-gray-600 hover:bg-gray-50 border-2 border-gray-200'
                                     }
                                 `}
                                 title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
                             >
-                                {soundEnabled ? <Volume2 size={16} className="sm:w-5 sm:h-5" /> : <VolumeX size={16} className="sm:w-5 sm:h-5" />}
-                                <span className="hidden sm:inline">
+                                <div className={`absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
+                                {soundEnabled ? <Volume2 size={16} className="sm:w-5 sm:h-5 relative z-10 animate-pulse" /> : <VolumeX size={16} className="sm:w-5 sm:h-5 relative z-10" />}
+                                <span className="hidden sm:inline relative z-10">
                                     {soundEnabled ? '音效' : '音效'}
                                 </span>
                             </button>
 
-                            {/* 語音播報開關 */}
+                            {/* 語音播報開關 - 優化設計 */}
                             <button
                                 onClick={toggleVoice}
                                 className={`
-                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-medium text-sm sm:text-base
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
-                                    active:scale-[0.98]
+                                    group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-xs sm:text-sm
+                                    transition-all duration-300 shadow-lg hover:shadow-xl
+                                    active:scale-95 overflow-hidden
                                     ${voiceEnabled 
-                                        ? 'bg-apple-blue/90 text-white hover:bg-apple-blue backdrop-blur-sm' 
-                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
+                                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white ring-2 ring-blue-300' 
+                                        : 'bg-white text-gray-600 hover:bg-gray-50 border-2 border-gray-200'
                                     }
                                 `}
                                 title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
                             >
-                                <MessageSquare size={16} className="sm:w-5 sm:h-5" />
-                                <span className="hidden sm:inline">
+                                <div className={`absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
+                                <MessageSquare size={16} className="sm:w-5 sm:h-5 relative z-10" />
+                                <span className="hidden sm:inline relative z-10">
                                     {voiceEnabled ? '語音' : '語音'}
                                 </span>
                             </button>
 
-                            {/* 桌面通知開關 */}
+                            {/* 桌面通知開關 - 優化設計 */}
                             <button
                                 onClick={toggleNotification}
                                 className={`
-                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-medium text-sm sm:text-base
-                                    transition-all duration-200 shadow-apple-sm hover:shadow-apple
-                                    active:scale-[0.98]
+                                    group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-xs sm:text-sm
+                                    transition-all duration-300 shadow-lg hover:shadow-xl
+                                    active:scale-95 overflow-hidden
                                     ${notificationEnabled 
-                                        ? 'bg-apple-purple/90 text-white hover:bg-apple-purple backdrop-blur-sm' 
-                                        : 'bg-white/90 text-gray-700 border border-gray-200/80 hover:bg-gray-50/90 backdrop-blur-sm'
+                                        ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white ring-2 ring-purple-300' 
+                                        : 'bg-white text-gray-600 hover:bg-gray-50 border-2 border-gray-200'
                                     }
                                 `}
                                 title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
                             >
-                                <Bell size={16} className="sm:w-5 sm:h-5" />
-                                <span className="hidden sm:inline">
+                                <div className={`absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
+                                <Bell size={16} className="sm:w-5 sm:h-5 relative z-10" />
+                                <span className="hidden sm:inline relative z-10">
                                     {notificationEnabled ? '通知' : '通知'}
                                 </span>
                             </button>
-
-                            {/* 討論通知中心 */}
-                            <NotificationCenter onOpenChat={handleOpenChat} />
                             
-                            {/* 管理中心 */}
+                            {/* 管理中心 - 優化設計 */}
                             {user && user.role === 'admin' && (
                                 <Link 
                                     to="/admin" 
                                     className="
-                                        flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-semibold text-sm sm:text-base
-                                        bg-gray-700/90 text-white hover:bg-gray-800 backdrop-blur-sm
-                                        shadow-apple-sm hover:shadow-apple
-                                        transition-all duration-200
-                                        active:scale-[0.98]
+                                        group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-bold text-xs sm:text-sm
+                                        bg-gradient-to-r from-gray-800 via-gray-900 to-black text-white
+                                        shadow-lg hover:shadow-2xl shadow-gray-900/50
+                                        transition-all duration-300
+                                        active:scale-95 overflow-hidden
                                     "
                                 >
-                                    <LayoutDashboard size={16} className="sm:w-5 sm:h-5" />
-                                    <span className="hidden xs:inline">管理中心</span>
+                                    <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
+                                    <LayoutDashboard size={16} className="sm:w-5 sm:h-5 relative z-10" />
+                                    <span className="hidden xs:inline relative z-10">管理中心</span>
                                 </Link>
                             )}
                         </div>
                     </div>
 
-                    {/* 統計卡片 */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                        <div className="glass rounded-xl sm:rounded-2xl p-3 sm:p-4 border border-white/20">
-                            <div className="flex items-center justify-between">
+                    {/* 統計卡片 - 全新設計 */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-5 sm:mt-6">
+                        {/* 待揀貨卡片 */}
+                        <div className="group relative glass rounded-xl sm:rounded-2xl p-4 sm:p-5 border border-white/50 hover:border-amber-300/50 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 bg-gradient-to-br from-white/80 to-amber-50/30 overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-amber-400/0 to-amber-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">待揀貨</p>
-                                    <p className="text-2xl sm:text-3xl font-bold text-gray-900">{pickTasks.length}</p>
+                                    <p className="text-xs sm:text-sm text-gray-600 font-medium mb-1 flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></span>
+                                        待揀貨
+                                    </p>
+                                    <p className="text-3xl sm:text-4xl font-black bg-gradient-to-br from-amber-600 to-orange-600 bg-clip-text text-transparent">
+                                        {pickTasks.length}
+                                    </p>
                                 </div>
-                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-amber-100 flex items-center justify-center">
-                                    <Package className="text-amber-600" size={20} />
+                                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                                    <Package className="text-white" size={24} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass rounded-xl sm:rounded-2xl p-3 sm:p-4 border border-white/20">
-                            <div className="flex items-center justify-between">
+
+                        {/* 待裝箱卡片 */}
+                        <div className="group relative glass rounded-xl sm:rounded-2xl p-4 sm:p-5 border border-white/50 hover:border-indigo-300/50 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 bg-gradient-to-br from-white/80 to-indigo-50/30 overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-indigo-400/0 to-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">待裝箱</p>
-                                    <p className="text-2xl sm:text-3xl font-bold text-gray-900">{packTasks.length}</p>
+                                    <p className="text-xs sm:text-sm text-gray-600 font-medium mb-1 flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse"></span>
+                                        待裝箱
+                                    </p>
+                                    <p className="text-3xl sm:text-4xl font-black bg-gradient-to-br from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                                        {packTasks.length}
+                                    </p>
                                 </div>
-                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-indigo-100 flex items-center justify-center">
-                                    <Box className="text-indigo-600" size={20} />
+                                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                                    <Box className="text-white" size={24} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass-card rounded-xl sm:rounded-2xl p-3 sm:p-4">
-                            <div className="flex items-center justify-between">
+
+                        {/* 總任務卡片 */}
+                        <div className="group relative glass rounded-xl sm:rounded-2xl p-4 sm:p-5 border border-white/50 hover:border-blue-300/50 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 bg-gradient-to-br from-white/80 to-blue-50/30 overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-blue-400/0 to-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">總任務</p>
-                                    <p className="text-2xl sm:text-3xl font-bold text-gray-900">{tasks.length}</p>
+                                    <p className="text-xs sm:text-sm text-gray-600 font-medium mb-1 flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
+                                        總任務
+                                    </p>
+                                    <p className="text-3xl sm:text-4xl font-black bg-gradient-to-br from-blue-600 to-cyan-600 bg-clip-text text-transparent">
+                                        {tasks.length}
+                                    </p>
                                 </div>
-                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-apple-blue/10 flex items-center justify-center">
-                                    <LayoutDashboard className="text-apple-blue" size={20} />
+                                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-gradient-to-br from-blue-400 to-cyan-500 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                                    <LayoutDashboard className="text-white" size={24} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass-card rounded-xl sm:rounded-2xl p-3 sm:p-4">
-                            <div className="flex items-center justify-between">
+
+                        {/* 我的任務卡片 */}
+                        <div className="group relative glass rounded-xl sm:rounded-2xl p-4 sm:p-5 border border-white/50 hover:border-green-300/50 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 bg-gradient-to-br from-white/80 to-green-50/30 overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-green-400/0 to-green-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">我的任務</p>
-                                    <p className="text-2xl sm:text-3xl font-bold text-apple-green">
+                                    <p className="text-xs sm:text-sm text-gray-600 font-medium mb-1 flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                                        我的任務
+                                    </p>
+                                    <p className="text-3xl sm:text-4xl font-black bg-gradient-to-br from-green-600 to-emerald-600 bg-clip-text text-transparent">
                                         {tasks.filter(t => t.current_user).length}
                                     </p>
                                 </div>
-                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-green-100 flex items-center justify-center">
-                                    <User className="text-green-600" size={20} />
+                                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                                    <User className="text-white" size={24} />
                                 </div>
                             </div>
                         </div>
                     </div>
                 </header>
 
-                {/* 任務列表 */}
+                {/* 任務列表 - 優化設計 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 md:gap-8">
-                    {/* 揀貨任務 */}
+                    {/* 揀貨任務區 */}
                     <section className="animate-slide-up">
-                        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
-                            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-100 flex items-center justify-center">
-                                <Package className="text-amber-600" size={18} />
+                        <div className="relative mb-4 sm:mb-6">
+                            {/* 漸層背景裝飾 */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent rounded-2xl blur-xl"></div>
+                            <div className="relative glass rounded-xl sm:rounded-2xl p-4 border border-amber-200/50 bg-gradient-to-r from-amber-50/50 to-orange-50/30">
+                                <div className="flex items-center gap-2 sm:gap-3">
+                                    <div className="relative">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl blur-md opacity-60"></div>
+                                        <div className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
+                                            <Package className="text-white" size={20} />
+                                        </div>
+                                    </div>
+                                    <div className="flex-1">
+                                        <h2 className="text-xl sm:text-2xl font-black bg-gradient-to-r from-amber-700 to-orange-700 bg-clip-text text-transparent">
+                                            待揀貨任務
+                                        </h2>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs sm:text-sm font-bold shadow-lg animate-pulse">
+                                            {pickTasks.length}
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
-                            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
-                                待揀貨任務
-                            </h2>
-                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-amber-100 text-amber-700 text-xs sm:text-sm font-semibold">
-                                {pickTasks.length}
-                            </span>
                         </div>
                         <div className="space-y-3 sm:space-y-4">
                             {pickTasks.length > 0 ? (
@@ -778,26 +868,45 @@ export function TaskDashboard({ user }) {
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-center py-12 sm:py-16 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200">
-                                    <Package className="mx-auto mb-3 sm:mb-4 text-gray-300" size={48} />
-                                    <p className="text-gray-400 text-base sm:text-lg">目前沒有待處理的揀貨任務</p>
+                                <div className="relative group text-center py-16 sm:py-20 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 hover:border-amber-300 transition-all duration-300 overflow-hidden">
+                                    <div className="absolute inset-0 bg-gradient-to-br from-amber-50/0 to-amber-100/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                    <div className="relative z-10">
+                                        <div className="inline-block p-4 bg-gradient-to-br from-amber-100 to-orange-100 rounded-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
+                                            <Package className="text-amber-600" size={48} />
+                                        </div>
+                                        <p className="text-gray-400 text-base sm:text-lg font-medium">目前沒有待處理的揀貨任務</p>
+                                        <p className="text-gray-300 text-xs sm:text-sm mt-2">太棒了！保持這個節奏 🎉</p>
+                                    </div>
                                 </div>
                             )}
                         </div>
                     </section>
 
-                    {/* 裝箱任務 */}
+                    {/* 裝箱任務區 */}
                     <section className="animate-slide-up" style={{ animationDelay: '100ms' }}>
-                        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
-                            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-indigo-100 flex items-center justify-center">
-                                <Box className="text-indigo-600" size={18} />
+                        <div className="relative mb-4 sm:mb-6">
+                            {/* 漸層背景裝飾 */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent rounded-2xl blur-xl"></div>
+                            <div className="relative glass rounded-xl sm:rounded-2xl p-4 border border-indigo-200/50 bg-gradient-to-r from-indigo-50/50 to-purple-50/30">
+                                <div className="flex items-center gap-2 sm:gap-3">
+                                    <div className="relative">
+                                        <div className="absolute inset-0 bg-gradient-to-br from-indigo-400 to-purple-500 rounded-xl blur-md opacity-60"></div>
+                                        <div className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center shadow-lg">
+                                            <Box className="text-white" size={20} />
+                                        </div>
+                                    </div>
+                                    <div className="flex-1">
+                                        <h2 className="text-xl sm:text-2xl font-black bg-gradient-to-r from-indigo-700 to-purple-700 bg-clip-text text-transparent">
+                                            待裝箱任務
+                                        </h2>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-xs sm:text-sm font-bold shadow-lg animate-pulse">
+                                            {packTasks.length}
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
-                            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
-                                待裝箱任務
-                            </h2>
-                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs sm:text-sm font-semibold">
-                                {packTasks.length}
-                            </span>
                         </div>
                         <div className="space-y-3 sm:space-y-4">
                             {packTasks.length > 0 ? (
@@ -820,9 +929,15 @@ export function TaskDashboard({ user }) {
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-center py-12 sm:py-16 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200">
-                                    <Box className="mx-auto mb-3 sm:mb-4 text-gray-300" size={48} />
-                                    <p className="text-gray-400 text-base sm:text-lg">目前沒有待處理的裝箱任務</p>
+                                <div className="relative group text-center py-16 sm:py-20 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 hover:border-indigo-300 transition-all duration-300 overflow-hidden">
+                                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/0 to-indigo-100/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                    <div className="relative z-10">
+                                        <div className="inline-block p-4 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
+                                            <Box className="text-indigo-600" size={48} />
+                                        </div>
+                                        <p className="text-gray-400 text-base sm:text-lg font-medium">目前沒有待處理的裝箱任務</p>
+                                        <p className="text-gray-300 text-xs sm:text-sm mt-2">繼續加油！💪</p>
+                                    </div>
                                 </div>
                             )}
                         </div>
