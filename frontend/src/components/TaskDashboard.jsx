@@ -79,13 +79,21 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
         onOpenChat(task.id, task.voucher_number);
     };
 
+    // 強化卡片框架：置頂/緊急以完整環繞光暈取代僅頂部色條，避免「只亮一角」的破圖感
+    const selectionRing = selectedTasks.includes(task.id) ? 'ring-2 ring-primary scale-[0.99]' : '';
+    const attentionRing = isUrgent
+        ? 'ring-2 ring-[rgba(255,59,48,0.45)] hover:ring-[rgba(255,59,48,0.65)] ring-offset-2 ring-offset-white dark:ring-offset-background shadow-[0_0_0_3px_rgba(255,59,48,0.10)]'
+        : (isPinned
+            ? 'ring-2 ring-[rgba(0,122,255,0.45)] hover:ring-[rgba(0,122,255,0.65)] ring-offset-2 ring-offset-white dark:ring-offset-background shadow-[0_0_0_3px_rgba(0,122,255,0.10)]'
+            : 'shadow-lg border border-gray-100 hover:border-blue-200');
+
     return (
         <div className={`
             group relative overflow-hidden
             bg-white/90 dark:bg-card backdrop-blur-sm rounded-xl sm:rounded-2xl 
             transition-all duration-500 ease-out
             hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.01]
-            ${selectedTasks.includes(task.id) ? 'ring-2 ring-primary scale-[0.99]' : 'shadow-lg border border-gray-100 hover:border-blue-200'}
+            ${attentionRing} ${selectionRing}
             animate-scale-in
         `}>
             {/* 左側狀態色條（2-3px） */}
@@ -97,13 +105,17 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             }`} />
             {/* 背景裝飾元素 */}
             <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700"></div>
-            
-            {/* 緊急任務頂部標記 */}
-            {isUrgent && (
-                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-red-500 via-orange-500 to-red-500 animate-pulse">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent animate-shimmer"></div>
-                </div>
+            {/* 置頂：藍色星光邊緣（conic-gradient）慢速旋轉的光暈，僅外緣可見 */}
+            {isPinned && (
+                <div
+                    className="pointer-events-none absolute -inset-[1px] rounded-[1.25rem] opacity-[0.35] blur-[1px] -z-10 group-hover:animate-[spin_16s_linear_infinite]"
+                    style={{
+                        background: 'conic-gradient(at 50% 50%, rgba(0,122,255,0.48), rgba(0,122,255,0.12), rgba(0,122,255,0.48))'
+                    }}
+                />
             )}
+            
+            {/* 以整體環繞光暈呈現緊急/置頂，不再僅顯示頂部色條 */}
 
             
             <div className="relative z-10 p-4 sm:p-5 md:p-6">
