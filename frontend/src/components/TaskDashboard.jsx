@@ -160,19 +160,19 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <span className="hidden xs:inline">{statusInfo.text}</span>
                         </div>
                         
-                        {/* 工具按鈕組（置頂對所有角色開放；緊急/刪除限管理員） */}
+                        {/* 工具按鈕組（置頂/緊急/刪除僅管理員） */}
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }}
-                                className={`p-2 rounded-lg transition-all duration-200 ${
-                                    isPinned ? 'text-gray-900 bg-gray-200 hover:bg-gray-300' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
-                                } hover:scale-110`}
-                                title={isPinned ? '取消置頂' : '置頂'}
-                            >
-                                <Pin size={16} className="sm:w-[18px] sm:h-[18px]" />
-                            </button>
                             {user && user.role === 'admin' && (
                                 <>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }}
+                                        className={`p-2 rounded-lg transition-all duration-200 ${
+                                            isPinned ? 'text-gray-900 bg-gray-200 hover:bg-gray-300' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                                        } hover:scale-110`}
+                                        title={isPinned ? '取消置頂' : '置頂'}
+                                    >
+                                        <Pin size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                    </button>
                                     <button
                                         onClick={handleSetUrgent}
                                         className={`

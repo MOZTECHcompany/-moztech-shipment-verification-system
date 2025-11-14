@@ -1447,7 +1447,7 @@ apiRouter.get('/tasks/pins', async (req, res) => {
 });
 
 // 設定/取消任務置頂（團隊共享）
-apiRouter.put('/tasks/pins/:orderId', async (req, res) => {
+apiRouter.put('/tasks/pins/:orderId', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const { pinned } = req.body; // true/false
     const userId = req.user?.id || null;
