@@ -817,7 +817,8 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
                     </div>
-                </header>
+                </div>
+            </header>
 
                 {/* 任務列表 - 優化設計 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 md:gap-8">
