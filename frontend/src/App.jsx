@@ -17,30 +17,13 @@ import { OrderWorkView } from './components/OrderWorkView';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { LogOut } from 'lucide-react';
 
-function AppLayout({ user, onLogout, onToggleTheme, theme }) {
+function AppLayout({ user, onLogout }) {
     return (
-        <div className="app-shell">
-            <header className="absolute top-4 right-4 z-20 flex items-center gap-3 pr-4">
-                 {user && (
-                    <>
-                        <button
-                            type="button"
-                            onClick={onToggleTheme}
-                            className="flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/80 backdrop-blur border border-gray-200 shadow-sm hover:bg-gray-50"
-                        >
-                            <span className="mr-1">{theme === 'dark' ? '🌙 暗色' : '☀️ 亮色'}</span>
-                            <span className="text-gray-500">切換</span>
-                        </button>
-                        <button
-                            onClick={onLogout}
-                            className="flex items-center px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 shadow-lg"
-                        >
-                            <LogOut className="mr-2 h-4 w-4" /> 登出
-                        </button>
-                    </>
-                 )}
+        <div>
+            <header className="absolute top-4 right-4 z-10">
+                 {user && <button onClick={onLogout} className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 shadow-lg"><LogOut className="mr-2 h-4 w-4" /> 登出</button>}
             </header>
-            <main className="app-shell-main">
+            <main>
                 <Outlet />
             </main>
         </div>
@@ -57,7 +40,6 @@ function ProtectedRoute({ user, token }) {
 function App() {
     const [user, setUser] = useLocalStorage('wms_user', null);
     const [token, setToken] = useLocalStorage('wms_token', null);
-    const [theme, setTheme] = useLocalStorage('wms_theme', 'light'); // 'light' | 'dark'
 
     // 【关键修改】在 token 变化时控制 apiClient 和 socket 连接
     useEffect(() => {
@@ -83,26 +65,11 @@ function App() {
         setUser(null);
         setToken(null);
     };
-
-    // 主題切換：在 body 上切換 .theme-dark 類別
-    useEffect(() => {
-        if (typeof document === 'undefined') return;
-        const body = document.body;
-        if (theme === 'dark') {
-            body.classList.add('theme-dark');
-        } else {
-            body.classList.remove('theme-dark');
-        }
-    }, [theme]);
     
     const getHomeRoute = () => {
         if (!user || !token) return "/login";
         if (user.role === 'admin') return "/admin";
         return "/tasks";
-    };
-
-    const toggleTheme = () => {
-        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
     };
 
     return (
@@ -113,7 +80,7 @@ function App() {
                     <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
                     
                     <Route element={<ProtectedRoute user={user} token={token} />}>
-                        <Route element={<AppLayout user={user} onLogout={handleLogout} onToggleTheme={toggleTheme} theme={theme} />}>
+                        <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
                             <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/users" element={user?.role === 'admin' ? <UserManagement /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={user?.role === 'admin' ? <OperationLogs /> : <Navigate to="/tasks" />} />
