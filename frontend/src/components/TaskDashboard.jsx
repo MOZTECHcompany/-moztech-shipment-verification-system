@@ -85,15 +85,16 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             bg-white/90 dark:bg-card backdrop-blur-sm rounded-xl sm:rounded-2xl 
             transition-all duration-500 ease-out
             hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.01]
-            ${isMyTask 
-                ? 'ring-1 ring-green-400/80 shadow-xl shadow-green-200/40 border-l-4 border-l-green-400' 
-                : isUrgent
-                ? 'ring-1 ring-red-400/80 shadow-xl shadow-red-200/40 border-l-4 border-l-red-400'
-                : 'shadow-lg border border-gray-100 hover:border-blue-200'
-            }
-            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500 scale-[0.99]' : ''}
+            ${selectedTasks.includes(task.id) ? 'ring-2 ring-primary scale-[0.99]' : 'shadow-lg border border-gray-100 hover:border-blue-200'}
             animate-scale-in
         `}>
+            {/* 左側狀態色條（2-3px） */}
+            <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${
+                isUrgent ? 'bg-[#FF3B30]' : (
+                    task.status === 'picking' ? 'bg-[#007AFF]' : (
+                    task.status === 'picked' ? 'bg-purple-500' : (
+                    task.status === 'packing' ? 'bg-green-500' : 'bg-gray-300')))
+            }`} />
             {/* 背景裝飾元素 */}
             <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700"></div>
             
@@ -133,15 +134,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     <div className="flex flex-col items-end gap-2 ml-2 sm:ml-3 flex-shrink-0">
                         {/* 緊急標記 - 優化 */}
                         {isUrgent && (
-                            <div className="relative group/badge">
-                                <div className="absolute inset-0 bg-gradient-to-r from-red-500 to-orange-500 rounded-xl blur-md opacity-60 animate-pulse"></div>
-                                <div className="relative px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-black
-                                    bg-gradient-to-r from-red-500 via-orange-500 to-red-500 text-white
-                                    flex items-center gap-1.5 shadow-lg">
-                                    <Flame size={14} className="sm:w-4 sm:h-4 animate-bounce" />
-                                    <span className="hidden xs:inline">緊急</span>
-                                </div>
-                            </div>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#FF3B30] text-white flex items-center gap-1 shadow-sm">
+                                <Flame size={12} />
+                                <span className="hidden xs:inline">緊急</span>
+                            </span>
                         )}
                         
                         {/* 狀態標籤 - 優化 */}
@@ -247,45 +243,27 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                 )}
 
-                {/* 操作按鈕 - 全新設計 */}
+                {/* 操作按鈕 - Apple 風格主色按鈕 */}
                 {isMyTask ? (
-                    <button
+                    <Button
+                        variant="primary"
+                        size="lg"
+                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg"
                         onClick={() => onClaim(task.id, true)}
-                        className="
-                            group/btn relative w-full px-4 py-3.5 sm:py-4
-                            bg-gradient-to-r from-green-500 via-emerald-500 to-green-600
-                            text-white text-sm sm:text-base font-black rounded-xl sm:rounded-2xl
-                            hover:from-green-600 hover:via-emerald-600 hover:to-green-700
-                            active:scale-[0.97]
-                            transition-all duration-300
-                            shadow-2xl shadow-green-500/50 hover:shadow-green-500/60
-                            flex items-center justify-center gap-2
-                            overflow-hidden
-                        "
+                        trailingIcon={ArrowRight}
                     >
-                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/25 to-white/0 -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"></div>
-                        <span className="relative z-10">繼續作業</span>
-                        <ArrowRight size={18} className="relative z-10 group-hover/btn:translate-x-1 transition-transform sm:w-5 sm:h-5" />
-                    </button>
+                        繼續作業
+                    </Button>
                 ) : (
-                    <button
+                    <Button
+                        variant="primary"
+                        size="lg"
+                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg"
                         onClick={() => onClaim(task.id, false)}
-                        className="
-                            group/btn relative w-full px-4 py-3.5 sm:py-4
-                            bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600
-                            text-white text-sm sm:text-base font-black rounded-xl sm:rounded-2xl
-                            hover:from-blue-600 hover:via-indigo-600 hover:to-purple-700
-                            active:scale-[0.97]
-                            transition-all duration-300
-                            shadow-2xl shadow-blue-500/50 hover:shadow-indigo-500/60
-                            flex items-center justify-center gap-2
-                            overflow-hidden
-                        "
+                        trailingIcon={ArrowRight}
                     >
-                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/25 to-white/0 -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"></div>
-                        <span className="relative z-10">{task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}</span>
-                        <ArrowRight size={18} className="relative z-10 group-hover/btn:translate-x-2 transition-transform sm:w-5 sm:h-5" />
-                    </button>
+                        {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}
+                    </Button>
                 )}
             </div>
         </div>
@@ -629,80 +607,30 @@ export function TaskDashboard({ user }) {
                 {/* 篩選／搜尋列 */}
                 <FilterBar value={search} onChange={setSearch} placeholder="搜尋單號或客戶..." />
 
-                {/* 統計卡片 */}
+                {/* 統計卡片（更克制的卡片：留白 + 細邊 + 單色 icon） */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-                        {/* 待揀貨卡片 - 橙色（需要關注） */}
-                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-orange-200/40 hover:border-orange-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-orange-500/10">
-                            <div className="absolute inset-0 bg-gradient-to-br from-orange-50/50 via-transparent to-orange-100/30 opacity-60 rounded-2xl"></div>
-                            <div className="relative z-10 flex items-center justify-between">
-                                <div>
-                                    <p className="text-xs text-orange-600 font-semibold uppercase tracking-wide mb-2">
-                                        待揀貨
-                                    </p>
-                                    <p className="text-3xl font-bold text-orange-600">
-                                        {pickTasks.length}
-                                    </p>
-                                </div>
-                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
-                                    <Package className="text-white" size={22} />
-                                </div>
-                            </div>
+                  {[
+                    {label:'待揀貨', value: pickTasks.length, color:'text-orange-600', icon: Package},
+                    {label:'待裝箱', value: packTasks.length, color:'text-green-600', icon: Box},
+                    {label:'總任務', value: visibleTasks.length, color:'text-blue-600', icon: LayoutDashboard},
+                    {label:'我的任務', value: visibleTasks.filter(t=>t.current_user).length, color:'text-gray-800', icon: User},
+                  ].map((c, i)=>{
+                    const Icon = c.icon;
+                    return (
+                      <div key={i} className="bg-white rounded-2xl p-5 border border-gray-200 hover:border-gray-300 hover:shadow-apple transition-all">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-1">{c.label}</p>
+                            <p className={`text-3xl font-bold ${c.color}`}>{c.value}</p>
+                          </div>
+                          <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+                            <Icon className="text-gray-700" size={18} />
+                          </div>
                         </div>
-
-                        {/* 待裝箱卡片 - 綠色（進行中） */}
-                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-green-200/40 hover:border-green-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-green-500/10">
-                            <div className="absolute inset-0 bg-gradient-to-br from-green-50/50 via-transparent to-green-100/30 opacity-60 rounded-2xl"></div>
-                            <div className="relative z-10 flex items-center justify-between">
-                                <div>
-                                    <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mb-2">
-                                        待裝箱
-                                    </p>
-                                    <p className="text-3xl font-bold text-green-600">
-                                        {packTasks.length}
-                                    </p>
-                                </div>
-                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30">
-                                    <Box className="text-white" size={22} />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 總任務卡片 - 藍色（總覽） */}
-                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-blue-200/40 hover:border-blue-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-500/10">
-                            <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 via-transparent to-blue-100/30 opacity-60 rounded-2xl"></div>
-                            <div className="relative z-10 flex items-center justify-between">
-                                <div>
-                                    <p className="text-xs text-blue-600 font-semibold uppercase tracking-wide mb-2">
-                                        總任務
-                                    </p>
-                                    <p className="text-3xl font-bold text-blue-600">
-                                        {visibleTasks.length}
-                                    </p>
-                                </div>
-                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                                    <LayoutDashboard className="text-white" size={22} />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 我的任務卡片 - 灰色（個人） */}
-                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-gray-200/40 hover:border-gray-300/60 transition-all duration-500 hover:shadow-2xl">
-                            <div className="absolute inset-0 bg-gradient-to-br from-gray-50/50 via-transparent to-gray-100/30 opacity-60 rounded-2xl"></div>
-                            <div className="relative z-10 flex items-center justify-between">
-                                <div>
-                                    <p className="text-xs text-gray-600 font-semibold uppercase tracking-wide mb-2">
-                                        我的任務
-                                    </p>
-                                    <p className="text-3xl font-bold text-gray-800">
-                                        {visibleTasks.filter(t => t.current_user).length}
-                                    </p>
-                                </div>
-                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center shadow-lg shadow-gray-500/20">
-                                    <User className="text-white" size={22} />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                      </div>
+                    );
+                  })}
+                </div>
                 
 
                 {/* 任務列表 */}
@@ -711,18 +639,17 @@ export function TaskDashboard({ user }) {
                     <section className="animate-slide-up">
                         <div className="relative mb-4">
                             {/* 背景光暈 */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-transparent rounded-2xl blur-xl"></div>
-                            <div className="relative bg-white/60 backdrop-blur-xl rounded-2xl p-4 border border-orange-200/40">
+                            <div className="relative bg-white rounded-2xl p-4 border border-gray-200">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
-                                            <Package className="text-white" size={20} />
+                                        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+                                            <Package className="text-gray-700" size={20} />
                                         </div>
                                         <h2 className="text-lg font-semibold text-gray-900">
                                             待揀貨任務
                                         </h2>
                                     </div>
-                                    <span className="px-2.5 py-0.5 rounded-lg bg-orange-100 text-orange-700 text-sm font-bold">
+                                    <span className="px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-semibold">
                                         {pickTasks.length}
                                     </span>
                                 </div>
@@ -767,18 +694,17 @@ export function TaskDashboard({ user }) {
                     <section className="animate-slide-up" style={{ animationDelay: '100ms' }}>
                         <div className="relative mb-4">
                             {/* 背景光暈 */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-green-500/10 via-green-500/5 to-transparent rounded-2xl blur-xl"></div>
-                            <div className="relative bg-white/60 backdrop-blur-xl rounded-2xl p-4 border border-green-200/40">
+                            <div className="relative bg-white rounded-2xl p-4 border border-gray-200">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30">
-                                            <Box className="text-white" size={20} />
+                                        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+                                            <Box className="text-gray-700" size={20} />
                                         </div>
                                         <h2 className="text-lg font-semibold text-gray-900">
                                             待裝箱任務
                                         </h2>
                                     </div>
-                                    <span className="px-2.5 py-0.5 rounded-lg bg-green-100 text-green-700 text-sm font-bold">
+                                    <span className="px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-semibold">
                                         {packTasks.length}
                                     </span>
                                 </div>

@@ -3,8 +3,10 @@ import { cx } from './utils';
 
 export function Table({ className, children, ...props }) {
   return (
-    <div className={cx('overflow-hidden rounded-2xl border border-gray-100 shadow-apple-sm', className)}>
-      <table className="min-w-full divide-y divide-gray-100" {...props}>{children}</table>
+    <div className={cx('overflow-x-auto', className)}>
+      <div className="min-w-full overflow-hidden rounded-2xl border border-gray-100 shadow-apple-sm">
+        <table className="min-w-full divide-y divide-gray-100" {...props}>{children}</table>
+      </div>
     </div>
   );
 }

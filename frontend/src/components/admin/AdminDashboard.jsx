@@ -114,7 +114,7 @@ export function AdminDashboard() {
                                 掌握錯誤來源，快速迭代流程品質。
                             </p>
                             <Link to="/admin/scan-errors">
-                                <Button variant="warning" size="sm" className="gap-2">
+                                <Button variant="secondary" size="sm" className="gap-2">
                                     <AlertTriangle size={18} />
                                     查看錯誤
                                 </Button>
