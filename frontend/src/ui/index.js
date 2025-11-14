@@ -9,3 +9,4 @@ export * from './PageHeader';
 export * from './FilterBar';
 export * from './EmptyState';
 export * from './Skeleton';
+export * from './Input';

@@ -7,6 +7,7 @@ import {
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
     ChevronUp, ShoppingCart, Box, Camera, MessageSquare, Printer, Users
 } from 'lucide-react';
+import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, EmptyState, SkeletonText } from '@/ui';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '../api/api';
@@ -642,185 +643,119 @@ export function OrderWorkView({ user }) {
         });
     }, [currentOrderData]);
 
-    if (loading || !currentOrderData.order) {
-        return (
-            <div className="flex flex-col justify-center items-center h-screen bg-gradient-to-br from-blue-50 to-purple-50">
-                <Loader2 className="animate-spin text-blue-500 mb-4" size={48} />
-                <p className="text-gray-600 font-medium">載入訂單資料中...</p>
-            </div>
-        );
-    }
-
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
+        <div className="min-h-screen bg-secondary">
             <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-                {/* iOS 風格 Header */}
-                <header className="mb-6 animate-fade-in">
-                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6">
-                        {/* 背景裝飾 */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
-                    
-                    <div className="relative z-10 space-y-4">
-                        {/* 返回按鈕 + 標題 */}
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <button onClick={handleReturnToTasks} 
-                                    className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-medium px-3 py-2 rounded-lg hover:bg-white/60 transition-all duration-200 group">
-                                    <ArrowLeft className="group-hover:-translate-x-1 transition-transform duration-200" size={20} />
-                                    <span>返回</span>
-                                </button>
-                                <div className="h-6 w-px bg-gray-200"></div>
-                                <div>
-                                    <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 tracking-tight">
-                                        📦 作業詳情
-                                    </h1>
-                                    <p className="text-sm text-gray-500 mt-0.5">
-                                        {user.name || user.username}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </header>
-
-            <ProgressDashboard 
-                stats={progressStats} 
-                onExport={handleExportReport} 
-                onVoid={handleVoidOrder} 
-                user={user}
-                onOpenCamera={() => setShowCameraScanner(true)}
-                activeSessions={activeSessions}
-                order={currentOrderData.order}
-                items={currentOrderData.items}
-            />
+                <PageHeader
+                  title={`📦 訂單作業 #${orderId}`}
+                  description={currentOrderData.order ? `${currentOrderData.order.customer_name}（${currentOrderData.order.customer_code}）` : '載入中...'}
+                  actions={<Button variant="secondary" size="sm" onClick={handleReturnToTasks} leadingIcon={ArrowLeft}>返回看板</Button>}
+                />
+                { (loading || !currentOrderData.order) && (
+                  <Card className="mb-6"><CardContent><SkeletonText lines={4} /></CardContent></Card>
+                )}
+                { !(loading || !currentOrderData.order) && (
+                  <ProgressDashboard 
+                    stats={progressStats} 
+                    onExport={handleExportReport} 
+                    onVoid={handleVoidOrder} 
+                    user={user}
+                    onOpenCamera={() => setShowCameraScanner(true)}
+                    activeSessions={activeSessions}
+                    order={currentOrderData.order}
+                    items={currentOrderData.items}
+                  />
+                )}
 
             {/* 討論區塊 */}
-            <div className="mb-6 animate-slide-up">
-                <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl">
-                    <div className="absolute inset-0 bg-gradient-to-br from-purple-50/20 via-transparent to-blue-50/20"></div>
-                    <div className="relative z-10 p-5 sm:p-6">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
-                                <MessageSquare className="text-white" size={20} />
-                            </div>
-                            <h2 className="text-lg font-semibold text-gray-900">
-                                團隊討論
-                            </h2>
-                        </div>
-                        <TaskComments 
-                            orderId={orderId}
-                            currentUser={user}
-                            allUsers={allUsers}
-                        />
-                    </div>
-                </div>
-            </div>
+            <Card className="mb-6 animate-slide-up">
+              <CardHeader className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center shadow-sm"><MessageSquare className="text-white" size={20}/></div>
+                <CardTitle className="text-lg">團隊討論</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} />
+              </CardContent>
+            </Card>
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
                 {/* 掃描區 */}
-                <div className="lg:col-span-1">
-                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6 sticky top-8 animate-scale-in">
-                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-blue-100/20"></div>
-                        <div className="relative z-10">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                                    <ScanLine className="text-white" size={20}/>
+                                <div className="lg:col-span-1">
+                                    <Card className="sticky top-8 animate-scale-in">
+                                        <CardHeader className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center shadow-sm"><ScanLine className="text-white" size={20}/></div>
+                                            <CardTitle className="text-lg">掃描區</CardTitle>
+                                        </CardHeader>
+                                        <CardContent>
+                                            <div className="flex gap-2 mb-3">
+                                                <div className="relative flex-1">
+                                                    <input
+                                                        ref={barcodeInputRef}
+                                                        type="text"
+                                                        placeholder="掃描 SN 碼或條碼..."
+                                                        value={barcodeInput}
+                                                        onChange={(e) => setBarcodeInput(e.target.value)}
+                                                        onKeyDown={handleKeyDown}
+                                                        className={`w-full px-4 py-2.5 pr-11 rounded-xl border bg-white text-sm focus:outline-none focus:ring-2 transition-all ${scanError ? 'border-red-300 ring-red-200 bg-red-50 animate-shake' : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'}`}
+                                                    />
+                                                    <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                                </div>
+                                                <Button onClick={handleClick} disabled={isUpdating} size="sm" leadingIcon={isUpdating ? Loader2 : Check}>
+                                                    {isUpdating ? '處理中' : '確認'}
+                                                </Button>
+                                            </div>
+                                            <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-lg">
+                                                <p className="text-xs text-blue-600 flex items-center gap-2">
+                                                    <AlertTriangle size={12} className="flex-shrink-0" />
+                                                    <span>掃描後按 Enter 或點擊確認</span>
+                                                </p>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
                                 </div>
-                                <h2 className="text-lg font-semibold text-gray-900">
-                                    掃描區
-                                </h2>
-                            </div>
-                            <div className="flex gap-2">
-                                <div className="relative flex-1">
-                                    <input
-                                        ref={barcodeInputRef}
-                                        type="text"
-                                        placeholder="掃描 SN 碼或條碼..."
-                                        value={barcodeInput}
-                                        onChange={(e) => setBarcodeInput(e.target.value)}
-                                        onKeyDown={handleKeyDown}
-                                        className={`w-full px-4 py-2.5 pr-11 rounded-lg border bg-white text-sm focus:outline-none focus:ring-2 transition-all ${
-                                            scanError 
-                                                ? 'border-red-300 ring-red-200 bg-red-50 animate-shake' 
-                                                : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
-                                        }`}
-                                    />
-                                    <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                                </div>
-                                <button onClick={handleClick} disabled={isUpdating} 
-                                    className="px-4 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
-                                    {isUpdating ? <Loader2 className="animate-spin" size={18} /> : '確認'}
-                                </button>
-                            </div>
-                            
-                            <div className="mt-3 p-3 bg-blue-50/50 border border-blue-100 rounded-lg">
-                                <p className="text-xs text-blue-600 flex items-center gap-2">
-                                    <AlertTriangle size={12} className="flex-shrink-0" />
-                                    <span>掃描後按 Enter 或點擊確認</span>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
                 {/* 作業清單 */}
-                <div className="lg:col-span-2">
-                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6 min-h-full animate-scale-in" style={{ animationDelay: '100ms' }}>
-                        <div className="absolute inset-0 bg-gradient-to-br from-gray-50/30 via-transparent to-gray-100/20"></div>
-                        {scanError && (
-                            <div className="absolute inset-0 bg-red-500/95 backdrop-blur-xl flex flex-col justify-center items-center z-10 rounded-2xl animate-fade-in p-4">
-                                <div className="bg-white rounded-full p-8 mb-6 shadow-2xl">
-                                    <XCircle className="text-red-600 h-20 w-20" strokeWidth={2.5} />
+                                <div className="lg:col-span-2">
+                                    <Card className="animate-scale-in" style={{ animationDelay: '100ms' }}>
+                                        <CardHeader className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center"><Package className="text-white" size={20}/></div>
+                                                <CardTitle className="text-lg">作業清單</CardTitle>
+                                            </div>
+                                            <StatusBadge status={currentOrderData.order.status} />
+                                        </CardHeader>
+                                        <CardContent>
+                                            <div className="flex items-center flex-wrap gap-4 text-sm p-4 bg-gray-50 rounded-xl border border-gray-200 mb-6">
+                                                <span className="flex items-center gap-2 text-gray-600"><Package size={16} className="text-gray-400" />單號: <strong className="text-gray-900 truncate">{currentOrderData.order.voucher_number}</strong></span>
+                                                <span className="flex items-center gap-2 text-gray-600"><User size={16} className="text-gray-400" />客戶: <strong className="text-gray-900 truncate">{currentOrderData.order.customer_name}</strong></span>
+                                            </div>
+                                            {scanError && (
+                                                <div className="mb-6 p-5 rounded-xl border border-red-300 bg-red-50 animate-fade-in">
+                                                    <p className="text-sm font-semibold text-red-700 mb-1 flex items-center gap-2"><XCircle size={16}/>掃描錯誤</p>
+                                                    <p className="text-sm text-red-600">{scanError}</p>
+                                                </div>
+                                            )}
+                                            <div className="space-y-4">
+                                                {sortedItems.map((item, index) => {
+                                                    const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
+                                                    const hasSN = itemInstances.length > 0;
+                                                    return (
+                                                        <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 40}ms` }}>
+                                                            {hasSN ? (
+                                                                <SNItemCard item={item} instances={itemInstances} />
+                                                            ) : (
+                                                                <QuantityItemCard item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order.status} isUpdating={isUpdating} />
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            {sortedItems.length === 0 && (
+                                                <EmptyState title="尚無品項" description="此訂單目前沒有可處理的品項" />
+                                            )}
+                                        </CardContent>
+                                    </Card>
                                 </div>
-                                <div className="bg-white/95 rounded-xl px-8 py-6 shadow-xl max-w-md">
-                                    <p className="text-2xl font-semibold text-red-600 text-center mb-2">掃描錯誤</p>
-                                    <p className="text-base text-gray-700 text-center">{scanError}</p>
-                                </div>
-                            </div>
-                        )}
-                        
-                        <div className="relative z-10 mb-6">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center shadow-lg shadow-gray-500/20">
-                                        <Package className="text-white" size={20} />
-                                    </div>
-                                    <h2 className="text-lg font-semibold text-gray-900">作業清單</h2>
-                                </div>
-                                <StatusBadge status={currentOrderData.order.status} />
-                            </div>
-                            <div className="flex items-center flex-wrap gap-4 text-sm p-4 bg-gray-50/50 rounded-lg border border-gray-200/30">
-                                <span className="flex items-center gap-2 text-gray-600">
-                                    <Package size={16} className="text-gray-400 flex-shrink-0" />
-                                    單號: <strong className="text-gray-900 truncate">{currentOrderData.order.voucher_number}</strong>
-                                </span>
-                                <span className="flex items-center gap-2 text-gray-600">
-                                    <User size={16} className="text-gray-400 flex-shrink-0" />
-                                    客戶: <strong className="text-gray-900 truncate">{currentOrderData.order.customer_name}</strong>
-                                </span>
-                            </div>
-                        </div>
-                        
-                        <div className="relative z-10 space-y-4">
-                            {sortedItems.map((item, index) => {
-                                const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
-                                const hasSN = itemInstances.length > 0;
-
-                                return (
-                                    <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 50}ms` }}>
-                                        {hasSN ? (
-                                            <SNItemCard item={item} instances={itemInstances} />
-                                        ) : (
-                                            <QuantityItemCard item={item} onUpdate={updateItemState} user={user} 
-                                                orderStatus={currentOrderData.order.status} isUpdating={isUpdating} />
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
             </div>
             
             {/* 相機掃描器 */}

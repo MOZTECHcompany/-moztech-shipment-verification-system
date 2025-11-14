@@ -1,11 +1,13 @@
 // frontend/src/components/LoginPage-modern.jsx
 // Apple 風格現代化登入頁面
 
+// 統一使用設計系統元件的登入頁
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, User, Lock, ArrowRight, Sparkles } from 'lucide-react';
+import { Loader2, User, Lock, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Button, Input } from '../ui';
 
 export function LoginPage({ onLogin }) {
   const navigate = useNavigate();
@@ -13,197 +15,99 @@ export function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [focusedField, setFocusedField] = useState(null);
 
   const handleLoginClick = async () => {
     if (!username || !password) {
-        setError('請提供使用者名稱和密碼');
-        toast.error('請填寫完整登入資訊');
-        return;
+      setError('請提供使用者名稱和密碼');
+      toast.error('請填寫完整登入資訊');
+      return;
     }
     setError('');
     setIsLoggingIn(true);
-    
     try {
-        const response = await apiClient.post('/api/auth/login', {
-            username,
-            password
-        });
-        
-        const responseData = response.data;
-        toast.success(`🎉 歡迎回來，${responseData.user.name || responseData.user.username}！`);
-        onLogin(responseData);
-        
-        if (responseData.user.role === 'admin') {
-            navigate('/admin');
-        } else {
-            navigate('/tasks');
-        }
-        
+      const response = await apiClient.post('/api/auth/login', { username, password });
+      const responseData = response.data;
+      toast.success(`🎉 歡迎回來，${responseData.user.name || responseData.user.username}！`);
+      onLogin(responseData);
+      if (responseData.user.role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/tasks');
+      }
     } catch (err) {
-        console.error("登入失敗", err);
-        const errorMessage = err.response?.data?.message || '登入時發生錯誤，請稍後再試。';
-        setError(errorMessage);
-        toast.error(errorMessage);
+      console.error('登入失敗', err);
+      const errorMessage = err.response?.data?.message || '登入時發生錯誤，請稍後再試。';
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
-        setIsLoggingIn(false);
+      setIsLoggingIn(false);
     }
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      handleLoginClick();
-    }
+    if (e.key === 'Enter') handleLoginClick();
   };
 
   return (
-    <div className="relative flex items-center justify-center min-h-screen p-4 overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-100">
-      {/* 背景裝飾 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-apple-blue/5 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-apple-purple/5 rounded-full blur-3xl"></div>
-      </div>
-
-      {/* 登入卡片 */}
-      <div
-        className="relative w-full max-w-md animate-scale-in"
-        onKeyDown={handleKeyDown}
-      >
-        {/* 主卡片 */}
-        <div className="glass-card rounded-3xl p-12 shadow-apple-xl">
-          {/* Logo 和標題 */}
-          <div className="flex flex-col items-center mb-12 animate-fade-in">
-            <div className="relative mb-8">
-              <div className="absolute inset-0 bg-apple-blue/10 rounded-3xl blur-2xl"></div>
-              <img 
-                src="/MOZTECH-002.png" 
-                alt="MOZTECH Logo" 
-                className="relative h-24 w-24 object-contain" 
+    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-gray-50 via-white to-gray-100">
+      <div className="w-full max-w-md" onKeyDown={handleKeyDown}>
+        <Card className="p-0 overflow-hidden">
+          <CardHeader className="pt-10 px-10 pb-6 text-center">
+            <div className="flex justify-center mb-8">
+              <img src="/MOZTECH-002.png" alt="MOZTECH Logo" className="h-20 w-20 object-contain" />
+            </div>
+            <CardTitle className="text-2xl tracking-tight">倉儲作業系統</CardTitle>
+            <CardDescription className="mt-2 text-sm">現代化智能管理平台</CardDescription>
+          </CardHeader>
+          <CardContent className="px-10 pb-4">
+            <div className="space-y-6">
+              <Input
+                label="使用者名稱"
+                icon={User}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="請輸入使用者名稱"
+                autoComplete="username"
               />
+              <Input
+                label="密碼"
+                type="password"
+                icon={Lock}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="請輸入密碼"
+                autoComplete="current-password"
+              />
+              {error && (
+                <div className="p-3 rounded-lg border border-red-200 bg-red-50">
+                  <p className="text-sm font-medium text-red-600 text-center">{error}</p>
+                </div>
+              )}
+              <Button
+                onClick={handleLoginClick}
+                disabled={isLoggingIn}
+                variant="primary"
+                size="lg"
+                className="w-full justify-center"
+              >
+                {isLoggingIn ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    登入中...
+                  </>
+                ) : (
+                  <>
+                    登入
+                    <ArrowRight className="ml-1" />
+                  </>
+                )}
+              </Button>
             </div>
-            <h1 className="text-3xl font-semibold text-gray-900 mb-3 tracking-tight">
-              倉儲作業系統
-            </h1>
-            <p className="text-gray-500 text-sm font-medium">
-              現代化智能管理平台
-            </p>
-          </div>
-
-          {/* 輸入欄位 */}
-          <div className="space-y-4 mb-8">
-            {/* 使用者名稱 */}
-            <div className="animate-slide-up" style={{ animationDelay: '100ms' }}>
-              <label className="block text-sm font-semibold text-gray-700 mb-2.5">
-                使用者名稱
-              </label>
-              <div className="relative group">
-                <User className={`
-                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-all duration-200
-                  ${focusedField === 'username' ? 'text-apple-blue scale-110' : 'text-gray-400'}
-                `} />
-                <input 
-                  type="text" 
-                  placeholder="請輸入使用者名稱" 
-                  value={username} 
-                  onChange={(e) => setUsername(e.target.value)}
-                  onFocus={() => setFocusedField('username')}
-                  onBlur={() => setFocusedField(null)}
-                  className="
-                    relative w-full pl-12 pr-4 py-4 
-                    bg-white
-                    border-2 border-gray-200
-                    rounded-xl 
-                    focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10
-                    outline-none transition-all duration-200
-                    text-gray-900 placeholder-gray-400
-                    font-medium
-                  " 
-                />
-              </div>
-            </div>
-
-            {/* 密碼 */}
-            <div className="animate-slide-up" style={{ animationDelay: '200ms' }}>
-              <label className="block text-sm font-semibold text-gray-700 mb-2.5">
-                密碼
-              </label>
-              <div className="relative group">
-                <Lock className={`
-                  absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 transition-all duration-200
-                  ${focusedField === 'password' ? 'text-apple-blue scale-110' : 'text-gray-400'}
-                `} />
-                <input 
-                  type="password" 
-                  placeholder="請輸入密碼" 
-                  value={password} 
-                  onChange={(e) => setPassword(e.target.value)}
-                  onFocus={() => setFocusedField('password')}
-                  onBlur={() => setFocusedField(null)}
-                  className="
-                    relative w-full pl-12 pr-4 py-4 
-                    bg-white
-                    border-2 border-gray-200
-                    rounded-xl 
-                    focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10
-                    outline-none transition-all duration-200
-                    text-gray-900 placeholder-gray-400
-                    font-medium
-                  " 
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 錯誤訊息 */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50/80 border-2 border-red-200/80 rounded-xl animate-shake backdrop-blur-sm">
-              <p className="text-sm font-medium text-red-600 text-center">{error}</p>
-            </div>
-          )}
-
-          {/* 登入按鈕 */}
-          <button 
-            onClick={handleLoginClick} 
-            disabled={isLoggingIn}
-            className="
-              w-full py-4 px-6
-              bg-apple-blue/90 hover:bg-apple-blue
-              disabled:bg-gray-300 disabled:cursor-not-allowed
-              text-white font-semibold text-lg
-              rounded-xl
-              shadow-apple-sm hover:shadow-apple
-              active:scale-[0.98]
-              transition-all duration-200
-              flex items-center justify-center gap-2
-              group
-              animate-slide-up
-              backdrop-blur-sm
-            "
-            style={{ animationDelay: '300ms' }}
-          >
-            {isLoggingIn ? (
-              <>
-                <Loader2 className="animate-spin" size={22} />
-                登入中...
-              </>
-            ) : (
-              <>
-                登入
-                <ArrowRight size={22} className="group-hover:translate-x-1 transition-transform" />
-              </>
-            )}
-          </button>
-
-          {/* 底部提示 */}
-          <div className="mt-8 text-center animate-fade-in" style={{ animationDelay: '400ms' }}>
-            <p className="text-xs text-gray-400 font-medium">
-              © 2025 MOZTECH 倉儲管理系統
-            </p>
-          </div>
-        </div>
-
-        {/* 裝飾性卡片陰影 */}
-        <div className="absolute -inset-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-3xl blur-2xl -z-10" />
+          </CardContent>
+          <CardFooter className="px-10 pb-8 pt-2 text-center">
+            <p className="text-xs text-gray-400 font-medium">© 2025 MOZTECH 倉儲管理系統</p>
+          </CardFooter>
+        </Card>
       </div>
     </div>
   );

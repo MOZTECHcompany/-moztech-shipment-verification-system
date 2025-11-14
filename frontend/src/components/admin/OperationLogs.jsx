@@ -6,10 +6,19 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { 
-    FileText, Search, Filter, Download, RefreshCw, 
+import {
+    FileText, Search, Filter, Download, RefreshCw,
     User, Package, Calendar, Activity, TrendingUp, ArrowLeft
 } from 'lucide-react';
+import {
+    PageHeader,
+    Card, CardHeader, CardTitle, CardDescription, CardContent,
+    Button,
+    Table, THead, TH, TBody, TR, TD,
+    EmptyState,
+    Skeleton,
+    Badge,
+} from '../../ui';
 
 // 操作類型的中文對照和顏色
 const actionTypeMap = {
@@ -171,243 +180,209 @@ export function OperationLogs() {
         ));
     };
 
-    return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-4 md:p-8">
-            <div className="max-w-7xl mx-auto">
-                {/* 標題 */}
-                <div className="mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
-                    <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-indigo/10 flex items-center justify-center">
-                            <FileText className="w-7 h-7 text-apple-blue" />
+        return (
+            <div className="min-h-screen p-6 md:p-8 bg-gradient-to-br from-gray-50 via-white to-gray-100">
+                <PageHeader
+                    title="操作日誌查詢"
+                    description="追蹤系統中所有操作記錄"
+                    actions={
+                        <div className="flex gap-2">
+                            <Link to="/admin">
+                                <Button variant="secondary" size="sm" className="gap-1">
+                                    <ArrowLeft className="h-4 w-4" /> 返回
+                                </Button>
+                            </Link>
+                            <Button onClick={fetchLogs} disabled={loading} variant="primary" size="sm" className="gap-1">
+                                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 重新整理
+                            </Button>
                         </div>
-                        <div>
-                            <h1 className="text-4xl font-semibold tracking-tight text-gray-900">
-                                📋 操作日誌查詢
-                            </h1>
-                            <p className="text-gray-500 mt-1 font-medium">追蹤系統中所有操作記錄</p>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        <Link to="/admin" 
-                            className="btn-apple bg-white/90 backdrop-blur-xl border-2 border-gray-200 hover:border-gray-300 text-gray-700 hover:bg-white flex items-center gap-2 shadow-apple">
-                            <ArrowLeft size={18} />
-                            返回
-                        </Link>
-                        <button
-                            onClick={fetchLogs}
-                            disabled={loading}
-                            className="btn-apple bg-apple-blue/90 backdrop-blur-xl hover:bg-apple-blue text-white flex items-center gap-2 shadow-apple-lg disabled:opacity-50"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                            重新整理
-                        </button>
-                    </div>
-                </div>
+                    }
+                />
 
-                {/* 統計卡片 */}
                 {stats && (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                        <div className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: '100ms' }}>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-gray-600 font-medium mb-1">總操作數</p>
-                                    <p className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{stats.total}</p>
-                                </div>
-                                <div className="p-3 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl">
-                                    <Activity className="w-6 h-6 text-blue-600" />
-                                </div>
-                            </div>
-                        </div>
-                        {stats.byActionType.slice(0, 3).map((item, index) => (
-                            <div key={index} className="glass-card p-6 animate-scale-in hover:shadow-apple-lg transition-all duration-300" style={{ animationDelay: `${(index + 2) * 100}ms` }}>
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <Card>
+                            <CardContent className="p-4">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <p className="text-sm text-gray-600 font-medium mb-1">{actionTypeMap[item.action_type]?.label || item.action_type}</p>
-                                        <p className="text-3xl font-bold text-gray-900">{item.count}</p>
-                                        <p className="text-xs text-gray-500 mt-1">{item.unique_users} 位使用者</p>
+                                        <p className="text-xs text-gray-600 font-medium mb-1">總操作數</p>
+                                        <p className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{stats.total}</p>
                                     </div>
-                                    <div className="p-3 bg-gradient-to-br from-green-100 to-green-200 rounded-xl">
-                                        <TrendingUp className="w-6 h-6 text-green-600" />
+                                    <div className="p-3 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl">
+                                        <Activity className="w-6 h-6 text-blue-600" />
                                     </div>
                                 </div>
-                            </div>
+                            </CardContent>
+                        </Card>
+                        {stats.byActionType.slice(0, 3).map((item, index) => (
+                            <Card key={index}>
+                                <CardContent className="p-4">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-xs text-gray-600 font-medium mb-1">{actionTypeMap[item.action_type]?.label || item.action_type}</p>
+                                            <p className="text-2xl font-bold text-gray-900">{item.count}</p>
+                                            <p className="text-[10px] text-gray-500 mt-1">{item.unique_users} 位使用者</p>
+                                        </div>
+                                        <div className="p-3 bg-gradient-to-br from-green-100 to-green-200 rounded-xl">
+                                            <TrendingUp className="w-5 h-5 text-green-600" />
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
                         ))}
                     </div>
                 )}
 
-                {/* 篩選區域 */}
-                <div className="glass-card p-6 mb-8 animate-scale-in" style={{ animationDelay: '200ms' }}>
-                    <div className="flex items-center gap-2 mb-6">
-                        <div className="p-2 bg-gradient-to-br from-purple-100 to-purple-200 rounded-xl">
-                            <Filter className="w-5 h-5 text-purple-600" />
+                <Card className="mt-8">
+                    <CardHeader className="flex items-center gap-2">
+                        <Filter className="h-5 w-5 text-purple-600" />
+                        <CardTitle className="text-lg">篩選條件</CardTitle>
+                        <CardDescription>設定條件以縮小結果</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <input
+                                type="text"
+                                placeholder="訂單編號"
+                                value={filters.orderId}
+                                onChange={(e) => handleFilterChange('orderId', e.target.value)}
+                                className="input-apple"
+                            />
+                            <input
+                                type="text"
+                                placeholder="使用者 ID"
+                                value={filters.userId}
+                                onChange={(e) => handleFilterChange('userId', e.target.value)}
+                                className="input-apple"
+                            />
+                            <select
+                                value={filters.actionType}
+                                onChange={(e) => handleFilterChange('actionType', e.target.value)}
+                                className="input-apple"
+                            >
+                                <option value="">所有類型</option>
+                                {Object.entries(actionTypeMap).map(([key, value]) => (
+                                    <option key={key} value={key}>{value.label}</option>
+                                ))}
+                            </select>
+                            <input
+                                type="date"
+                                value={filters.startDate}
+                                onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                                className="input-apple"
+                            />
+                            <input
+                                type="date"
+                                value={filters.endDate}
+                                onChange={(e) => handleFilterChange('endDate', e.target.value)}
+                                className="input-apple"
+                            />
+                            <select
+                                value={filters.limit}
+                                onChange={(e) => handleFilterChange('limit', e.target.value)}
+                                className="input-apple"
+                            >
+                                <option value="50">50 筆</option>
+                                <option value="100">100 筆</option>
+                                <option value="200">200 筆</option>
+                                <option value="500">500 筆</option>
+                            </select>
                         </div>
-                        <h2 className="text-xl font-bold text-gray-900">篩選條件</h2>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                        <input
-                            type="text"
-                            placeholder="訂單編號 (如: 20250807-33)"
-                            value={filters.orderId}
-                            onChange={(e) => handleFilterChange('orderId', e.target.value)}
-                            className="input-apple"
-                        />
-                        
-                        <input
-                            type="text"
-                            placeholder="使用者 ID"
-                            value={filters.userId}
-                            onChange={(e) => handleFilterChange('userId', e.target.value)}
-                            className="input-apple"
-                        />
-                        
-                        <select
-                            value={filters.actionType}
-                            onChange={(e) => handleFilterChange('actionType', e.target.value)}
-                            className="input-apple"
-                        >
-                            <option value="">所有操作類型</option>
-                            {Object.entries(actionTypeMap).map(([key, value]) => (
-                                <option key={key} value={key}>{value.label}</option>
-                            ))}
-                        </select>
-                        
-                        <input
-                            type="date"
-                            value={filters.startDate}
-                            onChange={(e) => handleFilterChange('startDate', e.target.value)}
-                            className="input-apple"
-                        />
-                        
-                        <input
-                            type="date"
-                            value={filters.endDate}
-                            onChange={(e) => handleFilterChange('endDate', e.target.value)}
-                            className="input-apple"
-                        />
-                        
-                        <select
-                            value={filters.limit}
-                            onChange={(e) => handleFilterChange('limit', e.target.value)}
-                            className="input-apple"
-                        >
-                            <option value="50">50 筆</option>
-                            <option value="100">100 筆</option>
-                            <option value="200">200 筆</option>
-                            <option value="500">500 筆</option>
-                        </select>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-3 mt-6">
-                        <button
-                            onClick={handleSearch}
-                            className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white flex items-center gap-2 shadow-apple-lg"
-                        >
-                            <Search className="w-4 h-4" />
-                            搜尋
-                        </button>
-                        
-                        <button
-                            onClick={handleReset}
-                            className="btn-apple bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600 text-white shadow-apple-lg"
-                        >
-                            重置
-                        </button>
-                        
-                        <button
-                            onClick={handleExport}
-                            disabled={logs.length === 0}
-                            className="btn-apple bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white flex items-center gap-2 shadow-apple-lg disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
-                        >
-                            <Download className="w-4 h-4" />
-                            匯出 CSV
-                        </button>
-                    </div>
-                </div>
+                        <div className="flex flex-wrap gap-2">
+                            <Button variant="primary" size="sm" className="gap-1" onClick={handleSearch}>
+                                <Search className="h-4 w-4" /> 搜尋
+                            </Button>
+                            <Button variant="secondary" size="sm" onClick={handleReset}>重置</Button>
+                            <Button
+                                variant="success"
+                                size="sm"
+                                className="gap-1 ml-auto"
+                                onClick={handleExport}
+                                disabled={logs.length === 0}
+                            >
+                                <Download className="h-4 w-4" /> 匯出 CSV
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
 
-                {/* 日誌列表 */}
-                <div className="glass-card overflow-hidden animate-scale-in shadow-apple-lg" style={{ animationDelay: '300ms' }}>
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead className="bg-gradient-to-r from-gray-50 to-blue-50 border-b border-gray-200">
-                                <tr>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">時間</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">訂單資訊</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">操作類型</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">操作人員</th>
-                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">詳細資訊</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-200">
+                <Card className="mt-8">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <FileText className="h-5 w-5 text-apple-blue" /> 操作記錄 ({logs.length})
+                        </CardTitle>
+                        <CardDescription>最新操作事件列表</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <Table>
+                            <THead>
+                                <TH>時間</TH>
+                                <TH>訂單資訊</TH>
+                                <TH>操作類型</TH>
+                                <TH>操作人員</TH>
+                                <TH>詳細資訊</TH>
+                            </THead>
+                            <TBody>
                                 {loading ? (
-                                    <tr>
-                                        <td colSpan="5" className="px-6 py-12 text-center">
-                                            <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-500 mb-2" />
-                                            <p className="text-gray-600 font-medium">載入中...</p>
-                                        </td>
-                                    </tr>
+                                    <TR>
+                                        <TD colSpan={5} className="py-12">
+                                            <div className="flex flex-col items-center justify-center">
+                                                <RefreshCw className="h-8 w-8 animate-spin text-blue-500 mb-3" />
+                                                <p className="text-gray-600 text-sm">載入中...</p>
+                                            </div>
+                                        </TD>
+                                    </TR>
                                 ) : logs.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
-                                            沒有找到操作記錄
-                                        </td>
-                                    </tr>
+                                    <TR>
+                                        <TD colSpan={5} className="py-10">
+                                            <EmptyState title="沒有找到操作記錄" description="嘗試調整篩選條件" />
+                                        </TD>
+                                    </TR>
                                 ) : (
-                                    logs.map((log, index) => (
-                                        <tr key={log.id} className="hover:bg-blue-50/50 transition-all duration-200 animate-slide-up" style={{ animationDelay: `${index * 20}ms` }}>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="flex items-center gap-2 text-sm text-gray-900">
-                                                    <Calendar className="w-4 h-4 text-gray-400" />
+                                    logs.map((log) => (
+                                        <TR key={log.id}>
+                                            <TD className="whitespace-nowrap text-xs">
+                                                <div className="flex items-center gap-1">
+                                                    <Calendar className="h-3.5 w-3.5 text-gray-400" />
                                                     {new Date(log.created_at).toLocaleString('zh-TW')}
                                                 </div>
-                                            </td>
-                                            <td className="px-6 py-4">
+                                            </TD>
+                                            <TD>
                                                 <div className="flex items-center gap-2">
-                                                    <Package className="w-4 h-4 text-blue-500" />
+                                                    <Package className="h-4 w-4 text-blue-500" />
                                                     <div>
-                                                        <div className="text-sm font-semibold text-gray-900">
-                                                            {log.voucher_number || '-'}
-                                                        </div>
-                                                        <div className="text-xs text-gray-500">
-                                                            {log.customer_name || '-'}
-                                                        </div>
+                                                        <div className="text-sm font-semibold text-gray-900">{log.voucher_number || '-'}</div>
+                                                        <div className="text-[10px] text-gray-500">{log.customer_name || '-'}</div>
                                                     </div>
                                                 </div>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className={`px-3 py-1.5 inline-flex items-center gap-1 text-xs font-semibold rounded-xl border ${actionTypeMap[log.action_type]?.color || 'bg-gray-100 text-gray-800 border-gray-200'} shadow-sm`}>
-                                                    <span>{actionTypeMap[log.action_type]?.icon}</span>
-                                                    <span>{actionTypeMap[log.action_type]?.label || log.action_type}</span>
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4">
+                                            </TD>
+                                            <TD className="whitespace-nowrap">
+                                                <Badge variant="info" className="gap-1 text-xs">
+                                                    {actionTypeMap[log.action_type]?.icon}
+                                                    {actionTypeMap[log.action_type]?.label || log.action_type}
+                                                </Badge>
+                                            </TD>
+                                            <TD>
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-2 bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg">
-                                                        <User className="w-3 h-3 text-purple-600" />
+                                                    <div className="p-1.5 bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg">
+                                                        <User className="h-3.5 w-3.5 text-purple-600" />
                                                     </div>
                                                     <div>
-                                                        <div className="text-sm font-semibold text-gray-900">
-                                                            {log.user_name || '-'}
-                                                        </div>
-                                                        <div className="text-xs text-gray-500">
-                                                            {log.user_role || '-'}
-                                                        </div>
+                                                        <div className="text-sm font-semibold text-gray-900">{log.user_name || '-'}</div>
+                                                        <div className="text-[10px] text-gray-500">{log.user_role || '-'}</div>
                                                     </div>
                                                 </div>
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <div className="text-sm text-gray-600 max-w-xs">
-                                                    {formatDetails(log.details)}
-                                                </div>
-                                            </td>
-                                        </tr>
+                                            </TD>
+                                            <TD className="max-w-xs">
+                                                <div className="text-xs text-gray-600 space-y-0.5">{formatDetails(log.details)}</div>
+                                            </TD>
+                                        </TR>
                                     ))
                                 )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                            </TBody>
+                        </Table>
+                    </CardContent>
+                </Card>
             </div>
-        </div>
-    );
+        );
 }

@@ -5,10 +5,20 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { 
-    ArrowLeft, AlertTriangle, User, Package, Calendar, 
-    TrendingUp, BarChart3, Download, Filter, Search
+import {
+    ArrowLeft, AlertTriangle, User, Package, Calendar,
+    TrendingUp, Download, Search
 } from 'lucide-react';
+import {
+    PageHeader,
+    Card, CardHeader, CardTitle, CardDescription, CardContent,
+    Button,
+    Badge,
+    EmptyState,
+    Skeleton,
+    Table, THead, TH, TBody, TR, TD,
+    Input
+} from '../../ui';
 
 export function ScanErrors() {
     const [loading, setLoading] = useState(true);
@@ -133,264 +143,266 @@ export function ScanErrors() {
         );
     });
 
-    if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-gray-500">載入中...</p>
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <div className="min-h-screen bg-gradient-to-br from-red-50/50 via-white to-orange-50/50 p-6 md:p-8 lg:p-12">
-            <div className="max-w-7xl mx-auto">
-                {/* 頂部導航 */}
-                <div className="mb-8 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <Link 
-                            to="/admin" 
-                            className="btn-apple bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
-                        >
-                            <ArrowLeft size={20} />
-                            返回
-                        </Link>
-                        <div>
-                            <h1 className="text-4xl font-bold bg-gradient-to-r from-red-600 to-orange-600 bg-clip-text text-transparent">
-                                刷錯條碼分析
-                            </h1>
-                            <p className="text-gray-500 mt-1">分析掃描錯誤,找出問題根源</p>
+            <div className="min-h-screen p-6 md:p-8 bg-gradient-to-br from-red-50/40 via-white to-orange-50/40">
+                <PageHeader
+                    title="刷錯條碼分析"
+                    description="分析掃描錯誤，找出問題根源"
+                    actions={
+                        <div className="flex gap-2 items-center">
+                            <select
+                                value={dateRange}
+                                onChange={(e) => setDateRange(e.target.value)}
+                                className="px-3 py-2 rounded-xl border-2 border-gray-200 bg-white text-sm font-medium focus:border-apple-blue focus:outline-none"
+                            >
+                                <option value="7days">近 7 天</option>
+                                <option value="30days">近 30 天</option>
+                                <option value="90days">近 90 天</option>
+                            </select>
+                            <Button variant="success" size="sm" className="gap-1" onClick={exportToCSV}>
+                                <Download className="h-4 w-4" /> 匯出 CSV
+                            </Button>
+                            <Link to="/admin">
+                                <Button variant="secondary" size="sm" className="gap-1">
+                                    <ArrowLeft className="h-4 w-4" /> 返回
+                                </Button>
+                            </Link>
                         </div>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                        {/* 日期範圍選擇 */}
-                        <select
-                            value={dateRange}
-                            onChange={(e) => setDateRange(e.target.value)}
-                            className="px-4 py-3 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all duration-200 text-gray-900 font-medium"
-                        >
-                            <option value="7days">近 7 天</option>
-                            <option value="30days">近 30 天</option>
-                            <option value="90days">近 90 天</option>
-                        </select>
-
-                        {/* 匯出按鈕 */}
-                        <button
-                            onClick={exportToCSV}
-                            className="flex items-center gap-2 px-6 py-3 rounded-xl font-semibold bg-apple-green/90 text-white hover:bg-apple-green shadow-apple-sm hover:shadow-apple backdrop-blur-sm transition-all duration-200 active:scale-[0.98]"
-                        >
-                            <Download size={20} />
-                            匯出 CSV
-                        </button>
-                    </div>
-                </div>
+                    }
+                />
 
                 {/* 統計卡片 */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm text-gray-500 mb-1 font-semibold">總錯誤次數</p>
-                                <p className="text-3xl font-bold text-apple-orange">{stats.totalErrors}</p>
-                            </div>
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-orange/10 to-apple-orange/5 flex items-center justify-center">
-                                <AlertTriangle className="text-apple-orange" size={24} />
-                            </div>
-                        </div>
+                {loading ? (
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                            <Card key={i} className="p-4">
+                                <Skeleton className="h-5 w-24 mb-3" />
+                                <Skeleton className="h-10 w-20" />
+                                <Skeleton className="h-3 w-28 mt-2" />
+                            </Card>
+                        ))}
                     </div>
-
-                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in" style={{ animationDelay: '100ms' }}>
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm text-gray-500 mb-1 font-semibold">最常刷錯的人</p>
-                                <p className="text-xl font-bold text-gray-800">
-                                    {stats.topUsers[0]?.name || '-'}
-                                </p>
-                                <p className="text-xs text-gray-500 mt-1 font-medium">
-                                    {stats.topUsers[0]?.count || 0} 次
-                                </p>
-                            </div>
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center">
-                                <User className="text-apple-blue" size={24} />
-                            </div>
-                        </div>
+                ) : (
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">總錯誤次數</p>
+                                        <p className="text-3xl font-bold text-apple-orange">{stats.totalErrors}</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-apple-orange/10 flex items-center justify-center">
+                                        <AlertTriangle className="text-apple-orange" size={22} />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">最常刷錯的人</p>
+                                        <p className="font-bold text-gray-800 text-lg">{stats.topUsers[0]?.name || '-'}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">{stats.topUsers[0]?.count || 0} 次</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center">
+                                        <User className="text-apple-blue" size={22} />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">最常刷錯的條碼</p>
+                                        <p className="font-mono text-xs font-bold text-gray-800 truncate max-w-[110px]">{stats.topBarcodes[0]?.barcode || '-'}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">{stats.topBarcodes[0]?.count || 0} 次</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                                        <Package className="text-amber-600" size={22} />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">平均每天錯誤</p>
+                                        <p className="text-3xl font-bold text-apple-indigo">{Math.round(stats.totalErrors / parseInt(dateRange.replace('days', '')) || 0)}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">次錯誤</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-apple-indigo/10 flex items-center justify-center">
+                                        <TrendingUp className="text-apple-indigo" size={22} />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
                     </div>
-
-                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in" style={{ animationDelay: '200ms' }}>
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm text-gray-500 mb-1 font-semibold">最常刷錯的條碼</p>
-                                <p className="text-sm font-bold text-gray-800 truncate max-w-[120px]">
-                                    {stats.topBarcodes[0]?.barcode || '-'}
-                                </p>
-                                <p className="text-xs text-gray-500 font-medium">
-                                    {stats.topBarcodes[0]?.count || 0} 次
-                                </p>
-                            </div>
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-500/5 flex items-center justify-center">
-                                <Package className="text-amber-600" size={24} />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="glass-card p-6 hover:shadow-apple-lg transition-all duration-300 animate-scale-in" style={{ animationDelay: '300ms' }}>
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm text-gray-500 mb-1 font-semibold">平均每天</p>
-                                <p className="text-3xl font-bold text-apple-indigo">
-                                    {Math.round(stats.totalErrors / parseInt(dateRange.replace('days', '')) || 0)}
-                                </p>
-                                <p className="text-xs text-gray-500 mt-1 font-medium">次錯誤</p>
-                            </div>
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-indigo/10 to-apple-indigo/5 flex items-center justify-center">
-                                <TrendingUp className="text-apple-indigo" size={24} />
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                )}
 
                 {/* 排行榜 */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                    {/* 員工錯誤排行 */}
-                    <div className="glass-card p-6">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                            <User size={20} className="text-orange-600" />
-                            員工錯誤排行 TOP 10
-                        </h2>
-                        <div className="space-y-2">
+                <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Card>
+                        <CardHeader className="flex items-center gap-2">
+                            <User className="h-5 w-5 text-orange-600" />
+                            <CardTitle className="text-lg">員工錯誤排行 TOP 10</CardTitle>
+                            <CardDescription>錯誤次數最多的操作員</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-2">
                             {stats.topUsers.map((user, index) => (
-                                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                <div
+                                    key={index}
+                                    className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
+                                >
                                     <div className="flex items-center gap-3">
-                                        <span className={`
-                                            w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold
-                                            ${index === 0 ? 'bg-yellow-500 text-white' : 
-                                              index === 1 ? 'bg-gray-400 text-white' : 
-                                              index === 2 ? 'bg-orange-500 text-white' : 
-                                              'bg-gray-200 text-gray-600'}
-                                        `}>
+                                        <span
+                                            className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                                index === 0
+                                                    ? 'bg-yellow-500 text-white'
+                                                    : index === 1
+                                                    ? 'bg-gray-400 text-white'
+                                                    : index === 2
+                                                    ? 'bg-orange-500 text-white'
+                                                    : 'bg-gray-200 text-gray-600'
+                                            }`}
+                                        >
                                             {index + 1}
                                         </span>
-                                        <span className="font-medium">{user.name}</span>
+                                        <span className="font-medium text-sm">{user.name}</span>
                                     </div>
-                                    <span className="text-red-600 font-bold">{user.count} 次</span>
+                                    <span className="text-red-600 font-bold text-sm">{user.count} 次</span>
                                 </div>
                             ))}
                             {stats.topUsers.length === 0 && (
-                                <p className="text-center text-gray-400 py-8">暫無數據</p>
+                                <EmptyState title="暫無數據" description="尚未有錯誤紀錄" />
                             )}
-                        </div>
-                    </div>
-
-                    {/* 條碼錯誤排行 */}
-                    <div className="glass-card p-6">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                            <Package size={20} className="text-yellow-600" />
-                            條碼錯誤排行 TOP 10
-                        </h2>
-                        <div className="space-y-2">
+                        </CardContent>
+                    </Card>
+                    <Card>
+                        <CardHeader className="flex items-center gap-2">
+                            <Package className="h-5 w-5 text-yellow-600" />
+                            <CardTitle className="text-lg">條碼錯誤排行 TOP 10</CardTitle>
+                            <CardDescription>最常發生錯誤的條碼</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-2">
                             {stats.topBarcodes.map((item, index) => (
-                                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                                        <span className={`
-                                            w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0
-                                            ${index === 0 ? 'bg-yellow-500 text-white' : 
-                                              index === 1 ? 'bg-gray-400 text-white' : 
-                                              index === 2 ? 'bg-orange-500 text-white' : 
-                                              'bg-gray-200 text-gray-600'}
-                                        `}>
+                                <div
+                                    key={index}
+                                    className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
+                                >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <span
+                                            className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                                                index === 0
+                                                    ? 'bg-yellow-500 text-white'
+                                                    : index === 1
+                                                    ? 'bg-gray-400 text-white'
+                                                    : index === 2
+                                                    ? 'bg-orange-500 text-white'
+                                                    : 'bg-gray-200 text-gray-600'
+                                            }`}
+                                        >
                                             {index + 1}
                                         </span>
-                                        <span className="font-mono text-sm truncate">{item.barcode}</span>
+                                        <span className="font-mono text-xs truncate">{item.barcode}</span>
                                     </div>
-                                    <span className="text-red-600 font-bold flex-shrink-0 ml-2">{item.count} 次</span>
+                                    <span className="text-red-600 font-bold text-sm">{item.count} 次</span>
                                 </div>
                             ))}
                             {stats.topBarcodes.length === 0 && (
-                                <p className="text-center text-gray-400 py-8">暫無數據</p>
+                                <EmptyState title="暫無數據" description="尚未有條碼錯誤紀錄" />
                             )}
-                        </div>
-                    </div>
+                        </CardContent>
+                    </Card>
                 </div>
 
-                {/* 搜尋框 */}
-                <div className="glass-card p-6 mb-6">
-                    <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                        <input
-                            type="text"
-                            placeholder="搜尋操作員、訂單號、客戶名稱或條碼..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="input-apple pl-12 w-full"
-                        />
-                    </div>
-                </div>
+                {/* 搜尋 */}
+                <Card className="mt-8">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5 text-red-600" /> 錯誤記錄搜尋
+                        </CardTitle>
+                        <CardDescription>搜尋操作員、訂單號、客戶或條碼</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="relative">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />
+                            <input
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="輸入關鍵字..."
+                                className="input-apple pl-12 w-full"
+                            />
+                        </div>
+                    </CardContent>
+                </Card>
 
                 {/* 錯誤列表 */}
-                <div className="glass-card p-6">
-                    <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                        <AlertTriangle size={20} className="text-red-600" />
-                        刷錯記錄明細 ({filteredErrors.length})
-                    </h2>
-                    
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="border-b-2 border-gray-200">
-                                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">時間</th>
-                                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">操作員</th>
-                                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">訂單號</th>
-                                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">刷錯條碼</th>
-                                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">錯誤原因</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredErrors.map((error, index) => (
-                                    <tr key={error.id || index} className="border-b border-gray-100 hover:bg-gray-50">
-                                        <td className="py-3 px-4 text-sm">
-                                            {new Date(error.created_at).toLocaleString('zh-TW')}
-                                        </td>
-                                        <td className="py-3 px-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium">{error.user_name}</span>
-                                                <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
-                                                    {error.user_role}
-                                                </span>
+                <Card className="mt-8">
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5 text-red-600" /> 刷錯記錄明細 ({filteredErrors.length})
+                        </CardTitle>
+                        <CardDescription>近期錯誤掃描詳細列表</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <Table>
+                            <THead>
+                                <TH>時間</TH>
+                                <TH>操作員</TH>
+                                <TH>訂單號</TH>
+                                <TH>刷錯條碼</TH>
+                                <TH>錯誤原因</TH>
+                            </THead>
+                            <TBody>
+                                {loading ? (
+                                    <TR>
+                                        <TD colSpan={5} className="py-16">
+                                            <div className="flex flex-col items-center">
+                                                <Skeleton className="h-8 w-8 rounded-full mb-4" />
+                                                <p className="text-gray-500 text-sm">載入中...</p>
                                             </div>
-                                        </td>
-                                        <td className="py-3 px-4 text-sm">
-                                            <div>
-                                                <p className="font-medium">{error.voucher_number || '-'}</p>
-                                                <p className="text-xs text-gray-500">{error.customer_name || '-'}</p>
-                                            </div>
-                                        </td>
-                                        <td className="py-3 px-4">
-                                            <code className="bg-red-50 text-red-700 px-2 py-1 rounded text-sm font-mono">
-                                                {error.details?.scanValue || '-'}
-                                            </code>
-                                        </td>
-                                        <td className="py-3 px-4 text-sm text-gray-600">
-                                            {error.details?.reason || '-'}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-
-                        {filteredErrors.length === 0 && (
-                            <div className="text-center py-12">
-                                <AlertTriangle className="mx-auto text-gray-300 mb-4" size={48} />
-                                <p className="text-gray-400 text-lg">
-                                    {searchTerm ? '找不到符合的記錄' : '太棒了!這段期間沒有刷錯記錄 🎉'}
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                                        </TD>
+                                    </TR>
+                                ) : filteredErrors.length === 0 ? (
+                                    <TR>
+                                        <TD colSpan={5} className="py-12">
+                                            <EmptyState
+                                                title={searchTerm ? '找不到符合的記錄' : '這段期間沒有刷錯記錄 🎉'}
+                                                description={searchTerm ? '嘗試修改搜尋條件' : '流程品質表現良好'}
+                                            />
+                                        </TD>
+                                    </TR>
+                                ) : (
+                                    filteredErrors.map((error) => (
+                                        <TR key={error.id}>
+                                            <TD className="text-xs whitespace-nowrap">{new Date(error.created_at).toLocaleString('zh-TW')}</TD>
+                                            <TD>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium text-sm">{error.user_name}</span>
+                                                    <Badge variant="info" className="text-[10px] px-2 py-0.5">{error.user_role}</Badge>
+                                                </div>
+                                            </TD>
+                                            <TD>
+                                                <div>
+                                                    <p className="font-medium text-sm">{error.voucher_number || '-'}</p>
+                                                    <p className="text-[10px] text-gray-500">{error.customer_name || '-'}</p>
+                                                </div>
+                                            </TD>
+                                            <TD>
+                                                <code className="bg-red-50 text-red-700 px-2 py-1 rounded text-xs font-mono">{error.details?.scanValue || '-'}</code>
+                                            </TD>
+                                            <TD className="text-xs text-gray-600">{error.details?.reason || '-'}</TD>
+                                        </TR>
+                                    ))
+                                )}
+                            </TBody>
+                        </Table>
+                    </CardContent>
+                </Card>
             </div>
-        </div>
-    );
+        );
 }
