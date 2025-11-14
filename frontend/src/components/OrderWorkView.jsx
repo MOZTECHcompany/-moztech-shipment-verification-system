@@ -652,25 +652,33 @@ export function OrderWorkView({ user }) {
     }
 
     return (
-        <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20 min-h-screen">
-            {/* Header - Apple 風格 */}
-            <header className="mb-6 sm:mb-8 animate-fade-in">
-                <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                        <button onClick={handleReturnToTasks} 
-                            className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-medium px-3 py-2 rounded-lg hover:bg-white/60 transition-all duration-200 group">
-                            <ArrowLeft className="group-hover:-translate-x-1 transition-transform duration-200" size={20} />
-                            <span>返回</span>
-                        </button>
-                    </div>
-                    <div>
-                        <h1 className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
-                            作業詳情
-                        </h1>
-                        <p className="text-sm text-gray-500 flex items-center gap-2">
-                            <User size={16} className="text-gray-400" />
-                            <span>操作員: <span className="font-medium text-gray-700">{user.name || user.username}</span></span>
-                        </p>
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20 min-h-screen">
+            {/* iOS 風格 Header */}
+            <header className="mb-6 animate-fade-in">
+                <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6">
+                    {/* 背景裝飾 */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
+                    
+                    <div className="relative z-10 space-y-4">
+                        {/* 返回按鈕 + 標題 */}
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <button onClick={handleReturnToTasks} 
+                                    className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-medium px-3 py-2 rounded-lg hover:bg-white/60 transition-all duration-200 group">
+                                    <ArrowLeft className="group-hover:-translate-x-1 transition-transform duration-200" size={20} />
+                                    <span>返回</span>
+                                </button>
+                                <div className="h-6 w-px bg-gray-200"></div>
+                                <div>
+                                    <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 tracking-tight">
+                                        📦 作業詳情
+                                    </h1>
+                                    <p className="text-sm text-gray-500 mt-0.5">
+                                        {user.name || user.username}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -686,16 +694,16 @@ export function OrderWorkView({ user }) {
                 items={currentOrderData.items}
             />
 
-            {/* 討論區塊 - Apple 風格 */}
+            {/* 討論區塊 */}
             <div className="mb-6 animate-slide-up">
-                <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-2xl">
+                <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl">
                     <div className="absolute inset-0 bg-gradient-to-br from-purple-50/20 via-transparent to-blue-50/20"></div>
-                    <div className="relative z-10 p-6">
+                    <div className="relative z-10 p-5 sm:p-6">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
                                 <MessageSquare className="text-white" size={20} />
                             </div>
-                            <h2 className="text-xl font-semibold text-gray-900">
+                            <h2 className="text-lg font-semibold text-gray-900">
                                 團隊討論
                             </h2>
                         </div>
@@ -708,53 +716,57 @@ export function OrderWorkView({ user }) {
                 </div>
             </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Scan Area */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+                {/* 掃描區 */}
                 <div className="lg:col-span-1">
-                    <div className="relative overflow-hidden rounded-2xl bg-white/80 backdrop-blur-xl border border-gray-200/50 shadow-lg p-6 sticky top-8 animate-scale-in">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-xl bg-gray-900 flex items-center justify-center">
-                                <ScanLine className="text-white" size={20}/>
+                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6 sticky top-8 animate-scale-in">
+                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-blue-100/20"></div>
+                        <div className="relative z-10">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                                    <ScanLine className="text-white" size={20}/>
+                                </div>
+                                <h2 className="text-lg font-semibold text-gray-900">
+                                    掃描區
+                                </h2>
                             </div>
-                            <h2 className="text-xl font-semibold text-gray-900">
-                                掃描區
-                            </h2>
-                        </div>
-                        <div className="flex gap-2">
-                            <div className="relative flex-1">
-                                <input
-                                    ref={barcodeInputRef}
-                                    type="text"
-                                    placeholder="掃描 SN 碼或條碼..."
-                                    value={barcodeInput}
-                                    onChange={(e) => setBarcodeInput(e.target.value)}
-                                    onKeyDown={handleKeyDown}
-                                    className={`w-full px-4 py-2.5 pr-11 rounded-lg border bg-white text-sm focus:outline-none focus:ring-2 transition-all ${
-                                        scanError 
-                                            ? 'border-red-300 ring-red-200 bg-red-50 animate-shake' 
-                                            : 'border-gray-200 focus:border-gray-900 focus:ring-gray-200'
-                                    }`}
-                                />
-                                <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                            <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                    <input
+                                        ref={barcodeInputRef}
+                                        type="text"
+                                        placeholder="掃描 SN 碼或條碼..."
+                                        value={barcodeInput}
+                                        onChange={(e) => setBarcodeInput(e.target.value)}
+                                        onKeyDown={handleKeyDown}
+                                        className={`w-full px-4 py-2.5 pr-11 rounded-lg border bg-white text-sm focus:outline-none focus:ring-2 transition-all ${
+                                            scanError 
+                                                ? 'border-red-300 ring-red-200 bg-red-50 animate-shake' 
+                                                : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
+                                        }`}
+                                    />
+                                    <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                </div>
+                                <button onClick={handleClick} disabled={isUpdating} 
+                                    className="px-4 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    {isUpdating ? <Loader2 className="animate-spin" size={18} /> : '確認'}
+                                </button>
                             </div>
-                            <button onClick={handleClick} disabled={isUpdating} 
-                                className="px-5 py-2.5 rounded-lg bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
-                                {isUpdating ? <Loader2 className="animate-spin" size={18} /> : '確認'}
-                            </button>
-                        </div>
-                        
-                        <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-                            <p className="text-xs text-gray-600 flex items-center gap-2">
-                                <AlertTriangle size={12} className="flex-shrink-0 text-gray-400" />
-                                <span>掃描後按 Enter 或點擊確認</span>
-                            </p>
+                            
+                            <div className="mt-3 p-3 bg-blue-50/50 border border-blue-100 rounded-lg">
+                                <p className="text-xs text-blue-600 flex items-center gap-2">
+                                    <AlertTriangle size={12} className="flex-shrink-0" />
+                                    <span>掃描後按 Enter 或點擊確認</span>
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Items List */}
+                {/* 作業清單 */}
                 <div className="lg:col-span-2">
-                    <div className="relative overflow-hidden rounded-2xl bg-white/80 backdrop-blur-xl border border-gray-200/50 shadow-lg p-6 min-h-full animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6 min-h-full animate-scale-in" style={{ animationDelay: '100ms' }}>
+                        <div className="absolute inset-0 bg-gradient-to-br from-gray-50/30 via-transparent to-gray-100/20"></div>
                         {scanError && (
                             <div className="absolute inset-0 bg-red-500/95 backdrop-blur-xl flex flex-col justify-center items-center z-10 rounded-2xl animate-fade-in p-4">
                                 <div className="bg-white rounded-full p-8 mb-6 shadow-2xl">
@@ -767,17 +779,17 @@ export function OrderWorkView({ user }) {
                             </div>
                         )}
                         
-                        <div className="mb-6">
+                        <div className="relative z-10 mb-6">
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-xl bg-gray-900 flex items-center justify-center">
+                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center shadow-lg shadow-gray-500/20">
                                         <Package className="text-white" size={20} />
                                     </div>
-                                    <h2 className="text-xl font-semibold text-gray-900">作業清單</h2>
+                                    <h2 className="text-lg font-semibold text-gray-900">作業清單</h2>
                                 </div>
                                 <StatusBadge status={currentOrderData.order.status} />
                             </div>
-                            <div className="flex items-center flex-wrap gap-4 text-sm p-4 bg-gray-50 rounded-lg border border-gray-200/50">
+                            <div className="flex items-center flex-wrap gap-4 text-sm p-4 bg-gray-50/50 rounded-lg border border-gray-200/30">
                                 <span className="flex items-center gap-2 text-gray-600">
                                     <Package size={16} className="text-gray-400 flex-shrink-0" />
                                     單號: <strong className="text-gray-900 truncate">{currentOrderData.order.voucher_number}</strong>
@@ -789,7 +801,7 @@ export function OrderWorkView({ user }) {
                             </div>
                         </div>
                         
-                        <div className="space-y-3 sm:space-y-4">
+                        <div className="relative z-10 space-y-4">
                             {sortedItems.map((item, index) => {
                                 const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
                                 const hasSN = itemInstances.length > 0;
