@@ -95,7 +95,7 @@ const NotificationCenter = ({ onOpenChat }) => {
                     />
 
                     {/* 通知面板 */}
-                    <div className="absolute right-0 top-16 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 max-h-[600px] flex flex-col">
+                    <div className="absolute right-0 top-16 w-96 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 max-h-[calc(100vh-120px)] flex flex-col overflow-hidden">
                         {/* 標題欄 */}
                         <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                             <div className="flex items-center gap-2">

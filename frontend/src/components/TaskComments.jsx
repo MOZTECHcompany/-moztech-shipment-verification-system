@@ -118,13 +118,23 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     useEffect(() => {
         // 降低備援輪詢頻率（主要依賴 WebSocket）
         const interval = setInterval(() => invalidate(), 60000);
+        
+        // 防止重複刷新的 debounce 計時器
+        let refreshTimer = null;
+        const debouncedInvalidate = () => {
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(() => {
+                invalidate();
+            }, 200); // 200ms 內的多次刷新請求只執行最後一次
+        };
 
         // 啟用 WebSocket 監聽新評論
         try {
             if (!socket.connected) socket.connect();
             const onNewComment = (data) => {
-                if (String(data.orderId) === String(orderId)) {
-                    invalidate();
+                // 只刷新別人發送的評論，自己的由 handleSubmit 處理
+                if (String(data.orderId) === String(orderId) && data.userId !== currentUser.id) {
+                    debouncedInvalidate();
                     fetchMentions();
                 }
             };
@@ -143,15 +153,21 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         if (!soundRef.current) soundRef.current = new SoundNotification();
                         soundRef.current.play('newTask');
                     } catch {}
-                    invalidate();
+                    debouncedInvalidate();
                     fetchMentions();
                 }
             };
             const onCommentDeleted = (payload) => {
-                if (String(payload.orderId) === String(orderId)) { invalidate(); fetchMentions(); }
+                if (String(payload.orderId) === String(orderId)) { 
+                    debouncedInvalidate(); 
+                    fetchMentions(); 
+                }
             };
             const onCommentRetracted = (payload) => {
-                if (String(payload.orderId) === String(orderId)) { invalidate(); fetchMentions(); }
+                if (String(payload.orderId) === String(orderId)) { 
+                    debouncedInvalidate(); 
+                    fetchMentions(); 
+                }
             };
             socket.on('new_comment', onNewComment);
             socket.on('new_mention', onNewMention);
@@ -159,6 +175,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             socket.on('comment_retracted', onCommentRetracted);
             return () => {
                 clearInterval(interval);
+                if (refreshTimer) clearTimeout(refreshTimer);
                 socket.off('new_comment', onNewComment);
                 socket.off('new_mention', onNewMention);
                 socket.off('comment_deleted', onCommentDeleted);
@@ -166,7 +183,10 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             };
         } catch (e) {
             // 若 socket 初始化失敗，不影響頁面其它功能
-            return () => clearInterval(interval);
+            return () => {
+                clearInterval(interval);
+                if (refreshTimer) clearTimeout(refreshTimer);
+            };
         }
     }, [orderId]);
 
@@ -271,41 +291,41 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
         if (loading) return; // 防重複點擊
         setLoading(true);
+        
+        // 儲存原始內容以備失敗時恢復
+        const originalComment = newComment;
+        const originalReplyTo = replyTo;
+        const originalPriority = priority;
+        
+        // 先清空輸入框（立即反饋）
+        setNewComment('');
+        setReplyTo(null);
+        setPriority('normal');
+        
         try {
-            const draft = {
-                id: `temp_${Date.now()}`,
-                content: newComment,
-                parent_id: replyTo?.id || null,
-                priority,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                user_id: currentUser.id,
-                username: currentUser.username,
-                user_name: currentUser.name,
-                replies: [],
-                __optimistic: true,
-            };
-            addOptimistic(draft);
-
             const payload = {
-                content: newComment,
-                parent_id: replyTo?.id || null,
-                priority: priority
+                content: originalComment,
+                parent_id: originalReplyTo?.id || null,
+                priority: originalPriority
             };
             lastPayloadRef.current = payload;
+            
+            // 直接發送，不使用樂觀更新（避免重複）
             await apiClient.post(`/api/tasks/${orderId}/comments`, payload);
             
-            setNewComment('');
-            setReplyTo(null);
-            setPriority('normal');
-            await invalidate();
-            // 發送成功後再捲到底，避免背景重新整理時誤觸頁面跳動
-            shouldScrollBottomRef.current = true;
+            // 發送成功，延遲刷新以避免與 WebSocket 衝突
+            setTimeout(() => {
+                invalidate();
+                shouldScrollBottomRef.current = true;
+            }, 300);
+            
             setInlineStatus({ type: 'success', message: '已發送評論' });
             setTimeout(() => setInlineStatus(null), 1600);
         } catch (error) {
-            // 還原暫時卡片
-            await invalidate();
+            // 失敗時恢復輸入內容
+            setNewComment(originalComment);
+            setReplyTo(originalReplyTo);
+            setPriority(originalPriority);
             setInlineStatus({ type: 'error', message: error.message || '發送失敗，請重試' });
         } finally {
             setLoading(false);
@@ -787,7 +807,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 )}
                 {hasNextPage && (
                     <div className="flex justify-center py-3">
-                        <button onClick={() => fetchNextPage()} className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50" aria-label="載入更多評論">
+                        <button onClick={() => fetchNextPage()} className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50" aria-label="載入更多評論">
                             載入更多
                         </button>
                     </div>
@@ -896,7 +916,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         onChange={handleInputChange}
                         placeholder="輸入評論... (使用 @ 提及同事)"
                         rows={3}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-apple-blue/50 focus:border-apple-blue transition-all text-sm"
+                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-apple-blue/50 focus:border-apple-blue transition-all text-sm text-gray-900 placeholder:text-gray-400"
                         disabled={loading}
                     />
 
