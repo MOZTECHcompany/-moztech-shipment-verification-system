@@ -578,7 +578,7 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-secondary">
+        <div className="min-h-screen bg-secondary dark:bg-background/95">
             <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
                 {/* iOS 風格 Header */}
                 <header className="mb-6 animate-fade-in">

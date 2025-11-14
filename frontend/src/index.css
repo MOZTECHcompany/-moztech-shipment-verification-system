@@ -33,18 +33,16 @@
     --radius: 1rem;
   }
 
-  /* 深色模式（可選） */
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --background: 0 0% 7%;        /* #121212 */
-      --foreground: 0 0% 98%;       /* #F5F5F7 */
-      --card: 0 0% 11%;             /* #1C1C1E */
-      --card-foreground: 0 0% 98%;
-      --secondary: 0 0% 15%;        /* #2C2C2E */
-      --secondary-foreground: 0 0% 70%;
-      --accent: 0 0% 20%;
-      --accent-foreground: 0 0% 98%;
-    }
+  /* 深色模式：由 .theme-dark 控制，而不是跟隨系統自動切換 */
+  .theme-dark {
+    --background: 0 0% 7%;        /* #121212 */
+    --foreground: 0 0% 98%;       /* #F5F5F7 */
+    --card: 0 0% 11%;             /* #1C1C1E */
+    --card-foreground: 0 0% 98%;
+    --secondary: 0 0% 15%;        /* #2C2C2E */
+    --secondary-foreground: 0 0% 70%;
+    --accent: 0 0% 20%;
+    --accent-foreground: 0 0% 98%;
   }
 }
 
