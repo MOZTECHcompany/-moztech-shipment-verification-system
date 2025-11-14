@@ -281,10 +281,10 @@ apiRouter.get('/tasks', async (req, res) => {
                 END) as unread_comments,
                 -- 最新評論
                 (SELECT json_build_object(
-                    'content', content,
+                    'content', tc2.content,
                     'user_name', u.name,
-                    'priority', priority,
-                    'created_at', created_at
+                    'priority', tc2.priority,
+                    'created_at', tc2.created_at
                 ) FROM task_comments tc2
                 LEFT JOIN users u ON tc2.user_id = u.id
                 WHERE tc2.order_id = o.id
@@ -299,7 +299,7 @@ apiRouter.get('/tasks', async (req, res) => {
                 ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
                 ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
-            GROUP BY o.id, o.voucher_number, o.customer_name, o.status, p.name, picker_u.name, packer_u.name
+            GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 
                 COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
                 COALESCE(o.is_urgent, FALSE) DESC, 
