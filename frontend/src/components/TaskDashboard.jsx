@@ -6,7 +6,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell, Flame, AlertTriangle } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
@@ -43,6 +43,7 @@ const statusConfig = {
 // 現代化任務卡片
 const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection }) => {
     const isMyTask = task.current_user;
+    const isUrgent = task.is_urgent || false;
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
         color: 'bg-gray-100 text-gray-700',
@@ -50,6 +51,20 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
         dot: 'bg-gray-500'
     };
     const StatusIcon = statusInfo.icon;
+
+    const handleSetUrgent = async (e) => {
+        e.stopPropagation();
+        try {
+            await apiClient.patch(`/api/orders/${task.id}/urgent`, {
+                isUrgent: !isUrgent
+            });
+            toast.success(isUrgent ? '已取消緊急標記' : '已標記為緊急任務');
+        } catch (error) {
+            toast.error('操作失敗', { 
+                description: error.response?.data?.message 
+            });
+        }
+    };
 
     return (
         <div className={`
@@ -59,12 +74,17 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             hover:shadow-apple-lg hover:-translate-y-1
             ${isMyTask 
                 ? 'ring-2 ring-green-500 shadow-apple-lg' 
+                : isUrgent
+                ? 'ring-2 ring-red-500 shadow-lg shadow-red-100'
                 : 'shadow-apple-sm border border-gray-100'
             }
             ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500' : ''}
             animate-scale-in
         `}>
             {/* 背景漸變裝飾 */}
+            {isUrgent && (
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-orange-500 to-red-500 animate-pulse" />
+            )}
 
             
             <div className="p-6">
@@ -91,6 +111,16 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                     
                     <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                        {/* 緊急標記 */}
+                        {isUrgent && (
+                            <div className="px-3 py-1.5 rounded-xl text-xs font-bold
+                                bg-gradient-to-r from-red-500 to-orange-500 text-white
+                                flex items-center gap-1.5 shadow-md animate-pulse">
+                                <Flame size={14} />
+                                緊急
+                            </div>
+                        )}
+                        
                         {/* 狀態標籤 */}
                         <div className={`
                             px-3 py-1.5 rounded-xl text-xs font-semibold
@@ -101,6 +131,24 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <StatusIcon size={12} />
                             {statusInfo.text}
                         </div>
+                        
+                        {/* 緊急按鈕（僅管理員） */}
+                        {user && user.role === 'admin' && (
+                            <button
+                                onClick={handleSetUrgent}
+                                className={`
+                                    p-2 rounded-xl transition-all duration-200
+                                    ${isUrgent 
+                                        ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' 
+                                        : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50'
+                                    }
+                                    opacity-0 group-hover:opacity-100
+                                `}
+                                title={isUrgent ? '取消緊急標記' : '標記為緊急'}
+                            >
+                                <AlertTriangle size={16} />
+                            </button>
+                        )}
                         
                         {/* 刪除按鈕（僅管理員） */}
                         {user && user.role === 'admin' && (
@@ -329,16 +377,40 @@ export function TaskDashboard({ user }) {
             setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
         };
 
+        const handleUrgentChanged = ({ orderId, isUrgent, voucherNumber }) => {
+            setTasks(prevTasks => {
+                const updatedTasks = prevTasks.map(task => 
+                    task.id === orderId 
+                        ? { ...task, is_urgent: isUrgent }
+                        : task
+                );
+                // 重新排序：緊急任務優先
+                return updatedTasks.sort((a, b) => {
+                    if (a.is_urgent === b.is_urgent) return 0;
+                    return a.is_urgent ? -1 : 1;
+                });
+            });
+            
+            if (isUrgent) {
+                toast.warning(`🔥 ${voucherNumber} 已被標記為緊急任務！`, {
+                    description: '請優先處理此訂單'
+                });
+                soundNotification.play('newTask');
+            }
+        };
+
         socket.on('new_task', handleNewTask);
         socket.on('task_claimed', handleTaskUpdate);
         socket.on('task_status_changed', handleTaskUpdate);
         socket.on('task_deleted', handleTaskDeleted);
+        socket.on('task_urgent_changed', handleUrgentChanged);
         
         return () => {
             socket.off('new_task', handleNewTask);
             socket.off('task_claimed', handleTaskUpdate);
             socket.off('task_status_changed', handleTaskUpdate);
             socket.off('task_deleted', handleTaskDeleted);
+            socket.off('task_urgent_changed', handleUrgentChanged);
         };
     }, [user]);
 

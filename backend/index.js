@@ -264,7 +264,8 @@ apiRouter.get('/tasks', async (req, res) => {
     const query = `
         SELECT o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
                (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
-               (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type
+               (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
+               COALESCE(o.is_urgent, FALSE) as is_urgent
         FROM orders o
         LEFT JOIN users p ON o.picker_id = p.id 
         LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
@@ -273,7 +274,7 @@ apiRouter.get('/tasks', async (req, res) => {
             ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
             ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
             ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
-        ORDER BY o.created_at ASC;
+        ORDER BY COALESCE(o.is_urgent, FALSE) DESC, o.created_at ASC;
     `;
     logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
     const result = await pool.query(query, [userId, role]);
@@ -708,6 +709,44 @@ apiRouter.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
     await logOperation(req.user.id, orderId, 'void', { reason });
     io.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'voided' });
     res.json({ message: `訂單 ${result.rows[0].voucher_number} 已成功作廢` });
+});
+apiRouter.patch('/orders/:orderId/urgent', authorizeAdmin, async (req, res) => {
+    const { orderId } = req.params;
+    const { isUrgent } = req.body;
+    
+    if (typeof isUrgent !== 'boolean') {
+        return res.status(400).json({ message: 'isUrgent 必須是布林值' });
+    }
+    
+    try {
+        const result = await pool.query(
+            'UPDATE orders SET is_urgent = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, voucher_number, is_urgent',
+            [isUrgent, orderId]
+        );
+        
+        if (result.rowCount === 0) {
+            return res.status(404).json({ message: '找不到該訂單' });
+        }
+        
+        const order = result.rows[0];
+        await logOperation(req.user.id, orderId, 'set_urgent', { is_urgent: isUrgent });
+        
+        // 即時通知所有用戶更新任務列表
+        io.emit('task_urgent_changed', { 
+            orderId: parseInt(orderId, 10), 
+            isUrgent: isUrgent,
+            voucherNumber: order.voucher_number
+        });
+        
+        logger.info(`[/api/orders/${orderId}/urgent] 訂單 ${order.voucher_number} 緊急狀態已更新為: ${isUrgent}`);
+        res.json({ 
+            message: `訂單 ${order.voucher_number} 已${isUrgent ? '標記為緊急' : '取消緊急標記'}`,
+            order
+        });
+    } catch (error) {
+        logger.error(`[/api/orders/${orderId}/urgent] 更新失敗:`, error);
+        res.status(500).json({ message: '更新緊急狀態失敗' });
+    }
 });
 apiRouter.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
