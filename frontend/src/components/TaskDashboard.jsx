@@ -568,7 +568,7 @@ export function TaskDashboard({ user }) {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
                 <div className="text-center">
                     <Loader2 className="animate-spin text-apple-blue mx-auto mb-4" size={56} />
                     <p className="text-gray-600 font-semibold text-lg">載入中...</p>
@@ -578,16 +578,17 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100">
+        <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
             <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
                 {/* Apple 風格標題區 */}
                 <header className="mb-6 sm:mb-8 animate-fade-in">
-                    <div className="rounded-2xl p-6 bg-white/80 backdrop-blur-xl border border-gray-200/50 shadow-lg">
-                        <div className="flex flex-col gap-5">
+                    <div className="rounded-2xl p-6 bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-2xl">
+                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20 rounded-2xl"></div>
+                        <div className="relative z-10 flex flex-col gap-5">
                             {/* 標題與歡迎訊息 */}
                             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                                 <div className="flex items-start gap-4">
-                                    <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center shadow-sm">
+                                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
                                         <Package className="text-white" size={24} />
                                     </div>
                                     <div>
@@ -724,72 +725,76 @@ export function TaskDashboard({ user }) {
                         </div>
                     </div>
 
-                    {/* 統計卡片 - Apple 風格 */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-5">
-                        {/* 待揀貨卡片 */}
-                        <div className="group relative bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-xl p-5 border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md">
-                            <div className="flex items-center justify-between">
+                    {/* 統計卡片 - iOS 毛玻璃風格 */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                        {/* 待揀貨卡片 - 橙色（需要關注） */}
+                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-orange-200/40 hover:border-orange-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-orange-500/10">
+                            <div className="absolute inset-0 bg-gradient-to-br from-orange-50/50 via-transparent to-orange-100/30 opacity-60 rounded-2xl"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">
+                                    <p className="text-xs text-orange-600 font-semibold uppercase tracking-wide mb-2">
                                         待揀貨
                                     </p>
-                                    <p className="text-3xl font-semibold text-gray-900">
+                                    <p className="text-3xl font-bold text-orange-600">
                                         {pickTasks.length}
                                     </p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center shadow-sm">
-                                    <Package className="text-white" size={20} />
+                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+                                    <Package className="text-white" size={22} />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 待裝箱卡片 */}
-                        <div className="group relative bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-xl p-5 border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md">
-                            <div className="flex items-center justify-between">
+                        {/* 待裝箱卡片 - 綠色（進行中） */}
+                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-green-200/40 hover:border-green-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-green-500/10">
+                            <div className="absolute inset-0 bg-gradient-to-br from-green-50/50 via-transparent to-green-100/30 opacity-60 rounded-2xl"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">
+                                    <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mb-2">
                                         待裝箱
                                     </p>
-                                    <p className="text-3xl font-semibold text-gray-900">
+                                    <p className="text-3xl font-bold text-green-600">
                                         {packTasks.length}
                                     </p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center shadow-sm">
-                                    <Box className="text-white" size={20} />
+                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30">
+                                    <Box className="text-white" size={22} />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 總任務卡片 */}
-                        <div className="group relative bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-xl p-5 border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md">
-                            <div className="flex items-center justify-between">
+                        {/* 總任務卡片 - 藍色（總覽） */}
+                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-blue-200/40 hover:border-blue-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-500/10">
+                            <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 via-transparent to-blue-100/30 opacity-60 rounded-2xl"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">
+                                    <p className="text-xs text-blue-600 font-semibold uppercase tracking-wide mb-2">
                                         總任務
                                     </p>
-                                    <p className="text-3xl font-semibold text-gray-900">
+                                    <p className="text-3xl font-bold text-blue-600">
                                         {tasks.length}
                                     </p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center shadow-sm">
-                                    <LayoutDashboard className="text-white" size={20} />
+                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                                    <LayoutDashboard className="text-white" size={22} />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 我的任務卡片 */}
-                        <div className="group relative bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-xl p-5 border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md">
-                            <div className="flex items-center justify-between">
+                        {/* 我的任務卡片 - 灰色（個人） */}
+                        <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-gray-200/40 hover:border-gray-300/60 transition-all duration-500 hover:shadow-2xl">
+                            <div className="absolute inset-0 bg-gradient-to-br from-gray-50/50 via-transparent to-gray-100/30 opacity-60 rounded-2xl"></div>
+                            <div className="relative z-10 flex items-center justify-between">
                                 <div>
-                                    <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2">
+                                    <p className="text-xs text-gray-600 font-semibold uppercase tracking-wide mb-2">
                                         我的任務
                                     </p>
-                                    <p className="text-3xl font-semibold text-gray-900">
+                                    <p className="text-3xl font-bold text-gray-800">
                                         {tasks.filter(t => t.current_user).length}
                                     </p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center shadow-sm">
-                                    <User className="text-white" size={20} />
+                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center shadow-lg shadow-gray-500/20">
+                                    <User className="text-white" size={22} />
                                 </div>
                             </div>
                         </div>

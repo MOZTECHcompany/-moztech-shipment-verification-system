@@ -58,8 +58,9 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
     const completionPercentage = stats.totalSkus > 0 ? (stats.packedSkus / stats.totalSkus) * 100 : 0;
     
     return (
-        <div className="relative overflow-hidden rounded-2xl bg-white/80 backdrop-blur-xl border border-gray-200/50 shadow-lg mb-6 animate-fade-in">
-            <div className="p-6">
+        <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-2xl mb-6 animate-fade-in">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
+            <div className="relative z-10 p-6">
                 <div className="flex flex-col gap-5">
                     <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                         <div className="w-full sm:w-auto">
@@ -120,56 +121,68 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
                     </div>
                 </div>
                 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    {/* SKU Progress */}
-                    <div className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100/50 p-5 rounded-xl border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md animate-scale-in" style={{ animationDelay: '100ms' }}>
-                        <div className="flex items-center justify-between mb-3">
-                            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">SKU 進度</p>
-                            <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center">
-                                <Package className="text-white" size={16} />
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* SKU Progress - 藍色（核心關注） */}
+                    <div className="group relative overflow-hidden bg-white/60 backdrop-blur-2xl p-6 rounded-2xl border border-blue-200/40 hover:border-blue-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-500/10 animate-scale-in" style={{ animationDelay: '100ms' }}>
+                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 via-transparent to-blue-100/30 opacity-60"></div>
+                        <div className="relative z-10">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-xs text-blue-600 font-semibold uppercase tracking-wide">SKU 進度</p>
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                                    <Package className="text-white" size={18} />
+                                </div>
                             </div>
+                            <p className="text-3xl font-bold text-blue-600 mb-2">{stats.packedSkus}<span className="text-lg text-blue-400/70">/{stats.totalSkus}</span></p>
+                            <ProgressBar value={stats.packedSkus} max={stats.totalSkus} colorClass="bg-gradient-to-r from-blue-500 to-blue-600" />
+                            <p className="text-xs text-blue-500 font-semibold mt-2">{completionPercentage.toFixed(0)}% 完成</p>
                         </div>
-                        <p className="text-3xl font-semibold text-gray-900 mb-2">{stats.packedSkus}<span className="text-xl text-gray-500">/{stats.totalSkus}</span></p>
-                        <ProgressBar value={stats.packedSkus} max={stats.totalSkus} colorClass="bg-gray-900" />
-                        <p className="text-xs text-gray-500 font-medium mt-2">{completionPercentage.toFixed(0)}% 完成</p>
                     </div>
 
-                    {/* Total Quantity */}
-                    <div className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100/50 p-5 rounded-xl border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md animate-scale-in" style={{ animationDelay: '200ms' }}>
-                        <div className="flex items-center justify-between mb-3">
-                            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">總數量</p>
-                            <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center">
-                                <Box className="text-white" size={16} />
+                    {/* Total Quantity - 灰色（基礎資訊） */}
+                    <div className="group relative overflow-hidden bg-white/60 backdrop-blur-2xl p-6 rounded-2xl border border-gray-200/40 hover:border-gray-300/60 transition-all duration-500 hover:shadow-2xl animate-scale-in" style={{ animationDelay: '200ms' }}>
+                        <div className="absolute inset-0 bg-gradient-to-br from-gray-50/50 via-transparent to-gray-100/30 opacity-60"></div>
+                        <div className="relative z-10">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-xs text-gray-600 font-semibold uppercase tracking-wide">總數量</p>
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center shadow-lg shadow-gray-500/20">
+                                    <Box className="text-white" size={18} />
+                                </div>
                             </div>
+                            <p className="text-3xl font-bold text-gray-800">{stats.totalQuantity}</p>
+                            <p className="text-xs text-gray-500 font-semibold mt-4">件商品</p>
                         </div>
-                        <p className="text-3xl font-semibold text-gray-900">{stats.totalQuantity}</p>
-                        <p className="text-xs text-gray-500 font-medium mt-4">件商品</p>
                     </div>
 
-                    {/* Picked Quantity */}
-                    <div className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100/50 p-5 rounded-xl border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md animate-scale-in" style={{ animationDelay: '300ms' }}>
-                        <div className="flex items-center justify-between mb-3">
-                            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">已揀貨</p>
-                            <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center">
-                                <ShoppingCart className="text-white" size={16} />
+                    {/* Picked Quantity - 橙色（進行中） */}
+                    <div className="group relative overflow-hidden bg-white/60 backdrop-blur-2xl p-6 rounded-2xl border border-orange-200/40 hover:border-orange-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-orange-500/10 animate-scale-in" style={{ animationDelay: '300ms' }}>
+                        <div className="absolute inset-0 bg-gradient-to-br from-orange-50/50 via-transparent to-orange-100/30 opacity-60"></div>
+                        <div className="relative z-10">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-xs text-orange-600 font-semibold uppercase tracking-wide">已揀貨</p>
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+                                    <ShoppingCart className="text-white" size={18} />
+                                </div>
                             </div>
+                            <p className="text-3xl font-bold text-orange-600 mb-2">{stats.totalPickedQty}</p>
+                            <ProgressBar value={stats.totalPickedQty} max={stats.totalQuantity} colorClass="bg-gradient-to-r from-orange-500 to-orange-600" />
+                            <p className="text-xs text-orange-500 font-semibold mt-2">{stats.totalQuantity > 0 ? ((stats.totalPickedQty / stats.totalQuantity) * 100).toFixed(0) : 0}% 完成</p>
                         </div>
-                        <p className="text-3xl font-semibold text-gray-900 mb-2">{stats.totalPickedQty}</p>
-                        <ProgressBar value={stats.totalPickedQty} max={stats.totalQuantity} colorClass="bg-gray-900" />
-                        <p className="text-xs text-gray-500 font-medium mt-2">{stats.totalQuantity > 0 ? ((stats.totalPickedQty / stats.totalQuantity) * 100).toFixed(0) : 0}% 完成</p>
                     </div>
 
-                    {/* Packed Quantity */}
-                    <div className="group relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100/50 p-5 rounded-xl border border-gray-200/50 hover:border-gray-300/50 transition-all duration-300 hover:shadow-md animate-scale-in" style={{ animationDelay: '400ms' }}>
-                        <div className="flex items-center justify-between mb-3">
-                            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">已裝箱</p>
-                            <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center">
-                                <Check className="text-white" size={16} />
+                    {/* Packed Quantity - 綠色（已完成） */}
+                    <div className="group relative overflow-hidden bg-white/60 backdrop-blur-2xl p-6 rounded-2xl border border-green-200/40 hover:border-green-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-green-500/10 animate-scale-in" style={{ animationDelay: '400ms' }}>
+                        <div className="absolute inset-0 bg-gradient-to-br from-green-50/50 via-transparent to-green-100/30 opacity-60"></div>
+                        <div className="relative z-10">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-xs text-green-600 font-semibold uppercase tracking-wide">已裝箱</p>
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30">
+                                    <Check className="text-white" size={18} />
+                                </div>
                             </div>
+                            <p className="text-3xl font-bold text-green-600 mb-2">{stats.totalPackedQty}</p>
+                            <ProgressBar value={stats.totalPackedQty} max={stats.totalQuantity} colorClass="bg-gradient-to-r from-green-500 to-green-600" />
+                            <p className="text-xs text-green-500 font-semibold mt-2">{stats.totalQuantity > 0 ? ((stats.totalPackedQty / stats.totalQuantity) * 100).toFixed(0) : 0}% 完成</p>
                         </div>
-                        <p className="text-3xl font-semibold text-gray-900 mb-2">{stats.totalPackedQty}</p>
-                        <ProgressBar value={stats.totalPackedQty} max={stats.totalQuantity} colorClass="bg-gray-900" />
-                        <p className="text-xs text-gray-500 font-medium mt-2">{stats.totalQuantity > 0 ? ((stats.totalPackedQty / stats.totalQuantity) * 100).toFixed(0) : 0}% 完成</p>
                     </div>
                 </div>
             </div>
@@ -639,7 +652,7 @@ export function OrderWorkView({ user }) {
     }
 
     return (
-        <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100 min-h-screen">
+        <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20 min-h-screen">
             {/* Header - Apple 風格 */}
             <header className="mb-6 sm:mb-8 animate-fade-in">
                 <div className="flex flex-col gap-4">
@@ -675,10 +688,11 @@ export function OrderWorkView({ user }) {
 
             {/* 討論區塊 - Apple 風格 */}
             <div className="mb-6 animate-slide-up">
-                <div className="relative overflow-hidden rounded-2xl bg-white/80 backdrop-blur-xl border border-gray-200/50 shadow-lg">
-                    <div className="p-6">
+                <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-2xl">
+                    <div className="absolute inset-0 bg-gradient-to-br from-purple-50/20 via-transparent to-blue-50/20"></div>
+                    <div className="relative z-10 p-6">
                         <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-xl bg-gray-900 flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
                                 <MessageSquare className="text-white" size={20} />
                             </div>
                             <h2 className="text-xl font-semibold text-gray-900">
