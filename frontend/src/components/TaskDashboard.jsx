@@ -12,6 +12,8 @@ import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
 import { voiceNotification } from '@/utils/voiceNotification.js';
 import { desktopNotification } from '@/utils/desktopNotification.js';
+import FloatingChatPanel from './FloatingChatPanel';
+import NotificationCenter from './NotificationCenter';
 
 const statusConfig = {
     pending: { 
@@ -41,9 +43,14 @@ const statusConfig = {
 };
 
 // 現代化任務卡片
-const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat }) => {
     const isMyTask = task.current_user;
     const isUrgent = task.is_urgent || false;
+    const hasComments = task.total_comments > 0;
+    const hasUnread = task.unread_comments > 0;
+    const hasUrgentComments = task.urgent_comments > 0;
+    const latestComment = task.latest_comment;
+    
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
         color: 'bg-gray-100 text-gray-700',
@@ -64,6 +71,11 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                 description: error.response?.data?.message 
             });
         }
+    };
+
+    const handleOpenChat = (e) => {
+        e.stopPropagation();
+        onOpenChat(task.id, task.voucher_number);
     };
 
     return (
@@ -177,6 +189,44 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                 )}
 
+                {/* 評論預覽區域 */}
+                {hasComments && (
+                    <div className="mb-4">
+                        <button
+                            onClick={handleOpenChat}
+                            className="w-full px-3 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 rounded-lg transition-all group"
+                        >
+                            <div className="flex items-start gap-2">
+                                <MessageSquare size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                                <div className="flex-1 text-left min-w-0">
+                                    {latestComment && (
+                                        <p className="text-xs text-gray-700 truncate mb-1">
+                                            <span className="font-semibold">{latestComment.user_name}:</span> {latestComment.content}
+                                        </p>
+                                    )}
+                                    <div className="flex items-center gap-2 text-xs">
+                                        {hasUnread && (
+                                            <span className="bg-red-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
+                                                {task.unread_comments} 則未讀
+                                            </span>
+                                        )}
+                                        {hasUrgentComments && (
+                                            <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                                <AlertTriangle size={10} />
+                                                {task.urgent_comments} 緊急
+                                            </span>
+                                        )}
+                                        <span className="text-gray-500">
+                                            {task.total_comments} 則對話
+                                        </span>
+                                    </div>
+                                </div>
+                                <ArrowRight size={16} className="text-blue-600 opacity-0 group-hover:opacity-100 transition flex-shrink-0" />
+                            </div>
+                        </button>
+                    </div>
+                )}
+
                 {/* 操作按鈕 */}
                 {isMyTask ? (
                     <button
@@ -228,8 +278,34 @@ export function TaskDashboard({ user }) {
     const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
+    
+    // 浮動聊天面板狀態
+    const [openChats, setOpenChats] = useState([]);
+    
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
+
+    // 打開聊天面板
+    const handleOpenChat = (orderId, voucherNumber) => {
+        // 檢查是否已經打開
+        if (openChats.some(chat => chat.orderId === orderId)) {
+            toast.info('該對話已經開啟');
+            return;
+        }
+        
+        // 最多同時打開3個
+        if (openChats.length >= 3) {
+            toast.warning('最多只能同時開啟 3 個對話窗');
+            return;
+        }
+        
+        setOpenChats(prev => [...prev, { orderId, voucherNumber }]);
+    };
+
+    // 關閉聊天面板
+    const handleCloseChat = (orderId) => {
+        setOpenChats(prev => prev.filter(chat => chat.orderId !== orderId));
+    };
 
     const toggleSound = () => {
         const newState = !soundEnabled;
@@ -591,6 +667,9 @@ export function TaskDashboard({ user }) {
                                     {notificationEnabled ? '通知開啟' : '通知關閉'}
                                 </span>
                             </button>
+
+                            {/* 討論通知中心 */}
+                            <NotificationCenter onOpenChat={handleOpenChat} />
                             
                             {/* 管理中心 */}
                             {user && user.role === 'admin' && (
@@ -693,6 +772,7 @@ export function TaskDashboard({ user }) {
                                             batchMode={batchMode}
                                             selectedTasks={selectedTasks}
                                             toggleTaskSelection={toggleTaskSelection}
+                                            onOpenChat={handleOpenChat}
                                         />
                                     </div>
                                 ))
@@ -734,6 +814,7 @@ export function TaskDashboard({ user }) {
                                             batchMode={batchMode}
                                             selectedTasks={selectedTasks}
                                             toggleTaskSelection={toggleTaskSelection}
+                                            onOpenChat={handleOpenChat}
                                         />
                                     </div>
                                 ))
@@ -758,6 +839,17 @@ export function TaskDashboard({ user }) {
                     </div>
                 )}
             </div>
+
+            {/* 浮動聊天面板 */}
+            {openChats.map((chat, index) => (
+                <FloatingChatPanel
+                    key={chat.orderId}
+                    orderId={chat.orderId}
+                    voucherNumber={chat.voucherNumber}
+                    position={index}
+                    onClose={() => handleCloseChat(chat.orderId)}
+                />
+            ))}
         </div>
     );
 }
