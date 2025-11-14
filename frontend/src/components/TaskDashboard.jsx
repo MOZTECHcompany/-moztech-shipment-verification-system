@@ -579,149 +579,112 @@ export function TaskDashboard({ user }) {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
-            <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
-                {/* Apple 風格標題區 */}
-                <header className="mb-6 sm:mb-8 animate-fade-in">
-                    <div className="rounded-2xl p-6 bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-2xl">
-                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20 rounded-2xl"></div>
-                        <div className="relative z-10 flex flex-col gap-5">
-                            {/* 標題與歡迎訊息 */}
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                                <div className="flex items-start gap-4">
-                                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                                        <Package className="text-white" size={24} />
+            <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+                {/* iOS 風格 Header */}
+                <header className="mb-6 animate-fade-in">
+                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6">
+                        {/* 背景裝飾 */}
+                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
+                        
+                        <div className="relative z-10 space-y-4">
+                            {/* 標題列 */}
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                                        <Package className="text-white" size={20} />
                                     </div>
                                     <div>
-                                        <h1 className="text-3xl font-semibold text-gray-900 mb-1 tracking-tight">
-                                            任務看板
+                                        <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 tracking-tight">
+                                            📋 任務看板
                                         </h1>
-                                        <p className="text-sm text-gray-500 flex items-center gap-2">
-                                            <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-                                            {currentView === 'tasks' ? '全部任務' : '我的任務'}
+                                        <p className="text-sm text-gray-500 mt-0.5">
+                                            {user?.name || user?.username}，您好
                                         </p>
                                     </div>
                                 </div>
                                 
                                 {/* 通知中心 */}
-                                <div className="flex items-center gap-2">
-                                    <NotificationCenter onOpenChat={handleOpenChat} />
-                                </div>
+                                <NotificationCenter onOpenChat={handleOpenChat} />
                             </div>
                             
-                            {/* 功能按鈕組 - Apple 風格 */}
+                            {/* 功能按鈕組 */}
                             <div className="flex flex-wrap items-center gap-2">
-                                {/* 批次模式開關 */}
+                                {/* 批次模式 */}
                                 {user && user.role === 'admin' && (
                                     <button
                                         onClick={toggleBatchMode}
-                                        className={`
-                                            px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 active:scale-95 flex items-center gap-2
-                                            ${ batchMode 
+                                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
+                                            batchMode 
                                                 ? 'bg-gray-900 text-white hover:bg-gray-800' 
-                                                : 'bg-white text-gray-900 border border-gray-200 hover:bg-gray-50'
-                                            }
-                                        `}
+                                                : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                        }`}
                                     >
                                         <ListChecks size={16} />
-                                        <span className="hidden xs:inline">
-                                            {batchMode ? '✓ 批次模式' : '批次操作'}
-                                        </span>
+                                        <span className="hidden sm:inline">{batchMode ? '✓ 批次模式' : '批次操作'}</span>
                                     </button>
                                 )}
 
-                                {/* 批次認領按鈕 */}
+                                {/* 批次認領 */}
                                 {batchMode && selectedTasks.length > 0 && (
                                     <button
                                         onClick={handleBatchClaim}
-                                        className="px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium transition-all duration-200 active:scale-95 flex items-center gap-2 animate-scale-in"
+                                        className="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2"
                                     >
-                                        <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
-                                        <CheckCircle2 size={16} className="sm:w-5 sm:h-5 relative z-10" />
-                                        <span className="hidden xs:inline relative z-10">認領 {selectedTasks.length} 個</span>
-                                        <span className="xs:hidden relative z-10">({selectedTasks.length})</span>
+                                        <CheckCircle2 size={16} />
+                                        <span>認領 {selectedTasks.length} 個</span>
                                     </button>
                                 )}
 
-                            {/* 音效開關 - 優化設計 */}
-                            <button
-                                onClick={toggleSound}
-                                className={`
-                                    group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-xs sm:text-sm
-                                    transition-all duration-300 shadow-lg hover:shadow-xl
-                                    active:scale-95 overflow-hidden
-                                    ${soundEnabled 
-                                        ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white ring-2 ring-green-300' 
-                                        : 'bg-white text-gray-600 hover:bg-gray-50 border-2 border-gray-200'
-                                    }
-                                `}
-                                title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
-                            >
-                                <div className={`absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
-                                {soundEnabled ? <Volume2 size={16} className="sm:w-5 sm:h-5 relative z-10 animate-pulse" /> : <VolumeX size={16} className="sm:w-5 sm:h-5 relative z-10" />}
-                                <span className="hidden sm:inline relative z-10">
-                                    {soundEnabled ? '音效' : '音效'}
-                                </span>
-                            </button>
-
-                            {/* 語音播報開關 - 優化設計 */}
-                            <button
-                                onClick={toggleVoice}
-                                className={`
-                                    group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-xs sm:text-sm
-                                    transition-all duration-300 shadow-lg hover:shadow-xl
-                                    active:scale-95 overflow-hidden
-                                    ${voiceEnabled 
-                                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white ring-2 ring-blue-300' 
-                                        : 'bg-white text-gray-600 hover:bg-gray-50 border-2 border-gray-200'
-                                    }
-                                `}
-                                title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
-                            >
-                                <div className={`absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
-                                <MessageSquare size={16} className="sm:w-5 sm:h-5 relative z-10" />
-                                <span className="hidden sm:inline relative z-10">
-                                    {voiceEnabled ? '語音' : '語音'}
-                                </span>
-                            </button>
-
-                            {/* 桌面通知開關 - 優化設計 */}
-                            <button
-                                onClick={toggleNotification}
-                                className={`
-                                    group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-xs sm:text-sm
-                                    transition-all duration-300 shadow-lg hover:shadow-xl
-                                    active:scale-95 overflow-hidden
-                                    ${notificationEnabled 
-                                        ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white ring-2 ring-purple-300' 
-                                        : 'bg-white text-gray-600 hover:bg-gray-50 border-2 border-gray-200'
-                                    }
-                                `}
-                                title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
-                            >
-                                <div className={`absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
-                                <Bell size={16} className="sm:w-5 sm:h-5 relative z-10" />
-                                <span className="hidden sm:inline relative z-10">
-                                    {notificationEnabled ? '通知' : '通知'}
-                                </span>
-                            </button>
-                            
-                            {/* 管理中心 - 優化設計 */}
-                            {user && user.role === 'admin' && (
-                                <Link 
-                                    to="/admin" 
-                                    className="
-                                        group relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-bold text-xs sm:text-sm
-                                        bg-gradient-to-r from-gray-800 via-gray-900 to-black text-white
-                                        shadow-lg hover:shadow-2xl shadow-gray-900/50
-                                        transition-all duration-300
-                                        active:scale-95 overflow-hidden
-                                    "
+                                {/* 音效 */}
+                                <button
+                                    onClick={toggleSound}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
+                                        soundEnabled 
+                                            ? 'bg-green-500 text-white hover:bg-green-600' 
+                                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                    }`}
                                 >
-                                    <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
-                                    <LayoutDashboard size={16} className="sm:w-5 sm:h-5 relative z-10" />
-                                    <span className="hidden xs:inline relative z-10">管理中心</span>
-                                </Link>
-                            )}
+                                    {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                                    <span className="hidden sm:inline">音效</span>
+                                </button>
+
+                                {/* 語音 */}
+                                <button
+                                    onClick={toggleVoice}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
+                                        voiceEnabled 
+                                            ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <MessageSquare size={16} />
+                                    <span className="hidden sm:inline">語音</span>
+                                </button>
+
+                                {/* 通知 */}
+                                <button
+                                    onClick={toggleNotification}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
+                                        notificationEnabled 
+                                            ? 'bg-purple-500 text-white hover:bg-purple-600' 
+                                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <Bell size={16} />
+                                    <span className="hidden sm:inline">通知</span>
+                                </button>
+                            
+                                {/* 管理中心 */}
+                                {user && user.role === 'admin' && (
+                                    <Link 
+                                        to="/admin" 
+                                        className="px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2"
+                                    >
+                                        <LayoutDashboard size={16} />
+                                        <span className="hidden sm:inline">管理中心</span>
+                                    </Link>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -799,38 +762,32 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
                     </div>
-                </div>
-            </header>
+                </header>
 
-                {/* 任務列表 - 優化設計 */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 md:gap-8">
+                {/* 任務列表 */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
                     {/* 揀貨任務區 */}
                     <section className="animate-slide-up">
-                        <div className="relative mb-4 sm:mb-6">
-                            {/* 漸層背景裝飾 */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent rounded-2xl blur-xl"></div>
-                            <div className="relative glass rounded-xl sm:rounded-2xl p-4 border border-amber-200/50 bg-gradient-to-r from-amber-50/50 to-orange-50/30">
-                                <div className="flex items-center gap-2 sm:gap-3">
-                                    <div className="relative">
-                                        <div className="absolute inset-0 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl blur-md opacity-60"></div>
-                                        <div className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
+                        <div className="relative mb-4">
+                            {/* 背景光暈 */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-transparent rounded-2xl blur-xl"></div>
+                            <div className="relative bg-white/60 backdrop-blur-xl rounded-2xl p-4 border border-orange-200/40">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
                                             <Package className="text-white" size={20} />
                                         </div>
-                                    </div>
-                                    <div className="flex-1">
-                                        <h2 className="text-xl sm:text-2xl font-black bg-gradient-to-r from-amber-700 to-orange-700 bg-clip-text text-transparent">
+                                        <h2 className="text-lg font-semibold text-gray-900">
                                             待揀貨任務
                                         </h2>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs sm:text-sm font-bold shadow-lg animate-pulse">
-                                            {pickTasks.length}
-                                        </span>
-                                    </div>
+                                    <span className="px-2.5 py-0.5 rounded-lg bg-orange-100 text-orange-700 text-sm font-bold">
+                                        {pickTasks.length}
+                                    </span>
                                 </div>
                             </div>
                         </div>
-                        <div className="space-y-3 sm:space-y-4">
+                        <div className="space-y-4">
                             {pickTasks.length > 0 ? (
                                 pickTasks.map((task, index) => (
                                     <div 
@@ -867,31 +824,26 @@ export function TaskDashboard({ user }) {
 
                     {/* 裝箱任務區 */}
                     <section className="animate-slide-up" style={{ animationDelay: '100ms' }}>
-                        <div className="relative mb-4 sm:mb-6">
-                            {/* 漸層背景裝飾 */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent rounded-2xl blur-xl"></div>
-                            <div className="relative glass rounded-xl sm:rounded-2xl p-4 border border-indigo-200/50 bg-gradient-to-r from-indigo-50/50 to-purple-50/30">
-                                <div className="flex items-center gap-2 sm:gap-3">
-                                    <div className="relative">
-                                        <div className="absolute inset-0 bg-gradient-to-br from-indigo-400 to-purple-500 rounded-xl blur-md opacity-60"></div>
-                                        <div className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center shadow-lg">
+                        <div className="relative mb-4">
+                            {/* 背景光暈 */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-green-500/10 via-green-500/5 to-transparent rounded-2xl blur-xl"></div>
+                            <div className="relative bg-white/60 backdrop-blur-xl rounded-2xl p-4 border border-green-200/40">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30">
                                             <Box className="text-white" size={20} />
                                         </div>
-                                    </div>
-                                    <div className="flex-1">
-                                        <h2 className="text-xl sm:text-2xl font-black bg-gradient-to-r from-indigo-700 to-purple-700 bg-clip-text text-transparent">
+                                        <h2 className="text-lg font-semibold text-gray-900">
                                             待裝箱任務
                                         </h2>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-xs sm:text-sm font-bold shadow-lg animate-pulse">
-                                            {packTasks.length}
-                                        </span>
-                                    </div>
+                                    <span className="px-2.5 py-0.5 rounded-lg bg-green-100 text-green-700 text-sm font-bold">
+                                        {packTasks.length}
+                                    </span>
                                 </div>
                             </div>
                         </div>
-                        <div className="space-y-3 sm:space-y-4">
+                        <div className="space-y-4">
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
