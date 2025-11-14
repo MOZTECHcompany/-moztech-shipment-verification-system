@@ -1810,6 +1810,60 @@ apiRouter.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
 // #endregion
 
 // =================================================================
+// #region 資料庫診斷端點 (Database Diagnostics)
+// =================================================================
+apiRouter.get('/debug/tables', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            ORDER BY table_name;
+        `);
+        res.json({ 
+            tables: result.rows.map(r => r.table_name),
+            count: result.rows.length 
+        });
+    } catch (error) {
+        logger.error('[/api/debug/tables] 錯誤:', error);
+        res.status(500).json({ message: '檢查資料表失敗', error: error.message });
+    }
+});
+
+apiRouter.get('/debug/check-comment-reads', async (req, res) => {
+    try {
+        const checkTable = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'task_comment_reads'
+            );
+        `);
+        
+        const tableExists = checkTable.rows[0].exists;
+        
+        if (tableExists) {
+            const count = await pool.query('SELECT COUNT(*) FROM task_comment_reads');
+            res.json({ 
+                tableExists: true, 
+                recordCount: parseInt(count.rows[0].count),
+                status: 'OK'
+            });
+        } else {
+            res.json({ 
+                tableExists: false, 
+                status: 'MISSING',
+                message: '需要執行 005_comment_read_tracking.sql 遷移'
+            });
+        }
+    } catch (error) {
+        logger.error('[/api/debug/check-comment-reads] 錯誤:', error);
+        res.status(500).json({ message: '檢查失敗', error: error.message });
+    }
+});
+// #endregion
+
+// =================================================================
 // #region 路由注册 (Router Registration)
 // =================================================================
 logger.info('Registering routers');
