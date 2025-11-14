@@ -1,7 +1,7 @@
 // frontend/src/components/TaskDashboard-modern.jsx
 // 現代化 Apple 風格任務儀表板
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
@@ -14,6 +14,7 @@ import { voiceNotification } from '@/utils/voiceNotification.js';
 import { desktopNotification } from '@/utils/desktopNotification.js';
 import FloatingChatPanel from './FloatingChatPanel';
 import NotificationCenter from './NotificationCenter';
+import { PageHeader, FilterBar, Button } from '@/ui';
 
 const statusConfig = {
     pending: { 
@@ -81,16 +82,16 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     return (
         <div className={`
             group relative overflow-hidden
-            bg-white/90 backdrop-blur-sm rounded-xl sm:rounded-2xl 
+            bg-white/90 dark:bg-card backdrop-blur-sm rounded-xl sm:rounded-2xl 
             transition-all duration-500 ease-out
-            hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.02]
+            hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.01]
             ${isMyTask 
-                ? 'ring-2 ring-green-500 shadow-2xl shadow-green-500/20 bg-gradient-to-br from-green-50/50 to-emerald-50/30' 
+                ? 'ring-1 ring-green-400/80 shadow-xl shadow-green-200/40 border-l-4 border-l-green-400' 
                 : isUrgent
-                ? 'ring-2 ring-red-500 shadow-2xl shadow-red-500/30 bg-gradient-to-br from-red-50/30 to-orange-50/20'
+                ? 'ring-1 ring-red-400/80 shadow-xl shadow-red-200/40 border-l-4 border-l-red-400'
                 : 'shadow-lg border border-gray-100 hover:border-blue-200'
             }
-            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500 scale-[0.98]' : ''}
+            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500 scale-[0.99]' : ''}
             animate-scale-in
         `}>
             {/* 背景裝飾元素 */}
@@ -300,6 +301,7 @@ export function TaskDashboard({ user }) {
     const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
+    const [search, setSearch] = useState('');
     
     // 浮動聊天面板狀態
     const [openChats, setOpenChats] = useState([]);
@@ -563,8 +565,17 @@ export function TaskDashboard({ user }) {
         });
     };
 
-    const pickTasks = tasks.filter(t => t.task_type === 'pick');
-    const packTasks = tasks.filter(t => t.task_type === 'pack');
+    const normalizedSearch = search.trim().toLowerCase();
+    const visibleTasks = useMemo(() => {
+        if (!normalizedSearch) return tasks;
+        return tasks.filter((t) => {
+            const hay = `${t.voucher_number || ''} ${t.customer_name || ''}`.toLowerCase();
+            return hay.includes(normalizedSearch);
+        });
+    }, [tasks, normalizedSearch]);
+
+    const pickTasks = visibleTasks.filter(t => t.task_type === 'pick');
+    const packTasks = visibleTasks.filter(t => t.task_type === 'pack');
 
     if (loading) {
         return (
@@ -578,118 +589,48 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-secondary">
+        <div className="min-h-screen bg-secondary dark:bg-background/95">
             <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-                {/* iOS 風格 Header */}
-                <header className="mb-6 animate-fade-in">
-                    <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-2xl border border-gray-200/30 shadow-xl p-5 sm:p-6">
-                        {/* 背景裝飾 */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-blue-50/20 via-transparent to-purple-50/20"></div>
-                        
-                        <div className="relative z-10 space-y-4">
-                            {/* 標題列 */}
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                                        <Package className="text-white" size={20} />
-                                    </div>
-                                    <div>
-                                        <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 tracking-tight">
-                                            📋 任務看板
-                                        </h1>
-                                        <p className="text-sm text-gray-500 mt-0.5">
-                                            {user?.name || user?.username}，您好
-                                        </p>
-                                    </div>
-                                </div>
-                                
-                                {/* 通知中心 */}
-                                <NotificationCenter onOpenChat={handleOpenChat} />
-                            </div>
-                            
-                            {/* 功能按鈕組 */}
-                            <div className="flex flex-wrap items-center gap-2">
-                                {/* 批次模式 */}
-                                {user && user.role === 'admin' && (
-                                    <button
-                                        onClick={toggleBatchMode}
-                                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
-                                            batchMode 
-                                                ? 'bg-gray-900 text-white hover:bg-gray-800' 
-                                                : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
-                                        }`}
-                                    >
-                                        <ListChecks size={16} />
-                                        <span className="hidden sm:inline">{batchMode ? '✓ 批次模式' : '批次操作'}</span>
-                                    </button>
-                                )}
-
-                                {/* 批次認領 */}
-                                {batchMode && selectedTasks.length > 0 && (
-                                    <button
-                                        onClick={handleBatchClaim}
-                                        className="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2"
-                                    >
-                                        <CheckCircle2 size={16} />
-                                        <span>認領 {selectedTasks.length} 個</span>
-                                    </button>
-                                )}
-
-                                {/* 音效 */}
-                                <button
-                                    onClick={toggleSound}
-                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
-                                        soundEnabled 
-                                            ? 'bg-green-500 text-white hover:bg-green-600' 
-                                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-                                    <span className="hidden sm:inline">音效</span>
-                                </button>
-
-                                {/* 語音 */}
-                                <button
-                                    onClick={toggleVoice}
-                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
-                                        voiceEnabled 
-                                            ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <MessageSquare size={16} />
-                                    <span className="hidden sm:inline">語音</span>
-                                </button>
-
-                                {/* 通知 */}
-                                <button
-                                    onClick={toggleNotification}
-                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2 ${
-                                        notificationEnabled 
-                                            ? 'bg-purple-500 text-white hover:bg-purple-600' 
-                                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <Bell size={16} />
-                                    <span className="hidden sm:inline">通知</span>
-                                </button>
-                            
-                                {/* 管理中心 */}
-                                {user && user.role === 'admin' && (
-                                    <Link 
-                                        to="/admin" 
-                                        className="px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium transition-all duration-200 hover:shadow-md active:scale-95 flex items-center gap-2"
-                                    >
-                                        <LayoutDashboard size={16} />
-                                        <span className="hidden sm:inline">管理中心</span>
-                                    </Link>
-                                )}
-                            </div>
-                        </div>
+                {/* 頁面標題 + 動作 */}
+                <PageHeader
+                  title="📋 任務看板"
+                  description={`${user?.name || user?.username}，您好`}
+                  actions={(
+                    <div className="flex items-center gap-2">
+                      <NotificationCenter onOpenChat={handleOpenChat} />
+                      {user && user.role === 'admin' && (
+                        <Button variant={batchMode ? 'primary' : 'secondary'} size="sm" onClick={toggleBatchMode} leadingIcon={ListChecks}>
+                          {batchMode ? '✓ 批次模式' : '批次操作'}
+                        </Button>
+                      )}
+                      {batchMode && selectedTasks.length > 0 && (
+                        <Button variant="primary" size="sm" onClick={handleBatchClaim} leadingIcon={CheckCircle2}>
+                          認領 {selectedTasks.length} 個
+                        </Button>
+                      )}
+                      <Button variant={soundEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleSound} leadingIcon={soundEnabled ? Volume2 : VolumeX}>
+                        音效
+                      </Button>
+                      <Button variant={voiceEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleVoice} leadingIcon={MessageSquare}>
+                        語音
+                      </Button>
+                      <Button variant={notificationEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleNotification} leadingIcon={Bell}>
+                        通知
+                      </Button>
+                      {user && user.role === 'admin' && (
+                        <Button as={Link} to="/admin" variant="secondary" size="sm" leadingIcon={LayoutDashboard}>
+                          管理中心
+                        </Button>
+                      )}
                     </div>
+                  )}
+                />
 
-                    {/* 統計卡片 - iOS 毛玻璃風格 */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                {/* 篩選／搜尋列 */}
+                <FilterBar value={search} onChange={setSearch} placeholder="搜尋單號或客戶..." />
+
+                {/* 統計卡片 */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
                         {/* 待揀貨卡片 - 橙色（需要關注） */}
                         <div className="group relative bg-white/60 backdrop-blur-2xl rounded-2xl p-6 border border-orange-200/40 hover:border-orange-300/60 transition-all duration-500 hover:shadow-2xl hover:shadow-orange-500/10">
                             <div className="absolute inset-0 bg-gradient-to-br from-orange-50/50 via-transparent to-orange-100/30 opacity-60 rounded-2xl"></div>
@@ -735,7 +676,7 @@ export function TaskDashboard({ user }) {
                                         總任務
                                     </p>
                                     <p className="text-3xl font-bold text-blue-600">
-                                        {tasks.length}
+                                        {visibleTasks.length}
                                     </p>
                                 </div>
                                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
@@ -753,7 +694,7 @@ export function TaskDashboard({ user }) {
                                         我的任務
                                     </p>
                                     <p className="text-3xl font-bold text-gray-800">
-                                        {tasks.filter(t => t.current_user).length}
+                                        {visibleTasks.filter(t => t.current_user).length}
                                     </p>
                                 </div>
                                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center shadow-lg shadow-gray-500/20">
@@ -762,7 +703,7 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
                     </div>
-                </header>
+                
 
                 {/* 任務列表 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
@@ -880,7 +821,7 @@ export function TaskDashboard({ user }) {
                 </div>
 
                 {/* 全部完成狀態 */}
-                {tasks.length === 0 && !loading && (
+                {visibleTasks.length === 0 && !loading && (
                     <div className="text-center py-24 animate-fade-in">
                         <div className="glass rounded-3xl p-12 max-w-md mx-auto">
                             <CheckCircle2 size={80} className="mx-auto mb-6 text-green-500" />

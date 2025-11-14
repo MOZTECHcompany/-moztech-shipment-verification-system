@@ -16,19 +16,9 @@ import { TaskDashboard } from './components/TaskDashboard';
 import { OrderWorkView } from './components/OrderWorkView';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { LogOut } from 'lucide-react';
+import { AppLayout } from '@/ui';
 
-function AppLayout({ user, onLogout }) {
-    return (
-        <div>
-            <header className="absolute top-4 right-4 z-10">
-                 {user && <button onClick={onLogout} className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 shadow-lg"><LogOut className="mr-2 h-4 w-4" /> 登出</button>}
-            </header>
-            <main>
-                <Outlet />
-            </main>
-        </div>
-    );
-}
+// AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
 
 function ProtectedRoute({ user, token }) {
     if (!user || !token) {

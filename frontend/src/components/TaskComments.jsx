@@ -17,6 +17,7 @@ import apiClient from '@/api/api';
 import { useComments } from '@/api/useComments';
 import DesktopNotification from '@/utils/desktopNotification';
 import SoundNotification from '@/utils/soundNotification';
+import { Button } from '@/ui';
 
 // 優先級配置
 const PRIORITIES = {
@@ -628,14 +629,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         </div>
                     </div>
                     {/* 提及收件匣按鈕 */}
-                    <button onClick={() => setMentionsOpen(!mentionsOpen)} className="relative px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm flex items-center gap-1">
-                        <AtSign className="w-4 h-4" /> 提及
-                        {mentionsUnread > 0 && (
-                            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold">
-                                {mentionsUnread}
-                            </span>
-                        )}
-                    </button>
+                                        <Button variant="secondary" size="sm" onClick={() => setMentionsOpen(!mentionsOpen)} leadingIcon={AtSign}>
+                                            提及
+                                            {mentionsUnread > 0 && (
+                                                <span className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold">
+                                                    {mentionsUnread}
+                                                </span>
+                                            )}
+                                        </Button>
                 </div>
 
                 {/* 搜尋和篩選欄 */}
@@ -793,9 +794,9 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 )}
                 {hasNextPage && (
                     <div className="flex justify-center py-3">
-                        <button onClick={() => fetchNextPage()} className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50" aria-label="載入更多評論">
-                            載入更多
-                        </button>
+                                                <Button variant="secondary" size="sm" onClick={() => fetchNextPage()} aria-label="載入更多評論">
+                                                    載入更多
+                                                </Button>
                     </div>
                 )}
                 <div ref={commentsEndRef} />
@@ -937,23 +938,9 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
                     {/* 發送按鈕 */}
                     <div className="mt-3 flex items-center justify-end">
-                        <button
-                            type="submit"
-                            disabled={loading || !newComment.trim()}
-                            className="px-6 py-2.5 bg-gradient-to-r from-apple-blue to-apple-purple text-white rounded-xl font-medium shadow-apple hover:shadow-apple-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                            {loading ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    發送中...
-                                </>
-                            ) : (
-                                <>
-                                    <Send className="w-4 h-4" />
-                                    發送評論
-                                </>
-                            )}
-                        </button>
+                        <Button type="submit" disabled={loading || !newComment.trim()} leadingIcon={loading ? Loader2 : Send} className={loading ? 'opacity-80' : ''}>
+                          {loading ? '發送中...' : '發送評論'}
+                        </Button>
                     </div>
                 </form>
             </div>
