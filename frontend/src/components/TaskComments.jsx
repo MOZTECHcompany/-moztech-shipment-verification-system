@@ -10,7 +10,7 @@ import {
     MessageSquare, Send, User, AtSign, Reply, Loader2, 
     Pin, AlertCircle, Clock, CheckCircle2, Search, X,
     Star, Bell, Filter, Paperclip, Upload, Image as ImageIcon,
-    TrendingUp, Users
+    TrendingUp, Users, ChevronDown
 } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
@@ -435,162 +435,123 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const renderComment = (comment, isReply = false, isPinned = false) => {
         const commentPriority = PRIORITIES[comment.priority || 'normal'];
         const PriorityIcon = commentPriority.icon;
-        const shouldAnimate = !!comment.__optimistic; // 僅在樂觀新增時套動畫，避免輸入時抖動
-        
+        const shouldAnimate = !!comment.__optimistic;
+        const isMine = Number(comment.user_id) === Number(currentUser.id);
+
+        const bubbleBase = 'max-w-[75%] px-4 py-2.5 rounded-2xl shadow-sm';
+        const mineStyle = 'bg-blue-600 text-white';
+        const otherStyle = 'bg-gray-100 text-gray-800';
+        const urgentWrap = comment.priority === 'urgent' ? 'ring-2 ring-red-400' : '';
+        const urgentBubble = comment.priority === 'urgent' ? (isMine ? 'bg-red-600 text-white' : 'bg-red-50 text-red-800') : '';
+        const replyNarrow = isReply ? 'max-w-[65%]' : '';
+
         return (
-            <div 
-                key={comment.id} 
-                id={`comment-${comment.id}`}
-                className={`
-                    glass-card p-4 ${shouldAnimate ? 'animate-scale-in' : ''} transition-all duration-200
-                    ${isReply ? 'ml-12 mt-2 border-l-2 border-l-apple-blue/30' : 'mb-3'}
-                    ${isPinned ? 'ring-1 ring-amber-300 shadow-md' : ''}
-                    ${commentPriority.bgGlow}
-                    hover:shadow-apple-md
-                `}
-            >
-                <div className="flex items-start gap-3">
-                    {/* 用戶頭像 */}
-                    <div className="relative">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-apple-blue/20 to-apple-purple/20 flex items-center justify-center flex-shrink-0">
-                            <User className="w-5 h-5 text-apple-blue" />
-                        </div>
-                        {/* 優先級指示器 */}
+            <div key={comment.id} id={`comment-${comment.id}`} className={`mb-2 ${shouldAnimate ? 'animate-scale-in' : ''}`}>
+                {/* 置頂與標籤列 */}
+                <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mb-1 px-1`}>
+                    <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                        {isPinned && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full border border-amber-300">
+                                <Pin className="w-3 h-3" /> 已置頂
+                            </span>
+                        )}
                         {comment.priority && comment.priority !== 'normal' && (
-                            <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full ${commentPriority.dotColor} border-2 border-white shadow-sm`} />
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${commentPriority.color}`}>
+                                <PriorityIcon className="w-3 h-3" /> {commentPriority.label}
+                            </span>
                         )}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                        {/* 用戶資訊和操作按鈕 */}
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                            <div className="flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-semibold text-gray-900">
-                                        {comment.username || '未知用戶'}
-                                    </span>
-                                    
-                                    {/* 優先級標籤 */}
-                                    {comment.priority && comment.priority !== 'normal' && (
-                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${commentPriority.color}`}>
-                                            <PriorityIcon className="w-3 h-3" />
-                                            {commentPriority.label}
-                                        </span>
-                                    )}
-                                    
-                                    {/* 置頂標記 */}
-                                    {isPinned && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-medium border border-amber-300">
-                                            <Pin className="w-3 h-3" />
-                                            已置頂
-                                        </span>
-                                    )}
-                                    {/* 被提及你 */}
-                                    {comment.mentioned_me && !comment.mention_is_read && (
-                                        <button
-                                            type="button"
-                                            onClick={(e)=>{ e.stopPropagation(); jumpToCommentId(comment.id); }}
-                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50 ${mentionPulseRef.current.has(comment.id) ? 'animate-pulse ring-2 ring-blue-300' : ''}`}
-                                            title="有人提及了你，點擊跳轉"
-                                        >
-                                            <AtSign className="w-3 h-3" /> 提及你
-                                        </button>
-                                    )}
-                                </div>
-                                
-                                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                                    <Clock className="w-3 h-3" />
-                                    <span>
-                                        {formatDistanceToNow(new Date(comment.created_at), {
-                                            addSuffix: true,
-                                            locale: zhTW
-                                        })}
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* 操作按鈕 */}
-                            <div className="flex items-center gap-1">
-                                {/* 置頂按鈕 */}
-                                {!isReply && (
-                                    <button
-                                        onClick={() => togglePin(comment.id)}
-                                        className={`p-1.5 rounded-lg transition-all duration-200 ${
-                                            isPinned
-                                                ? 'bg-amber-100 text-amber-600 hover:bg-amber-200'
-                                                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
-                                        }`}
-                                        title={isPinned ? '取消置頂' : '置頂評論'}
-                                    >
-                                        <Pin className={`w-4 h-4 ${isPinned ? 'fill-current' : ''}`} />
-                                    </button>
-                                )}
-                                
-                                {/* 回覆按鈕 */}
-                                {!isReply && (
-                                    <button
-                                        onClick={() => {
-                                            setReplyTo(comment);
-                                            textareaRef.current?.focus();
-                                        }}
-                                        className="p-1.5 text-gray-400 hover:bg-apple-blue/10 hover:text-apple-blue rounded-lg transition-all duration-200"
-                                        title="回覆"
-                                    >
-                                        <Reply className="w-4 h-4" />
-                                    </button>
-                                )}
-                                {/* 撤回/刪除（作者或管理員） */}
-                                {((currentUser?.id && currentUser.id === comment.user_id) || (currentUser?.role === 'admin')) && (
-                                    <>
-                                        <button
-                                            onClick={async () => {
-                                                try {
-                                                    await apiClient.patch(`/api/tasks/${orderId}/comments/${comment.id}/retract`);
-                                                    toast.success('已撤回評論');
-                                                    await invalidate();
-                                                } catch (e) { toast.error(e.message || '撤回失敗'); }
-                                            }}
-                                            className="p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 rounded-lg"
-                                            title="撤回"
-                                        >
-                                            <X className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                            onClick={async () => {
-                                                if (!confirm('確定要刪除這則評論嗎？（回覆也會一併刪除）')) return;
-                                                try {
-                                                    await apiClient.delete(`/api/tasks/${orderId}/comments/${comment.id}`);
-                                                    toast.success('已刪除評論');
-                                                    await invalidate();
-                                                } catch (e) { toast.error(e.message || '刪除失敗'); }
-                                            }}
-                                            className="p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 rounded-lg"
-                                            title="刪除"
-                                        >
-                                            <TrashIcon />
-                                        </button>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* 評論內容 */}
-                        {comment.content === '[已撤回]' ? (
-                            <div className="text-gray-400 italic">此評論已撤回</div>
-                        ) : (
-                            <div className="text-gray-700 leading-relaxed break-words">
-                                {highlightMentions(comment.content)}
-                            </div>
-                        )}
-
-                        {/* 回覆列表 */}
-                        {!isReply && comment.replies && comment.replies.length > 0 && (
-                            <div className="mt-3 space-y-2">
-                                {comment.replies.map(reply => renderComment(reply, true))}
-                            </div>
+                        {comment.mentioned_me && !comment.mention_is_read && (
+                            <button type="button" onClick={(e)=>{ e.stopPropagation(); jumpToCommentId(comment.id); }} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border border-blue-300 text-blue-700 bg-blue-50 ${mentionPulseRef.current.has(comment.id) ? 'animate-pulse ring-2 ring-blue-300' : ''}`}>
+                                <AtSign className="w-3 h-3" /> 提及你
+                            </button>
                         )}
                     </div>
                 </div>
+
+                {/* 主內容：左右聊天氣泡 */}
+                <div className={`flex items-end ${isMine ? 'justify-end' : 'justify-start'} gap-2`}>
+                    {!isMine && (
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-apple-blue/20 to-apple-purple/20 flex items-center justify-center">
+                            <User className="w-4 h-4 text-apple-blue" />
+                        </div>
+                    )}
+                    <div className={`relative ${urgentWrap}`}>
+                        {comment.content === '[已撤回]' ? (
+                            <div className={`${bubbleBase} ${replyNarrow} ${isMine ? mineStyle : otherStyle} opacity-70 italic`}>此評論已撤回</div>
+                        ) : (
+                            <div className={`${bubbleBase} ${replyNarrow} ${isMine ? mineStyle : otherStyle} ${urgentBubble}`}>
+                                <div className="whitespace-pre-wrap break-words leading-relaxed">{highlightMentions(comment.content)}</div>
+                            </div>
+                        )}
+                    </div>
+                    {isMine && (
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white">
+                            <User className="w-4 h-4" />
+                        </div>
+                    )}
+                </div>
+
+                {/* Meta 與動作列 */}
+                <div className={`flex items-center ${isMine ? 'justify-end pr-12' : 'justify-start pl-12'} gap-2 mt-1 text-[11px] text-gray-500`}>
+                    <Clock className="w-3 h-3" />
+                    <span>{formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: zhTW })}</span>
+                    {!isReply && (
+                        <>
+                            <button
+                                onClick={() => togglePin(comment.id)}
+                                className={`px-1.5 py-0.5 rounded-md transition-colors ${isPinned ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+                                title={isPinned ? '取消置頂' : '置頂評論'}
+                            >
+                                <Pin className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                                onClick={() => { setReplyTo(comment); textareaRef.current?.focus(); }}
+                                className="px-1.5 py-0.5 text-gray-400 hover:bg-apple-blue/10 hover:text-apple-blue rounded-md"
+                                title="回覆"
+                            >
+                                <Reply className="w-3.5 h-3.5" />
+                            </button>
+                            {((currentUser?.id && currentUser.id === comment.user_id) || (currentUser?.role === 'admin')) && (
+                                <>
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                await apiClient.patch(`/api/tasks/${orderId}/comments/${comment.id}/retract`);
+                                                toast.success('已撤回評論');
+                                                await invalidate();
+                                            } catch (e) { toast.error(e.message || '撤回失敗'); }
+                                        }}
+                                        className="px-1.5 py-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 rounded-md"
+                                        title="撤回"
+                                    >
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            if (!confirm('確定要刪除這則評論嗎？（回覆也會一併刪除）')) return;
+                                            try {
+                                                await apiClient.delete(`/api/tasks/${orderId}/comments/${comment.id}`);
+                                                toast.success('已刪除評論');
+                                                await invalidate();
+                                            } catch (e) { toast.error(e.message || '刪除失敗'); }
+                                        }}
+                                        className="px-1.5 py-0.5 text-gray-400 hover:bg-red-50 hover:text-red-600 rounded-md"
+                                        title="刪除"
+                                    >
+                                        <TrashIcon />
+                                    </button>
+                                </>
+                            )}
+                        </>
+                    )}
+                </div>
+
+                {/* 回覆列表（縮窄） */}
+                {!isReply && comment.replies && comment.replies.length > 0 && (
+                    <div className={`mt-2 space-y-2 ${isMine ? 'pr-12' : 'pl-12'}`}>
+                        {comment.replies.map(reply => renderComment(reply, true))}
+                    </div>
+                )}
             </div>
         );
     };
@@ -794,9 +755,9 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 )}
                 {hasNextPage && (
                     <div className="flex justify-center py-3">
-                                                <Button variant="secondary" size="sm" onClick={() => fetchNextPage()} aria-label="載入更多評論">
-                                                    載入更多
-                                                </Button>
+                        <Button variant="secondary" size="sm" className="rounded-full gap-1.5" onClick={() => fetchNextPage()} aria-label="載入更多評論" leadingIcon={ChevronDown}>
+                            載入更多
+                        </Button>
                     </div>
                 )}
                 <div ref={commentsEndRef} />

@@ -309,6 +309,7 @@ export function TaskDashboard({ user }) {
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
     const [search, setSearch] = useState('');
+    const [pickHighlight, setPickHighlight] = useState(false);
     const [pinnedTaskIds, setPinnedTaskIds] = useState([]);
     
     // 浮動聊天面板狀態
@@ -663,6 +664,13 @@ export function TaskDashboard({ user }) {
     const pickTasks = sortedVisibleTasks.filter(t => t.task_type === 'pick');
     const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
 
+    // 當待揀貨數量變動時，短暫高亮
+    useEffect(() => {
+        setPickHighlight(true);
+        const timer = setTimeout(() => setPickHighlight(false), 800);
+        return () => clearTimeout(timer);
+    }, [pickTasks.length]);
+
     if (loading) {
         return (
             <div className="min-h-screen bg-secondary dark:bg-background/95">
@@ -731,8 +739,8 @@ export function TaskDashboard({ user }) {
                       <Button variant={notificationEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleNotification} leadingIcon={Bell}>
                         通知
                       </Button>
-                      {user && user.role === 'admin' && (
-                        <Button as={Link} to="/admin" variant="secondary" size="sm" leadingIcon={LayoutDashboard}>
+                                            {user && user.role === 'admin' && (
+                                                <Button as={Link} to="/admin" variant="primary" size="sm" leadingIcon={LayoutDashboard}>
                           管理中心
                         </Button>
                       )}
@@ -757,7 +765,7 @@ export function TaskDashboard({ user }) {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-1">{c.label}</p>
-                            <p className={`text-3xl font-bold ${c.color}`}>{c.value}</p>
+                            <p className={`text-3xl font-bold ${c.color} ${c.label==='待揀貨' && pickHighlight ? 'animate-pulse drop-shadow-[0_0_6px_rgba(255,159,64,0.35)]' : ''}`}>{c.value}</p>
                           </div>
                           <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
                             <Icon className="text-gray-700" size={18} />
@@ -785,7 +793,7 @@ export function TaskDashboard({ user }) {
                                             待揀貨任務
                                         </h2>
                                     </div>
-                                    <span className="px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-semibold">
+                                    <span className={`px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-semibold ${pickHighlight ? 'ring-2 ring-amber-300 animate-pulse' : ''}`}>
                                         {pickTasks.length}
                                     </span>
                                 </div>

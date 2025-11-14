@@ -114,7 +114,7 @@ export function AdminDashboard() {
                                 掌握錯誤來源，快速迭代流程品質。
                             </p>
                             <Link to="/admin/scan-errors">
-                                <Button variant="secondary" size="sm" className="gap-2">
+                                <Button variant="secondary" size="sm" className="gap-2 text-red-600 border-red-200 hover:bg-red-50">
                                     <AlertTriangle size={18} />
                                     查看錯誤
                                 </Button>
@@ -228,7 +228,7 @@ export function AdminDashboard() {
                         <CardContent className="pt-2">
                             <p className="text-gray-600 mb-6 leading-relaxed">查詢特定訂單或人員的操作紀錄。</p>
                             <Link to="/admin/operation-logs">
-                                <Button variant="danger" size="sm" className="gap-2">
+                                <Button variant="secondary" size="sm" className="gap-2">
                                     查看日誌 →
                                 </Button>
                             </Link>
