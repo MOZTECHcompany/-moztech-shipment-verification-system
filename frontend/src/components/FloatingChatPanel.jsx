@@ -1,10 +1,11 @@
 // FloatingChatPanel.jsx - 類似 Messenger 的浮動討論面板
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Minus, Maximize2, Minimize2, Send, Paperclip, Smile, AlertTriangle, AtSign, Pin, Trash2, MessageSquare } from 'lucide-react';
+import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
 import { useComments } from '@/api/useComments.js';
+import { Button, Badge, EmptyState, Skeleton } from '../ui';
 
 const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPositionChange }) => {
     const [isMinimized, setIsMinimized] = useState(false);
@@ -256,24 +257,34 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
             {/* 消息列表 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
                 {loading ? (
-                    <div className="text-center text-gray-500 py-8">載入中...</div>
-                ) : !comments || comments.length === 0 ? (
-                    <div className="text-center text-gray-400 py-8">
-                        <MessageSquare size={48} className="mx-auto mb-2 opacity-50" />
-                        <p>還沒有對話，開始第一則留言吧！</p>
+                    <div className="space-y-4">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <div key={i} className="flex gap-2">
+                                <Skeleton className="w-8 h-8 rounded-full" />
+                                <div className="flex-1 space-y-2">
+                                    <Skeleton className="h-3 w-24" />
+                                    <Skeleton className="h-12 w-full rounded-2xl" />
+                                </div>
+                            </div>
+                        ))}
                     </div>
+                ) : !comments || comments.length === 0 ? (
+                    <EmptyState
+                        icon={MessageSquare}
+                        title="尚無對話"
+                        description="開始第一則留言，建立討論。"
+                        action="開始發送"
+                        onAction={() => textareaRef.current?.focus()}
+                    />
                 ) : (
                     comments.map((comment) => (
                         <div
                             key={comment.id}
                             className={`flex gap-2 ${comment.is_mine ? 'flex-row-reverse' : ''}`}
                         >
-                            {/* 頭像 */}
                             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
                                 {comment.user_name?.charAt(0).toUpperCase()}
                             </div>
-                            
-                            {/* 消息氣泡 */}
                             <div className={`flex-1 max-w-[70%] ${comment.is_mine ? 'items-end' : 'items-start'}`}>
                                 <div className="flex items-center gap-2 mb-1">
                                     <span className="text-xs font-semibold text-gray-700">
@@ -286,13 +297,11 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                                         })}
                                     </span>
                                     {comment.priority === 'urgent' && (
-                                        <span className="px-2 py-0.5 bg-red-100 text-red-600 text-xs rounded-full flex items-center gap-1">
-                                            <AlertTriangle size={12} />
-                                            緊急
-                                        </span>
+                                        <Badge variant="danger" className="flex items-center gap-1">
+                                            <AlertTriangle size={12} /> 緊急
+                                        </Badge>
                                     )}
                                 </div>
-                                
                                 <div
                                     className={`px-4 py-2 rounded-2xl ${
                                         comment.is_mine
@@ -407,21 +416,23 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                     </div>
                     
                     <div className="flex flex-col gap-2">
-                        <button
+                        <Button
+                            variant="subtle"
+                            size="sm"
                             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                            className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
                             title="插入 Emoji"
-                        >
-                            <Smile size={20} />
-                        </button>
-                        <button
+                            className="p-2 h-10 w-10"
+                            leadingIcon={Smile}
+                        />
+                        <Button
+                            variant="primary"
+                            size="sm"
                             onClick={handleSend}
                             disabled={!message.trim()}
-                            className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
                             title="發送 (Enter)"
-                        >
-                            <Send size={20} />
-                        </button>
+                            className="p-2 h-10 w-10"
+                            leadingIcon={Send}
+                        />
                     </div>
                 </div>
             </div>

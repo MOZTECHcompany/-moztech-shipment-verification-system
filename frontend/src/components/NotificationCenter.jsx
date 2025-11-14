@@ -1,9 +1,10 @@
 // NotificationCenter.jsx - 討論通知中心
 import React, { useState, useEffect } from 'react';
-import { Bell, MessageSquare, AlertTriangle, AtSign, X, Check } from 'lucide-react';
+import { Bell, MessageSquare, AlertTriangle, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
+import { Button, EmptyState, Skeleton } from '../ui';
 
 const NotificationCenter = ({ onOpenChat }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -73,9 +74,10 @@ const NotificationCenter = ({ onOpenChat }) => {
     return (
         <div className="relative">
             {/* 通知鈴鐺 */}
-            <button
+            <Button
+                variant="secondary"
                 onClick={() => setIsOpen(!isOpen)}
-                className="relative p-3 bg-white rounded-xl border border-gray-200 hover:bg-gray-50 transition shadow-sm"
+                className="relative !p-3 rounded-xl"
             >
                 <Bell size={20} className={totalUrgent > 0 ? 'text-red-600 animate-pulse' : 'text-gray-700'} />
                 {totalUnread > 0 && (
@@ -83,7 +85,7 @@ const NotificationCenter = ({ onOpenChat }) => {
                         {totalUnread > 99 ? '99+' : totalUnread}
                     </span>
                 )}
-            </button>
+            </Button>
 
             {/* 下拉面板 */}
             {isOpen && (
@@ -124,24 +126,39 @@ const NotificationCenter = ({ onOpenChat }) => {
                             </div>
                             
                             {totalUnread > 0 && (
-                                <button
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
                                     onClick={markAllAsRead}
-                                    className="mt-2 w-full px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 transition flex items-center justify-center gap-1"
+                                    className="mt-2 w-full flex items-center justify-center gap-1"
                                 >
-                                    <Check size={14} />
-                                    全部標記為已讀
-                                </button>
+                                    <Check size={14} /> 全部標記為已讀
+                                </Button>
                             )}
                         </div>
 
                         {/* 訊息列表 */}
                         <div className="flex-1 overflow-y-auto">
                             {loading ? (
-                                <div className="p-8 text-center text-gray-500">載入中...</div>
+                                <div className="p-4 space-y-4">
+                                    {Array.from({ length: 5 }).map((_, i) => (
+                                        <div key={i} className="flex items-start gap-3">
+                                            <Skeleton className="w-10 h-10 rounded-full" />
+                                            <div className="flex-1 space-y-2">
+                                                <Skeleton className="h-4 w-32" />
+                                                <Skeleton className="h-3 w-48" />
+                                                <Skeleton className="h-3 w-40" />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             ) : unreadSummary.orders.length === 0 ? (
-                                <div className="p-8 text-center text-gray-400">
-                                    <MessageSquare size={48} className="mx-auto mb-2 opacity-50" />
-                                    <p>目前沒有未讀訊息</p>
+                                <div className="p-6">
+                                    <EmptyState
+                                        icon={MessageSquare}
+                                        title="沒有未讀訊息"
+                                        description="目前所有訊息都已閱讀。"
+                                    />
                                 </div>
                             ) : (
                                 <div className="divide-y divide-gray-100">
@@ -155,7 +172,6 @@ const NotificationCenter = ({ onOpenChat }) => {
                                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-semibold flex-shrink-0">
                                                     {order.voucher_number?.charAt(0) || 'T'}
                                                 </div>
-                                                
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
                                                         <span className="font-semibold text-sm truncate">
@@ -168,11 +184,9 @@ const NotificationCenter = ({ onOpenChat }) => {
                                                             </span>
                                                         )}
                                                     </div>
-                                                    
                                                     <p className="text-xs text-gray-500 truncate mb-1">
                                                         {order.customer_name}
                                                     </p>
-                                                    
                                                     <div className="flex items-center gap-2 text-xs">
                                                         <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
                                                             {order.unread_count} 則未讀
@@ -185,7 +199,6 @@ const NotificationCenter = ({ onOpenChat }) => {
                                                         </span>
                                                     </div>
                                                 </div>
-
                                                 <div className="opacity-0 group-hover:opacity-100 transition">
                                                     <MessageSquare size={16} className="text-blue-600" />
                                                 </div>
