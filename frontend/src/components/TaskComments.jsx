@@ -118,23 +118,13 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     useEffect(() => {
         // 降低備援輪詢頻率（主要依賴 WebSocket）
         const interval = setInterval(() => invalidate(), 60000);
-        
-        // 防止重複刷新的 debounce 計時器
-        let refreshTimer = null;
-        const debouncedInvalidate = () => {
-            if (refreshTimer) clearTimeout(refreshTimer);
-            refreshTimer = setTimeout(() => {
-                invalidate();
-            }, 200); // 200ms 內的多次刷新請求只執行最後一次
-        };
 
         // 啟用 WebSocket 監聽新評論
         try {
             if (!socket.connected) socket.connect();
             const onNewComment = (data) => {
-                // 只刷新別人發送的評論，自己的由 handleSubmit 處理
-                if (String(data.orderId) === String(orderId) && data.userId !== currentUser.id) {
-                    debouncedInvalidate();
+                if (String(data.orderId) === String(orderId)) {
+                    invalidate();
                     fetchMentions();
                 }
             };
@@ -153,21 +143,15 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         if (!soundRef.current) soundRef.current = new SoundNotification();
                         soundRef.current.play('newTask');
                     } catch {}
-                    debouncedInvalidate();
+                    invalidate();
                     fetchMentions();
                 }
             };
             const onCommentDeleted = (payload) => {
-                if (String(payload.orderId) === String(orderId)) { 
-                    debouncedInvalidate(); 
-                    fetchMentions(); 
-                }
+                if (String(payload.orderId) === String(orderId)) { invalidate(); fetchMentions(); }
             };
             const onCommentRetracted = (payload) => {
-                if (String(payload.orderId) === String(orderId)) { 
-                    debouncedInvalidate(); 
-                    fetchMentions(); 
-                }
+                if (String(payload.orderId) === String(orderId)) { invalidate(); fetchMentions(); }
             };
             socket.on('new_comment', onNewComment);
             socket.on('new_mention', onNewMention);
@@ -175,7 +159,6 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             socket.on('comment_retracted', onCommentRetracted);
             return () => {
                 clearInterval(interval);
-                if (refreshTimer) clearTimeout(refreshTimer);
                 socket.off('new_comment', onNewComment);
                 socket.off('new_mention', onNewMention);
                 socket.off('comment_deleted', onCommentDeleted);
@@ -183,10 +166,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             };
         } catch (e) {
             // 若 socket 初始化失敗，不影響頁面其它功能
-            return () => {
-                clearInterval(interval);
-                if (refreshTimer) clearTimeout(refreshTimer);
-            };
+            return () => clearInterval(interval);
         }
     }, [orderId]);
 
@@ -291,41 +271,41 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
         if (loading) return; // 防重複點擊
         setLoading(true);
-        
-        // 儲存原始內容以備失敗時恢復
-        const originalComment = newComment;
-        const originalReplyTo = replyTo;
-        const originalPriority = priority;
-        
-        // 先清空輸入框（立即反饋）
-        setNewComment('');
-        setReplyTo(null);
-        setPriority('normal');
-        
         try {
+            const draft = {
+                id: `temp_${Date.now()}`,
+                content: newComment,
+                parent_id: replyTo?.id || null,
+                priority,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                user_id: currentUser.id,
+                username: currentUser.username,
+                user_name: currentUser.name,
+                replies: [],
+                __optimistic: true,
+            };
+            addOptimistic(draft);
+
             const payload = {
-                content: originalComment,
-                parent_id: originalReplyTo?.id || null,
-                priority: originalPriority
+                content: newComment,
+                parent_id: replyTo?.id || null,
+                priority: priority
             };
             lastPayloadRef.current = payload;
-            
-            // 直接發送，不使用樂觀更新（避免重複）
             await apiClient.post(`/api/tasks/${orderId}/comments`, payload);
             
-            // 發送成功，延遲刷新以避免與 WebSocket 衝突
-            setTimeout(() => {
-                invalidate();
-                shouldScrollBottomRef.current = true;
-            }, 300);
-            
+            setNewComment('');
+            setReplyTo(null);
+            setPriority('normal');
+            await invalidate();
+            // 發送成功後再捲到底，避免背景重新整理時誤觸頁面跳動
+            shouldScrollBottomRef.current = true;
             setInlineStatus({ type: 'success', message: '已發送評論' });
             setTimeout(() => setInlineStatus(null), 1600);
         } catch (error) {
-            // 失敗時恢復輸入內容
-            setNewComment(originalComment);
-            setReplyTo(originalReplyTo);
-            setPriority(originalPriority);
+            // 還原暫時卡片
+            await invalidate();
             setInlineStatus({ type: 'error', message: error.message || '發送失敗，請重試' });
         } finally {
             setLoading(false);
@@ -626,26 +606,32 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     );
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full bg-gradient-to-br from-gray-50 to-white">
             {/* 標題欄 */}
-            <div className="p-4 border-b border-indigo-100/50">
+            <div className="glass-card p-4 border-b border-gray-200">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="text-sm text-indigo-600 font-medium">
-                            {comments.length} 則評論
-                            {unreadCount > 0 && (
-                                <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-600 rounded-full text-xs font-medium">
-                                    <Bell className="w-3 h-3" />
-                                    {unreadCount} 則未讀
-                                </span>
-                            )}
+                        <div className="p-2 bg-gradient-to-br from-apple-purple/20 to-apple-blue/20 rounded-xl">
+                            <MessageSquare className="w-5 h-5 text-apple-purple" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900">任務討論</h3>
+                            <p className="text-sm text-gray-500">
+                                {comments.length} 則評論
+                                {unreadCount > 0 && (
+                                    <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-600 rounded-full text-xs font-medium">
+                                        <Bell className="w-3 h-3" />
+                                        {unreadCount} 則未讀
+                                    </span>
+                                )}
+                            </p>
                         </div>
                     </div>
                     {/* 提及收件匣按鈕 */}
-                    <button onClick={() => setMentionsOpen(!mentionsOpen)} className="relative px-3 py-1.5 rounded-lg border border-indigo-200 bg-white/80 hover:bg-indigo-50 text-sm flex items-center gap-1 font-medium text-indigo-600 transition-all">
+                    <button onClick={() => setMentionsOpen(!mentionsOpen)} className="relative px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm flex items-center gap-1">
                         <AtSign className="w-4 h-4" /> 提及
                         {mentionsUnread > 0 && (
-                            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[11px] font-semibold">
+                            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold">
                                 {mentionsUnread}
                             </span>
                         )}
@@ -656,18 +642,18 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 <div className="mt-4 flex items-center gap-2 flex-wrap">
                     {/* 搜尋框 */}
                     <div className="flex-1 min-w-[200px] relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <input
                             type="text"
                             placeholder="搜尋評論..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-white/80 backdrop-blur-sm border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-all"
+                            className="w-full pl-10 pr-4 py-2 bg-white/80 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-apple-blue/50 focus:border-apple-blue transition-all"
                         />
                         {searchTerm && (
                             <button
                                 onClick={() => setSearchTerm('')}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-600"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                             >
                                 <X className="w-4 h-4" />
                             </button>
@@ -675,13 +661,13 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     </div>
 
                     {/* 優先級篩選 */}
-                    <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-indigo-200 rounded-xl p-1">
+                    <div className="flex items-center gap-1 bg-white/80 border border-gray-300 rounded-xl p-1">
                         <button
                             onClick={() => setFilterPriority('all')}
                             className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
                                 filterPriority === 'all'
-                                    ? 'bg-indigo-600 text-white shadow-sm'
-                                    : 'text-gray-600 hover:bg-indigo-50'
+                                    ? 'bg-apple-blue text-white shadow-sm'
+                                    : 'text-gray-600 hover:bg-gray-100'
                             }`}
                         >
                             全部
@@ -695,7 +681,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                     className={`px-3 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
                                         filterPriority === key
                                             ? config.color.replace('100', '200')
-                                            : 'text-gray-600 hover:bg-indigo-50'
+                                            : 'text-gray-600 hover:bg-gray-100'
                                     }`}
                                     title={config.label}
                                 >
@@ -711,7 +697,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         className={`px-3 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 border ${
                             filterUnread
                                 ? 'bg-red-100 text-red-600 border-red-300'
-                                : 'bg-white/80 backdrop-blur-sm text-gray-600 border-indigo-200 hover:bg-indigo-50'
+                                : 'bg-white/80 text-gray-600 border-gray-300 hover:bg-gray-100'
                         }`}
                     >
                         <Bell className="w-3 h-3" />
@@ -807,7 +793,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 )}
                 {hasNextPage && (
                     <div className="flex justify-center py-3">
-                        <button onClick={() => fetchNextPage()} className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50" aria-label="載入更多評論">
+                        <button onClick={() => fetchNextPage()} className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50" aria-label="載入更多評論">
                             載入更多
                         </button>
                     </div>
@@ -916,7 +902,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         onChange={handleInputChange}
                         placeholder="輸入評論... (使用 @ 提及同事)"
                         rows={3}
-                        className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-apple-blue/50 focus:border-apple-blue transition-all text-sm text-gray-900 placeholder:text-gray-400"
+                        className="input-apple w-full min-h-[56px] bg-white text-sm text-gray-900 placeholder:text-gray-400 resize-none"
                         disabled={loading}
                     />
 

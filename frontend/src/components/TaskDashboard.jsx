@@ -568,7 +568,7 @@ export function TaskDashboard({ user }) {
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
+            <div className="flex justify-center items-center h-screen bg-secondary">
                 <div className="text-center">
                     <Loader2 className="animate-spin text-apple-blue mx-auto mb-4" size={56} />
                     <p className="text-gray-600 font-semibold text-lg">載入中...</p>
@@ -578,7 +578,7 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-blue-50/30 via-white to-purple-50/20">
+        <div className="min-h-screen bg-secondary">
             <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
                 {/* iOS 風格 Header */}
                 <header className="mb-6 animate-fade-in">
