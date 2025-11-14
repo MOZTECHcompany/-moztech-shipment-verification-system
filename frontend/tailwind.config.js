@@ -6,6 +6,14 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
+    screens: {
+      'xs': '475px',   // 超小屏幕
+      'sm': '640px',   // 小屏幕
+      'md': '768px',   // 中等屏幕
+      'lg': '1024px',  // 大屏幕
+      'xl': '1280px',  // 超大屏幕
+      '2xl': '1536px', // 2倍超大屏幕
+    },
     extend: {
       // Apple 風格字體
       fontFamily: {

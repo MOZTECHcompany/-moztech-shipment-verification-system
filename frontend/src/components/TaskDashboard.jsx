@@ -81,7 +81,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     return (
         <div className={`
             group relative overflow-hidden
-            bg-white rounded-2xl 
+            bg-white rounded-xl sm:rounded-2xl 
             transition-all duration-300 ease-out
             hover:shadow-apple-lg hover:-translate-y-1
             ${isMyTask 
@@ -99,49 +99,49 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             )}
 
             
-            <div className="p-6">
+            <div className="p-4 sm:p-5 md:p-6">
                 {/* 標題列 */}
-                <div className="flex justify-between items-start mb-4">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="flex justify-between items-start mb-3 sm:mb-4">
+                    <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
                         {batchMode && (
                             <input
                                 type="checkbox"
                                 checked={selectedTasks.includes(task.id)}
                                 onChange={() => toggleTaskSelection(task.id)}
-                                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                                className="w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
                             />
                         )}
                         <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-xl text-gray-900 truncate mb-1">
+                            <h3 className="font-semibold text-lg sm:text-xl text-gray-900 truncate mb-1">
                                 {task.voucher_number}
                             </h3>
-                            <div className="flex items-center text-sm text-gray-500">
-                                <User size={14} className="mr-1.5 flex-shrink-0" />
+                            <div className="flex items-center text-xs sm:text-sm text-gray-500">
+                                <User size={12} className="mr-1 sm:mr-1.5 flex-shrink-0 sm:w-3.5 sm:h-3.5" />
                                 <span className="truncate">{task.customer_name}</span>
                             </div>
                         </div>
                     </div>
                     
-                    <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                    <div className="flex items-center gap-1.5 sm:gap-2 ml-2 sm:ml-3 flex-shrink-0">
                         {/* 緊急標記 */}
                         {isUrgent && (
-                            <div className="px-3 py-1.5 rounded-xl text-xs font-bold
+                            <div className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl text-xs font-bold
                                 bg-gradient-to-r from-red-500 to-orange-500 text-white
-                                flex items-center gap-1.5 shadow-md animate-pulse">
-                                <Flame size={14} />
-                                緊急
+                                flex items-center gap-1 sm:gap-1.5 shadow-md animate-pulse">
+                                <Flame size={12} className="sm:w-3.5 sm:h-3.5" />
+                                <span className="hidden xs:inline">緊急</span>
                             </div>
                         )}
                         
                         {/* 狀態標籤 */}
                         <div className={`
-                            px-3 py-1.5 rounded-xl text-xs font-semibold
-                            flex items-center gap-1.5
+                            px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl text-xs font-semibold
+                            flex items-center gap-1 sm:gap-1.5
                             ${statusInfo.color}
                         `}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
-                            <StatusIcon size={12} />
-                            {statusInfo.text}
+                            <span className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full ${statusInfo.dot}`} />
+                            <StatusIcon size={10} className="sm:w-3 sm:h-3" />
+                            <span className="hidden xs:inline">{statusInfo.text}</span>
                         </div>
                         
                         {/* 緊急按鈕（僅管理員） */}
@@ -149,7 +149,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <button
                                 onClick={handleSetUrgent}
                                 className={`
-                                    p-2 rounded-xl transition-all duration-200
+                                    p-1.5 sm:p-2 rounded-lg sm:rounded-xl transition-all duration-200
                                     ${isUrgent 
                                         ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' 
                                         : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50'
@@ -158,7 +158,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 `}
                                 title={isUrgent ? '取消緊急標記' : '標記為緊急'}
                             >
-                                <AlertTriangle size={16} />
+                                <AlertTriangle size={14} className="sm:w-4 sm:h-4" />
                             </button>
                         )}
                         
@@ -167,13 +167,13 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <button
                                 onClick={() => onDelete(task.id, task.voucher_number)}
                                 className="
-                                    p-2 text-red-500 hover:bg-red-50 rounded-xl 
+                                    p-1.5 sm:p-2 text-red-500 hover:bg-red-50 rounded-lg sm:rounded-xl 
                                     transition-all duration-200
                                     opacity-0 group-hover:opacity-100
                                 "
                                 title="永久刪除此訂單"
                             >
-                                <Trash2 size={16} />
+                                <Trash2 size={14} className="sm:w-4 sm:h-4" />
                             </button>
                         )}
                     </div>
@@ -181,9 +181,9 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
                 {/* 額外資訊 */}
                 {task.task_type === 'pack' && task.picker_name && (
-                    <div className="mb-4 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
+                    <div className="mb-3 sm:mb-4 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-blue-50 rounded-lg border border-blue-100">
                         <p className="text-xs text-blue-700">
-                            <CheckCircle2 size={12} className="inline mr-1" />
+                            <CheckCircle2 size={10} className="inline mr-1 sm:w-3 sm:h-3" />
                             由 <span className="font-semibold">{task.picker_name}</span> 完成揀貨
                         </p>
                     </div>
@@ -191,37 +191,37 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
                 {/* 評論預覽區域 */}
                 {hasComments && (
-                    <div className="mb-4">
+                    <div className="mb-3 sm:mb-4">
                         <button
                             onClick={handleOpenChat}
-                            className="w-full px-3 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 rounded-lg transition-all group"
+                            className="w-full px-2.5 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 rounded-lg transition-all group"
                         >
-                            <div className="flex items-start gap-2">
-                                <MessageSquare size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                            <div className="flex items-start gap-1.5 sm:gap-2">
+                                <MessageSquare size={14} className="text-blue-600 flex-shrink-0 mt-0.5 sm:w-4 sm:h-4" />
                                 <div className="flex-1 text-left min-w-0">
                                     {latestComment && (
-                                        <p className="text-xs text-gray-700 truncate mb-1">
+                                        <p className="text-xs text-gray-700 truncate mb-0.5 sm:mb-1">
                                             <span className="font-semibold">{latestComment.user_name}:</span> {latestComment.content}
                                         </p>
                                     )}
-                                    <div className="flex items-center gap-2 text-xs">
+                                    <div className="flex items-center gap-1.5 sm:gap-2 text-xs">
                                         {hasUnread && (
-                                            <span className="bg-red-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
-                                                {task.unread_comments} 則未讀
+                                            <span className="bg-red-500 text-white px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold animate-pulse">
+                                                {task.unread_comments} 未讀
                                             </span>
                                         )}
                                         {hasUrgentComments && (
-                                            <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                                                <AlertTriangle size={10} />
+                                            <span className="bg-red-100 text-red-600 px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium flex items-center gap-0.5 sm:gap-1">
+                                                <AlertTriangle size={8} className="sm:w-2.5 sm:h-2.5" />
                                                 {task.urgent_comments} 緊急
                                             </span>
                                         )}
-                                        <span className="text-gray-500">
+                                        <span className="text-gray-500 text-[10px] sm:text-xs">
                                             {task.total_comments} 則對話
                                         </span>
                                     </div>
                                 </div>
-                                <ArrowRight size={16} className="text-blue-600 opacity-0 group-hover:opacity-100 transition flex-shrink-0" />
+                                <ArrowRight size={14} className="text-blue-600 opacity-0 group-hover:opacity-100 transition flex-shrink-0 sm:w-4 sm:h-4" />
                             </div>
                         </button>
                     </div>
@@ -232,36 +232,36 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     <button
                         onClick={() => onClaim(task.id, true)}
                         className="
-                            w-full px-4 py-3 
+                            w-full px-3 sm:px-4 py-2.5 sm:py-3 
                             bg-gradient-to-r from-green-500 to-emerald-600
-                            text-white font-semibold rounded-xl
+                            text-white text-sm sm:text-base font-semibold rounded-lg sm:rounded-xl
                             hover:from-green-600 hover:to-emerald-700
                             active:scale-[0.98]
                             transition-all duration-200
                             shadow-lg shadow-green-500/30
-                            flex items-center justify-center gap-2
+                            flex items-center justify-center gap-1.5 sm:gap-2
                         "
                     >
                         繼續作業
-                        <ArrowRight size={18} />
+                        <ArrowRight size={16} className="sm:w-[18px] sm:h-[18px]" />
                     </button>
                 ) : (
                     <button
                         onClick={() => onClaim(task.id, false)}
                         className="
-                            w-full px-4 py-3
+                            w-full px-3 sm:px-4 py-2.5 sm:py-3
                             bg-gradient-to-r from-blue-500 to-indigo-600
-                            text-white font-semibold rounded-xl
+                            text-white text-sm sm:text-base font-semibold rounded-lg sm:rounded-xl
                             hover:from-blue-600 hover:to-indigo-700
                             active:scale-[0.98]
                             transition-all duration-200
                             shadow-lg shadow-blue-500/30
-                            flex items-center justify-center gap-2
+                            flex items-center justify-center gap-1.5 sm:gap-2
                             group/btn
                         "
                     >
                         {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}
-                        <ArrowRight size={18} className="group-hover/btn:translate-x-1 transition-transform" />
+                        <ArrowRight size={16} className="group-hover/btn:translate-x-1 transition-transform sm:w-[18px] sm:h-[18px]" />
                     </button>
                 )}
             </div>
@@ -557,24 +557,24 @@ export function TaskDashboard({ user }) {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
-            <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto">
+            <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
                 {/* 現代化標題列 */}
-                <header className="mb-8 animate-fade-in">
-                    <div className="flex justify-between items-start mb-6">
+                <header className="mb-6 sm:mb-8 animate-fade-in">
+                    <div className="flex flex-col gap-4 sm:gap-6 mb-6">
                         <div>
-                            <h1 className="text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
+                            <h1 className="text-2xl sm:text-3xl md:text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
                                 {currentView === 'tasks' ? '📋 任務看板' : '🔍 我的任務'}
                             </h1>
-                            <p className="text-gray-500 text-base font-medium">選擇一項任務以開始作業</p>
+                            <p className="text-sm sm:text-base text-gray-500 font-medium">選擇一項任務以開始作業</p>
                         </div>
                         
                         {/* 操作按鈕組 */}
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                             {/* 批次模式開關 */}
                             <button
                                 onClick={toggleBatchMode}
                                 className={`
-                                    flex items-center gap-2 px-5 py-3 rounded-xl font-semibold
+                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-semibold text-sm sm:text-base
                                     transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${batchMode 
@@ -584,8 +584,8 @@ export function TaskDashboard({ user }) {
                                 `}
                                 title={batchMode ? '退出批次模式' : '進入批次模式'}
                             >
-                                <ListChecks size={20} />
-                                <span className="hidden sm:inline">
+                                <ListChecks size={16} className="sm:w-5 sm:h-5" />
+                                <span className="hidden xs:inline">
                                     {batchMode ? '批次模式' : '批次操作'}
                                 </span>
                             </button>
@@ -595,7 +595,7 @@ export function TaskDashboard({ user }) {
                                 <button
                                     onClick={handleBatchClaim}
                                     className="
-                                        flex items-center gap-2 px-5 py-3 rounded-xl font-semibold
+                                        flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-semibold text-sm sm:text-base
                                         bg-apple-green/90 text-white hover:bg-apple-green backdrop-blur-sm
                                         shadow-apple-sm hover:shadow-apple
                                         transition-all duration-200
@@ -603,8 +603,9 @@ export function TaskDashboard({ user }) {
                                         animate-scale-in
                                     "
                                 >
-                                    <CheckCircle2 size={20} />
-                                    <span>認領 {selectedTasks.length} 個任務</span>
+                                    <CheckCircle2 size={16} className="sm:w-5 sm:h-5" />
+                                    <span className="hidden xs:inline">認領 {selectedTasks.length} 個</span>
+                                    <span className="xs:hidden">({selectedTasks.length})</span>
                                 </button>
                             )}
 
@@ -612,7 +613,7 @@ export function TaskDashboard({ user }) {
                             <button
                                 onClick={toggleSound}
                                 className={`
-                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-medium text-sm sm:text-base
                                     transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${soundEnabled 
@@ -622,9 +623,9 @@ export function TaskDashboard({ user }) {
                                 `}
                                 title={soundEnabled ? '點擊關閉音效' : '點擊開啟音效'}
                             >
-                                {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                                {soundEnabled ? <Volume2 size={16} className="sm:w-5 sm:h-5" /> : <VolumeX size={16} className="sm:w-5 sm:h-5" />}
                                 <span className="hidden sm:inline">
-                                    {soundEnabled ? '音效開啟' : '音效關閉'}
+                                    {soundEnabled ? '音效' : '音效'}
                                 </span>
                             </button>
 
@@ -632,7 +633,7 @@ export function TaskDashboard({ user }) {
                             <button
                                 onClick={toggleVoice}
                                 className={`
-                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-medium text-sm sm:text-base
                                     transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${voiceEnabled 
@@ -642,9 +643,9 @@ export function TaskDashboard({ user }) {
                                 `}
                                 title={voiceEnabled ? '點擊關閉語音' : '點擊開啟語音'}
                             >
-                                <MessageSquare size={20} />
+                                <MessageSquare size={16} className="sm:w-5 sm:h-5" />
                                 <span className="hidden sm:inline">
-                                    {voiceEnabled ? '語音開啟' : '語音關閉'}
+                                    {voiceEnabled ? '語音' : '語音'}
                                 </span>
                             </button>
 
@@ -652,7 +653,7 @@ export function TaskDashboard({ user }) {
                             <button
                                 onClick={toggleNotification}
                                 className={`
-                                    flex items-center gap-2 px-5 py-3 rounded-xl font-medium
+                                    flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-medium text-sm sm:text-base
                                     transition-all duration-200 shadow-apple-sm hover:shadow-apple
                                     active:scale-[0.98]
                                     ${notificationEnabled 
@@ -662,9 +663,9 @@ export function TaskDashboard({ user }) {
                                 `}
                                 title={notificationEnabled ? '點擊關閉通知' : '點擊開啟通知'}
                             >
-                                <Bell size={20} />
+                                <Bell size={16} className="sm:w-5 sm:h-5" />
                                 <span className="hidden sm:inline">
-                                    {notificationEnabled ? '通知開啟' : '通知關閉'}
+                                    {notificationEnabled ? '通知' : '通知'}
                                 </span>
                             </button>
 
@@ -676,65 +677,65 @@ export function TaskDashboard({ user }) {
                                 <Link 
                                     to="/admin" 
                                     className="
-                                        flex items-center gap-2 px-5 py-3 rounded-xl font-semibold
+                                        flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 md:px-5 py-2 sm:py-2.5 md:py-3 rounded-lg sm:rounded-xl font-semibold text-sm sm:text-base
                                         bg-gray-700/90 text-white hover:bg-gray-800 backdrop-blur-sm
                                         shadow-apple-sm hover:shadow-apple
                                         transition-all duration-200
                                         active:scale-[0.98]
                                     "
                                 >
-                                    <LayoutDashboard size={20} />
-                                    <span className="hidden sm:inline">管理中心</span>
+                                    <LayoutDashboard size={16} className="sm:w-5 sm:h-5" />
+                                    <span className="hidden xs:inline">管理中心</span>
                                 </Link>
                             )}
                         </div>
                     </div>
 
                     {/* 統計卡片 */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                        <div className="glass rounded-2xl p-4 border border-white/20">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                        <div className="glass rounded-xl sm:rounded-2xl p-3 sm:p-4 border border-white/20">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-gray-600 mb-1">待揀貨</p>
-                                    <p className="text-3xl font-bold text-gray-900">{pickTasks.length}</p>
+                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">待揀貨</p>
+                                    <p className="text-2xl sm:text-3xl font-bold text-gray-900">{pickTasks.length}</p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center">
-                                    <Package className="text-amber-600" size={24} />
+                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-amber-100 flex items-center justify-center">
+                                    <Package className="text-amber-600" size={20} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass rounded-2xl p-4 border border-white/20">
+                        <div className="glass rounded-xl sm:rounded-2xl p-3 sm:p-4 border border-white/20">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-gray-600 mb-1">待裝箱</p>
-                                    <p className="text-3xl font-bold text-gray-900">{packTasks.length}</p>
+                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">待裝箱</p>
+                                    <p className="text-2xl sm:text-3xl font-bold text-gray-900">{packTasks.length}</p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center">
-                                    <Box className="text-indigo-600" size={24} />
+                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-indigo-100 flex items-center justify-center">
+                                    <Box className="text-indigo-600" size={20} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass-card rounded-2xl p-4">
+                        <div className="glass-card rounded-xl sm:rounded-2xl p-3 sm:p-4">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-gray-600 mb-1">總任務</p>
-                                    <p className="text-3xl font-bold text-gray-900">{tasks.length}</p>
+                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">總任務</p>
+                                    <p className="text-2xl sm:text-3xl font-bold text-gray-900">{tasks.length}</p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center">
-                                    <LayoutDashboard className="text-apple-blue" size={24} />
+                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-apple-blue/10 flex items-center justify-center">
+                                    <LayoutDashboard className="text-apple-blue" size={20} />
                                 </div>
                             </div>
                         </div>
-                        <div className="glass-card rounded-2xl p-4">
+                        <div className="glass-card rounded-xl sm:rounded-2xl p-3 sm:p-4">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-gray-600 mb-1">我的任務</p>
-                                    <p className="text-3xl font-bold text-apple-green">
+                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">我的任務</p>
+                                    <p className="text-2xl sm:text-3xl font-bold text-apple-green">
                                         {tasks.filter(t => t.current_user).length}
                                     </p>
                                 </div>
-                                <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center">
-                                    <User className="text-green-600" size={24} />
+                                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-green-100 flex items-center justify-center">
+                                    <User className="text-green-600" size={20} />
                                 </div>
                             </div>
                         </div>
@@ -742,21 +743,21 @@ export function TaskDashboard({ user }) {
                 </header>
 
                 {/* 任務列表 */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 md:gap-8">
                     {/* 揀貨任務 */}
                     <section className="animate-slide-up">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-                                <Package className="text-amber-600" size={20} />
+                        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+                            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-100 flex items-center justify-center">
+                                <Package className="text-amber-600" size={18} />
                             </div>
-                            <h2 className="text-2xl font-bold text-gray-900">
+                            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
                                 待揀貨任務
                             </h2>
-                            <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-sm font-semibold">
+                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-amber-100 text-amber-700 text-xs sm:text-sm font-semibold">
                                 {pickTasks.length}
                             </span>
                         </div>
-                        <div className="space-y-4">
+                        <div className="space-y-3 sm:space-y-4">
                             {pickTasks.length > 0 ? (
                                 pickTasks.map((task, index) => (
                                     <div 
@@ -777,9 +778,9 @@ export function TaskDashboard({ user }) {
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-center py-16 glass rounded-2xl border-2 border-dashed border-gray-200">
-                                    <Package className="mx-auto mb-4 text-gray-300" size={56} />
-                                    <p className="text-gray-400 text-lg">目前沒有待處理的揀貨任務</p>
+                                <div className="text-center py-12 sm:py-16 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200">
+                                    <Package className="mx-auto mb-3 sm:mb-4 text-gray-300" size={48} />
+                                    <p className="text-gray-400 text-base sm:text-lg">目前沒有待處理的揀貨任務</p>
                                 </div>
                             )}
                         </div>
@@ -787,18 +788,18 @@ export function TaskDashboard({ user }) {
 
                     {/* 裝箱任務 */}
                     <section className="animate-slide-up" style={{ animationDelay: '100ms' }}>
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
-                                <Box className="text-indigo-600" size={20} />
+                        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+                            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-indigo-100 flex items-center justify-center">
+                                <Box className="text-indigo-600" size={18} />
                             </div>
-                            <h2 className="text-2xl font-bold text-gray-900">
+                            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
                                 待裝箱任務
                             </h2>
-                            <span className="px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-sm font-semibold">
+                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs sm:text-sm font-semibold">
                                 {packTasks.length}
                             </span>
                         </div>
-                        <div className="space-y-4">
+                        <div className="space-y-3 sm:space-y-4">
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
@@ -819,9 +820,9 @@ export function TaskDashboard({ user }) {
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-center py-16 glass rounded-2xl border-2 border-dashed border-gray-200">
-                                    <Box className="mx-auto mb-4 text-gray-300" size={56} />
-                                    <p className="text-gray-400 text-lg">目前沒有待處理的裝箱任務</p>
+                                <div className="text-center py-12 sm:py-16 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200">
+                                    <Box className="mx-auto mb-3 sm:mb-4 text-gray-300" size={48} />
+                                    <p className="text-gray-400 text-base sm:text-lg">目前沒有待處理的裝箱任務</p>
                                 </div>
                             )}
                         </div>

@@ -58,70 +58,74 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, onTogg
     const completionPercentage = stats.totalSkus > 0 ? (stats.packedSkus / stats.totalSkus) * 100 : 0;
     
     return (
-        <div className="glass card-apple mb-8 p-6 animate-fade-in">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                <div>
-                    <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-2">
-                        <Package className="text-blue-600" size={28} />
-                        任務總覽
-                    </h2>
-                    {/* 即時協作指示器 */}
-                    {activeSessions.length > 0 && (
-                        <div className="flex items-center gap-2 mt-2">
-                            <Users size={14} className="text-apple-green" />
-                            <span className="text-sm text-gray-600">
-                                {activeSessions.map(s => s.name).join(', ')} 正在查看
-                            </span>
-                            <span className="w-2 h-2 bg-apple-green rounded-full animate-pulse"></span>
-                        </div>
-                    )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    {/* 相機掃描按鈕 */}
-                    <button 
-                        onClick={onOpenCamera}
-                        className="btn-apple bg-apple-indigo/90 hover:bg-apple-indigo text-white flex items-center gap-2 shadow-apple-lg"
-                    >
-                        <Camera size={18} />
-                        <span className="hidden sm:inline">相機掃描</span>
-                    </button>
-                    
-                    {/* 評論按鈕 */}
-                    <button 
-                        onClick={onToggleComments}
-                        className="btn-apple bg-apple-purple/90 hover:bg-apple-purple text-white flex items-center gap-2 shadow-apple-lg"
-                    >
-                        <MessageSquare size={18} />
-                        <span className="hidden sm:inline">討論</span>
-                    </button>
-                    
-                    {/* 列印標籤 */}
-                    <ShippingLabel order={order} items={items} />
-                    <PickingList order={order} items={items} />
-                    
-                    {/* 匯出報告 */}
-                    <button 
-                        onClick={onExport} 
-                        className="btn-apple bg-apple-blue/90 hover:bg-apple-blue text-white flex items-center gap-2 shadow-apple-lg"
-                    >
-                        <FileDown size={18} />
-                        <span className="hidden sm:inline">匯出</span>
-                    </button>
-                    
-                    {/* 作廢訂單 */}
-                    {user.role === 'admin' && (
+        <div className="glass card-apple mb-4 sm:mb-6 lg:mb-8 p-4 sm:p-6 animate-fade-in">
+            <div className="flex flex-col gap-3 sm:gap-4 mb-4 sm:mb-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
+                    <div className="w-full sm:w-auto">
+                        <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-2">
+                            <Package className="text-blue-600 flex-shrink-0" size={24} />
+                            <span>任務總覽</span>
+                        </h2>
+                        {/* 即時協作指示器 */}
+                        {activeSessions.length > 0 && (
+                            <div className="flex items-center gap-2 mt-2">
+                                <Users size={14} className="text-apple-green flex-shrink-0" />
+                                <span className="text-xs sm:text-sm text-gray-600 truncate">
+                                    {activeSessions.map(s => s.name).join(', ')} 正在查看
+                                </span>
+                                <span className="w-2 h-2 bg-apple-green rounded-full animate-pulse flex-shrink-0"></span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                        {/* 相機掃描按鈕 */}
                         <button 
-                            onClick={onVoid} 
-                            className="btn-apple bg-red-500/90 hover:bg-red-600 text-white flex items-center gap-2 shadow-apple-lg"
+                            onClick={onOpenCamera}
+                            className="btn-apple bg-apple-indigo/90 hover:bg-apple-indigo text-white flex items-center gap-2 shadow-apple-lg text-sm"
                         >
-                            <XCircle size={18} />
-                            <span className="hidden sm:inline">作廢</span>
+                            <Camera size={16} />
+                            <span className="hidden sm:inline">相機掃描</span>
+                            <span className="sm:hidden">相機</span>
                         </button>
-                    )}
+                        
+                        {/* 評論按鈕 */}
+                        <button 
+                            onClick={onToggleComments}
+                            className="btn-apple bg-apple-purple/90 hover:bg-apple-purple text-white flex items-center gap-2 shadow-apple-lg text-sm"
+                        >
+                            <MessageSquare size={16} />
+                            <span className="hidden sm:inline">討論</span>
+                            <span className="sm:hidden">訊息</span>
+                        </button>
+                        
+                        {/* 列印標籤 */}
+                        <ShippingLabel order={order} items={items} />
+                        <PickingList order={order} items={items} />
+                        
+                        {/* 匯出報告 */}
+                        <button 
+                            onClick={onExport} 
+                            className="btn-apple bg-apple-blue/90 hover:bg-apple-blue text-white flex items-center gap-2 shadow-apple-lg text-sm"
+                        >
+                            <FileDown size={16} />
+                            <span className="hidden sm:inline">匯出</span>
+                        </button>
+                        
+                        {/* 作廢訂單 */}
+                        {user.role === 'admin' && (
+                            <button 
+                                onClick={onVoid} 
+                                className="btn-apple bg-red-500/90 hover:bg-red-600 text-white flex items-center gap-2 shadow-apple-lg text-sm"
+                            >
+                                <XCircle size={16} />
+                                <span className="hidden sm:inline">作廢</span>
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 {/* SKU Progress */}
                 <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-2xl border border-purple-200/50 shadow-sm hover:shadow-md transition-all duration-300 animate-scale-in" style={{ animationDelay: '100ms' }}>
                     <div className="flex items-center justify-between mb-2">
@@ -632,21 +636,23 @@ export function OrderWorkView({ user }) {
     }
 
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gradient-to-br from-gray-50 to-blue-50/30 min-h-screen">
+        <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 bg-gradient-to-br from-gray-50 to-blue-50/30 min-h-screen">
             {/* Header */}
-            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 animate-fade-in">
+            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-6 sm:mb-8 animate-fade-in">
                 <button onClick={handleReturnToTasks} 
-                    className="flex items-center gap-2 text-gray-600 hover:text-blue-600 font-semibold px-4 py-2 rounded-xl hover:bg-white/80 transition-all duration-200 hover:shadow-md group">
-                    <ArrowLeft className="group-hover:-translate-x-1 transition-transform duration-200" size={20} />
-                    返回任務列表
+                    className="flex items-center gap-2 text-gray-600 hover:text-blue-600 font-semibold px-3 sm:px-4 py-2 rounded-xl hover:bg-white/80 transition-all duration-200 hover:shadow-md group text-sm sm:text-base">
+                    <ArrowLeft className="group-hover:-translate-x-1 transition-transform duration-200" size={18} />
+                    <span className="hidden xs:inline">返回任務列表</span>
+                    <span className="xs:hidden">返回</span>
                 </button>
-                <div className="text-right">
-                    <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-1">
+                <div className="text-left sm:text-right w-full sm:w-auto">
+                    <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-1">
                         作業詳情
                     </h1>
-                    <p className="text-gray-600 flex items-center gap-2 justify-end">
-                        <User size={16} />
-                        操作員: <span className="font-semibold text-gray-800">{user.name || user.username}</span>
+                    <p className="text-sm sm:text-base text-gray-600 flex items-center gap-2 justify-start sm:justify-end">
+                        <User size={14} className="sm:hidden" />
+                        <User size={16} className="hidden sm:block" />
+                        <span className="truncate max-w-[200px] sm:max-w-none">操作員: <span className="font-semibold text-gray-800">{user.name || user.username}</span></span>
                     </p>
                 </div>
             </header>
@@ -674,12 +680,12 @@ export function OrderWorkView({ user }) {
                 </div>
             )}
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
                 {/* Scan Area */}
                 <div className="lg:col-span-1">
-                    <div className="glass card-apple p-6 sticky top-8 animate-scale-in">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                            <ScanLine className="text-blue-600"/>
+                    <div className="glass card-apple p-4 sm:p-5 md:p-6 sticky top-4 sm:top-6 md:top-8 animate-scale-in">
+                        <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                            <ScanLine className="text-blue-600" size={20}/>
                             掃描區
                         </h2>
                         <div className="flex gap-2">
@@ -687,28 +693,29 @@ export function OrderWorkView({ user }) {
                                 <input
                                     ref={barcodeInputRef}
                                     type="text"
-                                    placeholder="掃描 SN 碼或國際條碼..."
+                                    placeholder="掃描 SN 碼..."
                                     value={barcodeInput}
                                     onChange={(e) => setBarcodeInput(e.target.value)}
                                     onKeyDown={handleKeyDown}
-                                    className={`input-apple w-full ${
+                                    className={`input-apple w-full text-sm sm:text-base ${
                                         scanError 
                                             ? 'border-red-500 ring-4 ring-red-300 bg-red-50 animate-shake' 
                                             : ''
                                     }`}
                                 />
-                                <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                                <Barcode className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                             </div>
                             <button onClick={handleClick} disabled={isUpdating} 
-                                className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-6 shadow-apple-lg disabled:opacity-50 disabled:cursor-not-allowed active:scale-95">
-                                {isUpdating ? <Loader2 className="animate-spin" size={20} /> : '確認'}
+                                className="btn-apple bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-4 sm:px-5 md:px-6 text-sm sm:text-base shadow-apple-lg disabled:opacity-50 disabled:cursor-not-allowed active:scale-95">
+                                {isUpdating ? <Loader2 className="animate-spin" size={18} /> : '確認'}
                             </button>
                         </div>
                         
-                        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
-                            <p className="text-xs text-blue-700 flex items-center gap-2">
-                                <AlertTriangle size={14} />
-                                提示：掃描後按 Enter 或點擊確認按鈕
+                        <div className="mt-3 sm:mt-4 p-2.5 sm:p-3 bg-blue-50 border border-blue-200 rounded-lg sm:rounded-xl">
+                            <p className="text-[10px] xs:text-xs text-blue-700 flex items-center gap-1.5 sm:gap-2">
+                                <AlertTriangle size={12} className="flex-shrink-0" />
+                                <span className="hidden xs:inline">提示：掃描後按 Enter 或點擊確認按鈕</span>
+                                <span className="xs:hidden">按 Enter 或點擊確認</span>
                             </p>
                         </div>
                     </div>
@@ -716,37 +723,37 @@ export function OrderWorkView({ user }) {
 
                 {/* Items List */}
                 <div className="lg:col-span-2">
-                    <div className="glass card-apple p-6 min-h-full relative animate-scale-in" style={{ animationDelay: '100ms' }}>
+                    <div className="glass card-apple p-4 sm:p-5 md:p-6 min-h-full relative animate-scale-in" style={{ animationDelay: '100ms' }}>
                         {scanError && (
-                            <div className="absolute inset-0 bg-gradient-to-br from-red-500/95 via-red-600/95 to-red-700/95 backdrop-blur-xl flex flex-col justify-center items-center z-10 rounded-2xl animate-fade-in">
-                                <div className="bg-white rounded-full p-8 mb-6 shadow-2xl animate-bounce-slow">
-                                    <XCircle className="text-red-600 h-24 w-24 animate-pulse" strokeWidth={3} />
+                            <div className="absolute inset-0 bg-gradient-to-br from-red-500/95 via-red-600/95 to-red-700/95 backdrop-blur-xl flex flex-col justify-center items-center z-10 rounded-xl sm:rounded-2xl animate-fade-in p-4">
+                                <div className="bg-white rounded-full p-6 sm:p-8 mb-4 sm:mb-6 shadow-2xl animate-bounce-slow">
+                                    <XCircle className="text-red-600 h-16 w-16 sm:h-20 sm:w-20 md:h-24 md:w-24 animate-pulse" strokeWidth={3} />
                                 </div>
-                                <div className="bg-white/90 rounded-2xl px-8 py-6 shadow-2xl max-w-md">
-                                    <p className="text-3xl font-black text-red-600 text-center mb-2 animate-pulse">⚠️ 錯誤！</p>
-                                    <p className="text-xl font-bold text-gray-800 text-center">{scanError}</p>
+                                <div className="bg-white/90 rounded-xl sm:rounded-2xl px-6 sm:px-8 py-4 sm:py-6 shadow-2xl max-w-md">
+                                    <p className="text-2xl sm:text-3xl font-black text-red-600 text-center mb-2 animate-pulse">⚠️ 錯誤！</p>
+                                    <p className="text-lg sm:text-xl font-bold text-gray-800 text-center">{scanError}</p>
                                 </div>
                             </div>
                         )}
                         
-                        <div className="mb-6">
-                            <div className="flex items-center justify-between mb-3">
-                                <h2 className="text-2xl font-bold text-gray-800">作業清單</h2>
+                        <div className="mb-4 sm:mb-5 md:mb-6">
+                            <div className="flex items-center justify-between mb-2 sm:mb-3">
+                                <h2 className="text-xl sm:text-2xl font-bold text-gray-800">作業清單</h2>
                                 <StatusBadge status={currentOrderData.order.status} />
                             </div>
-                            <div className="flex items-center flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-100">
-                                <span className="flex items-center gap-2 font-medium">
-                                    <Package size={16} className="text-blue-500" />
-                                    單號: <strong className="text-gray-900">{currentOrderData.order.voucher_number}</strong>
+                            <div className="flex items-center flex-wrap gap-x-4 sm:gap-x-6 gap-y-2 text-xs sm:text-sm text-gray-600 p-3 sm:p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg sm:rounded-xl border border-blue-100">
+                                <span className="flex items-center gap-1.5 sm:gap-2 font-medium">
+                                    <Package size={14} className="text-blue-500 flex-shrink-0 sm:w-4 sm:h-4" />
+                                    單號: <strong className="text-gray-900 truncate">{currentOrderData.order.voucher_number}</strong>
                                 </span>
-                                <span className="flex items-center gap-2">
-                                    <User size={16} className="text-purple-500" />
-                                    客戶: <strong className="text-gray-900">{currentOrderData.order.customer_name}</strong>
+                                <span className="flex items-center gap-1.5 sm:gap-2">
+                                    <User size={14} className="text-purple-500 flex-shrink-0 sm:w-4 sm:h-4" />
+                                    客戶: <strong className="text-gray-900 truncate">{currentOrderData.order.customer_name}</strong>
                                 </span>
                             </div>
                         </div>
                         
-                        <div className="space-y-4">
+                        <div className="space-y-3 sm:space-y-4">
                             {sortedItems.map((item, index) => {
                                 const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
                                 const hasSN = itemInstances.length > 0;
