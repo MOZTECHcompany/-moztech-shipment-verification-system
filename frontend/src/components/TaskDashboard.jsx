@@ -81,16 +81,16 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     return (
         <div className={`
             group relative overflow-hidden
-            bg-white/90 backdrop-blur-sm rounded-xl sm:rounded-2xl 
+            bg-white/90 dark:bg-card backdrop-blur-sm rounded-xl sm:rounded-2xl 
             transition-all duration-500 ease-out
-            hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.02]
+            hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.01]
             ${isMyTask 
-                ? 'ring-2 ring-green-500 shadow-2xl shadow-green-500/20 bg-gradient-to-br from-green-50/50 to-emerald-50/30' 
+                ? 'ring-1 ring-green-400/80 shadow-xl shadow-green-200/40 border-l-4 border-l-green-400' 
                 : isUrgent
-                ? 'ring-2 ring-red-500 shadow-2xl shadow-red-500/30 bg-gradient-to-br from-red-50/30 to-orange-50/20'
+                ? 'ring-1 ring-red-400/80 shadow-xl shadow-red-200/40 border-l-4 border-l-red-400'
                 : 'shadow-lg border border-gray-100 hover:border-blue-200'
             }
-            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500 scale-[0.98]' : ''}
+            ${selectedTasks.includes(task.id) ? 'ring-2 ring-blue-500 scale-[0.99]' : ''}
             animate-scale-in
         `}>
             {/* 背景裝飾元素 */}
