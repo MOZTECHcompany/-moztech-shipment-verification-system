@@ -505,7 +505,11 @@ export function OrderWorkView({ user }) {
         if (!scanValue) return;
         setScanError(null);
 
-        const { status } = currentOrderData.order;
+        const status = currentOrderData.order?.status;
+        if (!status) {
+            setScanError('訂單尚未載入，請稍候再試');
+            return;
+        }
         let operationType = null;
         if ((user.role === 'picker' || user.role === 'admin') && status === 'picking') operationType = 'pick';
         else if ((user.role === 'packer' || user.role === 'admin') && status === 'packing') operationType = 'pack';
@@ -715,47 +719,60 @@ export function OrderWorkView({ user }) {
                                 </div>
 
                 {/* 作業清單 */}
-                                <div className="lg:col-span-2">
-                                    <Card className="animate-scale-in" style={{ animationDelay: '100ms' }}>
-                                        <CardHeader className="flex items-center justify-between">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center"><Package className="text-white" size={20}/></div>
-                                                <CardTitle className="text-lg">作業清單</CardTitle>
-                                            </div>
-                                            <StatusBadge status={currentOrderData.order.status} />
-                                        </CardHeader>
-                                        <CardContent>
-                                            <div className="flex items-center flex-wrap gap-4 text-sm p-4 bg-gray-50 rounded-xl border border-gray-200 mb-6">
-                                                <span className="flex items-center gap-2 text-gray-600"><Package size={16} className="text-gray-400" />單號: <strong className="text-gray-900 truncate">{currentOrderData.order.voucher_number}</strong></span>
-                                                <span className="flex items-center gap-2 text-gray-600"><User size={16} className="text-gray-400" />客戶: <strong className="text-gray-900 truncate">{currentOrderData.order.customer_name}</strong></span>
-                                            </div>
-                                            {scanError && (
-                                                <div className="mb-6 p-5 rounded-xl border border-red-300 bg-red-50 animate-fade-in">
-                                                    <p className="text-sm font-semibold text-red-700 mb-1 flex items-center gap-2"><XCircle size={16}/>掃描錯誤</p>
-                                                    <p className="text-sm text-red-600">{scanError}</p>
-                                                </div>
-                                            )}
-                                            <div className="space-y-4">
-                                                {sortedItems.map((item, index) => {
-                                                    const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
-                                                    const hasSN = itemInstances.length > 0;
-                                                    return (
-                                                        <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 40}ms` }}>
-                                                            {hasSN ? (
-                                                                <SNItemCard item={item} instances={itemInstances} />
-                                                            ) : (
-                                                                <QuantityItemCard item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order.status} isUpdating={isUpdating} />
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                            {sortedItems.length === 0 && (
-                                                <EmptyState title="尚無品項" description="此訂單目前沒有可處理的品項" />
-                                            )}
-                                        </CardContent>
-                                    </Card>
+                <div className="lg:col-span-2">
+                    <Card className="animate-scale-in" style={{ animationDelay: '100ms' }}>
+                        <CardHeader className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center"><Package className="text-white" size={20}/></div>
+                                <CardTitle className="text-lg">作業清單</CardTitle>
+                            </div>
+                            {currentOrderData.order ? (
+                              <StatusBadge status={currentOrderData.order.status} />
+                            ) : (
+                              <div className="w-24 h-6 rounded-xl bg-gray-200 animate-pulse" />
+                            )}
+                        </CardHeader>
+                        <CardContent>
+                            {currentOrderData.order ? (
+                              <>
+                                <div className="flex items-center flex-wrap gap-4 text-sm p-4 bg-gray-50 rounded-xl border border-gray-200 mb-6">
+                                    <span className="flex items-center gap-2 text-gray-600"><Package size={16} className="text-gray-400" />單號: <strong className="text-gray-900 truncate">{currentOrderData.order.voucher_number}</strong></span>
+                                    <span className="flex items-center gap-2 text-gray-600"><User size={16} className="text-gray-400" />客戶: <strong className="text-gray-900 truncate">{currentOrderData.order.customer_name}</strong></span>
                                 </div>
+                                {scanError && (
+                                    <div className="mb-6 p-5 rounded-xl border border-red-300 bg-red-50 animate-fade-in">
+                                        <p className="text-sm font-semibold text-red-700 mb-1 flex items-center gap-2"><XCircle size={16}/>掃描錯誤</p>
+                                        <p className="text-sm text-red-600">{scanError}</p>
+                                    </div>
+                                )}
+                                <div className="space-y-4">
+                                    {sortedItems.map((item, index) => {
+                                        const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
+                                        const hasSN = itemInstances.length > 0;
+                                        return (
+                                            <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 40}ms` }}>
+                                                {hasSN ? (
+                                                    <SNItemCard item={item} instances={itemInstances} />
+                                                ) : (
+                                                    <QuantityItemCard item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating} />
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                {sortedItems.length === 0 && !loading && (
+                                    <EmptyState title="尚無品項" description="此訂單目前沒有可處理的品項" />
+                                )}
+                              </>
+                            ) : (
+                              <div className="space-y-4">
+                                <SkeletonText lines={3} />
+                                <SkeletonText lines={4} />
+                              </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
             
             {/* 相機掃描器 */}
