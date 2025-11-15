@@ -10,6 +10,7 @@
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "migrate": "node migrations/run.js",
+    "migrate:single": "node migrations/run-single.js",
     "retention": "node src/maintenance/retention.js"
   },
   "keywords": [
