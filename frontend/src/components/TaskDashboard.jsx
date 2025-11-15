@@ -142,13 +142,14 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             ? 'ring-2 ring-[rgba(0,122,255,0.45)] hover:ring-[rgba(0,122,255,0.65)] ring-offset-2 ring-offset-white dark:ring-offset-background shadow-[0_0_0_3px_rgba(0,122,255,0.10)]'
             : 'shadow-lg border border-gray-100 hover:border-blue-200');
 
+    const needsScanGlow = isPinned || isUrgent;
     return (
         <div className={`
             group relative overflow-hidden
             bg-white/90 dark:bg-card backdrop-blur-sm rounded-xl sm:rounded-2xl 
             transition-all duration-500 ease-out
             hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.01]
-            ${attentionRing} ${selectionRing}
+            ${attentionRing} ${selectionRing} ${needsScanGlow ? 'scan-glow' : ''}
             animate-scale-in
         `}>
             {/* 左側狀態色條（2-3px） */}
@@ -158,17 +159,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     task.status === 'picked' ? 'bg-purple-500' : (
                     task.status === 'packing' ? 'bg-green-500' : 'bg-gray-300')))
             }`} />
-            {/* 背景裝飾元素 */}
-            <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:scale-150 transition-transform duration-700"></div>
-            {/* 置頂：藍色星光邊緣（conic-gradient）慢速旋轉的光暈，僅外緣可見 */}
-            {isPinned && (
-                <div
-                    className="pointer-events-none absolute -inset-[1px] rounded-[1.25rem] opacity-[0.35] blur-[1px] -z-10 group-hover:animate-[spin_16s_linear_infinite]"
-                    style={{
-                        background: 'conic-gradient(at 50% 50%, rgba(0,122,255,0.48), rgba(0,122,255,0.12), rgba(0,122,255,0.48))'
-                    }}
-                />
-            )}
+            {/* 移除舊的背景漸層與藍色星光，改用 scan-glow */}
             
             {/* 以整體環繞光暈呈現緊急/置頂，不再僅顯示頂部色條 */}
 
@@ -293,7 +284,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover/comment:translate-x-full transition-transform duration-1000"></div>
                             
                             <div className="relative flex items-start gap-2 sm:gap-3">
-                                <div className="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg group-hover/comment:scale-110 transition-transform">
+                                <div
+                                  key={`${task.id}-${task.unread_comments}-${task.urgent_comments}`}
+                                  className={`flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg group-hover/comment:scale-110 transition-transform ${hasUnread || hasUrgentComments ? 'animate-wiggle-once' : ''}`}
+                                >
                                     <MessageSquare size={16} className="text-white sm:w-5 sm:h-5" />
                                 </div>
                                 <div className="flex-1 text-left min-w-0">
@@ -332,7 +326,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     <Button
                         variant="primary"
                         size="lg"
-                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg"
+                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg btn-shine"
                         onClick={() => onClaim(task.id, true)}
                         trailingIcon={ArrowRight}
                     >
@@ -342,7 +336,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     <Button
                         variant="primary"
                         size="lg"
-                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg"
+                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg btn-shine"
                         onClick={() => onClaim(task.id, false)}
                         trailingIcon={ArrowRight}
                     >
@@ -807,7 +801,7 @@ export function TaskDashboard({ user }) {
                 <FilterBar value={search} onChange={setSearch} placeholder="搜尋單號或客戶..." />
 
                 {/* 統計卡片（更克制的卡片：留白 + 細邊 + 單色 icon） */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mt-6">
                   {[
                     {label:'待揀貨', value: pickTasks.length, color:'text-orange-600', icon: Package},
                     {label:'待裝箱', value: packTasks.length, color:'text-green-600', icon: Box},
@@ -835,7 +829,7 @@ export function TaskDashboard({ user }) {
                 
 
                 {/* 任務列表 */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* 揀貨任務區 */}
                     <section className="animate-slide-up">
                         <div className="relative mb-4">
