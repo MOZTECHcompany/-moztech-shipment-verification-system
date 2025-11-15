@@ -448,7 +448,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         const shouldAnimate = !!comment.__optimistic;
         const displayName = comment.user_name || comment.username || '未知用戶';
         const isUrgent = comment.priority === 'urgent';
-        const bubbleBase = 'max-w-[80%] px-4 py-3 rounded-2xl shadow-sm bg-gray-100 text-gray-800';
+        // 單一泡泡寬度（依需求統一 75%），回覆略縮
+        const bubbleBase = 'max-w-[75%] px-4 py-3 rounded-2xl shadow-sm bg-gray-100 text-gray-800';
         const replyNarrow = isReply ? 'max-w-[76%]' : '';
         const header = (
             <div className="flex items-center justify-between gap-3">
@@ -548,8 +549,24 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
         if (!isReply) {
             const highlight = replyTo?.id === comment.id ? 'ring-2 ring-apple-blue/40' : '';
+            const isPinnedThread = isPinned;
+            const isUrgentThread = isUrgent; // 以主訊息優先級代表整個 thread 是否緊急
             return (
-                <div key={comment.id} id={`comment-${comment.id}`} className={`group/thread bg-white border border-gray-200 rounded-xl shadow-sm p-4 ${highlight} ${shouldAnimate ? 'animate-scale-in' : ''}`}>
+                <div
+                    key={comment.id}
+                    id={`comment-${comment.id}`}
+                    className={`group/thread relative bg-white border border-gray-200 rounded-2xl shadow-sm p-5 transition-all ${highlight} ${shouldAnimate ? 'animate-scale-in' : ''} ${isPinnedThread ? 'hover:shadow-lg hover:scale-[1.015]' : 'hover:shadow-md'}`}
+                >
+                    {/* 左側垂直高亮條：Pinned 黃色 / Urgent 紅色 + 呼吸動畫 */}
+                    <div className={`absolute left-0 top-0 bottom-0 w-[5px] rounded-l-2xl
+                        ${isUrgentThread ? 'bg-[#FF3B30] animate-[pulse_2.4s_ease-in-out_infinite]' : (isPinnedThread ? 'bg-amber-400' : 'bg-transparent')}`}
+                    />
+                    {/* 右上角 Pin 圖示（置頂） */}
+                    {isPinnedThread && (
+                        <div className="absolute top-2 right-3 text-amber-500">
+                            <Pin className="w-4 h-4" />
+                        </div>
+                    )}
                     <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                             {header}
@@ -558,10 +575,16 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         </div>
                         {actions}
                     </div>
-                    {/* 巢狀回覆：左側連接線 + 縮排 */}
+                    {/* 巢狀回覆區：左側連接線（細灰線），每條回覆再套泡泡樣式 */}
                     {comment.replies && comment.replies.length > 0 && (
-                        <div className="mt-3 ml-6 pl-4 border-l-2 border-gray-200 space-y-2">
-                            {comment.replies.map(reply => renderComment(reply, true))}
+                        <div className="mt-4 ml-8 pl-5 border-l border-gray-200 space-y-3">
+                            {comment.replies.map(reply => (
+                                <div key={reply.id} className="relative">
+                                    {/* 連接節點小圓點 */}
+                                    <div className="absolute -left-[11px] top-4 w-2 h-2 rounded-full bg-gray-300" />
+                                    {renderComment(reply, true)}
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
@@ -831,22 +854,25 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     </div>
                 )}
 
-                {/* 優先級選擇 */}
-                <div className="mb-3 flex items-center gap-2">
-                    <span className="text-sm text-gray-600">優先級：</span>
+                {/* 優先級 Chips */}
+                <div className="mb-3 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-semibold text-gray-500 tracking-wide">優先級</span>
                     {Object.entries(PRIORITIES).map(([key, config]) => {
                         const Icon = config.icon;
+                        const active = priority === key;
                         return (
                             <button
                                 key={key}
                                 onClick={() => setPriority(key)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 border ${
-                                    priority === key
-                                        ? config.color
+                                className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all focus:outline-none focus:ring-2 focus:ring-apple-blue/40 ${
+                                    active
+                                        ? `${config.color} shadow-sm scale-[1.05]`
                                         : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                                 }`}
+                                aria-pressed={active}
+                                aria-label={`設定優先級為 ${config.label}`}
                             >
-                                <Icon className="w-3 h-3" />
+                                <Icon className={`w-3 h-3 ${active ? 'opacity-100' : 'opacity-70 group-hover:opacity-90'}`} />
                                 {config.label}
                             </button>
                         );
@@ -920,11 +946,20 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     )}
 
                     {/* 發送按鈕 */}
-                    <div className="mt-3 flex items-center justify-end">
-                        <Button type="submit" disabled={loading || !newComment.trim()} leadingIcon={loading ? Loader2 : Send} className={loading ? 'opacity-80' : ''}>
-                          {loading ? '發送中...' : '發送評論'}
-                        </Button>
-                    </div>
+                                        <div className="mt-3 flex items-center justify-between">
+                                                <span className="text-[11px] text-gray-400">
+                                                        使用 @ 提及同事，可多行輸入。Enter 發送。
+                                                </span>
+                                                <Button
+                                                        type="submit"
+                                                        disabled={loading || !newComment.trim()}
+                                                        variant={(!newComment.trim() || loading) ? 'secondary' : 'primary'}
+                                                        leadingIcon={loading ? Loader2 : Send}
+                                                        className={`${loading ? 'opacity-80' : ''} ${!newComment.trim() ? 'cursor-not-allowed' : ''}`}
+                                                >
+                                                    {loading ? '發送中...' : '發送評論'}
+                                                </Button>
+                                        </div>
                 </form>
             </div>
         </div>
