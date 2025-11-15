@@ -9,7 +9,8 @@
     "dev:new": "nodemon src/server.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
-    "migrate": "node migrations/run.js"
+    "migrate": "node migrations/run.js",
+    "retention": "node src/maintenance/retention.js"
   },
   "keywords": [
     "wms",
