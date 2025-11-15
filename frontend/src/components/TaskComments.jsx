@@ -436,19 +436,16 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         const commentPriority = PRIORITIES[comment.priority || 'normal'];
         const PriorityIcon = commentPriority.icon;
         const shouldAnimate = !!comment.__optimistic;
-        const isMine = Number(comment.user_id) === Number(currentUser.id);
+        const displayName = comment.user_name || comment.username || '未知用戶';
+        const isUrgent = comment.priority === 'urgent';
 
-        const bubbleBase = 'max-w-[75%] px-4 py-2.5 rounded-2xl shadow-sm';
-        const mineStyle = 'bg-blue-600 text-white';
-        const otherStyle = 'bg-gray-100 text-gray-800';
-        const urgentWrap = comment.priority === 'urgent' ? 'ring-2 ring-red-400' : '';
-        const urgentBubble = comment.priority === 'urgent' ? (isMine ? 'bg-red-600 text-white' : 'bg-red-50 text-red-800') : '';
-        const replyNarrow = isReply ? 'max-w-[65%]' : '';
+        const bubbleBase = 'max-w-[80%] px-4 py-3 rounded-2xl shadow-sm bg-gray-100 text-gray-800';
+        const replyNarrow = isReply ? 'max-w-[70%]' : '';
 
         return (
-            <div key={comment.id} id={`comment-${comment.id}`} className={`mb-2 ${shouldAnimate ? 'animate-scale-in' : ''}`}>
-                {/* 置頂與標籤列 */}
-                <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mb-1 px-1`}>
+            <div key={comment.id} id={`comment-${comment.id}`} className={`mb-3 ${shouldAnimate ? 'animate-scale-in' : ''}`}>
+                {/* 標籤列與置頂提示（靠左） */}
+                <div className="flex justify-start mb-1 px-1">
                     <div className="flex items-center gap-2 text-[11px] text-gray-500">
                         {isPinned && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full border border-amber-300">
@@ -468,35 +465,33 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                     </div>
                 </div>
 
-                {/* 主內容：左右聊天氣泡 */}
-                <div className={`flex items-end ${isMine ? 'justify-end' : 'justify-start'} gap-2`}>
-                    {!isMine && (
+                {/* 左對齊聊天流：頭像與名稱在上，內容在下，時間在右下 */}
+                <div className={`flex flex-col items-start gap-1`}>
+                    {/* 頭像 + 名稱 */}
+                    <div className="flex items-center gap-2 ml-1">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-apple-blue/20 to-apple-purple/20 flex items-center justify-center">
                             <User className="w-4 h-4 text-apple-blue" />
                         </div>
-                    )}
-                    <div className={`relative ${urgentWrap}`}>
-                        {comment.content === '[已撤回]' ? (
-                            <div className={`${bubbleBase} ${replyNarrow} ${isMine ? mineStyle : otherStyle} opacity-70 italic`}>此評論已撤回</div>
-                        ) : (
-                            <div className={`${bubbleBase} ${replyNarrow} ${isMine ? mineStyle : otherStyle} ${urgentBubble}`}>
-                                <div className="whitespace-pre-wrap break-words leading-relaxed">{highlightMentions(comment.content)}</div>
-                            </div>
-                        )}
+                        <div className="text-sm font-semibold text-gray-800">{displayName}</div>
                     </div>
-                    {isMine && (
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white">
-                            <User className="w-4 h-4" />
-                        </div>
-                    )}
-                </div>
 
-                {/* Meta 與動作列 */}
-                <div className={`flex items-center ${isMine ? 'justify-end pr-12' : 'justify-start pl-12'} gap-2 mt-1 text-[11px] text-gray-500`}>
-                    <Clock className="w-3 h-3" />
-                    <span>{formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: zhTW })}</span>
+                    {/* 訊息泡泡（含緊急雙重高亮：左側 3px 紅條 + 淡紅背景） */}
+                    <div className="relative mt-1">
+                        {isUrgent && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#FF3B30] rounded-full" />}
+                        <div className={`ml-2 ${bubbleBase} ${replyNarrow} ${isUrgent ? 'bg-[rgba(255,59,48,0.10)] text-red-800' : ''}`}>
+                            <div className="whitespace-pre-wrap break-words leading-relaxed">
+                                {highlightMentions(comment.content === '[已撤回]' ? '此評論已撤回' : comment.content)}
+                            </div>
+                            {/* 右下角時間戳 */}
+                            <div className="mt-1 text-[11px] text-gray-400 text-right">
+                                {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: zhTW })}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 動作列（小且不干擾聊天流） */}
                     {!isReply && (
-                        <>
+                        <div className="flex items-center gap-2 mt-1 text-[11px] text-gray-500 pl-12">
                             <button
                                 onClick={() => togglePin(comment.id)}
                                 className={`px-1.5 py-0.5 rounded-md transition-colors ${isPinned ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
@@ -542,16 +537,16 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                                     </button>
                                 </>
                             )}
-                        </>
+                        </div>
+                    )}
+
+                    {/* 回覆列表（縮窄） */}
+                    {!isReply && comment.replies && comment.replies.length > 0 && (
+                        <div className={`mt-2 space-y-2 pl-12`}>
+                            {comment.replies.map(reply => renderComment(reply, true))}
+                        </div>
                     )}
                 </div>
-
-                {/* 回覆列表（縮窄） */}
-                {!isReply && comment.replies && comment.replies.length > 0 && (
-                    <div className={`mt-2 space-y-2 ${isMine ? 'pr-12' : 'pl-12'}`}>
-                        {comment.replies.map(reply => renderComment(reply, true))}
-                    </div>
-                )}
             </div>
         );
     };
@@ -755,7 +750,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 )}
                 {hasNextPage && (
                     <div className="flex justify-center py-3">
-                        <Button variant="secondary" size="sm" className="rounded-full gap-1.5" onClick={() => fetchNextPage()} aria-label="載入更多評論" leadingIcon={ChevronDown}>
+                        <Button variant="secondary" size="xs" className="rounded-full gap-1.5 px-3 py-1" onClick={() => fetchNextPage()} aria-label="載入更多評論" leadingIcon={ChevronDown}>
                             載入更多
                         </Button>
                     </div>

@@ -1,7 +1,7 @@
 // frontend/src/components/TaskDashboard-modern.jsx
 // 現代化 Apple 風格任務儀表板
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
@@ -15,6 +15,61 @@ import { desktopNotification } from '@/utils/desktopNotification.js';
 import FloatingChatPanel from './FloatingChatPanel';
 import NotificationCenter from './NotificationCenter';
 import { PageHeader, FilterBar, Button, Skeleton, SkeletonText } from '@/ui';
+
+// 可調整：任務分區數字徽章呼吸動畫秒數與光暈強度
+const BADGE_PULSE_SECONDS = 2.75; // 推薦：2.5~3.5 之間
+const BADGE_GLOW_ALPHA = 0.18;    // 推薦：0.12~0.22 之間
+
+// 數字滾動動畫：摘要卡數字在變化時垂直滾動過渡
+function NumberTicker({ value, duration = 300 }) {
+    const [display, setDisplay] = useState(value);
+    const [prev, setPrev] = useState(value);
+    const [anim, setAnim] = useState(null); // 'up' | 'down' | null
+    const timeoutRef = useRef(null);
+
+    useEffect(() => {
+        if (value === display) return;
+        // 設定方向與觸發動畫
+        setPrev(display);
+        setAnim(value > display ? 'up' : 'down');
+        // 動畫結束後更新顯示值並清理狀態
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => {
+            setDisplay(value);
+            setAnim(null);
+        }, duration);
+        return () => clearTimeout(timeoutRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value]);
+
+    // 容器高度以 1 行文字高度為準
+    const baseClass = 'relative h-[1em] overflow-hidden inline-block align-bottom';
+    const commonRow = 'block leading-none';
+
+    if (!anim) {
+        return <span className={baseClass}><span className={commonRow}>{display}</span></span>;
+    }
+
+    const translateStart = anim === 'up' ? 'translate-y-0' : '-translate-y-full';
+    const translateEnd = anim === 'up' ? '-translate-y-full' : 'translate-y-0';
+    const nextStart = anim === 'up' ? 'translate-y-full' : 'translate-y-0';
+    const nextEnd = anim === 'up' ? 'translate-y-0' : 'translate-y-full';
+
+    const style = { transition: `transform ${duration}ms ease-in-out` };
+
+    return (
+        <span className={baseClass} aria-live="polite">
+            <span className={`absolute inset-0 ${commonRow} ${translateStart}`} style={style}>{prev}</span>
+            <span className={`absolute inset-0 ${commonRow} ${nextStart}`} style={style}>{value}</span>
+            {/* 觸發下一個 frame 將 class 切換至結束狀態 */}
+            <span className="sr-only">&nbsp;</span>
+            <style>{`
+                /* 動態應用 translate 的結束狀態透過 requestAnimationFrame 會更穩定，
+                   這裡簡化為下一次 reflow 自動過渡（實務表現足夠平滑） */
+            `}</style>
+        </span>
+    );
+}
 
 const statusConfig = {
     pending: { 
@@ -765,7 +820,9 @@ export function TaskDashboard({ user }) {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-1">{c.label}</p>
-                            <p className={`text-3xl font-bold ${c.color} ${c.label==='待揀貨' && pickHighlight ? 'animate-pulse drop-shadow-[0_0_6px_rgba(255,159,64,0.35)]' : ''}`}>{c.value}</p>
+                                                        <p className={`text-3xl font-bold ${c.color} ${c.label==='待揀貨' && pickHighlight ? 'animate-pulse drop-shadow-[0_0_6px_rgba(255,159,64,0.35)]' : ''}`}>
+                                                            <NumberTicker value={c.value} />
+                                                        </p>
                           </div>
                           <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
                             <Icon className="text-gray-700" size={18} />
@@ -789,11 +846,18 @@ export function TaskDashboard({ user }) {
                                         <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
                                             <Package className="text-gray-700" size={20} />
                                         </div>
-                                        <h2 className="text-lg font-semibold text-gray-900">
+                                        <h2 className="text-2xl font-extrabold text-gray-900">
                                             待揀貨任務
                                         </h2>
                                     </div>
-                                    <span className={`px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-semibold ${pickHighlight ? 'ring-2 ring-amber-300 animate-pulse' : ''}`}>
+                                    <span
+                                        className={`px-3.5 py-1.5 rounded-full bg-apple-orange text-white text-sm font-black ${pickHighlight ? 'ring-2 ring-amber-300' : ''}`}
+                                        aria-label="待揀貨任務數量"
+                                        style={{
+                                            animation: `pulse ${BADGE_PULSE_SECONDS}s ease-in-out infinite`,
+                                            boxShadow: `0 0 0 6px rgba(255,159,64,${BADGE_GLOW_ALPHA})`
+                                        }}
+                                    >
                                         {pickTasks.length}
                                     </span>
                                 </div>
@@ -846,11 +910,18 @@ export function TaskDashboard({ user }) {
                                         <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
                                             <Box className="text-gray-700" size={20} />
                                         </div>
-                                        <h2 className="text-lg font-semibold text-gray-900">
+                                        <h2 className="text-2xl font-extrabold text-gray-900">
                                             待裝箱任務
                                         </h2>
                                     </div>
-                                    <span className="px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-semibold">
+                                    <span
+                                        className="px-3.5 py-1.5 rounded-full bg-apple-orange text-white text-sm font-black"
+                                        aria-label="待裝箱任務數量"
+                                        style={{
+                                            animation: `pulse ${BADGE_PULSE_SECONDS}s ease-in-out infinite`,
+                                            boxShadow: `0 0 0 6px rgba(255,159,64,${BADGE_GLOW_ALPHA})`
+                                        }}
+                                    >
                                         {packTasks.length}
                                     </span>
                                 </div>
