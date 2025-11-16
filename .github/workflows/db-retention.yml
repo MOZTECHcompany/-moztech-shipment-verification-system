@@ -1,0 +1,32 @@
+name: DB Retention Nightly
+
+on:
+  schedule:
+    # 每日 03:00（台北時間, UTC+8）→ 對應 UTC 19:00 前一日
+    - cron: '0 19 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package.json
+
+      - name: Install backend deps
+        run: npm ci --prefix backend
+
+      - name: Run retention (production/SSL)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm --prefix backend run retention:prod
+
+    # 注意：需要在 repo 設定 secrets.DATABASE_URL
+    # 若目標資料庫限制 IP，請將 GitHub Actions runner 出口 IP 納入白名單，或改用伺服器上的 PM2/Cron。

@@ -10,12 +10,13 @@ const morgan = require('morgan');
 const logger = require('./utils/logger');
 
 // 中間件
-const { authenticateToken } = require('./middleware/auth');
+const { authenticateToken, authorizeAdmin } = require('./middleware/auth');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 
 // 路由
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 // TODO: 添加其他路由
 // const orderRoutes = require('./routes/orderRoutes');
 // const taskRoutes = require('./routes/taskRoutes');
@@ -118,6 +119,7 @@ app.use('/api/auth', authRoutes);
 
 // 以下路由需要認證
 app.use('/api/users', authenticateToken, userRoutes);
+app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
 
 // TODO: 添加其他需要認證的路由
 // app.use('/api/orders', authenticateToken, orderRoutes);
