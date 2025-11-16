@@ -797,8 +797,10 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
-                {/* 篩選／搜尋列 */}
-                <FilterBar value={search} onChange={setSearch} placeholder="搜尋單號或客戶..." />
+                                {/* 篩選／搜尋列（行動裝置固定在頂端，方便快速篩選） */}
+                                <div className="sticky top-0 z-10 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-b border-gray-200 rounded-t-2xl -mx-4 px-4 py-3">
+                                    <FilterBar value={search} onChange={setSearch} placeholder="搜尋單號或客戶..." />
+                                </div>
 
                 {/* 統計卡片（更克制的卡片：留白 + 細邊 + 單色 icon） */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mt-6">

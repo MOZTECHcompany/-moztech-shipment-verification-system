@@ -808,8 +808,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 <div ref={commentsEndRef} />
             </div>
 
-            {/* 輸入區域（加入安全區 padding） */}
-            <div className="glass-card p-4 border-t border-gray-200 pb-[max(env(safe-area-inset-bottom),0px)]">
+            {/* 輸入區域（加入安全區 padding，並固定在底部） */}
+            <div className="glass-card p-4 border-t border-gray-200 pb-[max(env(safe-area-inset-bottom),0px)] sticky bottom-0 z-10 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
                 {/* 內嵌狀態提示 */}
                 {inlineStatus && (
                     <div className={`mb-3 px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${inlineStatus.type==='success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`} role="status" aria-live="polite">
