@@ -234,6 +234,42 @@ export function AdminDashboard() {
                             </Link>
                         </CardContent>
                     </Card>
+
+                    {/* 資料保留清理 */}
+                    <Card className="animate-scale-in" style={{ animationDelay: '300ms' }}>
+                        <CardHeader className="flex flex-row items-start gap-3">
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center">
+                                <Sparkles className="text-apple-blue" size={24} />
+                            </div>
+                            <div>
+                                <CardTitle className="text-2xl">資料保留清理</CardTitle>
+                                <CardDescription>清理過期操作日誌、已讀提及與已讀紀錄</CardDescription>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="pt-2 space-y-4">
+                            <p className="text-gray-600 leading-relaxed">
+                                本操作不會刪除訂單或評論本體。預設保留：日誌 180 天、提及 30 天、已讀 90 天、閒置工作階段 10 分鐘。
+                            </p>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                className="gap-2 btn-shine"
+                                onClick={() => {
+                                    const promise = apiClient.post('/api/admin/maintenance/retention/run', {});
+                                    toast.promise(promise, {
+                                        loading: '🧹 正在執行資料清理...（約數秒）',
+                                        success: (res) => {
+                                            const r = res?.data?.result || res?.data;
+                                            return `✅ 完成：logs ${r?.operation_logs_deleted ?? '-'}、mentions ${r?.task_mentions_deleted ?? '-'}、reads ${r?.comment_reads_deleted ?? '-'}、inactive ${r?.inactive_sessions_deleted ?? '-'}`;
+                                        },
+                                        error: (err) => `❌ 清理失敗：${err?.message || '請稍後重試'}`,
+                                    });
+                                }}
+                            >
+                                <Sparkles size={18} /> 立即清理
+                            </Button>
+                        </CardContent>
+                    </Card>
                 </div>
 
                 <div className="mt-12 text-center">
