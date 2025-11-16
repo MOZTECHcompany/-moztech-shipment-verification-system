@@ -614,8 +614,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
     return (
         <div className="flex flex-col h-full bg-gradient-to-br from-gray-50 to-white">
-            {/* 標題欄 */}
-            <div className="glass-card p-4 border-b border-gray-200">
+            {/* 標題欄（行動裝置固定在頂端，方便篩選） */}
+            <div className="glass-card p-4 border-b border-gray-200 sticky top-0 z-10">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-gradient-to-br from-apple-purple/20 to-apple-blue/20 rounded-xl">
@@ -808,8 +808,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 <div ref={commentsEndRef} />
             </div>
 
-            {/* 輸入區域 */}
-            <div className="glass-card p-4 border-t border-gray-200">
+            {/* 輸入區域（加入安全區 padding） */}
+            <div className="glass-card p-4 border-t border-gray-200 pb-[max(env(safe-area-inset-bottom),0px)]">
                 {/* 內嵌狀態提示 */}
                 {inlineStatus && (
                     <div className={`mb-3 px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${inlineStatus.type==='success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`} role="status" aria-live="polite">
