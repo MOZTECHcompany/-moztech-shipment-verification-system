@@ -3,6 +3,19 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .break-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 0px);
+  }
+}
+
 @layer base {
   :root {
     /* Apple 風格色彩系統 */

@@ -211,11 +211,11 @@ const SNItemCard = ({ item, instances }) => {
                         <div className="space-y-1.5">
                             <p className="text-sm text-gray-600 font-mono flex items-center gap-2">
                                 <Tag size={14} className="text-gray-400"/>
-                                {item.product_code}
+                                <span className="break-anywhere">{item.product_code}</span>
                             </p>
                             <p className="text-sm text-blue-600 font-mono flex items-center gap-2">
                                 <Barcode size={14} className="text-blue-400"/>
-                                {item.barcode}
+                                <span className="break-anywhere">{item.barcode}</span>
                             </p>
                         </div>
                     </div>
@@ -287,11 +287,11 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating }) => 
                     <div className="space-y-1.5">
                         <p className="text-sm text-gray-600 font-mono flex items-center gap-2">
                             <Tag size={14} className="text-gray-400"/>
-                            {item.product_code}
+                            <span className="break-anywhere">{item.product_code}</span>
                         </p>
                         <p className="text-sm text-blue-600 font-mono flex items-center gap-2">
                             <Barcode size={14} className="text-blue-400"/>
-                            {item.barcode}
+                            <span className="break-anywhere">{item.barcode}</span>
                         </p>
                     </div>
                 </div>
@@ -649,12 +649,14 @@ export function OrderWorkView({ user }) {
 
     return (
         <div className="min-h-screen bg-secondary">
-            <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-                <PageHeader
+                        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+                                <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 bg-secondary/80 backdrop-blur supports-[backdrop-filter]:bg-secondary/60 border-b border-gray-200 rounded-t-2xl">
+                                <PageHeader
                   title={`📦 訂單作業 #${orderId}`}
                   description={currentOrderData.order ? `${currentOrderData.order.customer_name}（${currentOrderData.order.customer_code}）` : '載入中...'}
                   actions={<Button variant="secondary" size="sm" onClick={handleReturnToTasks} leadingIcon={ArrowLeft}>返回看板</Button>}
                 />
+                                </div>
                 { (loading || !currentOrderData.order) && (
                   <Card className="mb-6"><CardContent><SkeletonText lines={4} /></CardContent></Card>
                 )}

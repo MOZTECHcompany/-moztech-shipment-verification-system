@@ -540,7 +540,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             <div className="relative mt-2">
                 {isUrgent && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#FF3B30] rounded-full" />}
                 <div className={`ml-2 ${bubbleBase} ${replyNarrow} ${isUrgent ? 'bg-[rgba(255,59,48,0.10)] text-red-800' : ''}`}>
-                    <div className="whitespace-pre-wrap break-words leading-relaxed">
+                    <div className="whitespace-pre-wrap break-words break-anywhere leading-relaxed">
                         {highlightMentions(comment.content === '[已撤回]' ? '此評論已撤回' : comment.content)}
                     </div>
                 </div>

@@ -269,7 +269,7 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
 
             {/* 批次模式：已掃描列表 */}
             {mode === 'batch' && scannedCodes.length > 0 && (
-                <div className="glass-dark p-4 border-t border-white/10 max-h-48 overflow-y-auto">
+                <div className="glass-dark p-4 border-t border-white/10 max-h-48 overflow-y-auto safe-bottom">
                     <div className="flex justify-between items-center mb-3">
                         <h3 className="text-white font-semibold">
                             已掃描 ({scannedCodes.length})
