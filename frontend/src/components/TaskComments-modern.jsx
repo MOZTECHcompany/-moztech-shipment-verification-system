@@ -205,8 +205,14 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
     // 自動滾動
     useEffect(() => {
-        commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [comments.length]);
+        if (commentsEndRef.current) {
+            // 使用 scrollTop 替代 scrollIntoView 以避免頁面跳動
+            const container = commentsEndRef.current.parentElement;
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+    }, [comments.length, activeMessageId]); // 當評論增加或操作選單開啟時滾動
 
     const fetchMentions = async () => {
         try {
@@ -460,40 +466,45 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     return (
-        <div className="flex flex-col h-[600px] bg-gray-50/50 rounded-3xl overflow-hidden border border-gray-200 shadow-inner">
+        <div className="flex flex-col h-[600px] bg-white rounded-3xl overflow-hidden border border-gray-200 shadow-xl">
             {/* Header */}
-            <div className="bg-white/80 backdrop-blur-md px-5 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 z-10">
+            <div className="bg-white/90 backdrop-blur-md px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-sm border border-blue-100">
+                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
                         <MessageSquare size={20} />
                     </div>
                     <div>
                         <h3 className="text-base font-bold text-gray-900">團隊討論</h3>
-                        <p className="text-xs text-gray-500 font-medium">{comments.length} 則留言</p>
+                        <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                            {comments.length} 則留言
+                        </p>
                     </div>
                 </div>
                 
                 <div className="flex items-center gap-2">
                     <button 
                         onClick={() => setMentionsOpen(!mentionsOpen)}
-                        className="p-2 hover:bg-gray-100 rounded-xl text-gray-500 relative transition-colors"
+                        className="p-2 hover:bg-gray-50 rounded-xl text-gray-400 hover:text-gray-600 relative transition-all"
                     >
                         <AtSign size={20} />
                         {mentionsUnread > 0 && (
-                            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
+                            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
                         )}
                     </button>
-                    <div className="h-6 w-px bg-gray-200 mx-1"></div>
-                    <div className="relative group">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
-                        <input 
-                            type="text" 
-                            placeholder="搜尋..." 
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-9 pr-4 py-2 bg-gray-100 rounded-xl text-sm w-32 focus:w-48 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white"
-                        />
-                    </div>
+                </div>
+            </div>
+
+            {/* Operation Hint - 操作提示 */}
+            <div className="bg-blue-50/50 px-5 py-3 border-b border-blue-100 flex items-start gap-3">
+                <div className="p-1.5 bg-blue-100 text-blue-600 rounded-lg mt-0.5">
+                    <AlertCircle size={14} />
+                </div>
+                <div className="flex-1">
+                    <h4 className="text-xs font-bold text-blue-800 mb-0.5">操作提示</h4>
+                    <p className="text-xs text-blue-600 leading-relaxed">
+                        確認游標在輸入框內，掃描槍掃描後會自動送出。如遇錯誤請檢查輸入法。
+                    </p>
                 </div>
             </div>
 
@@ -518,7 +529,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             )}
 
             {/* Comments List */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-2 bg-gradient-to-b from-gray-50/30 to-white/30">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/30">
                 {isLoading ? (
                     <div className="space-y-6">
                         {[1,2,3].map(i => (
@@ -548,43 +559,30 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             </div>
 
             {/* Input Area */}
-            <div className="p-4 bg-white border-t border-gray-200">
+            <div className="p-4 bg-white border-t border-gray-100 shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.05)] z-20">
                 {/* Reply Preview */}
                 {replyTo && (
-                    <div className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-t-2xl border-x border-t border-gray-200 mb-[-1px] relative z-10 mx-2">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                            <CornerDownRight size={16} className="text-blue-500 flex-shrink-0" />
+                    <div className="flex items-center justify-between bg-blue-50/50 px-4 py-3 rounded-xl border border-blue-100 mb-3 animate-slide-up">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                            <div className="w-1 h-8 bg-blue-500 rounded-full"></div>
                             <div className="flex flex-col">
-                                <span className="text-xs font-bold text-blue-600">回覆 {replyTo.user_name}</span>
-                                <span className="text-xs text-gray-500 truncate max-w-[200px]">{replyTo.content}</span>
+                                <span className="text-xs font-bold text-blue-600 flex items-center gap-1">
+                                    <Reply size={12} /> 回覆 {replyTo.user_name}
+                                </span>
+                                <span className="text-xs text-gray-600 truncate max-w-[200px] mt-0.5">{replyTo.content}</span>
                             </div>
                         </div>
                         <button 
                             onClick={() => setReplyTo(null)}
-                            className="p-1 hover:bg-gray-200 rounded-full text-gray-400 hover:text-gray-600"
+                            className="p-1.5 hover:bg-blue-100 rounded-full text-blue-400 hover:text-blue-600 transition-colors"
                         >
                             <X size={14} />
                         </button>
                     </div>
                 )}
 
-                {/* Quick Replies */}
-                {showQuickReplies && (
-                    <div className="flex gap-2 overflow-x-auto pb-3 scrollbar-hide px-1">
-                        {QUICK_REPLIES.map((reply, idx) => (
-                            <button
-                                key={idx}
-                                onClick={() => useQuickReply(reply)}
-                                className="whitespace-nowrap px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-xl text-xs font-medium text-gray-600 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5"
-                            >
-                                {reply.text}
-                            </button>
-                        ))}
-                    </div>
-                )}
-
-                <div className="flex items-end gap-2">
-                    <div className={`flex-1 bg-gray-100 rounded-[24px] border-2 transition-all duration-300 flex flex-col ${replyTo ? 'rounded-tl-none' : ''} focus-within:border-blue-500/30 focus-within:bg-white focus-within:shadow-lg`}>
+                <div className="flex items-end gap-3">
+                    <div className={`flex-1 bg-gray-50 rounded-2xl border-2 border-transparent transition-all duration-300 flex flex-col focus-within:border-blue-500/20 focus-within:bg-white focus-within:shadow-lg focus-within:shadow-blue-500/5`}>
                         <textarea
                             ref={textareaRef}
                             value={newComment}
@@ -596,31 +594,32 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                 }
                             }}
                             placeholder={replyTo ? `回覆 ${replyTo.user_name}...` : "輸入訊息..."}
-                            className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] text-sm"
+                            className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[48px] text-sm placeholder:text-gray-400"
                             rows={1}
-                            style={{ height: 'auto', minHeight: '44px' }}
+                            style={{ height: 'auto', minHeight: '48px' }}
                         />
                         
                         {/* Toolbar */}
-                        <div className="flex items-center justify-between px-3 pb-2">
+                        <div className="flex items-center justify-between px-2 pb-2">
                             <div className="flex items-center gap-1">
                                 <button
                                     onClick={() => setShowQuickReplies(!showQuickReplies)}
-                                    className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
+                                    className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${showQuickReplies ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
                                     title="快速回覆"
                                 >
-                                    <TrendingUp size={18} />
+                                    <TrendingUp size={16} />
+                                    <span className="hidden sm:inline">快速回覆</span>
                                 </button>
-                                <div className="h-4 w-px bg-gray-300 mx-1"></div>
+                                <div className="h-4 w-px bg-gray-200 mx-1"></div>
                                 <button
                                     onClick={() => setPriority(priority === 'urgent' ? 'normal' : 'urgent')}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                                         priority === 'urgent' 
-                                            ? 'bg-red-100 text-red-600 ring-1 ring-red-200 shadow-sm' 
-                                            : 'text-gray-500 hover:bg-gray-200'
+                                            ? 'bg-red-500 text-white shadow-lg shadow-red-500/30' 
+                                            : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
                                     }`}
                                 >
-                                    <AlertTriangle size={12} />
+                                    <AlertTriangle size={14} />
                                     {priority === 'urgent' ? '緊急' : '標記緊急'}
                                 </button>
                             </div>
@@ -631,15 +630,30 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                         onClick={handleSubmit}
                         disabled={!newComment.trim()}
                         className={`
-                            w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
+                            w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-300 flex-shrink-0
                             ${newComment.trim() 
-                                ? 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-110 hover:rotate-12 shadow-blue-500/30' 
-                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'}
+                                ? 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-105 hover:shadow-blue-500/30' 
+                                : 'bg-gray-100 text-gray-300 cursor-not-allowed'}
                         `}
                     >
                         <Send size={20} className={newComment.trim() ? 'ml-0.5' : ''} />
                     </button>
                 </div>
+
+                {/* Quick Replies Panel */}
+                {showQuickReplies && (
+                    <div className="mt-3 flex flex-wrap gap-2 animate-slide-down">
+                        {QUICK_REPLIES.map((reply, idx) => (
+                            <button
+                                key={idx}
+                                onClick={() => useQuickReply(reply)}
+                                className="px-4 py-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50 rounded-xl text-xs font-bold text-gray-600 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95"
+                            >
+                                {reply.text}
+                            </button>
+                        ))}
+                    </div>
+                )}
 
                 {/* Mentions Dropdown */}
                 {showMentions && filteredUsers.length > 0 && (

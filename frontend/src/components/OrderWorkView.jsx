@@ -120,18 +120,28 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
                                 <span className="hidden sm:inline">掃描</span>
                             </button>
                             
-                            {/* 工具按鈕群組 */}
-                            <div className="flex bg-white rounded-xl border border-gray-200 p-1 shadow-sm">
-                                <ShippingLabel order={order} items={items} variant="ghost" size="icon" />
-                                <PickingList order={order} items={items} variant="ghost" size="icon" />
-                                <button 
-                                    onClick={onExport} 
-                                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors"
-                                    title="匯出報告"
-                                >
-                                    <FileDown size={18} />
-                                </button>
+                            {/* 列印按鈕群組 */}
+                            <div className="flex items-center gap-2">
+                                <ShippingLabel 
+                                    order={order} 
+                                    items={items} 
+                                    className="px-4 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold transition-all duration-200 hover:shadow-lg hover:shadow-blue-500/20 active:scale-95 flex items-center gap-2"
+                                />
+                                <PickingList 
+                                    order={order} 
+                                    items={items} 
+                                    className="px-4 py-2.5 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-bold transition-all duration-200 hover:shadow-lg hover:shadow-green-500/20 active:scale-95 flex items-center gap-2"
+                                />
                             </div>
+
+                            {/* 匯出按鈕 */}
+                            <button 
+                                onClick={onExport} 
+                                className="p-2.5 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 transition-all duration-200 hover:shadow-md active:scale-95"
+                                title="匯出報告"
+                            >
+                                <FileDown size={18} />
+                            </button>
                             
                             {/* 作廢訂單 */}
                             {user.role === 'admin' && (

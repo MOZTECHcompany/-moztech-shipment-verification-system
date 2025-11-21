@@ -9,7 +9,7 @@ import { zhTW } from 'date-fns/locale';
 import { toast } from 'sonner';
 
 // 出貨標籤組件
-export function ShippingLabel({ order, items }) {
+export function ShippingLabel({ order, items, className, variant = 'default' }) {
     const componentRef = useRef(null);
 
     const handlePrint = useReactToPrint({
@@ -22,10 +22,11 @@ export function ShippingLabel({ order, items }) {
         <div>
             <button
                 onClick={handlePrint}
-                className="btn-apple bg-apple-blue/90 hover:bg-apple-blue text-white flex items-center gap-2"
+                className={className || `btn-apple bg-apple-blue/90 hover:bg-apple-blue text-white flex items-center gap-2 ${variant === 'icon' ? 'p-2' : 'px-4 py-2'}`}
+                title="列印出貨標籤"
             >
                 <Printer size={18} />
-                列印出貨標籤
+                {variant !== 'icon' && <span>列印出貨標籤</span>}
             </button>
 
             {/* 隱藏的列印內容 */}
@@ -150,7 +151,7 @@ export function ShippingLabel({ order, items }) {
 }
 
 // 揀貨單組件
-export function PickingList({ order, items }) {
+export function PickingList({ order, items, className, variant = 'default' }) {
     const componentRef = useRef(null);
 
     const handlePrint = useReactToPrint({
@@ -173,10 +174,11 @@ export function PickingList({ order, items }) {
         <div>
             <button
                 onClick={handlePrint}
-                className="btn-apple bg-apple-green/90 hover:bg-apple-green text-white flex items-center gap-2"
+                className={className || `btn-apple bg-apple-green/90 hover:bg-apple-green text-white flex items-center gap-2 ${variant === 'icon' ? 'p-2' : 'px-4 py-2'}`}
+                title="列印揀貨單"
             >
                 <FileText size={18} />
-                列印揀貨單
+                {variant !== 'icon' && <span>列印揀貨單</span>}
             </button>
 
             {/* 隱藏的列印內容 */}
