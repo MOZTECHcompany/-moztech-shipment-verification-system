@@ -24,12 +24,15 @@ import TaskComments from './TaskComments-modern';
 import { ShippingLabel, PickingList } from './LabelPrinter';
 
 // --- 小型组件 ---
-const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
+const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" }) => {
     const percentage = max > 0 ? (value / max) * 100 : 0;
     return (
-        <div className="w-full bg-gray-100 rounded-full h-2 mt-2 overflow-hidden shadow-inner">
-            <div className={`${colorClass} h-full rounded-full transition-all duration-500 shadow-sm relative`} style={{ width: `${Math.min(percentage, 100)}%` }}>
-                <div className="absolute inset-0 bg-white/20 animate-pulse-slow"></div>
+        <div className={`w-full bg-gray-100 rounded-full ${height} overflow-hidden`}>
+            <div 
+                className={`${colorClass} h-full rounded-full transition-all duration-500 ease-out relative`} 
+                style={{ width: `${Math.min(percentage, 100)}%` }}
+            >
+                <div className="absolute inset-0 bg-white/30 w-full h-full animate-shimmer" style={{ backgroundSize: '200% 100%' }}></div>
             </div>
         </div>
     );
@@ -37,8 +40,8 @@ const ProgressBar = ({ value, max, colorClass = "bg-blue-500" }) => {
 
 const QuantityButton = ({ icon: Icon, onClick, disabled, isUpdating }) => (
     <button onClick={onClick} disabled={disabled || isUpdating} 
-        className="p-3 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-md active:scale-95 active:bg-gray-100">
-        <Icon size={18} className="text-gray-700" />
+        className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-gray-200 hover:bg-gray-50 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-sm active:scale-95 active:bg-gray-100">
+        <Icon size={14} className="text-gray-700" />
     </button>
 );
 
@@ -53,8 +56,8 @@ const StatusBadge = ({ status }) => {
     const style = statusStyles[status] || statusStyles.pending;
     const Icon = style.icon;
     return (
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${style.bg} ${style.color} text-xs font-bold shadow-sm`}>
-            <Icon size={14} />
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${style.bg} ${style.color} text-xs font-bold shadow-sm`}>
+            <Icon size={12} />
             {style.label}
         </span>
     );
@@ -65,162 +68,150 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
     const completionPercentage = stats.totalSkus > 0 ? (stats.packedSkus / stats.totalSkus) * 100 : 0;
     
     return (
-        <div className={`relative overflow-hidden rounded-3xl bg-white/80 backdrop-blur-2xl border border-white/40 shadow-apple-lg mb-6 animate-fade-in transition-all duration-500 ${isFocusMode ? 'p-4' : 'p-6'}`}>
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-50/30 via-transparent to-purple-50/30 pointer-events-none"></div>
-            <div className="relative z-10">
-                <div className="flex flex-col gap-5">
-                    <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-                        <div className="w-full sm:w-auto">
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className="w-12 h-12 rounded-2xl bg-gray-900 flex items-center justify-center shadow-lg shadow-gray-900/20">
-                                    <Package className="text-white" size={24} />
-                                </div>
-                                <div>
-                                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
-                                        任務總覽
-                                    </h2>
-                                    {/* 即時協作指示器 */}
-                                    {activeSessions.length > 0 && (
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <span className="relative flex h-2 w-2">
-                                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                                            </span>
-                                            <span className="text-xs text-gray-500 font-medium truncate">
-                                                {activeSessions.map(s => s.name).join(', ')} 正在查看
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 w-full sm:w-auto items-center">
-                            {/* 專注模式切換 */}
-                            <button
-                                onClick={toggleFocusMode}
-                                className={`p-2.5 rounded-xl transition-all duration-300 flex items-center gap-2 text-sm font-bold ${
-                                    isFocusMode 
-                                        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 ring-2 ring-indigo-200' 
-                                        : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-                                }`}
-                                title={isFocusMode ? "退出專注模式" : "進入專注模式"}
-                            >
-                                {isFocusMode ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-                                <span className="hidden sm:inline">{isFocusMode ? '退出專注' : '專注模式'}</span>
-                            </button>
+        <div className="mb-6 animate-fade-in">
+            {/* 頂部控制列 */}
+            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6">
+                <div>
+                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-3">
+                        任務總覽
+                        {activeSessions.length > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                </span>
+                                {activeSessions.length} 人在線
+                            </span>
+                        )}
+                    </h2>
+                    <p className="text-gray-500 text-sm mt-1">管理與追蹤目前的訂單進度</p>
+                </div>
 
-                            <div className="w-px h-8 bg-gray-200 mx-1 hidden sm:block"></div>
+                <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                    {/* 專注模式切換 */}
+                    <button
+                        onClick={toggleFocusMode}
+                        className={`px-3 py-2 rounded-lg transition-all duration-200 flex items-center gap-2 text-sm font-medium border ${
+                            isFocusMode 
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200' 
+                                : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                        }`}
+                    >
+                        {isFocusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                        <span>{isFocusMode ? '退出專注' : '專注模式'}</span>
+                    </button>
 
-                            {/* 相機掃描按鈕 */}
+                    <div className="w-px h-8 bg-gray-200 mx-1 hidden sm:block"></div>
+
+                    {/* 相機掃描按鈕 */}
+                    <button 
+                        onClick={onOpenCamera}
+                        className="px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-gray-200 active:scale-95 flex items-center gap-2"
+                    >
+                        <Camera size={16} />
+                        <span>掃描</span>
+                    </button>
+                    
+                    {/* 列印按鈕群組 */}
+                    <div className="flex items-center gap-2">
+                        <ShippingLabel 
+                            order={order} 
+                            items={items} 
+                            className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-blue-200 active:scale-95 flex items-center gap-2"
+                        />
+                        <PickingList 
+                            order={order} 
+                            items={items} 
+                            className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-emerald-200 active:scale-95 flex items-center gap-2"
+                        />
+                    </div>
+
+                    {/* 更多操作 */}
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={onExport} 
+                            className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 transition-all duration-200 hover:shadow-sm active:scale-95"
+                            title="匯出報告"
+                        >
+                            <FileDown size={18} />
+                        </button>
+                        
+                        {user.role === 'admin' && (
                             <button 
-                                onClick={onOpenCamera}
-                                className="px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-gray-800 text-white text-sm font-bold transition-all duration-200 hover:shadow-lg hover:shadow-gray-900/20 active:scale-95 flex items-center gap-2"
+                                onClick={onVoid} 
+                                className="p-2 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 transition-all duration-200 hover:shadow-sm active:scale-95"
+                                title="作廢訂單"
                             >
-                                <Camera size={18} />
-                                <span className="hidden sm:inline">掃描</span>
+                                <XCircle size={18} />
                             </button>
-                            
-                            {/* 列印按鈕群組 */}
-                            <div className="flex items-center gap-2">
-                                <ShippingLabel 
-                                    order={order} 
-                                    items={items} 
-                                    className="px-4 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold transition-all duration-200 hover:shadow-lg hover:shadow-blue-500/20 active:scale-95 flex items-center gap-2"
-                                />
-                                <PickingList 
-                                    order={order} 
-                                    items={items} 
-                                    className="px-4 py-2.5 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-bold transition-all duration-200 hover:shadow-lg hover:shadow-green-500/20 active:scale-95 flex items-center gap-2"
-                                />
-                            </div>
-
-                            {/* 匯出按鈕 */}
-                            <button 
-                                onClick={onExport} 
-                                className="p-2.5 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 transition-all duration-200 hover:shadow-md active:scale-95"
-                                title="匯出報告"
-                            >
-                                <FileDown size={18} />
-                            </button>
-                            
-                            {/* 作廢訂單 */}
-                            {user.role === 'admin' && (
-                                <button 
-                                    onClick={onVoid} 
-                                    className="p-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-all duration-200 hover:shadow-md active:scale-95"
-                                    title="作廢訂單"
-                                >
-                                    <XCircle size={18} />
-                                </button>
-                            )}
-                        </div>
+                        )}
                     </div>
                 </div>
-                
-                {!isFocusMode && (
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6 animate-slide-up">
-                        {/* SKU Progress - 藍色（核心關注） */}
-                        <div className="group relative overflow-hidden bg-white p-5 rounded-2xl border border-blue-100 shadow-sm hover:shadow-md transition-all duration-300">
-                            <div className="flex items-center justify-between mb-3">
-                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">SKU 進度</p>
-                                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                                    <Package size={16} />
-                                </div>
-                            </div>
-                            <div className="flex items-baseline gap-1">
-                                <p className="text-3xl font-black text-gray-900">{stats.packedSkus}</p>
-                                <span className="text-sm text-gray-400 font-medium">/{stats.totalSkus}</span>
+            </div>
+            
+            {!isFocusMode && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* SKU Progress */}
+                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Package size={48} className="text-blue-600" />
+                        </div>
+                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">SKU 完成度</p>
+                        <div className="z-10">
+                            <div className="flex items-baseline gap-1 mb-1">
+                                <span className="text-2xl font-bold text-gray-900">{stats.packedSkus}</span>
+                                <span className="text-xs text-gray-400">/{stats.totalSkus}</span>
                             </div>
                             <ProgressBar value={stats.packedSkus} max={stats.totalSkus} colorClass="bg-blue-500" />
                         </div>
+                    </div>
 
-                        {/* Total Quantity - 灰色（基礎資訊） */}
-                        <div className="group relative overflow-hidden bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all duration-300">
-                            <div className="flex items-center justify-between mb-3">
-                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">總數量</p>
-                                <div className="w-8 h-8 rounded-lg bg-gray-50 text-gray-600 flex items-center justify-center">
-                                    <Box size={16} />
-                                </div>
-                            </div>
-                            <div className="flex items-baseline gap-1">
-                                <p className="text-3xl font-black text-gray-900">{stats.totalQuantity}</p>
-                                <span className="text-sm text-gray-400 font-medium">件</span>
-                            </div>
-                            <div className="w-full bg-gray-100 rounded-full h-2 mt-2"></div>
+                    {/* Total Quantity */}
+                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Box size={48} className="text-gray-600" />
                         </div>
-
-                        {/* Picked Quantity - 橙色（進行中） */}
-                        <div className="group relative overflow-hidden bg-white p-5 rounded-2xl border border-orange-100 shadow-sm hover:shadow-md transition-all duration-300">
-                            <div className="flex items-center justify-between mb-3">
-                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">已揀貨</p>
-                                <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center">
-                                    <ShoppingCart size={16} />
-                                </div>
+                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">總件數</p>
+                        <div className="z-10">
+                            <div className="flex items-baseline gap-1 mb-1">
+                                <span className="text-2xl font-bold text-gray-900">{stats.totalQuantity}</span>
+                                <span className="text-xs text-gray-400">件</span>
                             </div>
-                            <div className="flex items-baseline gap-1">
-                                <p className="text-3xl font-black text-gray-900">{stats.totalPickedQty}</p>
-                                <span className="text-sm text-gray-400 font-medium">/{stats.totalQuantity}</span>
+                            <div className="w-full bg-gray-100 rounded-full h-1.5"></div>
+                        </div>
+                    </div>
+
+                    {/* Picked Quantity */}
+                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <ShoppingCart size={48} className="text-orange-600" />
+                        </div>
+                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">已揀貨</p>
+                        <div className="z-10">
+                            <div className="flex items-baseline gap-1 mb-1">
+                                <span className="text-2xl font-bold text-gray-900">{stats.totalPickedQty}</span>
+                                <span className="text-xs text-gray-400">/{stats.totalQuantity}</span>
                             </div>
                             <ProgressBar value={stats.totalPickedQty} max={stats.totalQuantity} colorClass="bg-orange-500" />
                         </div>
+                    </div>
 
-                        {/* Packed Quantity - 綠色（已完成） */}
-                        <div className="group relative overflow-hidden bg-white p-5 rounded-2xl border border-green-100 shadow-sm hover:shadow-md transition-all duration-300">
-                            <div className="flex items-center justify-between mb-3">
-                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">已裝箱</p>
-                                <div className="w-8 h-8 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
-                                    <Check size={16} />
-                                </div>
-                            </div>
-                            <div className="flex items-baseline gap-1">
-                                <p className="text-3xl font-black text-gray-900">{stats.totalPackedQty}</p>
-                                <span className="text-sm text-gray-400 font-medium">/{stats.totalQuantity}</span>
+                    {/* Packed Quantity */}
+                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Check size={48} className="text-green-600" />
+                        </div>
+                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">已裝箱</p>
+                        <div className="z-10">
+                            <div className="flex items-baseline gap-1 mb-1">
+                                <span className="text-2xl font-bold text-gray-900">{stats.totalPackedQty}</span>
+                                <span className="text-xs text-gray-400">/{stats.totalQuantity}</span>
                             </div>
                             <ProgressBar value={stats.totalPackedQty} max={stats.totalQuantity} colorClass="bg-green-500" />
                         </div>
                     </div>
-                )}
-            </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -233,56 +224,55 @@ const SNItemCard = ({ item, instances, isFocusMode }) => {
     const packedCount = instances.filter(i => i.status === 'packed').length;
     const isComplete = packedCount >= item.quantity;
     
-    // 專注模式下，如果已完成則隱藏（除非展開）
     if (isFocusMode && isComplete && !expanded) return null;
 
     return (
-        <div className={`group relative bg-white rounded-2xl overflow-hidden transition-all duration-300 ${
+        <div className={`group relative bg-white rounded-xl overflow-hidden transition-all duration-300 ${
             isComplete 
-                ? 'border border-green-200 shadow-sm opacity-80 hover:opacity-100' 
-                : 'border border-gray-200 shadow-apple-sm hover:shadow-apple-md hover:-translate-y-0.5'
+                ? 'border border-green-100 shadow-sm opacity-75 hover:opacity-100' 
+                : 'border border-gray-200 shadow-sm hover:shadow-md hover:-translate-y-0.5'
         }`}>
-            {isComplete && (
-                <div className="absolute top-0 right-0 w-16 h-16 overflow-hidden z-10">
-                    <div className="absolute top-0 right-0 bg-green-500 text-white text-xs font-bold px-6 py-1 transform rotate-45 translate-x-4 translate-y-3 shadow-sm">
-                        完成
-                    </div>
-                </div>
-            )}
-            
-            <div className="p-5">
-                <div className="flex flex-col sm:flex-row items-start justify-between gap-4 mb-4">
+            <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2">
-                            <h3 className={`font-bold text-lg truncate ${isComplete ? 'text-green-700' : 'text-gray-900'}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                            <h3 className={`font-bold text-base truncate ${isComplete ? 'text-green-700' : 'text-gray-900'}`}>
                                 {item.product_name}
                             </h3>
+                            {isComplete && <Check size={16} className="text-green-600" />}
                         </div>
-                        <div className="flex flex-wrap gap-3">
-                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-50 border border-gray-100">
-                                <Tag size={14} className="text-gray-400"/>
-                                <span className="text-sm font-mono text-gray-600 break-all">{item.product_code}</span>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            <span className="text-xs font-mono text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                                {item.product_code}
+                            </span>
+                            <span className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                                {item.barcode}
+                            </span>
+                        </div>
+                        
+                        {/* 進度條 */}
+                        <div className="w-full max-w-md">
+                            <div className="flex justify-between text-[10px] text-gray-400 mb-1 uppercase font-bold tracking-wider">
+                                <span>進度</span>
+                                <span>{Math.round((packedCount / item.quantity) * 100)}%</span>
                             </div>
-                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-100">
-                                <Barcode size={14} className="text-blue-500"/>
-                                <span className="text-sm font-mono text-blue-700 font-medium break-all">{item.barcode}</span>
-                            </div>
+                            <ProgressBar value={packedCount} max={item.quantity} colorClass={isComplete ? "bg-green-500" : "bg-blue-500"} height="h-1.5" />
                         </div>
                     </div>
                     
-                    <div className="flex gap-3 w-full sm:w-auto">
-                        <div className="flex-1 sm:flex-none text-center bg-gray-50 px-4 py-2 rounded-xl border border-gray-100 min-w-[80px]">
-                            <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">揀貨</p>
+                    <div className="flex gap-2 flex-shrink-0">
+                        <div className="text-center px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-100 min-w-[60px]">
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">揀貨</p>
                             <div className="flex items-baseline justify-center gap-0.5">
-                                <span className={`text-xl font-black ${pickedCount >= item.quantity ? 'text-blue-600' : 'text-gray-900'}`}>{pickedCount}</span>
-                                <span className="text-xs text-gray-400">/{item.quantity}</span>
+                                <span className={`text-lg font-bold ${pickedCount >= item.quantity ? 'text-blue-600' : 'text-gray-900'}`}>{pickedCount}</span>
+                                <span className="text-[10px] text-gray-400">/{item.quantity}</span>
                             </div>
                         </div>
-                        <div className="flex-1 sm:flex-none text-center bg-gray-50 px-4 py-2 rounded-xl border border-gray-100 min-w-[80px]">
-                            <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">裝箱</p>
+                        <div className="text-center px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-100 min-w-[60px]">
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">裝箱</p>
                             <div className="flex items-baseline justify-center gap-0.5">
-                                <span className={`text-xl font-black ${packedCount >= item.quantity ? 'text-green-600' : 'text-gray-900'}`}>{packedCount}</span>
-                                <span className="text-xs text-gray-400">/{item.quantity}</span>
+                                <span className={`text-lg font-bold ${packedCount >= item.quantity ? 'text-green-600' : 'text-gray-900'}`}>{packedCount}</span>
+                                <span className="text-[10px] text-gray-400">/{item.quantity}</span>
                             </div>
                         </div>
                     </div>
@@ -290,28 +280,28 @@ const SNItemCard = ({ item, instances, isFocusMode }) => {
                 
                 {instances.length > 0 && (
                     <button onClick={() => setExpanded(!expanded)} 
-                        className="w-full flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-900 font-medium py-2 rounded-lg hover:bg-gray-50 transition-all duration-200 group-hover:bg-gray-50/50">
-                        {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        {expanded ? '收起序號列表' : `查看序號列表 (${instances.length})`}
+                        className="mt-3 w-full flex items-center justify-center gap-1 text-xs text-gray-400 hover:text-gray-600 py-1.5 rounded hover:bg-gray-50 transition-colors">
+                        {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        {expanded ? '收起序號' : `查看序號 (${instances.length})`}
                     </button>
                 )}
             </div>
             
             {expanded && instances.length > 0 && (
-                <div className="border-t border-gray-100 bg-gray-50/30 p-4 animate-slide-up">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-2 scrollbar-thin">
+                <div className="border-t border-gray-100 bg-gray-50/50 p-3 animate-slide-up">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
                         {instances.map((inst, idx) => (
                             <div key={idx} 
-                                className={`px-3 py-2 rounded-lg text-sm font-mono border transition-all duration-200 flex items-center justify-between ${
+                                className={`px-2 py-1.5 rounded text-xs font-mono border flex items-center justify-between ${
                                     inst.status === 'packed' 
-                                        ? 'bg-green-50 border-green-200 text-green-700 shadow-sm' 
+                                        ? 'bg-green-50 border-green-200 text-green-700' 
                                         : inst.status === 'picked' 
-                                            ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' 
-                                            : 'bg-white border-gray-200 text-gray-600'
+                                            ? 'bg-blue-50 border-blue-200 text-blue-700' 
+                                            : 'bg-white border-gray-200 text-gray-500'
                                 }`}>
                                 <span className="truncate">{inst.serial_number}</span>
-                                {inst.status === 'packed' && <Check size={14} className="text-green-600 flex-shrink-0" />}
-                                {inst.status === 'picked' && <ShoppingCart size={14} className="text-blue-600 flex-shrink-0" />}
+                                {inst.status === 'packed' && <Check size={12} />}
+                                {inst.status === 'picked' && <ShoppingCart size={12} />}
                             </div>
                         ))}
                     </div>
@@ -327,57 +317,56 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
     const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && orderStatus === 'packing';
     const isComplete = item.packed_quantity >= item.quantity;
     
-    // 專注模式下，如果已完成則隱藏
     if (isFocusMode && isComplete) return null;
 
     return (
-        <div className={`group relative bg-white rounded-2xl p-5 transition-all duration-300 ${
+        <div className={`group relative bg-white rounded-xl p-4 transition-all duration-300 ${
             isComplete 
-                ? 'border border-green-200 shadow-sm opacity-80 hover:opacity-100' 
-                : 'border border-gray-200 shadow-apple-sm hover:shadow-apple-md hover:-translate-y-0.5'
+                ? 'border border-green-100 shadow-sm opacity-75 hover:opacity-100' 
+                : 'border border-gray-200 shadow-sm hover:shadow-md hover:-translate-y-0.5'
         }`}>
-            {isComplete && (
-                <div className="absolute top-0 right-0 w-16 h-16 overflow-hidden z-10">
-                    <div className="absolute top-0 right-0 bg-green-500 text-white text-xs font-bold px-6 py-1 transform rotate-45 translate-x-4 translate-y-3 shadow-sm">
-                        完成
-                    </div>
-                </div>
-            )}
-
-            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex-1 min-w-0 w-full">
-                    <div className="flex items-center gap-2 mb-2">
-                        <h3 className={`font-bold text-lg truncate ${isComplete ? 'text-green-700' : 'text-gray-900'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                        <h3 className={`font-bold text-base truncate ${isComplete ? 'text-green-700' : 'text-gray-900'}`}>
                             {item.product_name}
                         </h3>
+                        {isComplete && <Check size={16} className="text-green-600" />}
                     </div>
-                    <div className="flex flex-wrap gap-3 mb-4 lg:mb-0">
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-50 border border-gray-100">
-                            <Tag size={14} className="text-gray-400"/>
-                            <span className="text-sm font-mono text-gray-600 break-all">{item.product_code}</span>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                        <span className="text-xs font-mono text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                            {item.product_code}
+                        </span>
+                        <span className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                            {item.barcode}
+                        </span>
+                    </div>
+
+                    {/* 進度條 */}
+                    <div className="w-full max-w-md">
+                        <div className="flex justify-between text-[10px] text-gray-400 mb-1 uppercase font-bold tracking-wider">
+                            <span>進度</span>
+                            <span>{Math.round((item.packed_quantity / item.quantity) * 100)}%</span>
                         </div>
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-100">
-                            <Barcode size={14} className="text-blue-500"/>
-                            <span className="text-sm font-mono text-blue-700 font-medium break-all">{item.barcode}</span>
-                        </div>
+                        <ProgressBar value={item.packed_quantity} max={item.quantity} colorClass={isComplete ? "bg-green-500" : "bg-blue-500"} height="h-1.5" />
                     </div>
                 </div>
                 
-                <div className="w-full lg:w-auto flex flex-col sm:flex-row items-center gap-4">
+                <div className="w-full sm:w-auto flex items-center gap-3">
                     {/* Pick Controls */}
-                    <div className={`flex items-center gap-3 p-2 rounded-2xl border transition-all w-full sm:w-auto justify-between ${
-                        item.picked_quantity >= item.quantity ? 'bg-blue-50/50 border-blue-100' : 'bg-gray-50/50 border-gray-100'
+                    <div className={`flex items-center gap-2 p-1.5 rounded-lg border transition-all ${
+                        item.picked_quantity >= item.quantity ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100'
                     }`}>
                         <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pick', -1)} 
                             disabled={!canAdjustPick || item.picked_quantity <= 0} isUpdating={isUpdating} />
                         
-                        <div className="flex flex-col items-center min-w-[80px]">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">揀貨</span>
+                        <div className="flex flex-col items-center min-w-[50px]">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">揀貨</span>
                             <div className="flex items-baseline gap-0.5">
-                                <span className={`text-2xl font-black ${item.picked_quantity >= item.quantity ? 'text-blue-600' : 'text-gray-900'}`}>
+                                <span className={`text-lg font-bold ${item.picked_quantity >= item.quantity ? 'text-blue-600' : 'text-gray-900'}`}>
                                     {item.picked_quantity}
                                 </span>
-                                <span className="text-xs text-gray-400 font-medium">/{item.quantity}</span>
+                                <span className="text-[10px] text-gray-400">/{item.quantity}</span>
                             </div>
                         </div>
 
@@ -386,19 +375,19 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                     </div>
                     
                     {/* Pack Controls */}
-                    <div className={`flex items-center gap-3 p-2 rounded-2xl border transition-all w-full sm:w-auto justify-between ${
-                        item.packed_quantity >= item.quantity ? 'bg-green-50/50 border-green-100' : 'bg-gray-50/50 border-gray-100'
+                    <div className={`flex items-center gap-2 p-1.5 rounded-lg border transition-all ${
+                        item.packed_quantity >= item.quantity ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
                     }`}>
                         <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pack', -1)} 
                             disabled={!canAdjustPack || item.packed_quantity <= 0} isUpdating={isUpdating} />
                         
-                        <div className="flex flex-col items-center min-w-[80px]">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">裝箱</span>
+                        <div className="flex flex-col items-center min-w-[50px]">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">裝箱</span>
                             <div className="flex items-baseline gap-0.5">
-                                <span className={`text-2xl font-black ${item.packed_quantity >= item.quantity ? 'text-green-600' : 'text-gray-900'}`}>
+                                <span className={`text-lg font-bold ${item.packed_quantity >= item.quantity ? 'text-green-600' : 'text-gray-900'}`}>
                                     {item.packed_quantity}
                                 </span>
-                                <span className="text-xs text-gray-400 font-medium">/{item.picked_quantity}</span>
+                                <span className="text-[10px] text-gray-400">/{item.picked_quantity}</span>
                             </div>
                         </div>
 
@@ -726,24 +715,17 @@ export function OrderWorkView({ user }) {
     }, [currentOrderData]);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100 pb-20">
-            <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-                {/* 頂部導航 */}
-                <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 mb-6 transition-all">
-                    <PageHeader
-                        title={`📦 訂單作業 #${orderId}`}
-                        description={currentOrderData.order ? `${currentOrderData.order.customer_name}（${currentOrderData.order.customer_code}）` : '載入中...'}
-                        actions={
-                            <Button variant="secondary" size="sm" onClick={handleReturnToTasks} leadingIcon={ArrowLeft} className="hover:bg-gray-100">
-                                返回看板
-                            </Button>
-                        }
-                        className="mb-0 p-0 border-0 shadow-none bg-transparent"
-                    />
+        <div className="min-h-screen bg-gray-50/50 pb-20">
+            <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                {/* 頂部導航 (已整合至 Dashboard) */}
+                <div className="mb-6">
+                    <Button variant="ghost" size="sm" onClick={handleReturnToTasks} leadingIcon={ArrowLeft} className="text-gray-500 hover:text-gray-900 hover:bg-gray-100">
+                        返回看板
+                    </Button>
                 </div>
 
                 { (loading || !currentOrderData.order) && (
-                  <Card className="mb-6 border-0 shadow-apple-sm"><CardContent className="p-6"><SkeletonText lines={4} /></CardContent></Card>
+                  <Card className="mb-6 border-0 shadow-sm"><CardContent className="p-6"><SkeletonText lines={4} /></CardContent></Card>
                 )}
                 
                 { !(loading || !currentOrderData.order) && (
@@ -761,132 +743,113 @@ export function OrderWorkView({ user }) {
                   />
                 )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     {/* 左側：掃描與討論 (在專注模式下隱藏討論) */}
-                    <div className={`lg:col-span-1 space-y-6 ${isFocusMode ? 'hidden lg:block lg:opacity-50 lg:pointer-events-none' : ''}`}>
-                        {/* 掃描區 */}
-                        <Card className="sticky top-24 border-0 shadow-apple-md overflow-hidden animate-scale-in z-20">
-                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
-                            <CardHeader className="flex items-center gap-3 pb-2">
-                                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-sm border border-blue-100">
-                                    <ScanLine size={20}/>
-                                </div>
-                                <div>
-                                    <CardTitle className="text-lg">掃描作業</CardTitle>
-                                    <CardDescription>請掃描商品條碼或 SN 碼</CardDescription>
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="flex gap-2 mb-3">
-                                    <div className="relative flex-1 group">
-                                        <input
-                                            ref={barcodeInputRef}
-                                            type="text"
-                                            placeholder="點擊此處開始掃描..."
-                                            value={barcodeInput}
-                                            onChange={(e) => setBarcodeInput(e.target.value)}
-                                            onKeyDown={handleKeyDown}
-                                            className={`w-full px-4 py-3 pr-11 rounded-xl border-2 bg-gray-50 text-base focus:outline-none transition-all ${
-                                                scanError 
-                                                    ? 'border-red-300 bg-red-50 animate-shake focus:border-red-400' 
-                                                    : 'border-transparent focus:bg-white focus:border-blue-500 focus:shadow-lg focus:shadow-blue-500/10'
-                                            }`}
-                                        />
-                                        <Barcode className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" size={20} />
-                                    </div>
-                                    <Button 
-                                        onClick={handleClick} 
-                                        disabled={isUpdating} 
-                                        size="lg" 
-                                        className={`px-6 rounded-xl shadow-lg shadow-blue-500/20 ${isUpdating ? 'opacity-80' : ''}`}
-                                    >
-                                        {isUpdating ? <Loader2 className="animate-spin" /> : <Check />}
-                                    </Button>
-                                </div>
+                    <div className={`lg:col-span-4 xl:col-span-3 space-y-6 ${isFocusMode ? 'hidden lg:block lg:opacity-50 lg:pointer-events-none' : ''}`}>
+                        {/* 掃描區 - 重新設計為深色主題以突顯 */}
+                        <div className="bg-gray-900 rounded-2xl p-5 shadow-xl shadow-gray-900/10 text-white relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                <ScanLine size={80} />
+                            </div>
+                            
+                            <div className="relative z-10">
+                                <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
+                                    <ScanLine size={20} className="text-blue-400"/>
+                                    掃描作業
+                                </h3>
+                                <p className="text-gray-400 text-sm mb-4">請掃描商品條碼或 SN 碼</p>
                                 
-                                <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl flex items-start gap-3">
-                                    <AlertTriangle size={16} className="text-blue-500 mt-0.5 flex-shrink-0" />
-                                    <div className="text-xs text-blue-700 leading-relaxed">
-                                        <p className="font-bold mb-0.5">操作提示</p>
-                                        <p>確認游標在輸入框內，掃描槍掃描後會自動送出。如遇錯誤請檢查輸入法。</p>
+                                <div className="relative mb-3">
+                                    <input
+                                        ref={barcodeInputRef}
+                                        type="text"
+                                        placeholder="點擊掃描..."
+                                        value={barcodeInput}
+                                        onChange={(e) => setBarcodeInput(e.target.value)}
+                                        onKeyDown={handleKeyDown}
+                                        className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-gray-800 border-2 text-white placeholder-gray-500 focus:outline-none transition-all ${
+                                            scanError 
+                                                ? 'border-red-500 animate-shake' 
+                                                : 'border-gray-700 focus:border-blue-500 focus:bg-gray-800'
+                                        }`}
+                                    />
+                                    <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                                        <button 
+                                            onClick={handleClick}
+                                            disabled={isUpdating}
+                                            className="p-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-colors"
+                                        >
+                                            {isUpdating ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} className="rotate-180" />}
+                                        </button>
                                     </div>
                                 </div>
-                            </CardContent>
-                        </Card>
+
+                                {scanError && (
+                                    <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-start gap-2 animate-fade-in">
+                                        <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                                        <span>{scanError}</span>
+                                    </div>
+                                )}
+                                
+                                {!scanError && (
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 mt-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                                        等待掃描輸入...
+                                    </div>
+                                )}
+                            </div>
+                        </div>
 
                         {/* 討論區塊 */}
-                        <Card className="border-0 shadow-apple-md animate-slide-up">
-                            <CardHeader className="flex items-center gap-3 pb-2">
-                                <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shadow-sm border border-purple-100">
-                                    <MessageSquare size={20}/>
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[500px]">
+                            <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <MessageSquare size={18} className="text-purple-600"/>
+                                    <h3 className="font-bold text-gray-900">團隊討論</h3>
                                 </div>
-                                <div>
-                                    <CardTitle className="text-lg">團隊討論</CardTitle>
-                                    <CardDescription>訂單相關備註與溝通</CardDescription>
-                                </div>
-                            </CardHeader>
-                            <CardContent>
+                                <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded border border-gray-200">
+                                    {allUsers.length} 人
+                                </span>
+                            </div>
+                            <div className="flex-1 overflow-hidden relative">
                                 <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} />
-                            </CardContent>
-                        </Card>
+                            </div>
+                        </div>
                     </div>
 
                     {/* 右側：作業清單 */}
-                    <div className={`${isFocusMode ? 'lg:col-span-3' : 'lg:col-span-2'} transition-all duration-500`}>
-                        <Card className="border-0 shadow-apple-lg animate-scale-in bg-white/80 backdrop-blur-xl" style={{ animationDelay: '100ms' }}>
-                            <CardHeader className="flex items-center justify-between border-b border-gray-100 pb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-12 h-12 rounded-2xl bg-gray-900 text-white flex items-center justify-center shadow-lg shadow-gray-900/20">
-                                        <Package size={24}/>
-                                    </div>
-                                    <div>
-                                        <CardTitle className="text-xl">作業清單</CardTitle>
-                                        <CardDescription>
-                                            {isFocusMode ? '專注模式：僅顯示未完成項目' : '顯示所有訂單品項'}
-                                        </CardDescription>
-                                    </div>
+                    <div className={`lg:col-span-8 xl:col-span-9 transition-all duration-500`}>
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[600px]">
+                            <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white sticky top-0 z-20">
+                                <div>
+                                    <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        作業清單
+                                        {currentOrderData.order && <StatusBadge status={currentOrderData.order.status} />}
+                                    </h3>
+                                    <p className="text-gray-500 text-sm mt-1">
+                                        {isFocusMode ? '專注模式：僅顯示未完成項目' : '顯示所有訂單品項'}
+                                    </p>
                                 </div>
-                                {currentOrderData.order ? (
-                                  <StatusBadge status={currentOrderData.order.status} />
-                                ) : (
-                                  <div className="w-24 h-8 rounded-full bg-gray-100 animate-pulse" />
+                                
+                                {currentOrderData.order && (
+                                    <div className="flex items-center gap-3 text-sm text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+                                        <User size={14} />
+                                        <span className="font-medium">{currentOrderData.order.customer_name}</span>
+                                        <span className="text-gray-300">|</span>
+                                        <span className="font-mono">{currentOrderData.order.voucher_number}</span>
+                                    </div>
                                 )}
-                            </CardHeader>
-                            <CardContent className="pt-6">
+                            </div>
+                            
+                            <div className="p-6 bg-gray-50/30 min-h-full">
                                 {currentOrderData.order ? (
                                   <>
-                                    {/* 訂單資訊摘要 */}
-                                    <div className="flex flex-wrap gap-3 mb-6">
-                                        <div className="px-4 py-2 bg-gray-50 rounded-xl border border-gray-100 flex items-center gap-2 text-sm">
-                                            <Package size={16} className="text-gray-400" />
-                                            <span className="text-gray-500">單號：</span>
-                                            <strong className="text-gray-900 font-mono">{currentOrderData.order.voucher_number}</strong>
-                                        </div>
-                                        <div className="px-4 py-2 bg-gray-50 rounded-xl border border-gray-100 flex items-center gap-2 text-sm">
-                                            <User size={16} className="text-gray-400" />
-                                            <span className="text-gray-500">客戶：</span>
-                                            <strong className="text-gray-900">{currentOrderData.order.customer_name}</strong>
-                                        </div>
-                                    </div>
-
-                                    {scanError && (
-                                        <div className="mb-6 p-4 rounded-2xl border border-red-200 bg-red-50 animate-shake flex items-center gap-4 shadow-sm">
-                                            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                                                <XCircle size={20} className="text-red-600"/>
-                                            </div>
-                                            <div>
-                                                <p className="font-bold text-red-800">掃描錯誤</p>
-                                                <p className="text-sm text-red-600">{scanError}</p>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div className="space-y-4">
+                                    <div className="space-y-3">
                                         {sortedItems.map((item, index) => {
                                             const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
                                             const hasSN = itemInstances.length > 0;
                                             return (
-                                                <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 50}ms` }}>
+                                                <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 30}ms` }}>
                                                     {hasSN ? (
                                                         <SNItemCard item={item} instances={itemInstances} isFocusMode={isFocusMode} />
                                                     ) : (
@@ -908,26 +871,26 @@ export function OrderWorkView({ user }) {
                                     {/* 專注模式下的完成提示 */}
                                     {isFocusMode && sortedItems.every(item => item.packed_quantity >= item.quantity) && (
                                         <div className="text-center py-12 animate-fade-in">
-                                            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                                <Check size={40} className="text-green-600" />
+                                            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+                                                <Check size={32} className="text-green-600" />
                                             </div>
-                                            <h3 className="text-xl font-bold text-gray-900 mb-2">太棒了！</h3>
-                                            <p className="text-gray-500">所有項目都已完成，您可以退出專注模式或返回看板。</p>
-                                            <Button onClick={() => setIsFocusMode(false)} variant="secondary" className="mt-4">
+                                            <h3 className="text-lg font-bold text-gray-900 mb-1">太棒了！</h3>
+                                            <p className="text-gray-500 text-sm">所有項目都已完成</p>
+                                            <Button onClick={() => setIsFocusMode(false)} variant="secondary" size="sm" className="mt-4">
                                                 退出專注模式
                                             </Button>
                                         </div>
                                     )}
                                   </>
                                 ) : (
-                                  <div className="space-y-6">
+                                  <div className="space-y-4">
                                     <SkeletonText lines={2} className="h-20" />
                                     <SkeletonText lines={4} className="h-32" />
                                     <SkeletonText lines={4} className="h-32" />
                                   </div>
                                 )}
-                            </CardContent>
-                        </Card>
+                            </div>
+                        </div>
                     </div>
                 </div>
             
