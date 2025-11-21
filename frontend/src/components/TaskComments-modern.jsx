@@ -399,7 +399,9 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                 ${isRetracted 
                                     ? 'bg-gray-100 text-gray-400 italic border border-gray-200 rounded-2xl' 
                                     : isMine 
-                                        ? 'bg-blue-500 text-white rounded-2xl rounded-tr-sm' 
+                                        ? isUrgent 
+                                            ? 'bg-red-500 text-white rounded-2xl rounded-tr-sm shadow-red-200'
+                                            : 'bg-blue-500 text-white rounded-2xl rounded-tr-sm' 
                                         : isUrgent
                                             ? 'bg-red-50 text-gray-900 border border-red-200 rounded-2xl rounded-tl-sm shadow-red-100'
                                             : 'bg-white text-gray-900 border border-gray-100 rounded-2xl rounded-tl-sm'
@@ -411,7 +413,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                 <div className={`
                                     mb-2 rounded-lg p-2 text-xs border-l-2 cursor-pointer hover:opacity-80 transition-opacity
                                     ${isMine 
-                                        ? 'bg-white/10 border-white/50 text-blue-50' 
+                                        ? 'bg-white/10 border-white/50 text-white/90' 
                                         : 'bg-gray-100 border-gray-300 text-gray-600'
                                     }
                                 `} onClick={() => {
@@ -425,8 +427,8 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                 </div>
                             )}
 
-                            {isUrgent && !isMine && !isRetracted && (
-                                <div className="flex items-center gap-1 text-red-500 text-xs font-bold mb-1 uppercase tracking-wider">
+                            {isUrgent && !isRetracted && (
+                                <div className={`flex items-center gap-1 text-xs font-bold mb-1 uppercase tracking-wider ${isMine ? 'text-white/90' : 'text-red-500'}`}>
                                     <AlertTriangle size={10} /> Urgent
                                 </div>
                             )}
@@ -523,31 +525,18 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                 </div>
             </div>
 
-            {/* Operation Hint - 操作提示 */}
-            <div className="bg-blue-50/50 px-5 py-3 border-b border-blue-100 flex items-start gap-3">
-                <div className="p-1.5 bg-blue-100 text-blue-600 rounded-lg mt-0.5">
-                    <AlertCircle size={14} />
-                </div>
-                <div className="flex-1">
-                    <h4 className="text-xs font-bold text-blue-800 mb-0.5">操作提示</h4>
-                    <p className="text-xs text-blue-600 leading-relaxed">
-                        確認游標在輸入框內，掃描槍掃描後會自動送出。如遇錯誤請檢查輸入法。
-                    </p>
-                </div>
-            </div>
-
             {/* Pinned Section */}
-            {pinnedComments.length > 0 && pinnedComments.some(p => p.content && p.user_name) && (
+            {pinnedComments.length > 0 && (
                 <div className="bg-blue-50/80 backdrop-blur-sm border-b border-blue-100 px-4 py-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
                         <Pin size={12} className="fill-blue-700" /> 置頂公告
                     </div>
                     <div className="space-y-2">
-                        {pinnedComments.filter(p => p.content && p.user_name).map(pin => (
+                        {pinnedComments.map(pin => (
                             <div key={pin.id} className="bg-white/80 p-2.5 rounded-xl border border-blue-100 shadow-sm text-sm text-gray-700 flex items-start gap-2">
-                                <UserAvatar name={pin.user_name} size="sm" />
+                                <UserAvatar name={pin.user_name || '系統'} size="sm" />
                                 <div className="min-w-0 flex-1">
-                                    <span className="font-bold text-gray-900 mr-1">{pin.user_name}:</span>
+                                    <span className="font-bold text-gray-900 mr-1">{pin.user_name || '系統'}:</span>
                                     <span className="break-all">{pin.content}</span>
                                 </div>
                             </div>
