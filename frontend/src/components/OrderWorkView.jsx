@@ -801,16 +801,7 @@ export function OrderWorkView({ user }) {
                         </div>
 
                         {/* 討論區塊 */}
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[500px]">
-                            <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <MessageSquare size={18} className="text-purple-600"/>
-                                    <h3 className="font-bold text-gray-900">團隊討論</h3>
-                                </div>
-                                <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded border border-gray-200">
-                                    {allUsers.length} 人
-                                </span>
-                            </div>
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[600px]">
                             <div className="flex-1 overflow-hidden relative">
                                 <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} />
                             </div>

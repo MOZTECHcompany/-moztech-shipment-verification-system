@@ -494,7 +494,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     return (
-        <div className="flex flex-col h-[600px] bg-white rounded-3xl overflow-hidden border border-gray-200 shadow-xl">
+        <div className="flex flex-col h-full bg-white">
             {/* Header */}
             <div className="bg-white/90 backdrop-blur-md px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
                 <div className="flex items-center gap-3">
