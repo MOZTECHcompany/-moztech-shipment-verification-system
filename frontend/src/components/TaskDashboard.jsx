@@ -769,27 +769,55 @@ export function TaskDashboard({ user }) {
                   actions={(
                     <div className="flex items-center gap-2">
                       <NotificationCenter onOpenChat={handleOpenChat} />
+                      
+                      {/* 批次操作按鈕 */}
                       {user && user.role === 'admin' && (
-                        <Button variant={batchMode ? 'primary' : 'secondary'} size="sm" onClick={toggleBatchMode} leadingIcon={ListChecks}>
+                        <Button 
+                            variant={batchMode ? 'primary' : 'secondary'} 
+                            size="sm" 
+                            onClick={toggleBatchMode} 
+                            leadingIcon={ListChecks}
+                            className={batchMode ? 'shadow-lg shadow-primary/30' : ''}
+                        >
                           {batchMode ? '✓ 批次模式' : '批次操作'}
                         </Button>
                       )}
+                      
                       {batchMode && selectedTasks.length > 0 && (
-                        <Button variant="primary" size="sm" onClick={handleBatchClaim} leadingIcon={CheckCircle2}>
+                        <Button variant="primary" size="sm" onClick={handleBatchClaim} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
                           認領 {selectedTasks.length} 個
                         </Button>
                       )}
-                      <Button variant={soundEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleSound} leadingIcon={soundEnabled ? Volume2 : VolumeX}>
-                        音效
-                      </Button>
-                      <Button variant={voiceEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleVoice} leadingIcon={MessageSquare}>
-                        語音
-                      </Button>
-                      <Button variant={notificationEnabled ? 'primary' : 'secondary'} size="sm" onClick={toggleNotification} leadingIcon={Bell}>
-                        通知
-                      </Button>
-                                            {user && user.role === 'admin' && (
-                                                <Button as={Link} to="/admin" variant="primary" size="sm" leadingIcon={LayoutDashboard}>
+
+                      {/* 設定群組 */}
+                      <div className="flex items-center bg-white/50 backdrop-blur-sm rounded-xl p-1 border border-gray-200/50 shadow-sm">
+                          <button 
+                            onClick={toggleSound}
+                            className={`p-2 rounded-lg transition-all ${soundEnabled ? 'bg-white text-primary shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                            title="音效開關"
+                          >
+                              {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                          </button>
+                          <div className="w-px h-4 bg-gray-200 mx-1"></div>
+                          <button 
+                            onClick={toggleVoice}
+                            className={`p-2 rounded-lg transition-all ${voiceEnabled ? 'bg-white text-primary shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                            title="語音播報"
+                          >
+                              <MessageSquare size={18} />
+                          </button>
+                          <div className="w-px h-4 bg-gray-200 mx-1"></div>
+                          <button 
+                            onClick={toggleNotification}
+                            className={`p-2 rounded-lg transition-all ${notificationEnabled ? 'bg-white text-primary shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                            title="桌面通知"
+                          >
+                              <Bell size={18} />
+                          </button>
+                      </div>
+
+                      {user && user.role === 'admin' && (
+                        <Button as={Link} to="/admin" variant="secondary" size="sm" leadingIcon={LayoutDashboard}>
                           管理中心
                         </Button>
                       )}
@@ -797,31 +825,69 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
-                                {/* 篩選／搜尋列（行動裝置固定在頂端，方便快速篩選） */}
-                                <div className="sticky top-0 z-10 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-b border-gray-200 rounded-t-2xl -mx-4 px-4 py-3">
-                                    <FilterBar value={search} onChange={setSearch} placeholder="搜尋單號或客戶..." />
-                                </div>
+                {/* 篩選／搜尋列 */}
+                <div className="sticky top-0 z-30 -mx-4 px-4 py-3 mb-6">
+                    <div className="glass rounded-2xl p-2 shadow-lg border border-white/40 backdrop-blur-xl">
+                        <FilterBar 
+                            value={search} 
+                            onChange={setSearch} 
+                            placeholder="搜尋單號、客戶名稱..." 
+                            className="mb-0 border-0 shadow-none bg-transparent"
+                        />
+                    </div>
+                </div>
 
-                {/* 統計卡片（更克制的卡片：留白 + 細邊 + 單色 icon） */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mt-6">
+                {/* 統計卡片 Widget 風格 */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mt-6 mb-8">
                   {[
-                    {label:'待揀貨', value: pickTasks.length, color:'text-orange-600', icon: Package},
-                    {label:'待裝箱', value: packTasks.length, color:'text-green-600', icon: Box},
-                    {label:'總任務', value: visibleTasks.length, color:'text-blue-600', icon: LayoutDashboard},
-                    {label:'我的任務', value: visibleTasks.filter(t=>t.current_user).length, color:'text-gray-800', icon: User},
+                    {
+                        label:'待揀貨', 
+                        value: pickTasks.length, 
+                        color:'from-orange-500 to-amber-500', 
+                        bg: 'bg-orange-50',
+                        text: 'text-orange-600',
+                        icon: Package,
+                        highlight: pickHighlight
+                    },
+                    {
+                        label:'待裝箱', 
+                        value: packTasks.length, 
+                        color:'from-emerald-500 to-teal-500', 
+                        bg: 'bg-emerald-50',
+                        text: 'text-emerald-600',
+                        icon: Box
+                    },
+                    {
+                        label:'總任務', 
+                        value: visibleTasks.length, 
+                        color:'from-blue-500 to-indigo-500', 
+                        bg: 'bg-blue-50',
+                        text: 'text-blue-600',
+                        icon: LayoutDashboard
+                    },
+                    {
+                        label:'我的任務', 
+                        value: visibleTasks.filter(t=>t.current_user).length, 
+                        color:'from-purple-500 to-pink-500', 
+                        bg: 'bg-purple-50',
+                        text: 'text-purple-600',
+                        icon: User
+                    },
                   ].map((c, i)=>{
                     const Icon = c.icon;
                     return (
-                      <div key={i} className="bg-white rounded-2xl p-5 border border-gray-200 hover:border-gray-300 hover:shadow-apple transition-all">
-                        <div className="flex items-center justify-between">
+                      <div key={i} className="relative group overflow-hidden bg-white/80 backdrop-blur-md rounded-2xl p-5 border border-white/60 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
+                        <div className={`absolute top-0 right-0 w-24 h-24 bg-gradient-to-br ${c.color} opacity-10 rounded-full blur-2xl -mr-8 -mt-8 group-hover:opacity-20 transition-opacity`}></div>
+                        
+                        <div className="relative z-10 flex items-center justify-between">
                           <div>
-                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-1">{c.label}</p>
-                                                        <p className={`text-3xl font-bold ${c.color} ${c.label==='待揀貨' && pickHighlight ? 'animate-pulse drop-shadow-[0_0_6px_rgba(255,159,64,0.35)]' : ''}`}>
-                                                            <NumberTicker value={c.value} />
-                                                        </p>
+                            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">{c.label}</p>
+                            <p className={`text-4xl font-black tracking-tight text-gray-900 ${c.highlight ? 'animate-pulse text-orange-500' : ''}`}>
+                                <NumberTicker value={c.value} />
+                            </p>
                           </div>
-                          <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-                            <Icon className="text-gray-700" size={18} />
+                          <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${c.color} flex items-center justify-center shadow-lg shadow-gray-200 group-hover:scale-110 transition-transform duration-300`}>
+                            <Icon className="text-white" size={22} />
                           </div>
                         </div>
                       </div>
@@ -831,35 +897,29 @@ export function TaskDashboard({ user }) {
                 
 
                 {/* 任務列表 */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     {/* 揀貨任務區 */}
-                    <section className="animate-slide-up">
-                        <div className="relative mb-4">
-                            {/* 背景光暈 */}
-                            <div className="relative bg-white rounded-2xl p-4 border border-gray-200">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-                                            <Package className="text-gray-700" size={20} />
-                                        </div>
-                                        <h2 className="text-2xl font-extrabold text-gray-900">
-                                            待揀貨任務
-                                        </h2>
+                    <section className="animate-slide-up flex flex-col h-full">
+                        <div className="glass-panel rounded-2xl p-1.5 mb-4 sticky top-24 z-20 shadow-lg">
+                            <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl px-4 py-3 flex items-center justify-between border border-orange-100/50">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-white text-orange-500 flex items-center justify-center shadow-sm">
+                                        <Package size={20} />
                                     </div>
-                                    <span
-                                        className={`px-3.5 py-1.5 rounded-full bg-apple-orange text-white text-sm font-black ${pickHighlight ? 'ring-2 ring-amber-300' : ''}`}
-                                        aria-label="待揀貨任務數量"
-                                        style={{
-                                            animation: `pulse ${BADGE_PULSE_SECONDS}s ease-in-out infinite`,
-                                            boxShadow: `0 0 0 6px rgba(255,159,64,${BADGE_GLOW_ALPHA})`
-                                        }}
-                                    >
-                                        {pickTasks.length}
-                                    </span>
+                                    <div>
+                                        <h2 className="text-lg font-bold text-gray-900 leading-none">待揀貨任務</h2>
+                                        <p className="text-xs text-orange-600/80 font-medium mt-1">等待處理的訂單</p>
+                                    </div>
                                 </div>
+                                <span
+                                    className={`px-3 py-1 rounded-lg bg-white text-orange-600 text-sm font-bold shadow-sm border border-orange-100 ${pickHighlight ? 'ring-2 ring-orange-400 ring-offset-1' : ''}`}
+                                >
+                                    {pickTasks.length}
+                                </span>
                             </div>
                         </div>
-                        <div className="space-y-4">
+                        
+                        <div className="space-y-4 flex-1">
                             {pickTasks.length > 0 ? (
                                 pickTasks.map((task, index) => (
                                     <div 
@@ -882,48 +942,39 @@ export function TaskDashboard({ user }) {
                                     </div>
                                 ))
                             ) : (
-                                <div className="relative group text-center py-16 sm:py-20 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 hover:border-amber-300 transition-all duration-300 overflow-hidden">
-                                    <div className="absolute inset-0 bg-gradient-to-br from-amber-50/0 to-amber-100/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                                    <div className="relative z-10">
-                                        <div className="inline-block p-4 bg-gradient-to-br from-amber-100 to-orange-100 rounded-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
-                                            <Package className="text-amber-600" size={48} />
-                                        </div>
-                                        <p className="text-gray-400 text-base sm:text-lg font-medium">目前沒有待處理的揀貨任務</p>
-                                        <p className="text-gray-300 text-xs sm:text-sm mt-2">太棒了！保持這個節奏 🎉</p>
+                                <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
+                                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                                        <Package className="text-gray-300" size={40} />
                                     </div>
+                                    <p className="text-gray-500 font-medium">目前沒有待揀貨任務</p>
+                                    <p className="text-gray-400 text-sm mt-1">稍作休息，喝杯咖啡吧 ☕️</p>
                                 </div>
                             )}
                         </div>
                     </section>
 
                     {/* 裝箱任務區 */}
-                    <section className="animate-slide-up" style={{ animationDelay: '100ms' }}>
-                        <div className="relative mb-4">
-                            {/* 背景光暈 */}
-                            <div className="relative bg-white rounded-2xl p-4 border border-gray-200">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-                                            <Box className="text-gray-700" size={20} />
-                                        </div>
-                                        <h2 className="text-2xl font-extrabold text-gray-900">
-                                            待裝箱任務
-                                        </h2>
+                    <section className="animate-slide-up flex flex-col h-full" style={{ animationDelay: '100ms' }}>
+                        <div className="glass-panel rounded-2xl p-1.5 mb-4 sticky top-24 z-20 shadow-lg">
+                            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">
+                                        <Box size={20} />
                                     </div>
-                                    <span
-                                        className="px-3.5 py-1.5 rounded-full bg-apple-orange text-white text-sm font-black"
-                                        aria-label="待裝箱任務數量"
-                                        style={{
-                                            animation: `pulse ${BADGE_PULSE_SECONDS}s ease-in-out infinite`,
-                                            boxShadow: `0 0 0 6px rgba(255,159,64,${BADGE_GLOW_ALPHA})`
-                                        }}
-                                    >
-                                        {packTasks.length}
-                                    </span>
+                                    <div>
+                                        <h2 className="text-lg font-bold text-gray-900 leading-none">待裝箱任務</h2>
+                                        <p className="text-xs text-emerald-600/80 font-medium mt-1">已完成揀貨，等待包裝</p>
+                                    </div>
                                 </div>
+                                <span
+                                    className="px-3 py-1 rounded-lg bg-white text-emerald-600 text-sm font-bold shadow-sm border border-emerald-100"
+                                >
+                                    {packTasks.length}
+                                </span>
                             </div>
                         </div>
-                        <div className="space-y-4">
+
+                        <div className="space-y-4 flex-1">
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
@@ -946,15 +997,12 @@ export function TaskDashboard({ user }) {
                                     </div>
                                 ))
                             ) : (
-                                <div className="relative group text-center py-16 sm:py-20 glass rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 hover:border-indigo-300 transition-all duration-300 overflow-hidden">
-                                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/0 to-indigo-100/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                                    <div className="relative z-10">
-                                        <div className="inline-block p-4 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
-                                            <Box className="text-indigo-600" size={48} />
-                                        </div>
-                                        <p className="text-gray-400 text-base sm:text-lg font-medium">目前沒有待處理的裝箱任務</p>
-                                        <p className="text-gray-300 text-xs sm:text-sm mt-2">繼續加油！💪</p>
+                                <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
+                                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                                        <Box className="text-gray-300" size={40} />
                                     </div>
+                                    <p className="text-gray-500 font-medium">目前沒有待裝箱任務</p>
+                                    <p className="text-gray-400 text-sm mt-1">所有包裹都已處理完畢 ✨</p>
                                 </div>
                             )}
                         </div>

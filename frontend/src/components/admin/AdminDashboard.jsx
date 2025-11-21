@@ -1,5 +1,5 @@
 // frontend/src/components/admin/AdminDashboard-modern.jsx
-// Apple 風格管理中心
+// Apple 風格管理中心 - Bento Grid Layout
 
 import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
@@ -8,7 +8,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp, AlertTriangle, ArrowRight, Database, History } from 'lucide-react';
 import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button } from '../../ui';
 
 export function AdminDashboard() {
@@ -60,94 +60,78 @@ export function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
-            <div className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100 pb-20">
+            <div className="p-6 md:p-8 lg:p-10 max-w-[1600px] mx-auto">
                 <PageHeader
                     title="管理中心"
-                    description="在這裡匯入訂單與管理系統"
+                    description="系統營運概況與管理工具"
                     actions={
                         <Link to="/tasks">
-                            <Button variant="primary" size="md" className="gap-2">
+                            <Button variant="primary" size="md" className="gap-2 shadow-lg shadow-primary/20">
                                 <LayoutGrid size={18} />
-                                前往作業面板
+                                前往作業看板
                             </Button>
                         </Link>
                     }
                 />
 
-                <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <Card className="animate-scale-in">
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue to-apple-indigo flex items-center justify-center shadow-apple-sm">
-                                <LayoutDashboard className="text-white" size={26} />
+                {/* Bento Grid Layout */}
+                <div className="mt-8 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 auto-rows-[minmax(180px,auto)]">
+                    
+                    {/* 1. 數據分析 (大卡片) */}
+                    <Card className="md:col-span-2 lg:col-span-2 row-span-2 animate-scale-in relative overflow-hidden group border-0 shadow-xl bg-gradient-to-br from-white to-blue-50/50">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-400/10 rounded-full blur-3xl -mr-16 -mt-16 transition-all group-hover:bg-blue-400/20"></div>
+                        <CardHeader className="relative z-10">
+                            <div className="w-12 h-12 rounded-2xl bg-blue-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
+                                <TrendingUp size={24} />
                             </div>
-                            <div>
-                                <CardTitle className="text-2xl">數據分析</CardTitle>
-                                <CardDescription>查看訂單趨勢、員工績效與營運數據分析</CardDescription>
-                            </div>
+                            <CardTitle className="text-3xl font-bold text-gray-900">數據分析</CardTitle>
+                            <CardDescription className="text-base mt-2">
+                                深入掌握營運狀態，查看訂單趨勢、員工績效與營運數據分析。
+                            </CardDescription>
                         </CardHeader>
-                        <CardContent className="pt-2">
-                            <p className="text-gray-600 mb-6 leading-relaxed">
-                                深入掌握營運狀態，提升決策效率。
-                            </p>
+                        <CardContent className="relative z-10 mt-4">
+                            <div className="grid grid-cols-2 gap-4 mb-8">
+                                <div className="p-4 rounded-2xl bg-white/60 backdrop-blur border border-white/50 shadow-sm">
+                                    <p className="text-sm text-gray-500 font-medium">今日訂單</p>
+                                    <p className="text-2xl font-bold text-gray-900 mt-1">--</p>
+                                </div>
+                                <div className="p-4 rounded-2xl bg-white/60 backdrop-blur border border-white/50 shadow-sm">
+                                    <p className="text-sm text-gray-500 font-medium">完成率</p>
+                                    <p className="text-2xl font-bold text-green-600 mt-1">--%</p>
+                                </div>
+                            </div>
                             <Link to="/admin/analytics">
-                                <Button variant="primary" size="sm" className="gap-2">
-                                    <TrendingUp size={18} />
-                                    前往分析
+                                <Button variant="primary" size="lg" className="w-full sm:w-auto gap-2 shadow-lg shadow-blue-500/20">
+                                    查看完整報告 <ArrowRight size={18} />
                                 </Button>
                             </Link>
                         </CardContent>
                     </Card>
 
-                    <Card className="animate-scale-in" style={{ animationDelay: '50ms' }}>
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-orange/10 to-apple-orange/5 flex items-center justify-center">
-                                <AlertTriangle className="text-apple-orange" size={24} />
+                    {/* 2. 建立新任務 (中卡片 - 重點功能) */}
+                    <Card className="md:col-span-1 lg:col-span-2 animate-scale-in border-0 shadow-xl bg-gradient-to-br from-purple-500 to-indigo-600 text-white overflow-hidden relative group" style={{ animationDelay: '50ms' }}>
+                        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-soft-light"></div>
+                        <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/20 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+                        
+                        <CardContent className="relative z-10 h-full flex flex-col justify-between p-8">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center mb-4">
+                                        <UploadCloud size={24} className="text-white" />
+                                    </div>
+                                    <h3 className="text-2xl font-bold mb-2">建立新任務</h3>
+                                    <p className="text-purple-100">上傳 Excel 出貨單產生新的揀貨/裝箱作業</p>
+                                </div>
                             </div>
-                            <div>
-                                <CardTitle className="text-2xl">刷錯分析</CardTitle>
-                                <CardDescription>統計最常發生的掃描錯誤以改善流程</CardDescription>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="pt-2">
-                            <p className="text-gray-600 mb-6 leading-relaxed">
-                                掌握錯誤來源，快速迭代流程品質。
-                            </p>
-                            <Link to="/admin/scan-errors">
-                                <Button variant="secondary" size="sm" className="gap-2 text-red-600 border-red-200 hover:bg-red-50">
-                                    <AlertTriangle size={18} />
-                                    查看錯誤
-                                </Button>
-                            </Link>
-                        </CardContent>
-                    </Card>
-
-                    <Card className="animate-scale-in" style={{ animationDelay: '100ms' }}>
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-purple/10 to-apple-purple/5 flex items-center justify-center">
-                                <UploadCloud className="text-apple-purple" size={24} />
-                            </div>
-                            <div>
-                                <CardTitle className="text-2xl">建立新任務</CardTitle>
-                                <CardDescription>上傳出貨單產生新的揀貨/裝箱作業</CardDescription>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="pt-2">
-                            <div
-                                className="glass p-8 rounded-2xl border-2 border-dashed border-gray-300 hover:border-apple-purple/50 hover:bg-apple-purple/5 cursor-pointer transition-all group"
+                            
+                            <div 
+                                className="mt-6 border-2 border-dashed border-white/30 rounded-xl p-6 text-center hover:bg-white/10 transition-colors cursor-pointer"
                                 onClick={() => fileInputRef.current?.click()}
                             >
-                                <div className="text-center">
-                                    <FileSpreadsheet className="mx-auto h-16 w-16 text-gray-400 group-hover:text-apple-purple transition-colors mb-4" />
-                                    <p className="text-lg font-semibold text-gray-900 mb-2">
-                                        <span className="text-apple-purple">點擊此處</span> 上傳出貨單
-                                    </p>
-                                    <p className="text-sm text-gray-500">支援 .xlsx, .xls 格式</p>
-                                    <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-apple-purple/10 rounded-lg">
-                                        <Sparkles size={16} className="text-apple-purple" />
-                                        <span className="text-sm text-apple-purple font-medium">拖放檔案或點擊選擇</span>
-                                    </div>
-                                </div>
+                                <FileSpreadsheet className="mx-auto h-10 w-10 text-white/80 mb-3" />
+                                <p className="font-medium">點擊上傳或拖放檔案</p>
+                                <p className="text-sm text-purple-200 mt-1">支援 .xlsx, .xls</p>
                             </div>
                             <input
                                 type="file"
@@ -159,123 +143,134 @@ export function AdminDashboard() {
                         </CardContent>
                     </Card>
 
-                    <Card className="animate-scale-in" style={{ animationDelay: '150ms' }}>
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-green/10 to-apple-green/5 flex items-center justify-center">
-                                <FileDown className="text-apple-green" size={24} />
+                    {/* 3. 刷錯分析 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 shadow-lg hover:shadow-xl transition-all group" style={{ animationDelay: '100ms' }}>
+                        <CardHeader>
+                            <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                                <AlertTriangle size={20} />
                             </div>
-                            <div>
-                                <CardTitle className="text-2xl">匯出營運報告</CardTitle>
-                                <CardDescription>選擇日期範圍並下載 CSV 報告</CardDescription>
-                            </div>
+                            <CardTitle className="text-lg">刷錯分析</CardTitle>
+                            <CardDescription>統計掃描錯誤</CardDescription>
                         </CardHeader>
-                        <CardContent className="pt-2 space-y-5">
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-3">選擇日期範圍</label>
-                                <DatePicker
-                                    selectsRange
-                                    startDate={startDate}
-                                    endDate={endDate}
-                                    onChange={(update) => setDateRange(update)}
-                                    isClearable
-                                    dateFormat="yyyy/MM/dd"
-                                    className="w-full px-4 py-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-green focus:ring-4 focus:ring-apple-green/10 outline-none transition-all text-gray-900"
-                                    placeholderText="點擊選擇日期範圍"
-                                />
-                            </div>
-                            <Button
-                                onClick={handleExportAdminReport}
-                                disabled={!startDate || !endDate}
-                                variant="success"
-                                className="w-full justify-center gap-2"
-                            >
-                                <TrendingUp size={18} />
-                                下載 CSV 報告
-                            </Button>
+                        <CardContent>
+                            <Link to="/admin/scan-errors">
+                                <Button variant="ghost" className="w-full justify-between group-hover:bg-orange-50 text-orange-700">
+                                    查看詳情 <ArrowRight size={16} />
+                                </Button>
+                            </Link>
                         </CardContent>
                     </Card>
 
-                    <Card className="animate-scale-in" style={{ animationDelay: '200ms' }}>
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center">
-                                <Users className="text-blue-600" size={24} />
+                    {/* 4. 使用者管理 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 shadow-lg hover:shadow-xl transition-all group" style={{ animationDelay: '150ms' }}>
+                        <CardHeader>
+                            <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                                <Users size={20} />
                             </div>
-                            <div>
-                                <CardTitle className="text-2xl">使用者管理</CardTitle>
-                                <CardDescription>新增、編輯或刪除操作員帳號</CardDescription>
-                            </div>
+                            <CardTitle className="text-lg">使用者管理</CardTitle>
+                            <CardDescription>管理團隊成員</CardDescription>
                         </CardHeader>
-                        <CardContent className="pt-2">
-                            <p className="text-gray-600 mb-6 leading-relaxed">統一管理團隊成員權限。</p>
+                        <CardContent>
                             <Link to="/admin/users">
-                                <Button variant="secondary" size="sm" className="gap-2">
-                                    前往管理 →
+                                <Button variant="ghost" className="w-full justify-between group-hover:bg-indigo-50 text-indigo-700">
+                                    前往設定 <ArrowRight size={16} />
                                 </Button>
                             </Link>
                         </CardContent>
                     </Card>
 
-                    <Card className="animate-scale-in" style={{ animationDelay: '250ms' }}>
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-indigo/10 to-apple-indigo/5 flex items-center justify-center">
-                                <FileText className="text-apple-pink" size={24} />
-                            </div>
-                            <div>
-                                <CardTitle className="text-2xl">操作日誌查詢</CardTitle>
-                                <CardDescription>追蹤系統中所有操作記錄，確保透明</CardDescription>
+                    {/* 5. 匯出營運報告 (中卡片) */}
+                    <Card className="md:col-span-2 lg:col-span-2 animate-scale-in border-0 shadow-lg" style={{ animationDelay: '200ms' }}>
+                        <CardHeader className="flex flex-row items-center justify-between pb-2">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-green-100 text-green-600 flex items-center justify-center">
+                                    <FileDown size={20} />
+                                </div>
+                                <div>
+                                    <CardTitle className="text-lg">匯出營運報告</CardTitle>
+                                    <CardDescription>下載 CSV 格式報表</CardDescription>
+                                </div>
                             </div>
                         </CardHeader>
-                        <CardContent className="pt-2">
-                            <p className="text-gray-600 mb-6 leading-relaxed">查詢特定訂單或人員的操作紀錄。</p>
+                        <CardContent>
+                            <div className="flex flex-col sm:flex-row gap-4 items-end">
+                                <div className="w-full">
+                                    <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">日期範圍</label>
+                                    <DatePicker
+                                        selectsRange
+                                        startDate={startDate}
+                                        endDate={endDate}
+                                        onChange={(update) => setDateRange(update)}
+                                        isClearable
+                                        dateFormat="yyyy/MM/dd"
+                                        className="w-full px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 focus:border-green-500 focus:ring-2 focus:ring-green-200 outline-none transition-all text-sm"
+                                        placeholderText="選擇起訖日期"
+                                    />
+                                </div>
+                                <Button
+                                    onClick={handleExportAdminReport}
+                                    disabled={!startDate || !endDate}
+                                    variant="success"
+                                    className="w-full sm:w-auto whitespace-nowrap"
+                                >
+                                    下載報告
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* 6. 操作日誌 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 shadow-lg hover:shadow-xl transition-all group" style={{ animationDelay: '250ms' }}>
+                        <CardHeader>
+                            <div className="w-10 h-10 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                                <History size={20} />
+                            </div>
+                            <CardTitle className="text-lg">操作日誌</CardTitle>
+                            <CardDescription>系統操作紀錄</CardDescription>
+                        </CardHeader>
+                        <CardContent>
                             <Link to="/admin/operation-logs">
-                                <Button variant="secondary" size="sm" className="gap-2">
-                                    查看日誌 →
+                                <Button variant="ghost" className="w-full justify-between group-hover:bg-gray-100">
+                                    查詢紀錄 <ArrowRight size={16} />
                                 </Button>
                             </Link>
                         </CardContent>
                     </Card>
 
-                    {/* 資料保留清理 */}
-                    <Card className="animate-scale-in" style={{ animationDelay: '300ms' }}>
-                        <CardHeader className="flex flex-row items-start gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-apple-blue/10 to-apple-blue/5 flex items-center justify-center">
-                                <Sparkles className="text-apple-blue" size={24} />
+                    {/* 7. 資料保留清理 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 shadow-lg hover:shadow-xl transition-all group" style={{ animationDelay: '300ms' }}>
+                        <CardHeader>
+                            <div className="w-10 h-10 rounded-xl bg-pink-100 text-pink-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                                <Database size={20} />
                             </div>
-                            <div>
-                                <CardTitle className="text-2xl">資料保留清理</CardTitle>
-                                <CardDescription>清理過期操作日誌、已讀提及與已讀紀錄</CardDescription>
-                            </div>
+                            <CardTitle className="text-lg">資料清理</CardTitle>
+                            <CardDescription>清理過期資料</CardDescription>
                         </CardHeader>
-                        <CardContent className="pt-2 space-y-4">
-                            <p className="text-gray-600 leading-relaxed">
-                                本操作不會刪除訂單或評論本體。預設保留：日誌 180 天、提及 30 天、已讀 90 天、閒置工作階段 10 分鐘。
-                            </p>
+                        <CardContent>
                             <Button
-                                variant="primary"
-                                size="sm"
-                                className="gap-2 btn-shine"
+                                variant="ghost"
+                                className="w-full justify-between group-hover:bg-pink-50 text-pink-700"
                                 onClick={() => {
                                     const promise = apiClient.post('/api/admin/maintenance/retention/run', {});
                                     toast.promise(promise, {
-                                        loading: '🧹 正在執行資料清理...（約數秒）',
-                                        success: (res) => {
-                                            const r = res?.data?.result || res?.data;
-                                            return `✅ 完成：logs ${r?.operation_logs_deleted ?? '-'}、mentions ${r?.task_mentions_deleted ?? '-'}、reads ${r?.comment_reads_deleted ?? '-'}、inactive ${r?.inactive_sessions_deleted ?? '-'}`;
-                                        },
-                                        error: (err) => `❌ 清理失敗：${err?.message || '請稍後重試'}`,
+                                        loading: '🧹 清理中...',
+                                        success: '✅ 清理完成',
+                                        error: '❌ 清理失敗',
                                     });
                                 }}
                             >
-                                <Sparkles size={18} /> 立即清理
+                                立即執行 <Sparkles size={16} />
                             </Button>
                         </CardContent>
                     </Card>
+
                 </div>
 
-                <div className="mt-12 text-center">
-                    <p className="text-sm text-gray-500">© 2025 MOZTECH 倉儲管理系統 - 企業級管理平台</p>
+                <div className="mt-16 text-center">
+                    <p className="text-sm text-gray-400 font-medium">© 2025 MOZTECH 倉儲管理系統</p>
                 </div>
             </div>
         </div>
     );
 }
+
