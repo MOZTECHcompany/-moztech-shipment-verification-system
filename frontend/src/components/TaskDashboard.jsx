@@ -150,7 +150,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             transition-all duration-500 ease-out
             hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.005]
             ${attentionRing} ${selectionRing} ${needsScanGlow ? 'scan-glow' : ''}
-            animate-scale-in mb-6
+            animate-scale-in
         `}>
             {/* 左側狀態色條（加寬並帶有圓角） */}
             <div className={`absolute left-0 top-0 bottom-0 w-[6px] ${
@@ -925,7 +925,7 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
                         
-                        <div className="space-y-4 flex-1">
+                        <div className="flex flex-col gap-6 flex-1">
                             {pickTasks.length > 0 ? (
                                 pickTasks.map((task, index) => (
                                     <div 
@@ -980,7 +980,7 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
 
-                        <div className="space-y-4 flex-1">
+                        <div className="flex flex-col gap-6 flex-1">
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
