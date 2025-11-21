@@ -106,6 +106,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
     const commentsEndRef = useRef(null);
+    const scrollContainerRef = useRef(null);
     const mentionPulseRef = useRef(new Set());
     const notifierRef = useRef(null);
     const soundRef = useRef(null);
@@ -205,12 +206,13 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
     // 自動滾動
     useEffect(() => {
-        if (commentsEndRef.current) {
+        if (scrollContainerRef.current) {
             // 使用 scrollTop 替代 scrollIntoView 以避免頁面跳動
-            const container = commentsEndRef.current.parentElement;
-            if (container) {
+            const container = scrollContainerRef.current;
+            // 使用 requestAnimationFrame 確保 DOM 更新後再滾動
+            requestAnimationFrame(() => {
                 container.scrollTop = container.scrollHeight;
-            }
+            });
         }
     }, [comments.length, activeMessageId]); // 當評論增加或操作選單開啟時滾動
 
@@ -529,7 +531,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             )}
 
             {/* Comments List */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/30">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/30">
                 {isLoading ? (
                     <div className="space-y-6">
                         {[1,2,3].map(i => (
