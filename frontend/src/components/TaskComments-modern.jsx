@@ -392,20 +392,6 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
                     {/* Message Bubble Container */}
                     <div className="relative group/bubble">
-                        {/* Reply Context */}
-                        {parentComment && (
-                            <div className={`
-                                text-xs mb-1 px-3 py-1.5 rounded-xl border-l-2 opacity-80
-                                ${isMine ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-gray-100 border-gray-300 text-gray-600'}
-                            `}>
-                                <div className="flex items-center gap-1 font-bold mb-0.5">
-                                    <Reply size={10} />
-                                    <span>回覆 {parentComment.user_name}</span>
-                                </div>
-                                <div className="truncate max-w-[200px]">{parentComment.content}</div>
-                            </div>
-                        )}
-
                         {/* Message Bubble */}
                         <div
                             className={`
@@ -420,6 +406,25 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                 }
                             `}
                         >
+                            {/* Reply Context (Integrated) */}
+                            {parentComment && !isRetracted && (
+                                <div className={`
+                                    mb-2 rounded-lg p-2 text-xs border-l-2 cursor-pointer hover:opacity-80 transition-opacity
+                                    ${isMine 
+                                        ? 'bg-white/10 border-white/50 text-blue-50' 
+                                        : 'bg-gray-100 border-gray-300 text-gray-600'
+                                    }
+                                `} onClick={() => {
+                                    // Optional: Scroll to parent
+                                }}>
+                                    <div className="flex items-center gap-1 font-bold mb-0.5 opacity-90">
+                                        <Reply size={10} />
+                                        <span>回覆 {parentComment.user_name}</span>
+                                    </div>
+                                    <div className="truncate opacity-80">{parentComment.content}</div>
+                                </div>
+                            )}
+
                             {isUrgent && !isMine && !isRetracted && (
                                 <div className="flex items-center gap-1 text-red-500 text-xs font-bold mb-1 uppercase tracking-wider">
                                     <AlertTriangle size={10} /> Urgent
@@ -532,18 +537,18 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             </div>
 
             {/* Pinned Section */}
-            {pinnedComments.length > 0 && (
+            {pinnedComments.length > 0 && pinnedComments.some(p => p.content && p.user_name) && (
                 <div className="bg-blue-50/80 backdrop-blur-sm border-b border-blue-100 px-4 py-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
                         <Pin size={12} className="fill-blue-700" /> 置頂公告
                     </div>
                     <div className="space-y-2">
-                        {pinnedComments.map(pin => (
+                        {pinnedComments.filter(p => p.content && p.user_name).map(pin => (
                             <div key={pin.id} className="bg-white/80 p-2.5 rounded-xl border border-blue-100 shadow-sm text-sm text-gray-700 flex items-start gap-2">
                                 <UserAvatar name={pin.user_name} size="sm" />
-                                <div>
+                                <div className="min-w-0 flex-1">
                                     <span className="font-bold text-gray-900 mr-1">{pin.user_name}:</span>
-                                    {pin.content}
+                                    <span className="break-all">{pin.content}</span>
                                 </div>
                             </div>
                         ))}
