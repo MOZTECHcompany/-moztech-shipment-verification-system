@@ -92,6 +92,13 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(20px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        'swing': {
+          '20%': { transform: 'rotate(15deg)' },
+          '40%': { transform: 'rotate(-10deg)' },
+          '60%': { transform: 'rotate(5deg)' },
+          '80%': { transform: 'rotate(-5deg)' },
+          '100%': { transform: 'rotate(0deg)' },
+        },
         'gradient-x': {
           '0%, 100%': {
             'background-size': '200% 200%',
@@ -108,6 +115,7 @@ export default {
         'fade-in': 'fade-in 0.3s ease-out',
         'scale-in': 'scale-in 0.2s ease-out',
         'slide-up': 'slide-up 0.4s ease-out',
+        'swing': 'swing 1s ease-in-out infinite',
         'gradient-x': 'gradient-x 3s ease infinite',
       },
       // 毛玻璃效果

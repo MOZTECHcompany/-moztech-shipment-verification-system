@@ -756,6 +756,7 @@ export function TaskDashboard({ user }) {
                 <PageHeader
                   title="📋 任務看板"
                   description={`${user?.name || user?.username}，您好`}
+                  className="relative z-50"
                   actions={(
                     <div className="flex items-center gap-2">
                       <NotificationCenter onOpenChat={handleOpenChat} />
