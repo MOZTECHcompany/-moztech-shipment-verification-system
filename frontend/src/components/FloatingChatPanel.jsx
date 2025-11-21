@@ -20,6 +20,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const [users, setUsers] = useState([]);
     const [showUserMention, setShowUserMention] = useState(false);
     const [mentionSearch, setMentionSearch] = useState('');
+    const [isSending, setIsSending] = useState(false);
     
     const panelRef = useRef(null);
     const dragStartPos = useRef({ x: 0, y: 0 });
@@ -27,7 +28,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const textareaRef = useRef(null);
     
     // 使用 useComments hook 獲取評論數據
-    const { data, isLoading, invalidate } = useComments(orderId);
+    const { data, isLoading, invalidate, addOptimistic } = useComments(orderId);
     const comments = (data?.pages || []).flatMap(p => p.items ?? []);
     const loading = isLoading;
 
@@ -143,18 +144,36 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
 
     // 發送消息
     const handleSend = async () => {
-        if (!message.trim()) return;
+        if (!message.trim() || isSending) return;
         
+        setIsSending(true);
+        const currentMessage = message;
+        const currentPriority = priority;
+
         try {
-            // 直接使用 apiClient 發送評論
-            await apiClient.post(`/api/tasks/${orderId}/comments`, {
-                content: message,
-                priority: priority,
-                parent_id: null
-            });
-            
+            // 樂觀更新：立即顯示訊息
+            const draft = {
+                id: `temp_${Date.now()}`,
+                content: currentMessage,
+                priority: currentPriority,
+                parent_id: null,
+                created_at: new Date().toISOString(),
+                user_id: 99999, // 暫時 ID，會被後端覆蓋但這裡用於判斷 is_mine
+                is_mine: true,
+                user_name: '我', // 暫時名稱
+                __optimistic: true,
+            };
+            addOptimistic(draft);
+
             setMessage('');
             setPriority('normal');
+
+            // 直接使用 apiClient 發送評論
+            await apiClient.post(`/api/tasks/${orderId}/comments`, {
+                content: currentMessage,
+                priority: currentPriority,
+                parent_id: null
+            });
             
             // 重新獲取評論列表
             await invalidate();
@@ -167,6 +186,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
             toast.error('發送失敗', {
                 description: error.response?.data?.message || error.message
             });
+            // 失敗時恢復訊息（可選）
+            setMessage(currentMessage);
+        } finally {
+            setIsSending(false);
         }
     };
 
@@ -431,15 +454,19 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                     
                     <button
                         onClick={handleSend}
-                        disabled={!message.trim()}
+                        disabled={!message.trim() || isSending}
                         className={`
                             w-11 h-11 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
-                            ${message.trim() 
+                            ${message.trim() && !isSending
                                 ? 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-110 hover:rotate-12' 
                                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'}
                         `}
                     >
-                        <Send size={20} className={message.trim() ? 'ml-0.5' : ''} />
+                        {isSending ? (
+                            <div className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                            <Send size={20} className={message.trim() ? 'ml-0.5' : ''} />
+                        )}
                     </button>
                 </div>
                 
