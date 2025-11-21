@@ -387,7 +387,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                         </button>
                     </div>
 
-                    <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-[24px] border border-transparent focus-within:border-blue-500/50 focus-within:bg-white dark:focus-within:bg-gray-900 focus-within:shadow-md transition-all duration-300 flex flex-col">
+                    <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-[24px] border border-transparent focus-within:bg-white dark:focus-within:bg-gray-900 focus-within:shadow-sm focus-within:ring-1 focus-within:ring-black/5 transition-all duration-200 flex flex-col">
                         <textarea
                             ref={textareaRef}
                             value={message}
@@ -399,7 +399,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                                 }
                             }}
                             placeholder="輸入訊息..."
-                            className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] text-sm"
+                            className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] text-sm placeholder:text-gray-400"
                             rows={1}
                             style={{ height: 'auto', minHeight: '44px' }}
                         />
