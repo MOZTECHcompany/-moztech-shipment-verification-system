@@ -16,7 +16,7 @@ import { soundNotification } from '../utils/soundNotification';
 import { voiceNotification } from '../utils/voiceNotification';
 import { desktopNotification } from '../utils/desktopNotification';
 import { CameraScanner } from './CameraScanner';
-import { TaskComments } from './TaskComments';
+import TaskComments from './TaskComments-modern';
 import { ShippingLabel, PickingList } from './LabelPrinter';
 
 // --- 小型组件 ---

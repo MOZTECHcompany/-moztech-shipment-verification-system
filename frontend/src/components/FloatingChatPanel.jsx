@@ -1,9 +1,8 @@
-// FloatingChatPanel.jsx - 類似 Messenger 的浮動討論面板
+// FloatingChatPanel.jsx - 類似 iMessage 的現代化浮動討論面板
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare } from 'lucide-react';
+import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { socket } from '@/api/socket.js';
 import { useComments } from '@/api/useComments.js';
 import { Button, Badge, EmptyState, Skeleton } from '../ui';
 
@@ -12,8 +11,8 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const [isMaximized, setIsMaximized] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [panelPosition, setPanelPosition] = useState({
-        x: window.innerWidth - 400 - (position * 420),
-        y: window.innerHeight - 600
+        x: window.innerWidth - 420 - (position * 440),
+        y: window.innerHeight - 650
     });
     const [message, setMessage] = useState('');
     const [priority, setPriority] = useState('normal');
@@ -153,7 +152,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
             // 重新獲取評論列表
             await invalidate();
             
-            toast.success('消息已發送');
+            // 音效回饋
+            const audio = new Audio('/sounds/sent.mp3'); // 假設有這個音效，若無則忽略
+            audio.play().catch(() => {});
+            
         } catch (error) {
             toast.error('發送失敗', {
                 description: error.response?.data?.message || error.message
@@ -176,7 +178,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
         u.name?.toLowerCase().includes(mentionSearch.toLowerCase())
     ).slice(0, 5);
 
-    // 最小化時的樣式
+    // 最小化時的樣式 - 類似 iOS 動態島
     if (isMinimized) {
         return (
             <div
@@ -186,20 +188,16 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                     bottom: 20,
                     zIndex: 9999
                 }}
-                className="bg-white rounded-xl shadow-2xl border-2 border-blue-500 cursor-pointer hover:shadow-2xl transition-all"
+                className="bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-105 transition-all duration-300 flex items-center gap-3 px-4 py-3"
                 onClick={() => setIsMinimized(false)}
             >
-                <div className="px-4 py-3 flex items-center gap-3">
-                    <MessageSquare size={20} className="text-blue-600" />
-                    <div>
-                        <div className="font-semibold text-sm">{voucherNumber}</div>
-                        {comments && comments.length > 0 && (
-                            <div className="text-xs text-gray-500">
-                                {comments.length} 則對話
-                            </div>
-                        )}
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                <div className="font-bold text-sm">{voucherNumber}</div>
+                {comments && comments.length > 0 && (
+                    <div className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                        {comments.length}
                     </div>
-                </div>
+                )}
             </div>
         );
     }
@@ -214,128 +212,149 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                 width: isMaximized ? '100vw' : 400,
                 height: isMaximized ? '100vh' : 600,
                 zIndex: 9999,
-                transition: isDragging ? 'none' : 'all 0.3s ease'
+                transition: isDragging ? 'none' : 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
-            className="bg-white rounded-xl shadow-2xl border-2 border-gray-200 flex flex-col"
+            className={`
+                flex flex-col overflow-hidden
+                ${isMaximized ? 'rounded-none' : 'rounded-[24px]'}
+                bg-white/80 backdrop-blur-2xl shadow-2xl border border-white/40
+                dark:bg-gray-900/80 dark:border-gray-700
+            `}
             onMouseDown={handleMouseDown}
         >
-            {/* 標題欄 */}
-            <div className="drag-handle bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-3 rounded-t-xl flex items-center justify-between cursor-move">
-                <div className="flex items-center gap-2">
-                    <MessageSquare size={20} />
+            {/* 標題欄 - 擬態風格 */}
+            <div className="drag-handle bg-white/50 dark:bg-gray-800/50 backdrop-blur-md px-5 py-4 flex items-center justify-between cursor-move border-b border-gray-200/50 dark:border-gray-700/50">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-lg">
+                        <MessageSquare size={20} />
+                    </div>
                     <div>
-                        <div className="font-semibold">{voucherNumber}</div>
-                        <div className="text-xs opacity-80">任務討論</div>
+                        <div className="font-black text-gray-900 dark:text-white text-lg leading-none mb-1">{voucherNumber}</div>
+                        <div className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            線上討論中
+                        </div>
                     </div>
                 </div>
                 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 bg-gray-100/50 dark:bg-gray-700/50 p-1 rounded-lg backdrop-blur-sm">
                     <button
                         onClick={() => setIsMinimized(true)}
-                        className="p-1.5 hover:bg-white/20 rounded-lg transition"
-                        title="最小化"
+                        className="p-1.5 hover:bg-white dark:hover:bg-gray-600 rounded-md transition-all text-gray-500 hover:text-gray-900 hover:shadow-sm"
                     >
-                        <Minus size={18} />
+                        <Minus size={16} />
                     </button>
                     <button
                         onClick={() => setIsMaximized(!isMaximized)}
-                        className="p-1.5 hover:bg-white/20 rounded-lg transition"
-                        title={isMaximized ? '還原' : '最大化'}
+                        className="p-1.5 hover:bg-white dark:hover:bg-gray-600 rounded-md transition-all text-gray-500 hover:text-gray-900 hover:shadow-sm"
                     >
-                        {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                        {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
                     <button
                         onClick={onClose}
-                        className="p-1.5 hover:bg-white/20 rounded-lg transition"
-                        title="關閉"
+                        className="p-1.5 hover:bg-red-500 hover:text-white rounded-md transition-all text-gray-500 hover:shadow-sm"
                     >
-                        <X size={18} />
+                        <X size={16} />
                     </button>
                 </div>
             </div>
 
-            {/* 消息列表 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+            {/* 消息列表 - iMessage 風格 */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-6 bg-gradient-to-b from-gray-50/50 to-white/50 dark:from-gray-900/50 dark:to-black/50">
                 {loading ? (
-                    <div className="space-y-4">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <div key={i} className="flex gap-2">
-                                <Skeleton className="w-8 h-8 rounded-full" />
-                                <div className="flex-1 space-y-2">
-                                    <Skeleton className="h-3 w-24" />
-                                    <Skeleton className="h-12 w-full rounded-2xl" />
+                    <div className="space-y-6">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                            <div key={i} className={`flex gap-3 ${i % 2 === 0 ? '' : 'flex-row-reverse'}`}>
+                                <Skeleton className="w-10 h-10 rounded-full" />
+                                <div className="space-y-2 max-w-[70%]">
+                                    <Skeleton className="h-12 w-48 rounded-2xl" />
                                 </div>
                             </div>
                         ))}
                     </div>
                 ) : !comments || comments.length === 0 ? (
-                    <EmptyState
-                        icon={MessageSquare}
-                        title="尚無對話"
-                        description="開始第一則留言，建立討論。"
-                        action="開始發送"
-                        onAction={() => textareaRef.current?.focus()}
-                    />
-                ) : (
-                    comments.map((comment) => (
-                        <div
-                            key={comment.id}
-                            className={`flex gap-2 ${comment.is_mine ? 'flex-row-reverse' : ''}`}
-                        >
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
-                                {comment.user_name?.charAt(0).toUpperCase()}
-                            </div>
-                            <div className={`flex-1 max-w-[70%] ${comment.is_mine ? 'items-end' : 'items-start'}`}>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-xs font-semibold text-gray-700">
-                                        {comment.user_name}
-                                    </span>
-                                    <span className="text-xs text-gray-400">
-                                        {new Date(comment.created_at).toLocaleTimeString('zh-TW', {
-                                            hour: '2-digit',
-                                            minute: '2-digit'
-                                        })}
-                                    </span>
-                                    {comment.priority === 'urgent' && (
-                                        <Badge variant="danger" className="flex items-center gap-1">
-                                            <AlertTriangle size={12} /> 緊急
-                                        </Badge>
-                                    )}
-                                </div>
-                                <div
-                                    className={`px-4 py-2 rounded-2xl ${
-                                        comment.is_mine
-                                            ? 'bg-blue-600 text-white'
-                                            : comment.priority === 'urgent'
-                                            ? 'bg-red-50 border-2 border-red-300 text-gray-900'
-                                            : 'bg-white border border-gray-200 text-gray-900'
-                                    }`}
-                                >
-                                    <p className="whitespace-pre-wrap break-words text-sm">
-                                        {comment.content}
-                                    </p>
-                                </div>
-                            </div>
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-60">
+                        <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mb-4">
+                            <MessageSquare size={40} className="text-blue-300" />
                         </div>
-                    ))
+                        <p className="text-gray-500 font-medium">尚無對話</p>
+                        <p className="text-sm text-gray-400 mt-1">開始第一則留言...</p>
+                    </div>
+                ) : (
+                    comments.map((comment, index) => {
+                        const isMine = comment.is_mine;
+                        const isUrgent = comment.priority === 'urgent';
+                        const showAvatar = index === 0 || comments[index - 1].user_id !== comment.user_id;
+
+                        return (
+                            <div
+                                key={comment.id}
+                                className={`flex gap-3 ${isMine ? 'flex-row-reverse' : ''} group animate-fade-in`}
+                            >
+                                {/* Avatar */}
+                                <div className={`flex-shrink-0 flex flex-col items-center ${!showAvatar ? 'invisible' : ''}`}>
+                                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-200 font-bold text-xs shadow-sm border-2 border-white dark:border-gray-800">
+                                        {comment.user_name?.charAt(0).toUpperCase()}
+                                    </div>
+                                </div>
+
+                                <div className={`flex flex-col max-w-[75%] ${isMine ? 'items-end' : 'items-start'}`}>
+                                    {/* Name & Time */}
+                                    {showAvatar && (
+                                        <div className={`flex items-center gap-2 mb-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
+                                            <span className="text-[11px] font-bold text-gray-500">
+                                                {comment.user_name}
+                                            </span>
+                                            <span className="text-[10px] text-gray-400">
+                                                {new Date(comment.created_at).toLocaleTimeString('zh-TW', {
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })}
+                                            </span>
+                                        </div>
+                                    )}
+
+                                    {/* Message Bubble */}
+                                    <div
+                                        className={`
+                                            relative px-4 py-2.5 text-[15px] leading-relaxed shadow-sm
+                                            ${isMine 
+                                                ? 'bg-blue-500 text-white rounded-[20px] rounded-tr-sm' 
+                                                : isUrgent
+                                                    ? 'bg-red-50 text-gray-900 border border-red-200 rounded-[20px] rounded-tl-sm shadow-red-100'
+                                                    : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-100 dark:border-gray-700 rounded-[20px] rounded-tl-sm'
+                                            }
+                                        `}
+                                    >
+                                        {isUrgent && !isMine && (
+                                            <div className="flex items-center gap-1 text-red-500 text-xs font-bold mb-1 uppercase tracking-wider">
+                                                <AlertTriangle size={10} /> Urgent
+                                            </div>
+                                        )}
+                                        <p className="whitespace-pre-wrap break-words">{comment.content}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })
                 )}
                 <div ref={messagesEndRef} />
             </div>
 
             {/* @ 提及選擇器 */}
             {showUserMention && filteredUsers.length > 0 && (
-                <div className="absolute bottom-32 left-4 right-4 bg-white rounded-lg shadow-xl border border-gray-200 max-h-40 overflow-y-auto z-10">
+                <div className="absolute bottom-24 left-4 right-4 bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-200/50 max-h-48 overflow-y-auto z-20 p-2 animate-slide-up">
                     {filteredUsers.map(user => (
                         <button
                             key={user.id}
                             onClick={() => insertMention(user.username)}
-                            className="w-full px-4 py-2 hover:bg-blue-50 text-left flex items-center gap-2 transition"
+                            className="w-full px-3 py-2.5 hover:bg-blue-50 rounded-xl text-left flex items-center gap-3 transition-colors group"
                         >
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-semibold text-sm">
+                            <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 font-bold text-xs group-hover:bg-blue-200 group-hover:text-blue-700 transition-colors">
                                 {user.name?.charAt(0).toUpperCase()}
                             </div>
                             <div>
-                                <div className="font-semibold text-sm">{user.name}</div>
+                                <div className="font-bold text-sm text-gray-900">{user.name}</div>
                                 <div className="text-xs text-gray-500">@{user.username}</div>
                             </div>
                         </button>
@@ -343,62 +362,25 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                 </div>
             )}
 
-            {/* Emoji 選擇器 */}
-            {showEmojiPicker && (
-                <div className="absolute bottom-32 left-4 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-10">
-                    <div className="grid grid-cols-5 gap-2">
-                        {emojis.map((emoji, idx) => (
-                            <button
-                                key={idx}
-                                onClick={() => insertEmoji(emoji)}
-                                className="text-2xl hover:bg-gray-100 rounded p-1 transition"
-                            >
-                                {emoji}
-                            </button>
-                        ))}
+            {/* 輸入區域 - 現代化工具列 */}
+            <div className="p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-t border-gray-200/50 dark:border-gray-700/50">
+                <div className="flex items-end gap-2">
+                    <div className="flex gap-1 pb-1">
+                        <button 
+                            className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"
+                            title="上傳圖片 (模擬)"
+                        >
+                            <ImageIcon size={20} />
+                        </button>
+                        <button 
+                            className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"
+                            title="附件 (模擬)"
+                        >
+                            <Paperclip size={20} />
+                        </button>
                     </div>
-                </div>
-            )}
 
-            {/* 輸入區域 */}
-            <div className="border-t border-gray-200 p-4 bg-white rounded-b-xl">
-                {/* 優先級選擇 */}
-                <div className="flex gap-2 mb-3">
-                    <button
-                        onClick={() => setPriority('normal')}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                            priority === 'normal'
-                                ? 'bg-gray-200 text-gray-800'
-                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                    >
-                        一般
-                    </button>
-                    <button
-                        onClick={() => setPriority('important')}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                            priority === 'important'
-                                ? 'bg-orange-200 text-orange-800'
-                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                    >
-                        重要
-                    </button>
-                    <button
-                        onClick={() => setPriority('urgent')}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${
-                            priority === 'urgent'
-                                ? 'bg-red-200 text-red-800'
-                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                    >
-                        <AlertTriangle size={12} />
-                        緊急
-                    </button>
-                </div>
-
-                <div className="flex gap-2">
-                    <div className="flex-1 relative">
+                    <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-[24px] border border-transparent focus-within:border-blue-500/50 focus-within:bg-white dark:focus-within:bg-gray-900 focus-within:shadow-md transition-all duration-300 flex flex-col">
                         <textarea
                             ref={textareaRef}
                             value={message}
@@ -409,32 +391,67 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                                     handleSend();
                                 }
                             }}
-                            placeholder="輸入訊息... (Shift+Enter 換行，@ 提及用戶)"
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                            rows={2}
+                            placeholder="輸入訊息..."
+                            className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] text-sm"
+                            rows={1}
+                            style={{ height: 'auto', minHeight: '44px' }}
                         />
+                        
+                        {/* 底部工具列 (Emoji, Priority) */}
+                        <div className="flex items-center justify-between px-2 pb-1">
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                                    className="p-1.5 text-gray-400 hover:text-yellow-500 rounded-full transition-colors"
+                                >
+                                    <Smile size={18} />
+                                </button>
+                                <div className="h-4 w-px bg-gray-300 mx-1"></div>
+                                <button
+                                    onClick={() => setPriority(priority === 'urgent' ? 'normal' : 'urgent')}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold transition-all ${
+                                        priority === 'urgent' 
+                                            ? 'bg-red-100 text-red-600 ring-1 ring-red-200' 
+                                            : 'text-gray-400 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    <AlertTriangle size={12} />
+                                    {priority === 'urgent' ? '緊急' : '標記緊急'}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
-                    <div className="flex flex-col gap-2">
-                        <Button
-                            variant="subtle"
-                            size="sm"
-                            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                            title="插入 Emoji"
-                            className="p-2 h-10 w-10"
-                            leadingIcon={Smile}
-                        />
-                        <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={handleSend}
-                            disabled={!message.trim()}
-                            title="發送 (Enter)"
-                            className="p-2 h-10 w-10"
-                            leadingIcon={Send}
-                        />
-                    </div>
+                    <button
+                        onClick={handleSend}
+                        disabled={!message.trim()}
+                        className={`
+                            w-11 h-11 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
+                            ${message.trim() 
+                                ? 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-110 hover:rotate-12' 
+                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'}
+                        `}
+                    >
+                        <Send size={20} className={message.trim() ? 'ml-0.5' : ''} />
+                    </button>
                 </div>
+                
+                {/* Emoji Picker Popover */}
+                {showEmojiPicker && (
+                    <div className="absolute bottom-20 left-4 bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-200/50 p-3 z-20 animate-scale-in origin-bottom-left">
+                        <div className="grid grid-cols-5 gap-1">
+                            {emojis.map((emoji, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => insertEmoji(emoji)}
+                                    className="text-2xl hover:bg-gray-100 rounded-lg p-2 transition-transform hover:scale-125"
+                                >
+                                    {emoji}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
