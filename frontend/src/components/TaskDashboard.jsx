@@ -146,116 +146,98 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     return (
         <div className={`
             group relative overflow-hidden
-            bg-white/90 dark:bg-card backdrop-blur-sm rounded-xl sm:rounded-2xl 
+            bg-white/90 dark:bg-card backdrop-blur-sm rounded-[24px]
             transition-all duration-500 ease-out
-            hover:shadow-2xl hover:-translate-y-2 hover:scale-[1.01]
+            hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.005]
             ${attentionRing} ${selectionRing} ${needsScanGlow ? 'scan-glow' : ''}
-            animate-scale-in
+            animate-scale-in mb-6
         `}>
-            {/* 左側狀態色條（2-3px） */}
-            <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${
+            {/* 左側狀態色條（加寬並帶有圓角） */}
+            <div className={`absolute left-0 top-0 bottom-0 w-[6px] ${
                 isUrgent ? 'bg-[#FF3B30]' : (
                     task.status === 'picking' ? 'bg-[#007AFF]' : (
                     task.status === 'picked' ? 'bg-purple-500' : (
                     task.status === 'packing' ? 'bg-green-500' : 'bg-gray-300')))
             }`} />
-            {/* 移除舊的背景漸層與藍色星光，改用 scan-glow */}
             
-            {/* 以整體環繞光暈呈現緊急/置頂，不再僅顯示頂部色條 */}
-
-            
-            <div className="relative z-10 p-4 sm:p-5 md:p-6">
-                {/* 標題列 - 優化 */}
-                <div className="flex justify-between items-start mb-4">
-                    <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
+            <div className="relative z-10 p-6 sm:p-7">
+                {/* 標題列 - 增加間距 */}
+                <div className="flex justify-between items-start mb-6">
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
                         {batchMode && (
                             <input
                                 type="checkbox"
                                 checked={selectedTasks.includes(task.id)}
                                 onChange={() => toggleTaskSelection(task.id)}
-                                className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 cursor-pointer transition-all flex-shrink-0"
+                                className="w-6 h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 cursor-pointer transition-all flex-shrink-0"
                             />
                         )}
                         <div className="flex-1 min-w-0">
-                            <h3 className="font-black text-lg sm:text-xl text-gray-900 truncate mb-1.5 group-hover:text-blue-600 transition-colors">
-                                {task.voucher_number}
-                            </h3>
-                            <div className="flex items-center text-xs sm:text-sm text-gray-500">
-                                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-lg">
-                                    <User size={12} className="flex-shrink-0 sm:w-3.5 sm:h-3.5" />
-                                    <span className="truncate font-medium">{task.customer_name}</span>
+                            <div className="flex items-center gap-3 mb-2">
+                                <h3 className="font-black text-2xl text-gray-900 truncate group-hover:text-blue-600 transition-colors tracking-tight">
+                                    {task.voucher_number}
+                                </h3>
+                                {/* 狀態標籤移到標題旁 */}
+                                <div className={`
+                                    px-3 py-1 rounded-full text-xs font-bold
+                                    flex items-center gap-1.5
+                                    ${statusInfo.color}
+                                `}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
+                                    <span>{statusInfo.text}</span>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center text-sm text-gray-500">
+                                <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-100">
+                                    <User size={14} className="flex-shrink-0 text-gray-400" />
+                                    <span className="truncate font-semibold text-gray-700">{task.customer_name}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <div className="flex flex-col items-end gap-2 ml-2 sm:ml-3 flex-shrink-0">
-                        {/* 置頂/緊急標記 - 優化 */}
-                        {isPinned && (
-                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-900 text-white flex items-center gap-1 shadow-sm">
-                                <Pin size={12} />
-                                <span className="hidden xs:inline">置頂</span>
-                            </span>
-                        )}
-                        
-                        {/* 緊急標記 */}
-                        {isUrgent && (
-                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#FF3B30] text-white flex items-center gap-1 shadow-sm">
-                                <Flame size={12} />
-                                <span className="hidden xs:inline">緊急</span>
-                            </span>
-                        )}
-                        
-                        {/* 狀態標籤 - 優化 */}
-                        <div className={`
-                            relative px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold
-                            flex items-center gap-1.5 shadow-md
-                            ${statusInfo.color}
-                            group-hover:scale-105 transition-transform
-                        `}>
-                            <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${statusInfo.dot}`} />
-                            <StatusIcon size={12} className="sm:w-3.5 sm:h-3.5" />
-                            <span className="hidden xs:inline">{statusInfo.text}</span>
+                    <div className="flex flex-col items-end gap-3 ml-4 flex-shrink-0">
+                        <div className="flex items-center gap-2">
+                            {/* 置頂/緊急標記 */}
+                            {isPinned && (
+                                <span className="w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center shadow-md" title="置頂">
+                                    <Pin size={14} />
+                                </span>
+                            )}
+                            
+                            {isUrgent && (
+                                <span className="w-8 h-8 rounded-full bg-[#FF3B30] text-white flex items-center justify-center shadow-md animate-pulse" title="緊急">
+                                    <Flame size={14} />
+                                </span>
+                            )}
                         </div>
                         
-                        {/* 工具按鈕組（置頂/緊急/刪除僅管理員） */}
-                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                        {/* 工具按鈕組 */}
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                             {user && user.role === 'admin' && (
                                 <>
                                     <button
                                         onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }}
-                                        className={`p-2 rounded-lg transition-all duration-200 ${
-                                            isPinned ? 'text-gray-900 bg-gray-200 hover:bg-gray-300' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
-                                        } hover:scale-110`}
-                                        title={isPinned ? '取消置頂' : '置頂'}
+                                        className={`p-2 rounded-xl transition-all duration-200 ${
+                                            isPinned ? 'text-gray-900 bg-gray-100' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50'
+                                        }`}
                                     >
-                                        <Pin size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                        <Pin size={18} />
                                     </button>
                                     <button
                                         onClick={handleSetUrgent}
-                                        className={`
-                                            p-2 rounded-lg transition-all duration-200
-                                            ${isUrgent 
-                                                ? 'text-orange-600 bg-orange-100 hover:bg-orange-200' 
-                                                : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50'
-                                            }
-                                            hover:scale-110
-                                        `}
-                                        title={isUrgent ? '取消緊急標記' : '標記為緊急'}
+                                        className={`p-2 rounded-xl transition-all duration-200 ${
+                                            isUrgent ? 'text-orange-600 bg-orange-50' : 'text-gray-400 hover:text-orange-500 hover:bg-orange-50'
+                                        }`}
                                     >
-                                        <AlertTriangle size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                        <AlertTriangle size={18} />
                                     </button>
-                                    
                                     <button
                                         onClick={() => onDelete(task.id, task.voucher_number)}
-                                        className="
-                                            p-2 text-red-500 hover:bg-red-50 rounded-lg 
-                                            transition-all duration-200
-                                            hover:scale-110 hover:rotate-12
-                                        "
-                                        title="永久刪除此訂單"
+                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all duration-200"
                                     >
-                                        <Trash2 size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                        <Trash2 size={18} />
                                     </button>
                                 </>
                             )}
@@ -263,84 +245,108 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                 </div>
 
-                {/* 額外資訊 - 優化 */}
+                {/* 額外資訊 */}
                 {task.task_type === 'pack' && task.picker_name && (
-                    <div className="mb-3 sm:mb-4 px-3 sm:px-4 py-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200/50 shadow-sm">
-                        <p className="text-xs sm:text-sm text-blue-700 font-medium flex items-center gap-2">
-                            <CheckCircle2 size={14} className="text-blue-600 flex-shrink-0" />
+                    <div className="mb-6 px-4 py-3 bg-blue-50/50 rounded-xl border border-blue-100 flex items-center gap-3">
+                        <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center">
+                            <CheckCircle2 size={14} className="text-blue-600" />
+                        </div>
+                        <p className="text-sm text-blue-900 font-medium">
                             由 <span className="font-bold">{task.picker_name}</span> 完成揀貨
                         </p>
                     </div>
                 )}
 
-                {/* 評論預覽區域 - 全新設計 */}
+                {/* 評論預覽區域 - 全新設計 (iOS 通知風格) */}
                 {hasComments && (
-                    <div className="mb-4">
+                    <div className="mb-6">
                         <button
                             onClick={handleOpenChat}
-                            className="w-full group/comment relative px-3 sm:px-4 py-3 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 hover:from-blue-100 hover:via-indigo-100 hover:to-purple-100 border-2 border-blue-200/50 hover:border-blue-400/50 rounded-xl sm:rounded-2xl transition-all duration-300 overflow-hidden shadow-md hover:shadow-xl"
+                            className="w-full group/comment relative flex items-stretch text-left transition-all duration-300 hover:scale-[1.01]"
                         >
-                            {/* 閃光效果 */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover/comment:translate-x-full transition-transform duration-1000"></div>
+                            {/* 裝飾背景 */}
+                            <div className="absolute inset-0 bg-gray-50 rounded-2xl border border-gray-100 transition-colors group-hover/comment:bg-blue-50/30 group-hover/comment:border-blue-100/50"></div>
                             
-                            <div className="relative flex items-start gap-2 sm:gap-3">
-                                <div
-                                  key={`${task.id}-${task.unread_comments}-${task.urgent_comments}`}
-                                  className={`flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg group-hover/comment:scale-110 transition-transform ${hasUnread || hasUrgentComments ? 'animate-wiggle-once' : ''}`}
-                                >
-                                    <MessageSquare size={16} className="text-white sm:w-5 sm:h-5" />
-                                </div>
-                                <div className="flex-1 text-left min-w-0">
-                                    {latestComment && (
-                                        <p className="text-xs sm:text-sm text-gray-700 truncate mb-2 font-medium">
-                                            <span className="font-bold text-blue-700">{latestComment.user_name}:</span> {latestComment.content}
-                                        </p>
+                            <div className="relative z-10 flex-1 p-4 flex items-start gap-4">
+                                {/* 左側頭像區 */}
+                                <div className="relative flex-shrink-0">
+                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm transition-colors ${
+                                        hasUnread ? 'bg-red-50 text-red-500' : 'bg-white text-blue-600 border border-gray-100'
+                                    }`}>
+                                        <MessageSquare size={22} className={hasUnread ? 'animate-bounce' : ''} />
+                                    </div>
+                                    {hasUnread && (
+                                        <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 bg-[#FF3B30] text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white shadow-sm">
+                                            {task.unread_comments}
+                                        </span>
                                     )}
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        {hasUnread && (
-                                            <span className="relative inline-flex items-center bg-red-500 text-white px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-black shadow-lg">
-                                                <span className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-75"></span>
-                                                <span className="relative">{task.unread_comments} 未讀</span>
-                                            </span>
-                                        )}
-                                        {hasUrgentComments && (
-                                            <span className="bg-gradient-to-r from-red-500 to-orange-500 text-white px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-lg">
-                                                <AlertTriangle size={10} className="animate-pulse" />
-                                                {task.urgent_comments} 緊急
-                                            </span>
-                                        )}
-                                        <span className="text-gray-500 text-[10px] sm:text-xs font-semibold flex items-center gap-1">
-                                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                                </div>
+
+                                {/* 中間內容區 */}
+                                <div className="flex-1 min-w-0 py-0.5">
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                                            最新訊息
+                                            {hasUrgentComments && (
+                                                <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full flex items-center gap-1">
+                                                    <Flame size={10} /> 緊急
+                                                </span>
+                                            )}
+                                        </span>
+                                        <span className="text-[10px] text-gray-400 font-medium">
                                             {task.total_comments} 則對話
                                         </span>
                                     </div>
+                                    
+                                    {latestComment ? (
+                                        <div className="pr-8">
+                                            <p className="text-sm text-gray-900 font-medium truncate">
+                                                {latestComment.user_name}
+                                            </p>
+                                            <p className="text-sm text-gray-500 truncate mt-0.5">
+                                                {latestComment.content}
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-gray-400 italic">點擊查看對話紀錄...</p>
+                                    )}
                                 </div>
-                                <ArrowRight size={16} className="text-blue-600 flex-shrink-0 opacity-0 group-hover/comment:opacity-100 group-hover/comment:translate-x-1 transition-all sm:w-5 sm:h-5" />
+
+                                {/* 右側箭頭 */}
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-gray-100 flex items-center justify-center text-gray-300 group-hover/comment:bg-blue-500 group-hover/comment:text-white group-hover/comment:border-transparent transition-all shadow-sm">
+                                    <ArrowRight size={16} />
+                                </div>
                             </div>
                         </button>
                     </div>
                 )}
 
-                {/* 操作按鈕 - Apple 風格主色按鈕 */}
+                {/* 操作按鈕 - 加大尺寸與圓角 */}
                 {isMyTask ? (
                     <Button
                         variant="primary"
                         size="lg"
-                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg btn-shine"
+                        className="w-full justify-center h-14 text-base font-bold rounded-2xl shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 hover:-translate-y-0.5 transition-all"
                         onClick={() => onClaim(task.id, true)}
-                        trailingIcon={ArrowRight}
                     >
-                        繼續作業
+                        <span className="flex items-center gap-2">
+                            繼續作業 <ArrowRight size={18} />
+                        </span>
                     </Button>
                 ) : (
                     <Button
                         variant="primary"
                         size="lg"
-                        className="w-full justify-center mt-1 rounded-2xl shadow-apple-sm hover:shadow-apple-lg btn-shine"
+                        className={`w-full justify-center h-14 text-base font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all ${
+                            task.task_type === 'pick' 
+                                ? 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20' 
+                                : 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20'
+                        }`}
                         onClick={() => onClaim(task.id, false)}
-                        trailingIcon={ArrowRight}
                     >
-                        {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'}
+                        <span className="flex items-center gap-2">
+                            {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} <ArrowRight size={18} />
+                        </span>
                     </Button>
                 )}
             </div>
