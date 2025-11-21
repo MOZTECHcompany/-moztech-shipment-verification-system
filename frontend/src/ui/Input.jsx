@@ -52,10 +52,6 @@ export function Input({
             error ? 'border-red-300 bg-red-50/50 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-100' : ''
           )}
         />
-            focused && 'focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10',
-            error && 'border-red-300 focus:border-red-400 focus:ring-red-300/30'
-          )}
-        />
       </div>
       {error && (
         <p className="mt-2 text-xs font-medium text-red-600">{error}</p>
