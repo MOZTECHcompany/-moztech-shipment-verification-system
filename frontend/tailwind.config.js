@@ -91,13 +91,24 @@ export default {
         'slide-up': {
           '0%': { opacity: '0', transform: 'translateY(20px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
-        }
+        },
+        'gradient-x': {
+          '0%, 100%': {
+            'background-size': '200% 200%',
+            'background-position': 'left center'
+          },
+          '50%': {
+            'background-size': '200% 200%',
+            'background-position': 'right center'
+          },
+        },
       },
       animation: {
         shake: 'shake 0.5s ease-in-out',
         'fade-in': 'fade-in 0.3s ease-out',
         'scale-in': 'scale-in 0.2s ease-out',
         'slide-up': 'slide-up 0.4s ease-out',
+        'gradient-x': 'gradient-x 3s ease infinite',
       },
       // 毛玻璃效果
       backdropBlur: {
