@@ -1077,33 +1077,15 @@ apiRouter.get('/tasks/:orderId/comments', async (req, res) => {
             params
         );
 
-        // 組織成樹狀結構（父評論和回覆）
-        const commentMap = {};
-        const rootComments = [];
-
-        comments.rows.forEach(comment => {
-            comment.replies = [];
-            commentMap[comment.id] = comment;
-        });
-
-        comments.rows.forEach(comment => {
-            if (comment.parent_id) {
-                if (commentMap[comment.parent_id]) {
-                    commentMap[comment.parent_id].replies.push(comment);
-                } else {
-                    // 父評論不在本頁（或已刪除），仍將其作為根節點顯示，避免整則回覆被隱藏
-                    rootComments.push(comment);
-                }
-            } else {
-                rootComments.push(comment);
-            }
-        });
+        // 直接回傳平坦列表，讓前端自行處理顯示邏輯（現代化聊天室風格）
+        // 舊有的樹狀結構邏輯會導致回覆被隱藏在 replies 屬性中，而前端只渲染 items
+        const flatComments = comments.rows;
 
         const nextCursor = comments.rows.length > 0
             ? comments.rows[comments.rows.length - 1].created_at
             : null;
 
-        res.json({ items: rootComments, nextCursor, total, unreadMentions });
+        res.json({ items: flatComments, nextCursor, total, unreadMentions });
     } catch (error) {
         logger.error('[/api/tasks/:orderId/comments] 獲取評論失敗:', error);
         res.status(500).json({ code: 'COMMENTS_FETCH_FAILED', message: '獲取評論失敗', requestId: req.requestId });
