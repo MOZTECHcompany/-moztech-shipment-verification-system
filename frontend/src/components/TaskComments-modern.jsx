@@ -1,7 +1,7 @@
 // frontend/src/components/TaskComments-modern.jsx
-// 任務評論系統 - 現代化重構版 (iMessage 風格)
+// 任務評論系統 - 現代化重構版 (iMessage/LINE 風格)
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { socket } from '@/api/socket';
 import { formatDistanceToNow } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
@@ -9,7 +9,8 @@ import {
     MessageSquare, Send, User, AtSign, Reply, Loader2, 
     Pin, AlertCircle, Clock, CheckCircle2, Search, X,
     Star, Bell, Filter, Paperclip, Upload, Image as ImageIcon,
-    TrendingUp, Users, ChevronDown, Smile, AlertTriangle, Mic
+    TrendingUp, Users, ChevronDown, Smile, AlertTriangle, Mic,
+    MoreHorizontal, Trash2, RotateCcw, CornerDownRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
@@ -17,6 +18,10 @@ import { useComments } from '@/api/useComments';
 import DesktopNotification from '@/utils/desktopNotification';
 import SoundNotification from '@/utils/soundNotification';
 import { Button, Skeleton } from '@/ui';
+import Swal from 'sweetalert2';
+import withReactContent from 'sweetalert2-react-content';
+
+const MySwal = withReactContent(Swal);
 
 // 優先級配置
 const PRIORITIES = {
@@ -46,6 +51,40 @@ const QUICK_REPLIES = [
     { text: '🚨 緊急！需立即處理', priority: 'urgent' },
 ];
 
+// 頭像組件
+const UserAvatar = ({ name, size = "md" }) => {
+    const sizeClasses = {
+        sm: "w-6 h-6 text-[10px]",
+        md: "w-9 h-9 text-xs",
+        lg: "w-12 h-12 text-sm"
+    };
+    
+    // 根據名字生成穩定的顏色
+    const getColor = (str) => {
+        const colors = [
+            'from-blue-400 to-blue-600',
+            'from-purple-400 to-purple-600',
+            'from-green-400 to-green-600',
+            'from-orange-400 to-orange-600',
+            'from-pink-400 to-pink-600',
+            'from-teal-400 to-teal-600'
+        ];
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return colors[Math.abs(hash) % colors.length];
+    };
+
+    const colorClass = useMemo(() => getColor(name || '?'), [name]);
+
+    return (
+        <div className={`${sizeClasses[size]} rounded-full bg-gradient-to-br ${colorClass} flex items-center justify-center text-white font-bold shadow-sm border-2 border-white ring-1 ring-gray-100`}>
+            {name?.charAt(0).toUpperCase()}
+        </div>
+    );
+};
+
 export default function TaskComments({ orderId, currentUser, allUsers }) {
     const { data, isLoading, fetchNextPage, hasNextPage, addOptimistic, invalidate } = useComments(orderId);
     const comments = (data?.pages || []).flatMap(p => p.items ?? []);
@@ -62,6 +101,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     const [mentionsOpen, setMentionsOpen] = useState(false);
     const [mentions, setMentions] = useState([]);
     const [mentionsUnread, setMentionsUnread] = useState(0);
+    const [activeMessageId, setActiveMessageId] = useState(null); // 用於顯示操作選單
     
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
@@ -69,6 +109,13 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     const mentionPulseRef = useRef(new Set());
     const notifierRef = useRef(null);
     const soundRef = useRef(null);
+
+    // 建立評論 ID 對照表，用於快速查找父評論
+    const commentMap = useMemo(() => {
+        const map = {};
+        comments.forEach(c => map[c.id] = c);
+        return map;
+    }, [comments]);
 
     // 初始化與 Socket 監聽
     useEffect(() => {
@@ -91,12 +138,34 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
         const interval = setInterval(() => invalidate(), 60000);
         try {
             if (!socket.connected) socket.connect();
+            
             const onNewComment = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
                     fetchMentions();
+                    // 播放音效
+                    if (data.userId !== currentUser.id) {
+                        try {
+                            if (!soundRef.current) soundRef.current = new SoundNotification();
+                            soundRef.current.play('message');
+                        } catch {}
+                    }
                 }
             };
+
+            const onCommentRetracted = (data) => {
+                if (String(data.orderId) === String(orderId)) {
+                    invalidate();
+                    toast.info('一則訊息已收回');
+                }
+            };
+
+            const onCommentDeleted = (data) => {
+                if (String(data.orderId) === String(orderId)) {
+                    invalidate();
+                }
+            };
+
             const onNewMention = (payload) => {
                 if (String(payload.orderId) === String(orderId) && Number(payload.userId) === Number(currentUser.id)) {
                     mentionPulseRef.current.add(payload.commentId);
@@ -116,22 +185,28 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                     fetchMentions();
                 }
             };
+
             socket.on('new_comment', onNewComment);
+            socket.on('comment_retracted', onCommentRetracted);
+            socket.on('comment_deleted', onCommentDeleted);
             socket.on('new_mention', onNewMention);
+            
             return () => {
                 clearInterval(interval);
                 socket.off('new_comment', onNewComment);
+                socket.off('comment_retracted', onCommentRetracted);
+                socket.off('comment_deleted', onCommentDeleted);
                 socket.off('new_mention', onNewMention);
             };
         } catch (e) {
             return () => clearInterval(interval);
         }
-    }, [orderId]);
+    }, [orderId, currentUser.id, invalidate]);
 
     // 自動滾動
     useEffect(() => {
         commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [comments.length]); // 簡單依賴長度變化
+    }, [comments.length]);
 
     const fetchMentions = async () => {
         try {
@@ -181,6 +256,47 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
         textareaRef.current?.focus();
     };
 
+    const handleReply = (comment) => {
+        setReplyTo(comment);
+        textareaRef.current?.focus();
+    };
+
+    const handleRetract = async (comment) => {
+        try {
+            await apiClient.patch(`/api/tasks/${orderId}/comments/${comment.id}/retract`);
+            toast.success('訊息已收回');
+            setActiveMessageId(null);
+        } catch (error) {
+            toast.error('收回失敗', { description: error.response?.data?.message });
+        }
+    };
+
+    const handleDelete = async (comment) => {
+        const result = await MySwal.fire({
+            title: '確定刪除？',
+            text: '此操作無法復原',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: '刪除',
+            cancelButtonText: '取消',
+            customClass: {
+                popup: 'rounded-2xl',
+                confirmButton: 'bg-red-500 text-white px-4 py-2 rounded-lg',
+                cancelButton: 'bg-gray-200 text-gray-800 px-4 py-2 rounded-lg ml-2'
+            }
+        });
+
+        if (result.isConfirmed) {
+            try {
+                await apiClient.delete(`/api/tasks/${orderId}/comments/${comment.id}`);
+                toast.success('訊息已刪除');
+                setActiveMessageId(null);
+            } catch (error) {
+                toast.error('刪除失敗', { description: error.response?.data?.message });
+            }
+        }
+    };
+
     const handleSubmit = async (e) => {
         e?.preventDefault();
         if (!newComment.trim()) return;
@@ -228,44 +344,115 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
         const isMine = comment.user_id === currentUser.id;
         const isUrgent = comment.priority === 'urgent';
         const isPinned = pinnedComments.some(p => p.id === comment.id);
+        const isRetracted = comment.content === '[已撤回]';
+        const parentComment = comment.parent_id ? commentMap[comment.parent_id] : null;
+        const isActive = activeMessageId === comment.id;
 
         return (
-            <div key={comment.id} className={`flex gap-3 mb-4 ${isMine ? 'flex-row-reverse' : ''} group`}>
+            <div 
+                key={comment.id} 
+                className={`flex gap-3 mb-4 ${isMine ? 'flex-row-reverse' : ''} group relative`}
+                onMouseLeave={() => setActiveMessageId(null)}
+            >
                 {/* Avatar */}
-                <div className="flex-shrink-0 flex flex-col items-center">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center text-gray-600 font-bold text-xs shadow-sm border-2 border-white">
-                        {comment.user_name?.charAt(0).toUpperCase()}
-                    </div>
+                <div className="flex-shrink-0 flex flex-col items-center self-end mb-1">
+                    <UserAvatar name={comment.user_name} size="md" />
                 </div>
 
-                <div className={`flex flex-col max-w-[80%] ${isMine ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col max-w-[75%] ${isMine ? 'items-end' : 'items-start'}`}>
                     {/* Name & Time */}
                     <div className={`flex items-center gap-2 mb-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
-                        <span className="text-[11px] font-bold text-gray-500">{comment.user_name}</span>
+                        <span className="text-[11px] font-bold text-gray-600">{comment.user_name}</span>
                         <span className="text-[10px] text-gray-400">
                             {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: zhTW })}
                         </span>
                         {isPinned && <Pin size={10} className="text-blue-500 fill-blue-500" />}
                     </div>
 
-                    {/* Message Bubble */}
-                    <div
-                        className={`
-                            relative px-4 py-2.5 text-[15px] leading-relaxed shadow-sm
-                            ${isMine 
-                                ? 'bg-blue-500 text-white rounded-[20px] rounded-tr-sm' 
-                                : isUrgent
-                                    ? 'bg-red-50 text-gray-900 border border-red-200 rounded-[20px] rounded-tl-sm shadow-red-100'
-                                    : 'bg-white text-gray-900 border border-gray-100 rounded-[20px] rounded-tl-sm'
-                            }
-                        `}
-                    >
-                        {isUrgent && !isMine && (
-                            <div className="flex items-center gap-1 text-red-500 text-xs font-bold mb-1 uppercase tracking-wider">
-                                <AlertTriangle size={10} /> Urgent
+                    {/* Message Bubble Container */}
+                    <div className="relative group/bubble">
+                        {/* Reply Context */}
+                        {parentComment && (
+                            <div className={`
+                                text-xs mb-1 px-3 py-1.5 rounded-xl border-l-2 opacity-80
+                                ${isMine ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-gray-100 border-gray-300 text-gray-600'}
+                            `}>
+                                <div className="flex items-center gap-1 font-bold mb-0.5">
+                                    <Reply size={10} />
+                                    <span>回覆 {parentComment.user_name}</span>
+                                </div>
+                                <div className="truncate max-w-[200px]">{parentComment.content}</div>
                             </div>
                         )}
-                        <p className="whitespace-pre-wrap break-words">{comment.content}</p>
+
+                        {/* Message Bubble */}
+                        <div
+                            className={`
+                                relative px-4 py-2.5 text-[15px] leading-relaxed shadow-sm transition-all
+                                ${isRetracted 
+                                    ? 'bg-gray-100 text-gray-400 italic border border-gray-200 rounded-2xl' 
+                                    : isMine 
+                                        ? 'bg-blue-500 text-white rounded-2xl rounded-tr-sm' 
+                                        : isUrgent
+                                            ? 'bg-red-50 text-gray-900 border border-red-200 rounded-2xl rounded-tl-sm shadow-red-100'
+                                            : 'bg-white text-gray-900 border border-gray-100 rounded-2xl rounded-tl-sm'
+                                }
+                            `}
+                        >
+                            {isUrgent && !isMine && !isRetracted && (
+                                <div className="flex items-center gap-1 text-red-500 text-xs font-bold mb-1 uppercase tracking-wider">
+                                    <AlertTriangle size={10} /> Urgent
+                                </div>
+                            )}
+                            <p className="whitespace-pre-wrap break-words">{comment.content}</p>
+                        </div>
+
+                        {/* Actions Menu (Hover/Click) */}
+                        {!isRetracted && (
+                            <div className={`
+                                absolute top-0 ${isMine ? '-left-10' : '-right-10'} 
+                                opacity-0 group-hover/bubble:opacity-100 transition-opacity flex flex-col gap-1
+                            `}>
+                                <button 
+                                    onClick={() => handleReply(comment)}
+                                    className="p-1.5 bg-white rounded-full shadow-sm border border-gray-100 text-gray-500 hover:text-blue-500 hover:bg-blue-50"
+                                    title="回覆"
+                                >
+                                    <Reply size={14} />
+                                </button>
+                                
+                                {(isMine || currentUser.role === 'admin') && (
+                                    <div className="relative">
+                                        <button 
+                                            onClick={() => setActiveMessageId(activeMessageId === comment.id ? null : comment.id)}
+                                            className="p-1.5 bg-white rounded-full shadow-sm border border-gray-100 text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                                        >
+                                            <MoreHorizontal size={14} />
+                                        </button>
+                                        
+                                        {isActive && (
+                                            <div className={`
+                                                absolute top-full mt-1 ${isMine ? 'right-0' : 'left-0'} 
+                                                bg-white rounded-xl shadow-xl border border-gray-100 py-1 w-24 z-20 overflow-hidden animate-scale-in
+                                            `}>
+                                                <button 
+                                                    onClick={() => handleRetract(comment)}
+                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 text-gray-700"
+                                                >
+                                                    <RotateCcw size={12} /> 收回
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDelete(comment)}
+                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-red-50 flex items-center gap-2 text-red-600"
+                                                >
+                                                    <Trash2 size={12} /> 刪除
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -273,38 +460,38 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     return (
-        <div className="flex flex-col h-[600px] bg-gray-50/50 rounded-2xl overflow-hidden border border-gray-200">
+        <div className="flex flex-col h-[600px] bg-gray-50/50 rounded-3xl overflow-hidden border border-gray-200 shadow-inner">
             {/* Header */}
-            <div className="bg-white/80 backdrop-blur-md px-4 py-3 border-b border-gray-200 flex items-center justify-between sticky top-0 z-10">
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-                        <MessageSquare size={16} />
+            <div className="bg-white/80 backdrop-blur-md px-5 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 z-10">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-sm border border-blue-100">
+                        <MessageSquare size={20} />
                     </div>
                     <div>
-                        <h3 className="text-sm font-bold text-gray-900">團隊討論</h3>
-                        <p className="text-xs text-gray-500">{comments.length} 則留言</p>
+                        <h3 className="text-base font-bold text-gray-900">團隊討論</h3>
+                        <p className="text-xs text-gray-500 font-medium">{comments.length} 則留言</p>
                     </div>
                 </div>
                 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
                     <button 
                         onClick={() => setMentionsOpen(!mentionsOpen)}
-                        className="p-2 hover:bg-gray-100 rounded-full text-gray-500 relative"
+                        className="p-2 hover:bg-gray-100 rounded-xl text-gray-500 relative transition-colors"
                     >
-                        <AtSign size={18} />
+                        <AtSign size={20} />
                         {mentionsUnread > 0 && (
-                            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
                         )}
                     </button>
-                    <div className="h-4 w-px bg-gray-200 mx-1"></div>
-                    <div className="relative">
-                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
+                    <div className="h-6 w-px bg-gray-200 mx-1"></div>
+                    <div className="relative group">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
                         <input 
                             type="text" 
                             placeholder="搜尋..." 
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-7 pr-3 py-1.5 bg-gray-100 rounded-full text-xs w-32 focus:w-48 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            className="pl-9 pr-4 py-2 bg-gray-100 rounded-xl text-sm w-32 focus:w-48 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white"
                         />
                     </div>
                 </div>
@@ -312,15 +499,18 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* Pinned Section */}
             {pinnedComments.length > 0 && (
-                <div className="bg-blue-50/50 border-b border-blue-100 px-4 py-2">
+                <div className="bg-blue-50/80 backdrop-blur-sm border-b border-blue-100 px-4 py-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
                         <Pin size={12} className="fill-blue-700" /> 置頂公告
                     </div>
                     <div className="space-y-2">
                         {pinnedComments.map(pin => (
-                            <div key={pin.id} className="bg-white p-2 rounded-lg border border-blue-100 shadow-sm text-sm text-gray-700">
-                                <span className="font-bold text-gray-900 mr-1">{pin.user_name}:</span>
-                                {pin.content}
+                            <div key={pin.id} className="bg-white/80 p-2.5 rounded-xl border border-blue-100 shadow-sm text-sm text-gray-700 flex items-start gap-2">
+                                <UserAvatar name={pin.user_name} size="sm" />
+                                <div>
+                                    <span className="font-bold text-gray-900 mr-1">{pin.user_name}:</span>
+                                    {pin.content}
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -328,23 +518,26 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             )}
 
             {/* Comments List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            <div className="flex-1 overflow-y-auto p-5 space-y-2 bg-gradient-to-b from-gray-50/30 to-white/30">
                 {isLoading ? (
-                    <div className="space-y-4">
+                    <div className="space-y-6">
                         {[1,2,3].map(i => (
                             <div key={i} className="flex gap-3">
-                                <Skeleton className="w-8 h-8 rounded-full" />
+                                <Skeleton className="w-10 h-10 rounded-full" />
                                 <div className="space-y-2 w-2/3">
                                     <Skeleton className="h-4 w-24" />
-                                    <Skeleton className="h-10 w-full rounded-2xl" />
+                                    <Skeleton className="h-12 w-full rounded-2xl" />
                                 </div>
                             </div>
                         ))}
                     </div>
                 ) : comments.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400">
-                        <MessageSquare size={40} className="mb-2 opacity-20" />
-                        <p className="text-sm">尚無討論</p>
+                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                            <MessageSquare size={32} className="text-gray-300" />
+                        </div>
+                        <p className="text-sm font-medium">尚無討論</p>
+                        <p className="text-xs text-gray-400 mt-1">開始第一則留言...</p>
                     </div>
                 ) : (
                     comments
@@ -356,14 +549,33 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* Input Area */}
             <div className="p-4 bg-white border-t border-gray-200">
+                {/* Reply Preview */}
+                {replyTo && (
+                    <div className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-t-2xl border-x border-t border-gray-200 mb-[-1px] relative z-10 mx-2">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                            <CornerDownRight size={16} className="text-blue-500 flex-shrink-0" />
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-blue-600">回覆 {replyTo.user_name}</span>
+                                <span className="text-xs text-gray-500 truncate max-w-[200px]">{replyTo.content}</span>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => setReplyTo(null)}
+                            className="p-1 hover:bg-gray-200 rounded-full text-gray-400 hover:text-gray-600"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
+
                 {/* Quick Replies */}
                 {showQuickReplies && (
-                    <div className="flex gap-2 overflow-x-auto pb-3 scrollbar-hide">
+                    <div className="flex gap-2 overflow-x-auto pb-3 scrollbar-hide px-1">
                         {QUICK_REPLIES.map((reply, idx) => (
                             <button
                                 key={idx}
                                 onClick={() => useQuickReply(reply)}
-                                className="whitespace-nowrap px-3 py-1.5 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-full text-xs text-gray-600 transition-colors"
+                                className="whitespace-nowrap px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-xl text-xs font-medium text-gray-600 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5"
                             >
                                 {reply.text}
                             </button>
@@ -372,7 +584,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                 )}
 
                 <div className="flex items-end gap-2">
-                    <div className="flex-1 bg-gray-100 rounded-[24px] border border-transparent focus-within:border-blue-500/50 focus-within:bg-white focus-within:shadow-md transition-all duration-300 flex flex-col">
+                    <div className={`flex-1 bg-gray-100 rounded-[24px] border-2 transition-all duration-300 flex flex-col ${replyTo ? 'rounded-tl-none' : ''} focus-within:border-blue-500/30 focus-within:bg-white focus-within:shadow-lg`}>
                         <textarea
                             ref={textareaRef}
                             value={newComment}
@@ -383,29 +595,29 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                     handleSubmit();
                                 }
                             }}
-                            placeholder="輸入訊息..."
+                            placeholder={replyTo ? `回覆 ${replyTo.user_name}...` : "輸入訊息..."}
                             className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[44px] text-sm"
                             rows={1}
                             style={{ height: 'auto', minHeight: '44px' }}
                         />
                         
                         {/* Toolbar */}
-                        <div className="flex items-center justify-between px-2 pb-1">
+                        <div className="flex items-center justify-between px-3 pb-2">
                             <div className="flex items-center gap-1">
                                 <button
                                     onClick={() => setShowQuickReplies(!showQuickReplies)}
-                                    className="p-1.5 text-gray-400 hover:text-blue-500 rounded-full transition-colors"
+                                    className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
                                     title="快速回覆"
                                 >
-                                    <TrendingUp size={16} />
+                                    <TrendingUp size={18} />
                                 </button>
                                 <div className="h-4 w-px bg-gray-300 mx-1"></div>
                                 <button
                                     onClick={() => setPriority(priority === 'urgent' ? 'normal' : 'urgent')}
-                                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold transition-all ${
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all ${
                                         priority === 'urgent' 
-                                            ? 'bg-red-100 text-red-600 ring-1 ring-red-200' 
-                                            : 'text-gray-400 hover:bg-gray-200'
+                                            ? 'bg-red-100 text-red-600 ring-1 ring-red-200 shadow-sm' 
+                                            : 'text-gray-500 hover:bg-gray-200'
                                     }`}
                                 >
                                     <AlertTriangle size={12} />
@@ -419,9 +631,9 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                         onClick={handleSubmit}
                         disabled={!newComment.trim()}
                         className={`
-                            w-11 h-11 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
+                            w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300
                             ${newComment.trim() 
-                                ? 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-110 hover:rotate-12' 
+                                ? 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-110 hover:rotate-12 shadow-blue-500/30' 
                                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'}
                         `}
                     >
@@ -431,17 +643,18 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
                 {/* Mentions Dropdown */}
                 {showMentions && filteredUsers.length > 0 && (
-                    <div className="absolute bottom-20 left-4 bg-white rounded-xl shadow-xl border border-gray-200 max-h-48 overflow-y-auto z-20 w-64">
+                    <div className="absolute bottom-24 left-4 bg-white rounded-2xl shadow-2xl border border-gray-200 max-h-48 overflow-y-auto z-20 w-64 animate-slide-up">
                         {filteredUsers.slice(0, 5).map(user => (
                             <button
                                 key={user.id}
                                 onClick={() => insertMention(user)}
-                                className="w-full px-4 py-2 hover:bg-blue-50 text-left flex items-center gap-3 transition-colors"
+                                className="w-full px-4 py-3 hover:bg-blue-50 text-left flex items-center gap-3 transition-colors border-b border-gray-50 last:border-0"
                             >
-                                <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold">
-                                    {user.name?.charAt(0)}
+                                <UserAvatar name={user.name} size="sm" />
+                                <div>
+                                    <div className="text-sm font-bold text-gray-900">{user.name}</div>
+                                    <div className="text-xs text-gray-500">@{user.username}</div>
                                 </div>
-                                <span className="text-sm text-gray-700">{user.name}</span>
                             </button>
                         ))}
                     </div>
