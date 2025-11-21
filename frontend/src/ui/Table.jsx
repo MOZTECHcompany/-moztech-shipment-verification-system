@@ -4,8 +4,8 @@ import { cx } from './utils';
 export function Table({ className, children, ...props }) {
   return (
     <div className={cx('overflow-x-auto', className)}>
-      <div className="min-w-full overflow-hidden rounded-2xl border border-gray-100 shadow-apple-sm">
-        <table className="min-w-full divide-y divide-gray-100" {...props}>{children}</table>
+      <div className="min-w-full overflow-hidden rounded-2xl border border-white/40 shadow-sm bg-white/30 backdrop-blur-md">
+        <table className="min-w-full divide-y divide-gray-200/50" {...props}>{children}</table>
       </div>
     </div>
   );
@@ -13,7 +13,7 @@ export function Table({ className, children, ...props }) {
 
 export function THead({ children }) {
   return (
-    <thead className="bg-gray-50/70">
+    <thead className="bg-gray-50/50 backdrop-blur-sm">
       <tr>{children}</tr>
     </thead>
   );
@@ -28,11 +28,11 @@ export function TH({ className, children }) {
 }
 
 export function TBody({ children }) {
-  return <tbody className="divide-y divide-gray-100 bg-white">{children}</tbody>;
+  return <tbody className="divide-y divide-gray-200/50 bg-transparent">{children}</tbody>;
 }
 
 export function TR({ children, className }) {
-  return <tr className={cx('hover:bg-gray-50/70', className)}>{children}</tr>;
+  return <tr className={cx('hover:bg-white/50 transition-colors duration-150', className)}>{children}</tr>;
 }
 
 export function TD({ className, children }) {

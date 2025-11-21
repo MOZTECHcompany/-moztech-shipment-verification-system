@@ -44,10 +44,14 @@ export function Input({
           onBlur={() => setFocused(false)}
           onKeyDown={onKeyDown}
           className={cx(
-            'relative w-full font-medium outline-none transition-all',
-            'bg-white border-2 border-gray-200 rounded-xl',
+            'relative w-full font-medium outline-none transition-all duration-200',
+            'bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl',
             'placeholder-gray-400 text-gray-900',
             'py-4', Icon ? 'pl-12 pr-4' : 'px-4',
+            'focus:bg-white focus:border-primary/50 focus:ring-4 focus:ring-primary/10 focus:shadow-lg',
+            error ? 'border-red-300 bg-red-50/50 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-100' : ''
+          )}
+        />
             focused && 'focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10',
             error && 'border-red-300 focus:border-red-400 focus:ring-red-300/30'
           )}

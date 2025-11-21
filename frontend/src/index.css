@@ -14,6 +14,19 @@
   .safe-top {
     padding-top: max(env(safe-area-inset-top), 0px);
   }
+  
+  /* 毛玻璃擬態 (Glassmorphism) */
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-lg;
+  }
+  
+  .glass-dark {
+    @apply bg-black/30 backdrop-blur-xl border border-white/10 shadow-lg;
+  }
+
+  .glass-panel {
+    @apply bg-white/60 backdrop-blur-2xl border border-white/40 shadow-xl;
+  }
 }
 
 @layer base {
@@ -44,6 +57,13 @@
     
     /* 圓角 */
     --radius: 1rem;
+  }
+
+  body {
+    @apply bg-[#F5F5F7] text-foreground antialiased;
+    /* 柔和的漸層背景，模擬 Apple 桌布質感 */
+    background: radial-gradient(circle at 50% 0%, #eef2f3 0%, #e6e9f0 100%);
+    min-height: 100vh;
   }
 
   /* 深色模式（可選） */
