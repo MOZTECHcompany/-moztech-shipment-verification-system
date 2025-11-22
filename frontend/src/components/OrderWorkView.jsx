@@ -9,7 +9,7 @@ import {
     Loader2, ArrowLeft, Check, ScanLine, Barcode, Tag, Package, 
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
     ChevronUp, ShoppingCart, Box, Camera, MessageSquare, Printer, Users,
-    Maximize2, Minimize2, Focus, Eye, EyeOff
+    Maximize2, Minimize2, Focus, Eye, EyeOff, CheckCircle2
 } from 'lucide-react';
 import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge } from '@/ui';
 import Swal from 'sweetalert2';
@@ -621,6 +621,48 @@ export function OrderWorkView({ user }) {
         setTimeout(() => handleScan(), 100);
     };
 
+    // 操作提示組件
+    const OperationHint = ({ order, scanError, isUpdating }) => {
+        if (scanError) return null; // 錯誤訊息由外部處理
+        
+        let hint = "等待掃描輸入...";
+        let subHint = "請掃描商品條碼或 SN 碼";
+        let icon = <ScanLine size={20} className="text-blue-400" />;
+        let statusColor = "bg-blue-500";
+
+        if (isUpdating) {
+            hint = "正在處理...";
+            subHint = "請稍候";
+            icon = <Loader2 size={20} className="text-blue-400 animate-spin" />;
+            statusColor = "bg-blue-500";
+        } else if (order?.status === 'completed') {
+            hint = "訂單已完成";
+            subHint = "所有品項已處理完畢";
+            icon = <CheckCircle2 size={20} className="text-green-400" />;
+            statusColor = "bg-green-500";
+        } else if (order?.status === 'picking') {
+            hint = "揀貨作業中";
+            subHint = "請掃描商品進行揀貨";
+            statusColor = "bg-blue-500";
+        } else if (order?.status === 'packing') {
+            hint = "裝箱作業中";
+            subHint = "請掃描商品進行裝箱";
+            statusColor = "bg-green-500";
+        }
+
+        return (
+            <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm animate-fade-in">
+                <div className="flex items-start gap-3">
+                    <div className="mt-1">{icon}</div>
+                    <div>
+                        <p className="text-sm font-bold text-white">{hint}</p>
+                        <p className="text-xs text-gray-400">{subHint}</p>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const handleVoidOrder = async () => {
         if (!currentOrderData.order) return;
         const { value: reason } = await MySwal.fire({ 
@@ -791,12 +833,11 @@ export function OrderWorkView({ user }) {
                                     </div>
                                 )}
                                 
-                                {!scanError && (
-                                    <div className="flex items-center gap-2 text-xs text-gray-500 mt-2">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                                        等待掃描輸入...
-                                    </div>
-                                )}
+                                <OperationHint 
+                                    order={currentOrderData.order} 
+                                    scanError={scanError} 
+                                    isUpdating={isUpdating} 
+                                />
                             </div>
                         </div>
 

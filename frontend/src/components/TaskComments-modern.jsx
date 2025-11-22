@@ -293,6 +293,30 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
         }
     };
 
+    const handlePin = async (comment) => {
+        try {
+            const isPinned = pinnedComments.some(p => p.id === comment.id);
+            await apiClient.put(`/api/tasks/${orderId}/pins/${comment.id}`, {
+                pinned: !isPinned
+            });
+            
+            // 更新本地狀態
+            let newPinned;
+            if (isPinned) {
+                newPinned = pinnedComments.filter(p => p.id !== comment.id);
+                toast.success('已取消置頂');
+            } else {
+                newPinned = [...pinnedComments, comment];
+                toast.success('已置頂留言');
+            }
+            setPinnedComments(newPinned);
+            localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(newPinned));
+            setActiveMessageId(null);
+        } catch (error) {
+            toast.error('操作失敗', { description: error.response?.data?.message });
+        }
+    };
+
     const handleDelete = async (comment) => {
         const result = await MySwal.fire({
             title: '確定刪除？',
@@ -471,6 +495,13 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                                 absolute top-full mt-1 ${isMine ? 'right-0' : 'left-0'} 
                                                 bg-white rounded-xl shadow-xl border border-gray-100 py-1 w-24 z-30 overflow-hidden animate-scale-in
                                             `}>
+                                                <button 
+                                                    onClick={() => handlePin(comment)}
+                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-blue-50 flex items-center gap-2 text-gray-700"
+                                                >
+                                                    <Pin size={12} className={pinnedComments.some(p => p.id === comment.id) ? "fill-blue-500 text-blue-500" : ""} /> 
+                                                    {pinnedComments.some(p => p.id === comment.id) ? '取消置頂' : '置頂'}
+                                                </button>
                                                 <button 
                                                     onClick={() => handleRetract(comment)}
                                                     className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 text-gray-700"
