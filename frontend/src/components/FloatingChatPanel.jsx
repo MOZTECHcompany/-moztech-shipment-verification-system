@@ -1,6 +1,6 @@
 // FloatingChatPanel.jsx - 類似 iMessage 的現代化浮動討論面板
 import React, { useState, useEffect, useRef } from 'react';
-import ReactDOM from 'react-dom';
+import { createPortal } from 'react-dom';
 import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
@@ -212,7 +212,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
 
     // 最小化時的樣式 - 圓形 FAB
     if (isMinimized) {
-        return ReactDOM.createPortal(
+        return createPortal(
             <div
                 style={{
                     position: 'fixed',
@@ -234,7 +234,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
         );
     }
 
-    return ReactDOM.createPortal(
+    return createPortal(
         <div
             ref={panelRef}
             style={{
