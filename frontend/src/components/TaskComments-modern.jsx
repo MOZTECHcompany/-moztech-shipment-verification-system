@@ -432,14 +432,14 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                             className={`
                                 relative px-5 py-3 text-[15px] leading-relaxed shadow-md transition-all backdrop-blur-md
                                 ${isRetracted 
-                                    ? 'bg-gray-100/50 text-gray-400 italic border border-gray-200/50 rounded-3xl' 
+                                    ? 'bg-gray-100/30 text-gray-400 italic border border-gray-200/30 rounded-3xl' 
                                     : isMine 
                                         ? isUrgent 
                                             ? 'bg-gradient-to-br from-red-500 to-orange-600 text-white rounded-3xl rounded-tr-sm shadow-red-500/30'
                                             : 'bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-3xl rounded-tr-sm shadow-blue-500/30' 
                                         : isUrgent
-                                            ? 'bg-red-50/80 text-gray-900 border border-red-200/50 rounded-3xl rounded-tl-sm shadow-red-100/50'
-                                            : 'bg-white/60 text-gray-900 border border-white/40 rounded-3xl rounded-tl-sm shadow-sm'
+                                            ? 'bg-red-50/40 text-slate-800 border border-red-200/30 rounded-3xl rounded-tl-sm shadow-red-100/30'
+                                            : 'bg-white/30 text-slate-800 border border-white/20 rounded-3xl rounded-tl-sm shadow-sm'
                                 }
                             `}
                         >

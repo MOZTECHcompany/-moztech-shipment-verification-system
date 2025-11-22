@@ -60,7 +60,7 @@ export function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen pb-20">
+        <div className="min-h-screen bg-transparent pb-20">
             <div className="p-6 md:p-8 lg:p-10 max-w-[1600px] mx-auto">
                 <PageHeader
                     title="管理中心"

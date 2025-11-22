@@ -17,22 +17,31 @@
   
   /* 毛玻璃擬態 (Glassmorphism) - Spatial Computing Style */
   .glass {
-    @apply bg-white/65 backdrop-blur-[40px] border-t border-white/60 border-b border-white/10 shadow-lg;
-    box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.5), 0 10px 40px -10px rgba(0,0,0,0.1);
+    @apply bg-white/30 backdrop-blur-[40px] shadow-lg text-slate-800;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(255, 255, 255, 0.5);
+    border-left-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 10px 40px -10px rgba(0,0,0,0.1);
   }
   
   .glass-dark {
-    @apply bg-black/40 backdrop-blur-[40px] border-t border-white/20 border-b border-white/5 shadow-lg;
+    @apply bg-black/30 backdrop-blur-[40px] border border-white/10 shadow-lg text-white;
   }
 
   .glass-panel {
-    @apply bg-white/65 backdrop-blur-[40px] border-t border-white/60 border-b border-white/10 shadow-xl rounded-3xl;
-    box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.5), 0 20px 40px -10px rgba(0,0,0,0.15);
+    @apply bg-white/30 backdrop-blur-[40px] shadow-xl rounded-3xl text-slate-800;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(255, 255, 255, 0.5);
+    border-left-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 20px 40px -10px rgba(0,0,0,0.15);
   }
 
   .glass-pill {
-    @apply bg-white/80 backdrop-blur-xl border border-white/40 shadow-lg rounded-full;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    @apply bg-white/40 backdrop-blur-xl shadow-lg rounded-full text-slate-800;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(255, 255, 255, 0.5);
+    border-left-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 8px 32px rgba(0, 0, 0, 0.1);
   }
 
   /* Mesh Gradient Background */

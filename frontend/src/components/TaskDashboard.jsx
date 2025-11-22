@@ -710,7 +710,7 @@ export function TaskDashboard({ user }) {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-secondary dark:bg-background/95">
+            <div className="min-h-screen bg-transparent">
                 <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
                     {/* Header Skeleton */}
                     <div className="mb-4">
@@ -724,7 +724,7 @@ export function TaskDashboard({ user }) {
                     {/* Stats Skeleton */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-2 mb-6">
                         {Array.from({ length: 4 }).map((_, i) => (
-                            <div key={i} className="bg-white rounded-2xl p-5 border border-gray-200">
+                            <div key={i} className="bg-white/40 backdrop-blur-md rounded-2xl p-5 border border-white/20">
                                 <Skeleton className="h-6 w-24 mb-3" />
                                 <Skeleton className="h-8 w-16" />
                             </div>
@@ -733,7 +733,7 @@ export function TaskDashboard({ user }) {
                     {/* Cards Skeleton */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
                         {Array.from({ length: 6 }).map((_, i) => (
-                            <div key={i} className="bg-white rounded-2xl p-6 border border-gray-200">
+                            <div key={i} className="bg-white/40 backdrop-blur-md rounded-2xl p-6 border border-white/20">
                                 <Skeleton className="h-6 w-40 mb-4" />
                                 <SkeletonText lines={3} />
                                 <div className="mt-6">
@@ -748,7 +748,7 @@ export function TaskDashboard({ user }) {
     }
 
     return (
-        <div className="min-h-screen bg-secondary dark:bg-background/95">
+        <div className="min-h-screen bg-transparent">
             <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
                 {/* 頁面標題 + 動作 */}
                 <PageHeader
