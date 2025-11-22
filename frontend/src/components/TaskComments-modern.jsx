@@ -85,7 +85,7 @@ const UserAvatar = ({ name, size = "md" }) => {
     );
 };
 
-export default function TaskComments({ orderId, currentUser, allUsers }) {
+export default function TaskComments({ orderId, currentUser, allUsers, mode = 'embedded' }) {
     const { data, isLoading, fetchNextPage, hasNextPage, addOptimistic, invalidate } = useComments(orderId);
     const comments = (data?.pages || []).flatMap(p => p.items ?? []);
     const [newComment, setNewComment] = useState('');
@@ -98,6 +98,28 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     const [showQuickReplies, setShowQuickReplies] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [pinnedComments, setPinnedComments] = useState([]);
+    const [isMinimized, setIsMinimized] = useState(false);
+
+    // Widget Mode Styles
+    const containerStyles = mode === 'widget' 
+        ? `fixed bottom-6 right-6 z-50 w-[380px] h-[600px] shadow-2xl transition-all duration-300 ${isMinimized ? 'w-14 h-14 rounded-full overflow-hidden cursor-pointer hover:scale-110' : 'rounded-[24px]'}`
+        : 'flex flex-col h-full bg-transparent relative';
+
+    if (mode === 'widget' && isMinimized) {
+        return (
+            <div 
+                className={containerStyles}
+                onClick={() => setIsMinimized(false)}
+            >
+                <div className="w-full h-full bg-black/80 backdrop-blur-xl flex items-center justify-center text-white">
+                    <MessageSquare size={24} />
+                    {comments.length > 0 && (
+                        <div className="absolute top-0 right-0 w-4 h-4 bg-red-500 rounded-full border-2 border-white"></div>
+                    )}
+                </div>
+            </div>
+        );
+    }
     const [mentionsOpen, setMentionsOpen] = useState(false);
     const [mentions, setMentions] = useState([]);
     const [mentionsUnread, setMentionsUnread] = useState(0);
@@ -538,9 +560,9 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     return (
-        <div className="flex flex-col h-full bg-transparent">
+        <div className={`${containerStyles} ${mode === 'widget' ? 'bg-white/80 backdrop-blur-2xl border border-white/40' : ''}`}>
             {/* Header */}
-            <div className="bg-white/30 backdrop-blur-md border border-white/20 shadow-sm m-4 mb-0 px-5 py-4 flex items-center justify-between z-10 rounded-3xl">
+            <div className={`${mode === 'widget' ? 'px-5 py-4 border-b border-gray-200/50' : 'bg-white/30 backdrop-blur-md border border-white/20 shadow-sm m-4 mb-0 px-5 py-4 rounded-3xl'} flex items-center justify-between z-10`}>
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
                         <MessageSquare size={20} />
@@ -555,15 +577,25 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                 </div>
                 
                 <div className="flex items-center gap-2">
-                    <button 
-                        onClick={() => setMentionsOpen(!mentionsOpen)}
-                        className="p-2 hover:bg-white/50 rounded-xl text-gray-500 hover:text-gray-700 relative transition-all"
-                    >
-                        <AtSign size={20} />
-                        {mentionsUnread > 0 && (
-                            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
-                        )}
-                    </button>
+                    {mode === 'widget' && (
+                        <button 
+                            onClick={() => setIsMinimized(true)}
+                            className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-gray-600"
+                        >
+                            <X size={18} />
+                        </button>
+                    )}
+                    {mode !== 'widget' && (
+                        <button 
+                            onClick={() => setMentionsOpen(!mentionsOpen)}
+                            className="p-2 hover:bg-white/50 rounded-xl text-gray-500 hover:text-gray-700 relative transition-all"
+                        >
+                            <AtSign size={20} />
+                            {mentionsUnread > 0 && (
+                                <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+                            )}
+                        </button>
+                    )}
                 </div>
             </div>
 

@@ -839,7 +839,12 @@ export function OrderWorkView({ user }) {
                             </div>
                         </div>
 
-                        {/* 討論區塊 - 已移至懸浮面板 */}
+                        {/* 討論區塊 */}
+                        <div className="bg-white/30 backdrop-blur-md rounded-2xl shadow-sm border border-white/20 overflow-hidden flex flex-col h-[600px]">
+                            <div className="flex-1 overflow-hidden relative">
+                                <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} mode="embedded" />
+                            </div>
+                        </div>
                     </div>
 
                     {/* 右側：作業清單 */}
@@ -927,12 +932,6 @@ export function OrderWorkView({ user }) {
                         mode="single"
                     />
                 )}
-
-                {/* 懸浮聊天室 */}
-                <FloatingChatPanel 
-                    orderId={orderId} 
-                    voucherNumber={currentOrderData.order?.voucher_number}
-                />
             </div>
         </div>
     );
