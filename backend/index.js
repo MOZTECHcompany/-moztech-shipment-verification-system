@@ -1456,8 +1456,15 @@ apiRouter.get('/tasks/:orderId/pins', async (req, res) => {
     const client = await pool.connect();
     try {
         await ensurePinsTable(client);
-        const rows = await client.query('SELECT comment_id FROM task_comment_pins WHERE order_id = $1 AND user_id = $2', [orderId, userId]);
-        res.json({ pinned: rows.rows.map(r => r.comment_id) });
+        const rows = await client.query(`
+            SELECT c.*, u.name as user_name, u.username
+            FROM task_comment_pins p
+            JOIN task_comments c ON p.comment_id = c.id
+            LEFT JOIN users u ON c.user_id = u.id
+            WHERE p.order_id = $1 AND p.user_id = $2
+            ORDER BY c.created_at ASC
+        `, [orderId, userId]);
+        res.json({ pinned: rows.rows });
     } catch (e) {
         logger.error('[/api/tasks/:orderId/pins] 取得置頂清單失敗:', e);
         res.status(500).json({ message: '取得置頂清單失敗' });

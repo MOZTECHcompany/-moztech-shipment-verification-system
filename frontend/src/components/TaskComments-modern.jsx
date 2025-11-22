@@ -129,9 +129,15 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             try {
                 const res = await apiClient.get(`/api/tasks/${orderId}/pins`);
                 const list = Array.isArray(res?.data?.pinned) ? res.data.pinned : [];
-                setPinnedComments(list);
-                localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(list));
-            } catch (e) {}
+                // 確保資料完整性與唯一性
+                const validList = list.filter(item => item && item.id && item.content);
+                const uniqueList = Array.from(new Map(validList.map(item => [item.id, item])).values());
+                
+                setPinnedComments(uniqueList);
+                localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(uniqueList));
+            } catch (e) {
+                console.error('Failed to fetch pins:', e);
+            }
         })();
     }, [orderId]);
 
@@ -306,7 +312,12 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                 newPinned = pinnedComments.filter(p => p.id !== comment.id);
                 toast.success('已取消置頂');
             } else {
-                newPinned = [...pinnedComments, comment];
+                // 避免重複添加
+                if (!pinnedComments.some(p => p.id === comment.id)) {
+                    newPinned = [...pinnedComments, comment];
+                } else {
+                    newPinned = [...pinnedComments];
+                }
                 toast.success('已置頂留言');
             }
             setPinnedComments(newPinned);
