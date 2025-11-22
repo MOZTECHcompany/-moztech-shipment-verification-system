@@ -152,7 +152,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
             {!isFocusMode && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {/* SKU Progress */}
-                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
                         <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Package size={48} className="text-blue-600" />
                         </div>
@@ -167,7 +167,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
                     </div>
 
                     {/* Total Quantity */}
-                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
                         <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Box size={48} className="text-gray-600" />
                         </div>
@@ -182,7 +182,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
                     </div>
 
                     {/* Picked Quantity */}
-                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
                         <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
                             <ShoppingCart size={48} className="text-orange-600" />
                         </div>
@@ -197,7 +197,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
                     </div>
 
                     {/* Packed Quantity */}
-                    <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-24 relative overflow-hidden group">
+                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
                         <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Check size={48} className="text-green-600" />
                         </div>
@@ -227,10 +227,10 @@ const SNItemCard = ({ item, instances, isFocusMode }) => {
     if (isFocusMode && isComplete && !expanded) return null;
 
     return (
-        <div className={`group relative bg-white rounded-xl overflow-hidden transition-all duration-300 ${
+        <div className={`group relative glass-panel rounded-xl overflow-hidden transition-all duration-300 ${
             isComplete 
-                ? 'border border-green-100 shadow-sm opacity-75 hover:opacity-100' 
-                : 'border border-gray-200 shadow-sm hover:shadow-md hover:-translate-y-0.5'
+                ? '!border-green-500/30 shadow-sm opacity-75 hover:opacity-100' 
+                : 'shadow-sm hover:shadow-md hover:-translate-y-0.5'
         }`}>
             <div className="p-4">
                 <div className="flex items-start justify-between gap-4">
@@ -320,10 +320,10 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
     if (isFocusMode && isComplete) return null;
 
     return (
-        <div className={`group relative bg-white rounded-xl p-4 transition-all duration-300 ${
+        <div className={`group relative glass-panel rounded-xl p-4 transition-all duration-300 ${
             isComplete 
-                ? 'border border-green-100 shadow-sm opacity-75 hover:opacity-100' 
-                : 'border border-gray-200 shadow-sm hover:shadow-md hover:-translate-y-0.5'
+                ? '!border-green-500/30 shadow-sm opacity-75 hover:opacity-100' 
+                : 'shadow-sm hover:shadow-md hover:-translate-y-0.5'
         }`}>
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex-1 min-w-0 w-full">
@@ -754,7 +754,7 @@ export function OrderWorkView({ user }) {
     }, [currentOrderData]);
 
     return (
-        <div className="min-h-screen bg-gray-50/50 pb-20">
+        <div className="min-h-screen bg-transparent pb-20">
             <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
                 {/* 頂部導航 (已整合至 Dashboard) */}
                 <div className="mb-6">
@@ -786,7 +786,7 @@ export function OrderWorkView({ user }) {
                     {/* 左側：掃描與討論 (在專注模式下隱藏討論) */}
                     <div className={`lg:col-span-4 xl:col-span-3 space-y-6 ${isFocusMode ? 'hidden lg:block lg:opacity-50 lg:pointer-events-none' : ''}`}>
                         {/* 掃描區 - 重新設計為深色主題以突顯 */}
-                        <div className="bg-gray-900 rounded-2xl p-5 shadow-xl shadow-gray-900/10 text-white relative overflow-hidden group">
+                        <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 rounded-2xl p-5 shadow-xl shadow-black/20 text-white relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                                 <ScanLine size={80} />
                             </div>
@@ -839,7 +839,7 @@ export function OrderWorkView({ user }) {
                         </div>
 
                         {/* 討論區塊 */}
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[600px]">
+                        <div className="bg-white/30 backdrop-blur-md rounded-2xl shadow-sm border border-white/20 overflow-hidden flex flex-col h-[600px]">
                             <div className="flex-1 overflow-hidden relative">
                                 <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} />
                             </div>
@@ -848,8 +848,8 @@ export function OrderWorkView({ user }) {
 
                     {/* 右側：作業清單 */}
                     <div className={`lg:col-span-8 xl:col-span-9 transition-all duration-500`}>
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[600px]">
-                            <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white sticky top-0 z-20">
+                        <div className="min-h-[600px]">
+                            <div className="p-6 mb-4 rounded-2xl glass-panel flex flex-col sm:flex-row sm:items-center justify-between gap-4 sticky top-0 z-20">
                                 <div>
                                     <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                                         作業清單
@@ -870,7 +870,7 @@ export function OrderWorkView({ user }) {
                                 )}
                             </div>
                             
-                            <div className="p-6 bg-gray-50/30 min-h-full">
+                            <div className="min-h-full">
                                 {currentOrderData.order ? (
                                   <>
                                     <div className="space-y-3">

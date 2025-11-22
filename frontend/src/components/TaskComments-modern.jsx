@@ -504,7 +504,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                         {isActive && (
                                             <div className={`
                                                 absolute top-full mt-2 ${isMine ? 'right-0' : 'left-0'} 
-                                                glass-panel py-1 w-28 z-30 overflow-hidden animate-scale-in
+                                                bg-white/30 backdrop-blur-md border border-white/20 shadow-sm py-1 w-28 z-30 overflow-hidden animate-scale-in
                                             `}>
                                                 <button 
                                                     onClick={() => handlePin(comment)}
@@ -540,7 +540,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     return (
         <div className="flex flex-col h-full bg-transparent">
             {/* Header */}
-            <div className="glass-panel m-4 mb-0 px-5 py-4 flex items-center justify-between z-10 rounded-3xl">
+            <div className="bg-white/30 backdrop-blur-md border border-white/20 shadow-sm m-4 mb-0 px-5 py-4 flex items-center justify-between z-10 rounded-3xl">
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
                         <MessageSquare size={20} />
@@ -626,7 +626,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* Input Area */}
             <div className="p-4 z-20">
-                <div className="glass-panel p-2 rounded-[2rem]">
+                <div className="bg-white/30 backdrop-blur-md border border-white/20 shadow-sm p-2 rounded-[2rem]">
                     {/* Reply Preview */}
                     {replyTo && (
                         <div className="flex items-center justify-between bg-blue-50/50 px-4 py-3 rounded-2xl border border-blue-100/50 mb-2 mx-2 animate-slide-up backdrop-blur-sm">
@@ -725,7 +725,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
                 {/* Mentions Dropdown */}
                 {showMentions && filteredUsers.length > 0 && (
-                    <div className="absolute bottom-24 left-4 glass-panel max-h-48 overflow-y-auto z-20 w-64 animate-slide-up">
+                    <div className="absolute bottom-24 left-4 bg-white/30 backdrop-blur-md border border-white/20 shadow-sm max-h-48 overflow-y-auto z-20 w-64 animate-slide-up">
                         {filteredUsers.slice(0, 5).map(user => (
                             <button
                                 key={user.id}
