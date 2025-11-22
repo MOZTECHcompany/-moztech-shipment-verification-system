@@ -430,26 +430,26 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                         {/* Message Bubble */}
                         <div
                             className={`
-                                relative px-4 py-2.5 text-[15px] leading-relaxed shadow-sm transition-all
+                                relative px-5 py-3 text-[15px] leading-relaxed shadow-md transition-all backdrop-blur-md
                                 ${isRetracted 
-                                    ? 'bg-gray-100 text-gray-400 italic border border-gray-200 rounded-2xl' 
+                                    ? 'bg-gray-100/50 text-gray-400 italic border border-gray-200/50 rounded-3xl' 
                                     : isMine 
                                         ? isUrgent 
-                                            ? 'bg-red-500 text-white rounded-2xl rounded-tr-sm shadow-red-200'
-                                            : 'bg-blue-500 text-white rounded-2xl rounded-tr-sm' 
+                                            ? 'bg-gradient-to-br from-red-500 to-orange-600 text-white rounded-3xl rounded-tr-sm shadow-red-500/30'
+                                            : 'bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-3xl rounded-tr-sm shadow-blue-500/30' 
                                         : isUrgent
-                                            ? 'bg-red-50 text-gray-900 border border-red-200 rounded-2xl rounded-tl-sm shadow-red-100'
-                                            : 'bg-white text-gray-900 border border-gray-100 rounded-2xl rounded-tl-sm'
+                                            ? 'bg-red-50/80 text-gray-900 border border-red-200/50 rounded-3xl rounded-tl-sm shadow-red-100/50'
+                                            : 'bg-white/60 text-gray-900 border border-white/40 rounded-3xl rounded-tl-sm shadow-sm'
                                 }
                             `}
                         >
                             {/* Reply Context (Integrated) */}
                             {parentComment && !isRetracted && (
                                 <div className={`
-                                    mb-2 rounded-lg p-2 text-xs border-l-2 cursor-pointer hover:opacity-80 transition-opacity
+                                    mb-2 rounded-xl p-2.5 text-xs border-l-2 cursor-pointer hover:opacity-80 transition-opacity
                                     ${isMine 
-                                        ? 'bg-white/10 border-white/50 text-white/90' 
-                                        : 'bg-gray-100 border-gray-300 text-gray-600'
+                                        ? 'bg-black/10 border-white/50 text-white/90' 
+                                        : 'bg-white/50 border-gray-300 text-gray-600'
                                     }
                                 `} onClick={() => {
                                     // Optional: Scroll to parent
@@ -467,19 +467,19 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                     <AlertTriangle size={10} /> Urgent
                                 </div>
                             )}
-                            <p className="whitespace-pre-wrap break-words">{comment.content}</p>
+                            <p className="whitespace-pre-wrap break-words font-medium">{comment.content}</p>
                         </div>
 
                         {/* Actions Menu (Hover/Click) */}
                         {!isRetracted && (
                             <div className={`
-                                absolute top-0 ${isMine ? '-left-10' : '-right-10'} 
+                                absolute top-0 ${isMine ? '-left-12' : '-right-12'} 
                                 ${isActive ? 'opacity-100 z-30' : 'opacity-0 group-hover/bubble:opacity-100'} 
                                 transition-opacity flex flex-col gap-1 action-menu-container
                             `}>
                                 <button 
                                     onClick={() => handleReply(comment)}
-                                    className="p-1.5 bg-white rounded-full shadow-sm border border-gray-100 text-gray-500 hover:text-blue-500 hover:bg-blue-50"
+                                    className="p-2 bg-white/80 backdrop-blur rounded-full shadow-sm border border-white/50 text-gray-500 hover:text-blue-500 hover:bg-blue-50 hover:scale-110 transition-all"
                                     title="回覆"
                                 >
                                     <Reply size={14} />
@@ -492,10 +492,10 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                                 e.stopPropagation();
                                                 setActiveMessageId(activeMessageId === comment.id ? null : comment.id);
                                             }}
-                                            className={`p-1.5 rounded-full shadow-sm border transition-colors ${
+                                            className={`p-2 rounded-full shadow-sm border transition-all hover:scale-110 ${
                                                 isActive 
                                                     ? 'bg-blue-50 text-blue-600 border-blue-200' 
-                                                    : 'bg-white text-gray-500 border-gray-100 hover:text-gray-900 hover:bg-gray-50'
+                                                    : 'bg-white/80 backdrop-blur text-gray-500 border-white/50 hover:text-gray-900 hover:bg-gray-50'
                                             }`}
                                         >
                                             <MoreHorizontal size={14} />
@@ -503,25 +503,25 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                                         
                                         {isActive && (
                                             <div className={`
-                                                absolute top-full mt-1 ${isMine ? 'right-0' : 'left-0'} 
-                                                bg-white rounded-xl shadow-xl border border-gray-100 py-1 w-24 z-30 overflow-hidden animate-scale-in
+                                                absolute top-full mt-2 ${isMine ? 'right-0' : 'left-0'} 
+                                                glass-panel py-1 w-28 z-30 overflow-hidden animate-scale-in
                                             `}>
                                                 <button 
                                                     onClick={() => handlePin(comment)}
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-blue-50 flex items-center gap-2 text-gray-700"
+                                                    className="w-full px-3 py-2.5 text-left text-xs hover:bg-blue-50/50 flex items-center gap-2 text-gray-700 font-medium"
                                                 >
                                                     <Pin size={12} className={pinnedComments.some(p => p.id === comment.id) ? "fill-blue-500 text-blue-500" : ""} /> 
                                                     {pinnedComments.some(p => p.id === comment.id) ? '取消置頂' : '置頂'}
                                                 </button>
                                                 <button 
                                                     onClick={() => handleRetract(comment)}
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 text-gray-700"
+                                                    className="w-full px-3 py-2.5 text-left text-xs hover:bg-gray-50/50 flex items-center gap-2 text-gray-700 font-medium"
                                                 >
                                                     <RotateCcw size={12} /> 收回
                                                 </button>
                                                 <button 
                                                     onClick={() => handleDelete(comment)}
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-red-50 flex items-center gap-2 text-red-600"
+                                                    className="w-full px-3 py-2.5 text-left text-xs hover:bg-red-50/50 flex items-center gap-2 text-red-600 font-medium"
                                                 >
                                                     <Trash2 size={12} /> 刪除
                                                 </button>
@@ -538,17 +538,17 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white">
+        <div className="flex flex-col h-full bg-transparent">
             {/* Header */}
-            <div className="bg-white/90 backdrop-blur-md px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
+            <div className="glass-panel m-4 mb-0 px-5 py-4 flex items-center justify-between z-10 rounded-3xl">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
+                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
                         <MessageSquare size={20} />
                     </div>
                     <div>
                         <h3 className="text-base font-bold text-gray-900">團隊討論</h3>
                         <p className="text-xs text-gray-500 font-medium flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                             {comments.length} 則留言
                         </p>
                     </div>
@@ -557,7 +557,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                 <div className="flex items-center gap-2">
                     <button 
                         onClick={() => setMentionsOpen(!mentionsOpen)}
-                        className="p-2 hover:bg-gray-50 rounded-xl text-gray-400 hover:text-gray-600 relative transition-all"
+                        className="p-2 hover:bg-white/50 rounded-xl text-gray-500 hover:text-gray-700 relative transition-all"
                     >
                         <AtSign size={20} />
                         {mentionsUnread > 0 && (
@@ -569,13 +569,13 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
             {/* Pinned Section */}
             {pinnedComments.length > 0 && (
-                <div className="bg-blue-50/80 backdrop-blur-sm border-b border-blue-100 px-4 py-2">
+                <div className="mx-4 mt-2 bg-blue-50/60 backdrop-blur-md border border-blue-100/50 rounded-2xl px-4 py-3 shadow-sm">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
                         <Pin size={12} className="fill-blue-700" /> 置頂公告
                     </div>
                     <div className="space-y-2">
                         {pinnedComments.map(pin => (
-                            <div key={pin.id} className="bg-white/80 p-2.5 rounded-xl border border-blue-100 shadow-sm text-sm text-gray-700 flex items-start gap-2 group/pin relative">
+                            <div key={pin.id} className="bg-white/60 p-2.5 rounded-xl border border-white/50 shadow-sm text-sm text-gray-700 flex items-start gap-2 group/pin relative">
                                 <UserAvatar name={pin.user_name || '系統'} size="sm" />
                                 <div className="min-w-0 flex-1 pr-6">
                                     <span className="font-bold text-gray-900 mr-1">{pin.user_name || '系統'}:</span>
@@ -595,7 +595,7 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             )}
 
             {/* Comments List */}
-            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/30">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 space-y-6 scroll-smooth">
                 {isLoading ? (
                     <div className="space-y-6">
                         {[1,2,3].map(i => (
@@ -610,11 +610,11 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                     </div>
                 ) : comments.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400">
-                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                            <MessageSquare size={32} className="text-gray-300" />
+                        <div className="w-24 h-24 bg-white/30 backdrop-blur rounded-full flex items-center justify-center mb-4 shadow-inner">
+                            <MessageSquare size={40} className="text-gray-300" />
                         </div>
-                        <p className="text-sm font-medium">尚無討論</p>
-                        <p className="text-xs text-gray-400 mt-1">開始第一則留言...</p>
+                        <p className="text-base font-bold text-gray-500">尚無討論</p>
+                        <p className="text-sm text-gray-400 mt-1">開始第一則留言...</p>
                     </div>
                 ) : (
                     comments
@@ -625,95 +625,97 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
             </div>
 
             {/* Input Area */}
-            <div className="p-4 bg-white border-t border-gray-100 shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.05)] z-20">
-                {/* Reply Preview */}
-                {replyTo && (
-                    <div className="flex items-center justify-between bg-blue-50/50 px-4 py-3 rounded-xl border border-blue-100 mb-3 animate-slide-up">
-                        <div className="flex items-center gap-3 overflow-hidden">
-                            <div className="w-1 h-8 bg-blue-500 rounded-full"></div>
-                            <div className="flex flex-col">
-                                <span className="text-xs font-bold text-blue-600 flex items-center gap-1">
-                                    <Reply size={12} /> 回覆 {replyTo.user_name}
-                                </span>
-                                <span className="text-xs text-gray-600 truncate max-w-[200px] mt-0.5">{replyTo.content}</span>
+            <div className="p-4 z-20">
+                <div className="glass-panel p-2 rounded-[2rem]">
+                    {/* Reply Preview */}
+                    {replyTo && (
+                        <div className="flex items-center justify-between bg-blue-50/50 px-4 py-3 rounded-2xl border border-blue-100/50 mb-2 mx-2 animate-slide-up backdrop-blur-sm">
+                            <div className="flex items-center gap-3 overflow-hidden">
+                                <div className="w-1 h-8 bg-blue-500 rounded-full"></div>
+                                <div className="flex flex-col">
+                                    <span className="text-xs font-bold text-blue-600 flex items-center gap-1">
+                                        <Reply size={12} /> 回覆 {replyTo.user_name}
+                                    </span>
+                                    <span className="text-xs text-gray-600 truncate max-w-[200px] mt-0.5">{replyTo.content}</span>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setReplyTo(null)}
+                                className="p-1.5 hover:bg-blue-100/50 rounded-full text-blue-400 hover:text-blue-600 transition-colors"
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="flex items-end gap-2">
+                        <div className={`flex-1 bg-gray-50/50 rounded-[1.5rem] border border-transparent transition-all duration-300 flex flex-col focus-within:bg-white/80 focus-within:shadow-inner`}>
+                            <textarea
+                                ref={textareaRef}
+                                value={newComment}
+                                onChange={handleInputChange}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        handleSubmit();
+                                    }
+                                }}
+                                placeholder={replyTo ? `回覆 ${replyTo.user_name}...` : "輸入訊息..."}
+                                className="w-full px-5 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[48px] text-sm placeholder:text-gray-400"
+                                rows={1}
+                                style={{ height: 'auto', minHeight: '48px' }}
+                            />
+                            
+                            {/* Toolbar */}
+                            <div className="flex items-center justify-between px-3 pb-2">
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        onClick={() => setShowQuickReplies(!showQuickReplies)}
+                                        className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${showQuickReplies ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100/50 hover:text-gray-600'}`}
+                                        title="快速回覆"
+                                    >
+                                        <TrendingUp size={16} />
+                                        <span className="hidden sm:inline">快速回覆</span>
+                                    </button>
+                                    <div className="h-4 w-px bg-gray-200 mx-1"></div>
+                                    <button
+                                        onClick={() => setPriority(priority === 'urgent' ? 'normal' : 'urgent')}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                            priority === 'urgent' 
+                                                ? 'bg-red-500 text-white shadow-lg shadow-red-500/30' 
+                                                : 'text-gray-400 hover:bg-gray-100/50 hover:text-gray-600'
+                                        }`}
+                                    >
+                                        <AlertTriangle size={14} />
+                                        {priority === 'urgent' ? '緊急' : '標記緊急'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <button 
-                            onClick={() => setReplyTo(null)}
-                            className="p-1.5 hover:bg-blue-100 rounded-full text-blue-400 hover:text-blue-600 transition-colors"
+                        
+                        <button
+                            onClick={handleSubmit}
+                            disabled={!newComment.trim()}
+                            className={`
+                                w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 flex-shrink-0
+                                ${newComment.trim() 
+                                    ? 'bg-gradient-to-br from-blue-500 to-purple-600 text-white hover:scale-110 hover:shadow-blue-500/40' 
+                                    : 'bg-gray-100 text-gray-300 cursor-not-allowed'}
+                            `}
                         >
-                            <X size={14} />
+                            <Send size={20} className={newComment.trim() ? 'ml-0.5' : ''} />
                         </button>
                     </div>
-                )}
-
-                <div className="flex items-end gap-3">
-                    <div className={`flex-1 bg-gray-50 rounded-2xl border-2 border-transparent transition-all duration-300 flex flex-col focus-within:border-blue-500/20 focus-within:bg-white focus-within:shadow-lg focus-within:shadow-blue-500/5`}>
-                        <textarea
-                            ref={textareaRef}
-                            value={newComment}
-                            onChange={handleInputChange}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    handleSubmit();
-                                }
-                            }}
-                            placeholder={replyTo ? `回覆 ${replyTo.user_name}...` : "輸入訊息..."}
-                            className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[48px] text-sm placeholder:text-gray-400"
-                            rows={1}
-                            style={{ height: 'auto', minHeight: '48px' }}
-                        />
-                        
-                        {/* Toolbar */}
-                        <div className="flex items-center justify-between px-2 pb-2">
-                            <div className="flex items-center gap-1">
-                                <button
-                                    onClick={() => setShowQuickReplies(!showQuickReplies)}
-                                    className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${showQuickReplies ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
-                                    title="快速回覆"
-                                >
-                                    <TrendingUp size={16} />
-                                    <span className="hidden sm:inline">快速回覆</span>
-                                </button>
-                                <div className="h-4 w-px bg-gray-200 mx-1"></div>
-                                <button
-                                    onClick={() => setPriority(priority === 'urgent' ? 'normal' : 'urgent')}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                                        priority === 'urgent' 
-                                            ? 'bg-red-500 text-white shadow-lg shadow-red-500/30' 
-                                            : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
-                                    }`}
-                                >
-                                    <AlertTriangle size={14} />
-                                    {priority === 'urgent' ? '緊急' : '標記緊急'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <button
-                        onClick={handleSubmit}
-                        disabled={!newComment.trim()}
-                        className={`
-                            w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-300 flex-shrink-0
-                            ${newComment.trim() 
-                                ? 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-105 hover:shadow-blue-500/30' 
-                                : 'bg-gray-100 text-gray-300 cursor-not-allowed'}
-                        `}
-                    >
-                        <Send size={20} className={newComment.trim() ? 'ml-0.5' : ''} />
-                    </button>
                 </div>
 
                 {/* Quick Replies Panel */}
                 {showQuickReplies && (
-                    <div className="mt-3 flex flex-wrap gap-2 animate-slide-down">
+                    <div className="mt-3 flex flex-wrap gap-2 animate-slide-down px-2">
                         {QUICK_REPLIES.map((reply, idx) => (
                             <button
                                 key={idx}
                                 onClick={() => useQuickReply(reply)}
-                                className="px-4 py-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50 rounded-xl text-xs font-bold text-gray-600 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95"
+                                className="px-4 py-2 bg-white/80 backdrop-blur border border-white/50 hover:border-blue-300 hover:bg-blue-50 rounded-xl text-xs font-bold text-gray-600 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95"
                             >
                                 {reply.text}
                             </button>
@@ -723,12 +725,12 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
 
                 {/* Mentions Dropdown */}
                 {showMentions && filteredUsers.length > 0 && (
-                    <div className="absolute bottom-24 left-4 bg-white rounded-2xl shadow-2xl border border-gray-200 max-h-48 overflow-y-auto z-20 w-64 animate-slide-up">
+                    <div className="absolute bottom-24 left-4 glass-panel max-h-48 overflow-y-auto z-20 w-64 animate-slide-up">
                         {filteredUsers.slice(0, 5).map(user => (
                             <button
                                 key={user.id}
                                 onClick={() => insertMention(user)}
-                                className="w-full px-4 py-3 hover:bg-blue-50 text-left flex items-center gap-3 transition-colors border-b border-gray-50 last:border-0"
+                                className="w-full px-4 py-3 hover:bg-blue-50/50 text-left flex items-center gap-3 transition-colors border-b border-gray-50/50 last:border-0"
                             >
                                 <UserAvatar name={user.name} size="sm" />
                                 <div>

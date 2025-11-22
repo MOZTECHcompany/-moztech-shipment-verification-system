@@ -98,7 +98,7 @@ const statusConfig = {
     },
 };
 
-// 現代化任務卡片 - 2025 重構版
+// 現代化任務卡片 - 2025 重構版 (Spatial Style)
 const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin }) => {
     const isMyTask = task.current_user;
     const isUrgent = task.is_urgent || false;
@@ -138,25 +138,23 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     const selectionRing = selectedTasks.includes(task.id) ? 'ring-4 ring-primary/30 scale-[0.98]' : '';
     
     // 根據狀態決定卡片邊框與陰影風格
-    let cardStyle = 'bg-white dark:bg-card border border-gray-100 shadow-sm hover:shadow-xl';
+    let cardStyle = 'glass-panel hover:shadow-2xl hover:scale-[1.02] hover:-rotate-1 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)]';
     if (isUrgent) {
-        cardStyle = 'bg-red-50/30 border-2 border-red-500/50 shadow-[0_0_30px_-10px_rgba(239,68,68,0.3)]';
+        cardStyle = 'glass-panel bg-red-500/10 border-red-500/30 shadow-[0_0_30px_-10px_rgba(239,68,68,0.3)] hover:shadow-red-500/40 hover:scale-[1.02] hover:-rotate-1';
     } else if (isPinned) {
-        cardStyle = 'bg-blue-50/30 border-2 border-blue-500/50 shadow-[0_0_30px_-10px_rgba(59,130,246,0.3)]';
+        cardStyle = 'glass-panel bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_-10px_rgba(59,130,246,0.3)] hover:shadow-blue-500/40 hover:scale-[1.02] hover:-rotate-1';
     }
 
     return (
         <div className={`
             group relative flex flex-col
             rounded-[32px]
-            transition-all duration-300 ease-out
-            hover:-translate-y-1
             ${cardStyle} ${selectionRing}
             overflow-hidden
         `}>
             {/* 頂部狀態光條 - 僅在非緊急/置頂時顯示一般顏色，緊急/置頂由邊框主導 */}
             {!isUrgent && !isPinned && (
-                <div className={`h-1.5 w-full ${
+                <div className={`h-1.5 w-full opacity-80 ${
                     task.status === 'picking' ? 'bg-gradient-to-r from-blue-500 to-cyan-400' : (
                     task.status === 'picked' ? 'bg-gradient-to-r from-purple-500 to-pink-400' : (
                     task.status === 'packing' ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gray-200'))
@@ -169,9 +167,9 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
             )}
             
             <div className="p-7 flex flex-col h-full relative">
-                {/* 背景裝飾 */}
-                <div className={`absolute top-0 right-0 w-40 h-40 bg-gradient-to-br rounded-bl-[100px] -z-0 opacity-20 pointer-events-none ${
-                    isUrgent ? 'from-red-500 to-transparent' : (isPinned ? 'from-blue-500 to-transparent' : 'from-gray-100 to-transparent')
+                {/* 背景裝飾 - 更加微妙的光暈 */}
+                <div className={`absolute top-0 right-0 w-40 h-40 bg-gradient-to-br rounded-bl-[100px] -z-0 opacity-10 pointer-events-none blur-2xl ${
+                    isUrgent ? 'from-red-500 to-transparent' : (isPinned ? 'from-blue-500 to-transparent' : 'from-white to-transparent')
                 }`}></div>
 
                 {/* Header Section */}
@@ -189,18 +187,18 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         )}
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3 mb-1">
-                                <h3 className="font-black text-4xl text-gray-900 tracking-tighter group-hover:text-blue-600 transition-colors">
+                                <h3 className="font-black text-4xl text-gray-900 tracking-tighter group-hover:text-blue-600 transition-colors drop-shadow-sm">
                                     {task.voucher_number}
                                 </h3>
                             </div>
                             
                             <div className="flex items-center gap-3 mt-2">
-                                <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full ${statusInfo.color.replace('border', '')} bg-opacity-50`}>
-                                    <span className={`w-2 h-2 rounded-full ${statusInfo.dot}`} />
+                                <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full backdrop-blur-md border border-white/20 shadow-sm ${statusInfo.color.replace('border', '')} bg-opacity-60`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
                                     {statusInfo.text}
                                 </div>
-                                <div className="flex items-center gap-1.5 text-gray-500 font-medium bg-gray-100 px-3 py-1 rounded-full text-xs">
-                                    <User size={12} />
+                                <div className="flex items-center gap-1.5 text-gray-600 font-bold bg-white/40 backdrop-blur-md border border-white/30 px-2.5 py-1 rounded-full text-[10px] shadow-sm">
+                                    <User size={10} />
                                     <span className="truncate max-w-[100px]">{task.customer_name}</span>
                                 </div>
                             </div>
@@ -210,7 +208,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     {/* 右上角工具列 - 總是顯示重要狀態 */}
                     <div className="flex items-center gap-2">
                         {isPinned && (
-                            <div className="w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center shadow-lg">
+                            <div className="w-10 h-10 rounded-full bg-gray-900/90 backdrop-blur text-white flex items-center justify-center shadow-lg">
                                 <Pin size={18} />
                             </div>
                         )}
@@ -223,13 +221,13 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         {/* Admin Actions - Hover Reveal */}
                         {user && user.role === 'admin' && (
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-4 group-hover:translate-x-0 ml-2">
-                                <button onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-blue-600 transition-colors">
+                                <button onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-blue-600 transition-colors backdrop-blur-sm">
                                     <Pin size={18} />
                                 </button>
-                                <button onClick={handleSetUrgent} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-red-600 transition-colors">
+                                <button onClick={handleSetUrgent} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-red-600 transition-colors backdrop-blur-sm">
                                     <AlertTriangle size={18} />
                                 </button>
-                                <button onClick={() => onDelete(task.id, task.voucher_number)} className="p-2 hover:bg-red-50 rounded-full text-gray-400 hover:text-red-600 transition-colors">
+                                <button onClick={() => onDelete(task.id, task.voucher_number)} className="p-2 hover:bg-red-50/50 rounded-full text-gray-400 hover:text-red-600 transition-colors backdrop-blur-sm">
                                     <Trash2 size={18} />
                                 </button>
                             </div>
@@ -239,7 +237,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
                 {/* 揀貨員資訊 */}
                 {task.task_type === 'pack' && task.picker_name && (
-                    <div className="mb-6 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50/50 rounded-lg border border-blue-100/50 w-fit">
+                    <div className="mb-6 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50/40 backdrop-blur-sm rounded-lg border border-blue-100/30 w-fit">
                         <CheckCircle2 size={14} className="text-blue-600" />
                         <span className="text-xs text-blue-900 font-medium">
                             揀貨員: <span className="font-bold">{task.picker_name}</span>
@@ -252,12 +250,12 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     <div className="mt-auto mb-6">
                         <div 
                             onClick={handleOpenChat}
-                            className="cursor-pointer relative overflow-hidden rounded-[24px] bg-gray-50 border border-gray-200 transition-all hover:bg-white hover:shadow-lg group/chat"
+                            className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/40 backdrop-blur-md border border-white/40 transition-all hover:bg-white/60 hover:shadow-lg group/chat"
                         >
                             <div className="p-5">
                                 {/* Header: Avatar + Name + Status */}
                                 <div className="flex items-center gap-3 mb-4">
-                                    <div className="w-10 h-10 rounded-full bg-[#5E81F4] flex items-center justify-center text-sm font-bold text-white shadow-md">
+                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold text-white shadow-md border border-white/20">
                                         {latestComment?.user_name?.[0] || 'U'}
                                     </div>
                                     <div className="flex flex-col">
@@ -265,11 +263,11 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                             <span className="text-base font-bold text-gray-900">
                                                 {latestComment?.user_name}
                                             </span>
-                                            <span className="text-xs text-gray-400 font-medium">• 最新留言</span>
+                                            <span className="text-xs text-gray-500 font-medium">• 最新留言</span>
                                         </div>
                                         {/* 緊急標籤 */}
                                         {hasUrgentComments && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 text-red-600 text-[10px] font-bold w-fit mt-0.5">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100/80 text-red-600 text-[10px] font-bold w-fit mt-0.5 backdrop-blur-sm">
                                                 <Flame size={10} /> 緊急
                                             </span>
                                         )}
@@ -279,10 +277,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 {/* Message Body - Large Text with Indicator */}
                                 <div className="flex gap-4">
                                     {/* Vertical Indicator Bar */}
-                                    <div className="w-1.5 rounded-full bg-gray-200 flex-shrink-0 self-stretch"></div>
+                                    <div className="w-1.5 rounded-full bg-gray-400/30 flex-shrink-0 self-stretch backdrop-blur-sm"></div>
                                     
                                     <div className="flex-1 py-1">
-                                        <p className="text-xl font-bold text-gray-800 leading-relaxed line-clamp-2">
+                                        <p className="text-xl font-bold text-gray-800 leading-relaxed line-clamp-2 drop-shadow-sm">
                                             {latestComment?.content || '...'}
                                         </p>
                                     </div>
@@ -290,7 +288,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             </div>
                             
                             {/* Footer Action */}
-                            <div className="px-5 py-3 bg-white border-t border-gray-100 flex items-center justify-between">
+                            <div className="px-5 py-3 bg-white/30 border-t border-white/20 flex items-center justify-between backdrop-blur-sm">
                                 <span className="text-sm font-bold text-blue-600 flex items-center gap-2">
                                     <MessageSquare size={16} />
                                     {task.total_comments} 則對話紀錄
@@ -309,7 +307,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         <Button
                             variant="primary"
                             size="lg"
-                            className="w-full justify-center h-14 text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all"
+                            className="w-full justify-center h-14 text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                             onClick={() => onClaim(task.id, true)}
                         >
                             <span className="flex items-center gap-2">
@@ -320,7 +318,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         <Button
                             variant="primary"
                             size="lg"
-                            className={`w-full justify-center h-14 text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all ${
+                            className={`w-full justify-center h-14 text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all active:scale-95 ${
                                 task.task_type === 'pick' 
                                     ? 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20' 
                                     : 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20'
