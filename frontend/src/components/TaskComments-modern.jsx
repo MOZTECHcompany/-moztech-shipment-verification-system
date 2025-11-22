@@ -575,12 +575,19 @@ export default function TaskComments({ orderId, currentUser, allUsers }) {
                     </div>
                     <div className="space-y-2">
                         {pinnedComments.map(pin => (
-                            <div key={pin.id} className="bg-white/80 p-2.5 rounded-xl border border-blue-100 shadow-sm text-sm text-gray-700 flex items-start gap-2">
+                            <div key={pin.id} className="bg-white/80 p-2.5 rounded-xl border border-blue-100 shadow-sm text-sm text-gray-700 flex items-start gap-2 group/pin relative">
                                 <UserAvatar name={pin.user_name || '系統'} size="sm" />
-                                <div className="min-w-0 flex-1">
+                                <div className="min-w-0 flex-1 pr-6">
                                     <span className="font-bold text-gray-900 mr-1">{pin.user_name || '系統'}:</span>
                                     <span className="break-all">{pin.content}</span>
                                 </div>
+                                <button 
+                                    onClick={() => handlePin(pin)}
+                                    className="absolute right-2 top-2 opacity-0 group-hover/pin:opacity-100 p-1.5 hover:bg-red-50 rounded-full text-gray-400 hover:text-red-500 transition-all"
+                                    title="取消置頂"
+                                >
+                                    <X size={14} />
+                                </button>
                             </div>
                         ))}
                     </div>
