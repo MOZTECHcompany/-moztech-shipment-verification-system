@@ -98,28 +98,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     const [showQuickReplies, setShowQuickReplies] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [pinnedComments, setPinnedComments] = useState([]);
-    const [isMinimized, setIsMinimized] = useState(false);
-
-    // Widget Mode Styles
-    const containerStyles = mode === 'widget' 
-        ? `fixed bottom-6 right-6 z-50 w-[380px] h-[600px] shadow-2xl transition-all duration-300 ${isMinimized ? 'w-14 h-14 rounded-full overflow-hidden cursor-pointer hover:scale-110' : 'rounded-[24px]'}`
-        : 'flex flex-col h-full bg-transparent relative';
-
-    if (mode === 'widget' && isMinimized) {
-        return (
-            <div 
-                className={containerStyles}
-                onClick={() => setIsMinimized(false)}
-            >
-                <div className="w-full h-full bg-black/80 backdrop-blur-xl flex items-center justify-center text-white">
-                    <MessageSquare size={24} />
-                    {comments.length > 0 && (
-                        <div className="absolute top-0 right-0 w-4 h-4 bg-red-500 rounded-full border-2 border-white"></div>
-                    )}
-                </div>
-            </div>
-        );
-    }
+    const [isMinimized, setIsMinimized] = useState(false); // Widget mode only
     const [mentionsOpen, setMentionsOpen] = useState(false);
     const [mentions, setMentions] = useState([]);
     const [mentionsUnread, setMentionsUnread] = useState(0);
@@ -559,10 +538,32 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
         );
     };
 
+    // Widget Mode: Minimized State
+    if (mode === 'widget' && isMinimized) {
+        return (
+            <div
+                style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 50 }}
+                className="w-14 h-14 bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-110 transition-all duration-300 flex items-center justify-center group"
+                onClick={() => setIsMinimized(false)}
+            >
+                <MessageSquare size={24} className="group-hover:scale-110 transition-transform" />
+                {comments.length > 0 && (
+                    <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white dark:border-gray-900">
+                        {comments.length}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    const containerClasses = mode === 'widget' 
+        ? "fixed bottom-6 right-6 z-50 w-[380px] h-[600px] rounded-[24px] bg-white/80 backdrop-blur-2xl shadow-2xl border border-white/40 flex flex-col overflow-hidden transition-all duration-300"
+        : "flex flex-col h-full bg-transparent relative w-full";
+
     return (
-        <div className={`${containerStyles} ${mode === 'widget' ? 'bg-white/80 backdrop-blur-2xl border border-white/40' : ''}`}>
+        <div className={containerClasses}>
             {/* Header */}
-            <div className={`${mode === 'widget' ? 'px-5 py-4 border-b border-gray-200/50' : 'bg-white/30 backdrop-blur-md border border-white/20 shadow-sm m-4 mb-0 px-5 py-4 rounded-3xl'} flex items-center justify-between z-10`}>
+            <div className={`${mode === 'widget' ? 'px-5 py-4 bg-white/50 border-b border-gray-100' : 'glass-panel m-4 mb-0 px-5 py-4 rounded-3xl'} flex items-center justify-between z-10`}>
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
                         <MessageSquare size={20} />
@@ -578,10 +579,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                 
                 <div className="flex items-center gap-2">
                     {mode === 'widget' && (
-                        <button 
-                            onClick={() => setIsMinimized(true)}
-                            className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-gray-600"
-                        >
+                        <button onClick={() => setIsMinimized(true)} className="p-2 hover:bg-gray-100 rounded-xl text-gray-400">
                             <X size={18} />
                         </button>
                     )}
