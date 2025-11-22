@@ -1,5 +1,6 @@
 // FloatingChatPanel.jsx - 類似 iMessage 的現代化浮動討論面板
 import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
@@ -211,13 +212,13 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
 
     // 最小化時的樣式 - 圓形 FAB
     if (isMinimized) {
-        return (
+        return ReactDOM.createPortal(
             <div
                 style={{
                     position: 'fixed',
                     right: 24 + (position * 70), // 最小化時橫向排列
                     bottom: 24,
-                    zIndex: 50
+                    zIndex: 9999 // 確保在最上層
                 }}
                 className="w-14 h-14 bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-110 transition-all duration-300 flex items-center justify-center group"
                 onClick={() => setIsMinimized(false)}
@@ -228,11 +229,12 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                         {comments.length}
                     </div>
                 )}
-            </div>
+            </div>,
+            document.body
         );
     }
 
-    return (
+    return ReactDOM.createPortal(
         <div
             ref={panelRef}
             style={{
@@ -241,7 +243,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                 top: isMaximized ? 0 : panelPosition.y,
                 width: isMaximized ? '100vw' : 380,
                 height: isMaximized ? '100vh' : 600,
-                zIndex: 50,
+                zIndex: 9999, // 確保在最上層
                 transition: isDragging ? 'none' : 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
             className={`
