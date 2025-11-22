@@ -11,8 +11,9 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const [isMaximized, setIsMaximized] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [panelPosition, setPanelPosition] = useState({
-        x: window.innerWidth - 404, // 380px width + 24px margin
-        y: window.innerHeight - 624 // 600px height + 24px margin
+        // 加入 position 偏移量，讓多個視窗開啟時會稍微錯開，不會完全重疊
+        x: window.innerWidth - 404 - (position * 30), 
+        y: window.innerHeight - 624 - (position * 30)
     });
     const [message, setMessage] = useState('');
     const [priority, setPriority] = useState('normal');
@@ -214,7 +215,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
             <div
                 style={{
                     position: 'fixed',
-                    right: 24,
+                    right: 24 + (position * 70), // 最小化時橫向排列
                     bottom: 24,
                     zIndex: 50
                 }}
