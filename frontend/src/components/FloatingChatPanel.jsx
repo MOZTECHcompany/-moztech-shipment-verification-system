@@ -11,8 +11,8 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const [isMaximized, setIsMaximized] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [panelPosition, setPanelPosition] = useState({
-        x: window.innerWidth - 420 - (position * 440),
-        y: window.innerHeight - 650
+        x: window.innerWidth - 404, // 380px width + 24px margin
+        y: window.innerHeight - 624 // 600px height + 24px margin
     });
     const [message, setMessage] = useState('');
     const [priority, setPriority] = useState('normal');
@@ -208,23 +208,22 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
         u.name?.toLowerCase().includes(mentionSearch.toLowerCase())
     ).slice(0, 5);
 
-    // 最小化時的樣式 - 類似 iOS 動態島
+    // 最小化時的樣式 - 圓形 FAB
     if (isMinimized) {
         return (
             <div
                 style={{
                     position: 'fixed',
-                    right: 20 + (position * 280),
-                    bottom: 20,
-                    zIndex: 9999
+                    right: 24,
+                    bottom: 24,
+                    zIndex: 50
                 }}
-                className="bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-105 transition-all duration-300 flex items-center gap-3 px-4 py-3"
+                className="w-14 h-14 bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-110 transition-all duration-300 flex items-center justify-center group"
                 onClick={() => setIsMinimized(false)}
             >
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <div className="font-bold text-sm">{voucherNumber}</div>
+                <MessageSquare size={24} className="group-hover:scale-110 transition-transform" />
                 {comments && comments.length > 0 && (
-                    <div className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white dark:border-gray-900">
                         {comments.length}
                     </div>
                 )}
@@ -239,9 +238,9 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                 position: 'fixed',
                 left: isMaximized ? 0 : panelPosition.x,
                 top: isMaximized ? 0 : panelPosition.y,
-                width: isMaximized ? '100vw' : 400,
+                width: isMaximized ? '100vw' : 380,
                 height: isMaximized ? '100vh' : 600,
-                zIndex: 9999,
+                zIndex: 50,
                 transition: isDragging ? 'none' : 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
             className={`
