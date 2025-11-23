@@ -11,7 +11,11 @@ export function PageHeader({ title, description, actions, className }) {
             <p className="text-sm text-gray-500 mt-1 font-medium">{description}</p>
           )}
         </div>
-        {actions && <div className="flex items-center gap-3">{actions}</div>}
+        {actions && (
+          <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2 sm:justify-end">
+            {actions}
+          </div>
+        )}
       </div>
     </div>
   );

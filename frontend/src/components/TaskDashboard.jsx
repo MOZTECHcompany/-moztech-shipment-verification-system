@@ -166,14 +166,14 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                 <div className={`h-1.5 w-full ${isUrgent ? 'bg-red-500 animate-pulse' : 'bg-blue-500'}`} />
             )}
             
-            <div className="p-7 flex flex-col h-full relative">
+            <div className="p-5 sm:p-7 flex flex-col h-full relative">
                 {/* 背景裝飾 - 更加微妙的光暈 */}
                 <div className={`absolute top-0 right-0 w-40 h-40 bg-gradient-to-br rounded-bl-[100px] -z-0 opacity-10 pointer-events-none blur-2xl ${
                     isUrgent ? 'from-red-500 to-transparent' : (isPinned ? 'from-blue-500 to-transparent' : 'from-white to-transparent')
                 }`}></div>
 
                 {/* Header Section */}
-                <div className="flex justify-between items-start mb-6 relative z-10">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between mb-6 relative z-10">
                     <div className="flex items-start gap-4 flex-1 min-w-0">
                         {batchMode && (
                             <div className="pt-1">
@@ -187,17 +187,17 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         )}
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3 mb-1">
-                                <h3 className="font-black text-4xl text-gray-900 tracking-tighter group-hover:text-blue-600 transition-colors drop-shadow-sm">
+                                <h3 className="font-black text-3xl sm:text-4xl text-gray-900 tracking-tighter group-hover:text-blue-600 transition-colors drop-shadow-sm">
                                     {task.voucher_number}
                                 </h3>
                             </div>
                             
-                            <div className="flex items-center gap-3 mt-2">
-                                <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full backdrop-blur-md border border-white/20 shadow-sm ${statusInfo.color.replace('border', '')} bg-opacity-60`}>
+                            <div className="flex flex-wrap items-center gap-3 mt-2">
+                                <div className={`flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full backdrop-blur-md border border-white/20 shadow-sm ${statusInfo.color.replace('border', '')} bg-opacity-60`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
                                     {statusInfo.text}
                                 </div>
-                                <div className="flex items-center gap-1.5 text-gray-600 font-bold bg-white/40 backdrop-blur-md border border-white/30 px-2.5 py-1 rounded-full text-[10px] shadow-sm">
+                                <div className="flex items-center gap-1.5 text-gray-600 font-bold bg-white/40 backdrop-blur-md border border-white/30 px-2.5 py-1 rounded-full text-[11px] sm:text-[12px] shadow-sm">
                                     <User size={10} />
                                     <span className="truncate max-w-[100px]">{task.customer_name}</span>
                                 </div>
@@ -206,7 +206,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                     
                     {/* 右上角工具列 - 總是顯示重要狀態 */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         {isPinned && (
                             <div className="w-10 h-10 rounded-full bg-gray-900/90 backdrop-blur text-white flex items-center justify-center shadow-lg">
                                 <Pin size={18} />
@@ -255,7 +255,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             <div className="p-5">
                                 {/* Header: Avatar + Name + Status */}
                                 <div className="flex items-center gap-3 mb-4">
-                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold text-white shadow-md border border-white/20">
+                                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold text-white shadow-md border border-white/20">
                                         {latestComment?.user_name?.[0] || 'U'}
                                     </div>
                                     <div className="flex flex-col">
@@ -280,7 +280,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                     <div className="w-1.5 rounded-full bg-gray-400/30 flex-shrink-0 self-stretch backdrop-blur-sm"></div>
                                     
                                     <div className="flex-1 py-1">
-                                        <p className="text-xl font-bold text-gray-800 leading-relaxed line-clamp-2 drop-shadow-sm">
+                                        <p className="text-lg sm:text-xl font-bold text-gray-800 leading-relaxed line-clamp-2 drop-shadow-sm">
                                             {latestComment?.content || '...'}
                                         </p>
                                     </div>
@@ -307,7 +307,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         <Button
                             variant="primary"
                             size="lg"
-                            className="w-full justify-center h-14 text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
+                            className="w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                             onClick={() => onClaim(task.id, true)}
                         >
                             <span className="flex items-center gap-2">
@@ -318,7 +318,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         <Button
                             variant="primary"
                             size="lg"
-                            className={`w-full justify-center h-14 text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all active:scale-95 ${
+                            className={`w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all active:scale-95 ${
                                 task.task_type === 'pick' 
                                     ? 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20' 
                                     : 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20'
@@ -722,7 +722,7 @@ export function TaskDashboard({ user }) {
                         <Skeleton className="h-10 w-full rounded-xl" />
                     </div>
                     {/* Stats Skeleton */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-2 mb-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-2 mb-6">
                         {Array.from({ length: 4 }).map((_, i) => (
                             <div key={i} className="bg-white/40 backdrop-blur-md rounded-2xl p-5 border border-white/20">
                                 <Skeleton className="h-6 w-24 mb-3" />
@@ -755,8 +755,8 @@ export function TaskDashboard({ user }) {
                   title="📋 任務看板"
                   description={`${user?.name || user?.username}，您好`}
                   className="relative z-50"
-                  actions={(
-                    <div className="flex items-center gap-2">
+                                    actions={(
+                                        <div className="flex flex-wrap items-center gap-2 justify-end">
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
@@ -815,7 +815,7 @@ export function TaskDashboard({ user }) {
                 />
 
                 {/* 篩選／搜尋列 */}
-                <div className="sticky top-0 z-30 -mx-4 px-4 py-3 mb-6">
+                <div className="lg:sticky lg:top-6 z-30 -mx-4 px-4 py-3 mb-6">
                     <div className="glass rounded-2xl p-2 shadow-lg border border-white/40 backdrop-blur-xl">
                         <FilterBar 
                             value={search} 
@@ -827,7 +827,7 @@ export function TaskDashboard({ user }) {
                 </div>
 
                 {/* 統計卡片 Widget 風格 */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mt-6 mb-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 mt-6 mb-8">
                   {[
                     {
                         label:'待揀貨', 
@@ -871,7 +871,7 @@ export function TaskDashboard({ user }) {
                         <div className="relative z-10 flex items-center justify-between">
                           <div>
                             <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">{c.label}</p>
-                            <p className={`text-4xl font-black tracking-tight text-gray-900 ${c.highlight ? 'animate-pulse text-orange-500' : ''}`}>
+                            <p className={`text-3xl sm:text-4xl font-black tracking-tight text-gray-900 ${c.highlight ? 'animate-pulse text-orange-500' : ''}`}>
                                 <NumberTicker value={c.value} />
                             </p>
                           </div>
@@ -886,10 +886,10 @@ export function TaskDashboard({ user }) {
                 
 
                 {/* 任務列表 */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
                     {/* 揀貨任務區 */}
                     <section className="animate-slide-up flex flex-col h-full">
-                        <div className="glass-panel rounded-2xl p-1.5 mb-4 sticky top-24 z-20 shadow-lg">
+                        <div className="glass-panel rounded-2xl p-1.5 mb-4 lg:sticky lg:top-28 z-20 shadow-lg">
                             <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl px-4 py-3 flex items-center justify-between border border-orange-100/50">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white text-orange-500 flex items-center justify-center shadow-sm">
@@ -944,7 +944,7 @@ export function TaskDashboard({ user }) {
 
                     {/* 裝箱任務區 */}
                     <section className="animate-slide-up flex flex-col h-full" style={{ animationDelay: '100ms' }}>
-                        <div className="glass-panel rounded-2xl p-1.5 mb-4 sticky top-24 z-20 shadow-lg">
+                        <div className="glass-panel rounded-2xl p-1.5 mb-4 lg:sticky lg:top-28 z-20 shadow-lg">
                             <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">

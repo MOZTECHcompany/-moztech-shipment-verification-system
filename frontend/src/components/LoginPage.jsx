@@ -49,18 +49,20 @@ export function LoginPage({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-gray-50 via-white to-gray-100">
-      <div className="w-full max-w-md" onKeyDown={handleKeyDown}>
-        <Card className="p-0 overflow-hidden">
-          <CardHeader className="pt-10 px-10 pb-6 text-center">
-            <div className="flex justify-center mb-8">
-              <img src="/MOZTECH-002.png" alt="MOZTECH Logo" className="h-20 w-20 object-contain" />
+    <div className="min-h-screen flex items-center justify-center px-4 sm:px-6 lg:px-10 py-12 sm:py-16 bg-gradient-to-br from-gray-50 via-white to-gray-100 safe-top safe-bottom">
+      <div className="w-full max-w-[420px] sm:max-w-md" onKeyDown={handleKeyDown}>
+        <Card className="p-0 overflow-hidden shadow-2xl border-white/30">
+          <CardHeader className="pt-10 px-6 sm:px-10 pb-6 text-center space-y-4">
+            <div className="flex justify-center">
+              <img src="/MOZTECH-002.png" alt="MOZTECH Logo" className="h-16 w-16 sm:h-20 sm:w-20 object-contain" />
             </div>
-            <CardTitle className="text-2xl tracking-tight">倉儲作業系統</CardTitle>
-            <CardDescription className="mt-2 text-sm">現代化智能管理平台</CardDescription>
+            <div>
+              <CardTitle className="text-xl sm:text-2xl tracking-tight">倉儲作業系統</CardTitle>
+              <CardDescription className="mt-2 text-sm">現代化智能管理平台</CardDescription>
+            </div>
           </CardHeader>
-          <CardContent className="px-10 pb-4">
-            <div className="space-y-6">
+          <CardContent className="px-6 sm:px-10 pb-6">
+            <div className="space-y-5">
               <Input
                 label="使用者名稱"
                 icon={User}
@@ -79,8 +81,8 @@ export function LoginPage({ onLogin }) {
                 autoComplete="current-password"
               />
               {error && (
-                <div className="p-3 rounded-lg border border-red-200 bg-red-50">
-                  <p className="text-sm font-medium text-red-600 text-center">{error}</p>
+                <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-center">
+                  <p className="text-sm font-medium text-red-600">{error}</p>
                 </div>
               )}
               <Button
@@ -88,7 +90,7 @@ export function LoginPage({ onLogin }) {
                 disabled={isLoggingIn}
                 variant="primary"
                 size="lg"
-                className="w-full justify-center"
+                className="w-full justify-center gap-2"
               >
                 {isLoggingIn ? (
                   <>
@@ -104,7 +106,7 @@ export function LoginPage({ onLogin }) {
               </Button>
             </div>
           </CardContent>
-          <CardFooter className="px-10 pb-8 pt-2 text-center">
+          <CardFooter className="px-6 sm:px-10 pb-8 pt-0 text-center">
             <p className="text-xs text-gray-400 font-medium">© 2025 MOZTECH 倉儲管理系統</p>
           </CardFooter>
         </Card>
