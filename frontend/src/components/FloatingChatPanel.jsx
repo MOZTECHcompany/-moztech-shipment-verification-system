@@ -76,7 +76,7 @@ const getDefaultPosition = (index, alignToContent) => {
     return { x, y };
 };
 
-const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alignToContent = true }) => {
+const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alignToContent = false }) => {
     const [isMinimized, setIsMinimized] = useState(false);
     const [isMaximized, setIsMaximized] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
