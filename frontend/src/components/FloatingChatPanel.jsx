@@ -18,6 +18,30 @@ const getContentRightEdge = () => {
     return rect.right;
 };
 
+const getXBounds = () => {
+    if (typeof window === 'undefined') return { min: PANEL_GAP, max: PANEL_GAP };
+    const viewportWidth = window.innerWidth;
+    const potentialMax = viewportWidth - PANEL_WIDTH - PANEL_GAP;
+    const min = Math.min(PANEL_GAP, potentialMax);
+    const max = Math.max(PANEL_GAP, potentialMax);
+    return { min, max };
+};
+
+const getYBounds = () => {
+    if (typeof window === 'undefined') return { min: PANEL_GAP, max: PANEL_GAP };
+    const viewportHeight = window.innerHeight;
+    const bottomAlignTop = viewportHeight - PANEL_HEIGHT - PANEL_GAP;
+    const min = Math.min(PANEL_GAP, bottomAlignTop);
+    const max = Math.max(PANEL_GAP, bottomAlignTop);
+    return { min, max };
+};
+
+const clampToBounds = (value, { min, max }) => {
+    if (Number.isNaN(value)) return min;
+    if (min === max) return min;
+    return Math.min(Math.max(value, min), max);
+};
+
 const getDefaultPosition = (index, alignToContent) => {
     if (typeof window === 'undefined') {
         return { x: PANEL_GAP, y: PANEL_GAP };
@@ -25,20 +49,24 @@ const getDefaultPosition = (index, alignToContent) => {
 
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    const y = Math.max(PANEL_GAP, viewportHeight - PANEL_HEIGHT - PANEL_GAP);
+    const yBounds = getYBounds();
+    const desiredY = viewportHeight - PANEL_HEIGHT - PANEL_GAP;
+    const y = clampToBounds(desiredY, yBounds);
 
     if (alignToContent) {
         const contentRight = getContentRightEdge();
         if (typeof contentRight === 'number') {
             const stackOffset = index * (PANEL_WIDTH + PANEL_GAP);
             const rightEdge = Math.max(PANEL_WIDTH + PANEL_GAP, contentRight - PANEL_GAP - stackOffset);
-            const x = Math.max(PANEL_GAP, rightEdge - PANEL_WIDTH);
+            const xBounds = getXBounds();
+            const x = clampToBounds(rightEdge - PANEL_WIDTH, xBounds);
             return { x, y };
         }
     }
 
     const rightOffset = PANEL_GAP + index * (PANEL_WIDTH + PANEL_GAP);
-    const x = Math.max(PANEL_GAP, viewportWidth - PANEL_WIDTH - rightOffset);
+    const xBounds = getXBounds();
+    const x = clampToBounds(viewportWidth - PANEL_WIDTH - rightOffset, xBounds);
     return { x, y };
 };
 
@@ -138,11 +166,14 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
 
     const handleMouseMove = (e) => {
         if (isDragging) {
-            const maxX = Math.max(0, window.innerWidth - PANEL_WIDTH);
-            const maxY = Math.max(0, window.innerHeight - PANEL_HEIGHT);
-            const newX = Math.min(maxX, Math.max(0, e.clientX - dragStartPos.current.x));
-            const newY = Math.min(maxY, Math.max(0, e.clientY - dragStartPos.current.y));
-            setPanelPosition({ x: newX, y: newY });
+            const xBounds = getXBounds();
+            const yBounds = getYBounds();
+            const rawX = e.clientX - dragStartPos.current.x;
+            const rawY = e.clientY - dragStartPos.current.y;
+            setPanelPosition({
+                x: clampToBounds(rawX, xBounds),
+                y: clampToBounds(rawY, yBounds)
+            });
         }
     };
 
