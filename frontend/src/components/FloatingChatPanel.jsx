@@ -1,5 +1,6 @@
 // FloatingChatPanel.jsx - 類似 iMessage 的現代化浮動討論面板
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
@@ -40,6 +41,11 @@ const clampToBounds = (value, { min, max }) => {
     if (Number.isNaN(value)) return min;
     if (min === max) return min;
     return Math.min(Math.max(value, min), max);
+};
+
+const getPortalTarget = () => {
+    if (typeof document === 'undefined') return null;
+    return document.body;
 };
 
 const getDefaultPosition = (index, alignToContent) => {
@@ -294,33 +300,33 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
         u.name?.toLowerCase().includes(mentionSearch.toLowerCase())
     ).slice(0, 5);
 
-    // 最小化時的樣式 - 圓形 FAB
-    if (isMinimized) {
-        return (
-            <div
-                style={{
-                    position: 'fixed',
-                    right: 24,
-                    bottom: 24,
-                    zIndex: 50
-                }}
-                className="w-14 h-14 bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-110 transition-all duration-300 flex items-center justify-center group"
-                onClick={() => {
-                    setIsMinimized(false);
-                    recomputePosition();
-                }}
-            >
-                <MessageSquare size={24} className="group-hover:scale-110 transition-transform" />
-                {comments && comments.length > 0 && (
-                    <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white dark:border-gray-900">
-                        {comments.length}
-                    </div>
-                )}
-            </div>
-        );
-    }
+    const portalTarget = getPortalTarget();
+    if (!portalTarget) return null;
 
-    return (
+    const minimizedFab = (
+        <div
+            style={{
+                position: 'fixed',
+                right: 24,
+                bottom: 24,
+                zIndex: 50
+            }}
+            className="w-14 h-14 bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-110 transition-all duration-300 flex items-center justify-center group"
+            onClick={() => {
+                setIsMinimized(false);
+                recomputePosition();
+            }}
+        >
+            <MessageSquare size={24} className="group-hover:scale-110 transition-transform" />
+            {comments && comments.length > 0 && (
+                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white dark:border-gray-900">
+                    {comments.length}
+                </div>
+            )}
+        </div>
+    );
+
+    const panel = (
         <div
             ref={panelRef}
             style={{
@@ -577,6 +583,12 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
             </div>
         </div>
     );
+
+    if (isMinimized) {
+        return createPortal(minimizedFab, portalTarget);
+    }
+
+    return createPortal(panel, portalTarget);
 };
 
 export default FloatingChatPanel;
