@@ -10,21 +10,21 @@ export function AppLayout({ user, onLogout, children }) {
       <header className="fixed top-6 left-0 w-full flex justify-center pointer-events-none z-50">
         <div className="pointer-events-auto w-full max-w-7xl mx-auto px-6">
           <div className="glass-panel rounded-full px-6 py-3 flex items-center justify-between transition-all duration-300 hover:scale-[1.005] shadow-lg shadow-black/5 border border-white/20 backdrop-blur-xl bg-white/40">
-          <div className="text-sm font-bold text-gray-800 tracking-wide flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-red-500 shadow-sm"></div>
-            <div className="w-3 h-3 rounded-full bg-yellow-500 shadow-sm"></div>
-            <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
-            <span className="ml-2 opacity-80">出貨／倉儲管理系統</span>
-          </div>
-          {user && (
-            <Button variant="secondary" size="sm" onClick={onLogout} leadingIcon={LogOut} className="bg-white/50 hover:bg-white/80 border-0 shadow-sm rounded-full px-4">
-              登出
-            </Button>
-          )}
+            <div className="text-sm font-bold text-gray-800 tracking-wide flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-red-500 shadow-sm"></div>
+              <div className="w-3 h-3 rounded-full bg-yellow-500 shadow-sm"></div>
+              <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
+              <span className="ml-2 opacity-80">出貨／倉儲管理系統</span>
+            </div>
+            {user && (
+              <Button variant="secondary" size="sm" onClick={onLogout} leadingIcon={LogOut} className="bg-white/50 hover:bg-white/80 border-0 shadow-sm rounded-full px-4">
+                登出
+              </Button>
+            )}
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-[1440px] px-6 pt-28 pb-8 animate-scale-up">
+      <main data-layout-content className="mx-auto max-w-[1440px] px-6 pt-28 pb-8 animate-scale-up">
         {children ? children : <Outlet />}
       </main>
     </div>

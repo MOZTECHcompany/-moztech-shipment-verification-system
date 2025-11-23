@@ -1,19 +1,52 @@
 // FloatingChatPanel.jsx - 類似 iMessage 的現代化浮動討論面板
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { useComments } from '@/api/useComments.js';
 import { Button, Badge, EmptyState, Skeleton } from '../ui';
 
-const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPositionChange }) => {
+const PANEL_WIDTH = 380;
+const PANEL_HEIGHT = 600;
+const PANEL_GAP = 24;
+
+const getContentRightEdge = () => {
+    if (typeof window === 'undefined') return null;
+    const contentEl = document.querySelector('[data-layout-content]');
+    if (!contentEl) return null;
+    const rect = contentEl.getBoundingClientRect();
+    return rect.right;
+};
+
+const getDefaultPosition = (index, alignToContent) => {
+    if (typeof window === 'undefined') {
+        return { x: PANEL_GAP, y: PANEL_GAP };
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const y = Math.max(PANEL_GAP, viewportHeight - PANEL_HEIGHT - PANEL_GAP);
+
+    if (alignToContent) {
+        const contentRight = getContentRightEdge();
+        if (typeof contentRight === 'number') {
+            const stackOffset = index * (PANEL_WIDTH + PANEL_GAP);
+            const rightEdge = Math.max(PANEL_WIDTH + PANEL_GAP, contentRight - PANEL_GAP - stackOffset);
+            const x = Math.max(PANEL_GAP, rightEdge - PANEL_WIDTH);
+            return { x, y };
+        }
+    }
+
+    const rightOffset = PANEL_GAP + index * (PANEL_WIDTH + PANEL_GAP);
+    const x = Math.max(PANEL_GAP, viewportWidth - PANEL_WIDTH - rightOffset);
+    return { x, y };
+};
+
+const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alignToContent = true }) => {
     const [isMinimized, setIsMinimized] = useState(false);
     const [isMaximized, setIsMaximized] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
-    const [panelPosition, setPanelPosition] = useState({
-        x: window.innerWidth - 404, // 380px width + 24px margin
-        y: window.innerHeight - 624 // 600px height + 24px margin
-    });
+    const [panelPosition, setPanelPosition] = useState(() => getDefaultPosition(position, alignToContent));
     const [message, setMessage] = useState('');
     const [priority, setPriority] = useState('normal');
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -31,6 +64,26 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
     const { data, isLoading, invalidate, addOptimistic } = useComments(orderId);
     const comments = (data?.pages || []).flatMap(p => p.items ?? []);
     const loading = isLoading;
+
+    const recomputePosition = useCallback(() => {
+        const next = getDefaultPosition(position, alignToContent);
+        setPanelPosition(prev => (prev.x === next.x && prev.y === next.y ? prev : next));
+    }, [position, alignToContent]);
+
+    useEffect(() => {
+        if (isMaximized || isDragging) return;
+        recomputePosition();
+    }, [position, alignToContent, isMaximized, isDragging, recomputePosition]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const handleResize = () => {
+            if (isMaximized || isDragging) return;
+            recomputePosition();
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, [recomputePosition, isMaximized, isDragging]);
 
     // 獲取用戶列表
     useEffect(() => {
@@ -85,8 +138,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
 
     const handleMouseMove = (e) => {
         if (isDragging) {
-            const newX = Math.max(0, Math.min(window.innerWidth - 400, e.clientX - dragStartPos.current.x));
-            const newY = Math.max(0, Math.min(window.innerHeight - 60, e.clientY - dragStartPos.current.y));
+            const maxX = Math.max(0, window.innerWidth - PANEL_WIDTH);
+            const maxY = Math.max(0, window.innerHeight - PANEL_HEIGHT);
+            const newX = Math.min(maxX, Math.max(0, e.clientX - dragStartPos.current.x));
+            const newY = Math.min(maxY, Math.max(0, e.clientY - dragStartPos.current.y));
             setPanelPosition({ x: newX, y: newY });
         }
     };
@@ -219,7 +274,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                     zIndex: 50
                 }}
                 className="w-14 h-14 bg-black/80 backdrop-blur-xl text-white rounded-full shadow-2xl border border-white/10 cursor-pointer hover:scale-110 transition-all duration-300 flex items-center justify-center group"
-                onClick={() => setIsMinimized(false)}
+                onClick={() => {
+                    setIsMinimized(false);
+                    recomputePosition();
+                }}
             >
                 <MessageSquare size={24} className="group-hover:scale-110 transition-transform" />
                 {comments && comments.length > 0 && (
@@ -238,8 +296,8 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, onPo
                 position: 'fixed',
                 left: isMaximized ? 0 : panelPosition.x,
                 top: isMaximized ? 0 : panelPosition.y,
-                width: isMaximized ? '100vw' : 380,
-                height: isMaximized ? '100vh' : 600,
+                width: isMaximized ? '100vw' : PANEL_WIDTH,
+                height: isMaximized ? '100vh' : PANEL_HEIGHT,
                 zIndex: 50,
                 transition: isDragging ? 'none' : 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
