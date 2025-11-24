@@ -27,9 +27,16 @@ function authenticateToken(req, res, next) {
             logger.warn(`Token 驗證失敗: ${err.message}`);
             return res.status(403).json({ message: 'Token 無效或已過期' });
         }
-        
-        logger.debug(`用戶認證成功: ${user.username} (${user.role})`);
-        req.user = user;
+
+        const normalizedRole = user.role ? String(user.role).trim().toLowerCase() : null;
+        const normalizedUser = {
+            ...user,
+            id: user.id ?? user.userId,
+            role: normalizedRole
+        };
+
+        logger.debug(`用戶認證成功: ${normalizedUser.username} (${normalizedUser.role})`);
+        req.user = normalizedUser;
         next();
     });
 }

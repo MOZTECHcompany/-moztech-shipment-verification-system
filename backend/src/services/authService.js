@@ -17,9 +17,9 @@ class AuthService {
         try {
             logger.debug(`登入嘗試: ${username}`);
 
-            // 查詢用戶
+            // 查詢用戶（忽略大小寫）
             const result = await pool.query(
-                'SELECT * FROM users WHERE username = $1',
+                'SELECT id, username, password, name, role FROM users WHERE LOWER(username) = LOWER($1)',
                 [username]
             );
 
@@ -37,25 +37,30 @@ class AuthService {
                 throw new Error('用戶名或密碼錯誤');
             }
 
-            // 生成 JWT
-            const token = jwt.sign(
-                { 
-                    userId: user.id, 
-                    username: user.username, 
-                    role: user.role 
+            const cleanedRole = user.role ? String(user.role).trim().toLowerCase() : null;
+
+            // 生成 JWT（與 v6 index.js 相容）
+            const accessToken = jwt.sign(
+                {
+                    id: user.id,
+                    username: user.username,
+                    name: user.name,
+                    role: cleanedRole
                 },
                 process.env.JWT_SECRET,
-                { expiresIn: '24h' }
+                { expiresIn: '8h' }
             );
 
-            logger.info(`用戶登入成功: ${username} (${user.role})`);
-
-            // 返回用戶資訊（不包含密碼）
-            const { password: _, ...userWithoutPassword } = user;
+            logger.info(`用戶登入成功: ${username} (${cleanedRole || 'unknown'})`);
 
             return {
-                token,
-                user: userWithoutPassword
+                accessToken,
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    name: user.name,
+                    role: cleanedRole
+                }
             };
         } catch (error) {
             logger.error('登入服務錯誤:', error);
@@ -86,19 +91,37 @@ class AuthService {
     async refreshToken(oldToken) {
         try {
             const decoded = await this.verifyToken(oldToken);
-            
-            // 生成新 token
-            const newToken = jwt.sign(
-                { 
-                    userId: decoded.userId, 
-                    username: decoded.username, 
-                    role: decoded.role 
-                },
-                process.env.JWT_SECRET,
-                { expiresIn: '24h' }
-            );
 
-            logger.info(`Token 已刷新: ${decoded.username}`);
+            const userId = decoded.id ?? decoded.userId;
+            if (!userId) {
+                throw new Error('Token 無效或已過期');
+            }
+
+            let username = decoded.username;
+            let name = decoded.name;
+            let role = decoded.role ? String(decoded.role).trim().toLowerCase() : null;
+
+            if (!username || !name || !role) {
+                const userResult = await pool.query(
+                    'SELECT username, name, role FROM users WHERE id = $1',
+                    [userId]
+                );
+
+                if (userResult.rowCount === 0) {
+                    throw new Error('找不到用戶');
+                }
+
+                const dbUser = userResult.rows[0];
+                username = username || dbUser.username;
+                name = name || dbUser.name;
+                role = role || (dbUser.role ? String(dbUser.role).trim().toLowerCase() : null);
+            }
+
+            const payload = { id: userId, username, name, role };
+
+            const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
+
+            logger.info(`Token 已刷新: ${username}`);
             return newToken;
         } catch (error) {
             logger.error('刷新 Token 失敗:', error);

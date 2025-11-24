@@ -19,11 +19,11 @@ router.post('/login', async (req, res, next) => {
         }
 
         const result = await authService.login(username, password);
-        
+
         res.json(result);
     } catch (error) {
         if (error.message.includes('用戶名或密碼錯誤')) {
-            return res.status(401).json({ message: error.message });
+            return res.status(400).json({ message: error.message });
         }
         next(error);
     }
@@ -42,8 +42,8 @@ router.post('/refresh', async (req, res, next) => {
         }
 
         const newToken = await authService.refreshToken(token);
-        
-        res.json({ token: newToken });
+
+        res.json({ accessToken: newToken });
     } catch (error) {
         res.status(401).json({ message: error.message });
     }
