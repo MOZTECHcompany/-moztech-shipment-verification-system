@@ -3,6 +3,7 @@
 
 const express = require('express');
 const http = require('http');
+const crypto = require('crypto');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const helmet = require('helmet');
@@ -17,6 +18,11 @@ const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandl
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const taskRoutes = require('./routes/taskRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+const commentRoutes = require('./routes/commentRoutes');
+const maintenanceRoutes = require('./routes/maintenanceRoutes');
 // TODO: 添加其他路由
 // const orderRoutes = require('./routes/orderRoutes');
 // const taskRoutes = require('./routes/taskRoutes');
@@ -89,6 +95,17 @@ app.use(helmet());
 app.use(morgan('dev'));
 
 app.use((req, res, next) => {
+    try {
+        const id = (crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2);
+        req.requestId = id;
+        res.setHeader('X-Request-Id', id);
+    } catch (e) {
+        logger.warn('requestId 產生失敗:', e);
+    }
+    next();
+});
+
+app.use((req, res, next) => {
     res.header('Vary', 'Origin');
     next();
 });
@@ -118,8 +135,13 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 
 // 以下路由需要認證
-app.use('/api/users', authenticateToken, userRoutes);
+app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
+app.use('/api', authenticateToken, taskRoutes);
+app.use('/api', authenticateToken, orderRoutes);
+app.use('/api', authenticateToken, analyticsRoutes);
+app.use('/api', authenticateToken, commentRoutes);
+app.use('/api', authenticateToken, maintenanceRoutes);
 
 // TODO: 添加其他需要認證的路由
 // app.use('/api/orders', authenticateToken, orderRoutes);

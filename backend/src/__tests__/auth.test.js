@@ -19,7 +19,7 @@ describe('AuthService', () => {
     });
 
     describe('login', () => {
-        it('應該成功登入並返回 token 和用戶資訊', async () => {
+        it('應該成功登入並返回 accessToken 和用戶資訊', async () => {
             // 準備測試數據
             const mockUser = {
                 id: 1,
@@ -39,7 +39,7 @@ describe('AuthService', () => {
             const result = await authService.login('testuser', 'password123');
 
             // 驗證結果
-            expect(result).toHaveProperty('token');
+            expect(result).toHaveProperty('accessToken');
             expect(result).toHaveProperty('user');
             expect(result.user.username).toBe('testuser');
             expect(result.user.role).toBe('admin');
@@ -47,7 +47,7 @@ describe('AuthService', () => {
 
             // 驗證資料庫查詢被調用
             expect(pool.query).toHaveBeenCalledWith(
-                'SELECT * FROM users WHERE username = $1',
+                'SELECT id, username, password, name, role FROM users WHERE LOWER(username) = LOWER($1)',
                 ['testuser']
             );
         });
