@@ -4,6 +4,8 @@ import { cx } from './utils';
 // 通用輸入框：支援 label、icon、錯誤訊息，與 Apple 風格聚焦樣式
 export function Input({
   label,
+  id,
+  name,
   type = 'text',
   value,
   onChange,
@@ -13,13 +15,16 @@ export function Input({
   className,
   autoComplete,
   onKeyDown,
+  disabled,
+  required,
+  autoFocus,
 }) {
   const [focused, setFocused] = useState(false);
 
   return (
     <div className={cx('w-full', className)}>
       {label && (
-        <label className="block text-sm font-semibold text-gray-700 mb-2.5">
+        <label htmlFor={id || name} className="block text-sm font-semibold text-gray-700 mb-2.5">
           {label}
         </label>
       )}
@@ -35,6 +40,8 @@ export function Input({
           />
         )}
         <input
+          id={id || name}
+          name={name}
           type={type}
           value={value}
           onChange={onChange}
@@ -43,12 +50,17 @@ export function Input({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onKeyDown={onKeyDown}
+          disabled={disabled}
+          required={required}
+          autoFocus={autoFocus}
           className={cx(
             'relative w-full font-medium outline-none transition-all duration-200',
             'bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl',
             'placeholder-gray-400 text-gray-900',
             'py-4', Icon ? 'pl-12 pr-4' : 'px-4',
-            'focus:bg-white focus:border-primary/50 focus:ring-4 focus:ring-primary/10 focus:shadow-lg',
+            disabled
+              ? 'opacity-60 cursor-not-allowed'
+              : 'focus:bg-white focus:border-primary/50 focus:ring-4 focus:ring-primary/10 focus:shadow-lg',
             error ? 'border-red-300 bg-red-50/50 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-100' : ''
           )}
         />
