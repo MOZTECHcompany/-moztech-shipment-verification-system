@@ -5,6 +5,31 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
+const userService = require('../services/userService');
+
+// 與舊版 API 兼容：POST /api/admin/create-user
+router.post('/create-user', async (req, res) => {
+  try {
+    let { username, password, name, role } = req.body || {};
+    if (!username || !password || !name || !role) {
+      return res.status(400).json({ message: '請提供完整的使用者資料' });
+    }
+
+    role = String(role).trim().toLowerCase();
+    const user = await userService.createUser({ username, password, name, role });
+
+    return res.status(201).json({
+      message: `使用者 ${user.username} (${user.role}) 已成功建立`,
+      user
+    });
+  } catch (error) {
+    if (error.message === '用戶名已存在') {
+      return res.status(409).json({ message: error.message });
+    }
+    logger.error('Legacy create-user endpoint failed:', error);
+    return res.status(500).json({ message: '建立使用者失敗', error: error.message });
+  }
+});
 
 // POST /api/admin/maintenance/retention/run
 // 可接受可選參數覆寫保留期間：logsDays, mentionsDays, readsDays, idleMinutes
