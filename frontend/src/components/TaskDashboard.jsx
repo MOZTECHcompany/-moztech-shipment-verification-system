@@ -246,8 +246,8 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                 )}
 
                 {/* 評論區塊 - 依照第二張圖設計重構 */}
-                {hasComments && (
-                    <div className="mt-auto mb-6">
+                <div className="mt-auto mb-6">
+                    {hasComments ? (
                         <div 
                             onClick={handleOpenChat}
                             className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/40 backdrop-blur-md border border-white/40 transition-all hover:bg-white/60 hover:shadow-lg group/chat"
@@ -298,8 +298,18 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 </span>
                             </div>
                         </div>
-                    </div>
-                )}
+                    ) : (
+                        <div 
+                            onClick={handleOpenChat}
+                            className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/20 backdrop-blur-sm border border-white/20 border-dashed transition-all hover:bg-white/40 hover:border-white/40 hover:shadow-md group/chat flex flex-col items-center justify-center py-6 gap-2 text-gray-500 hover:text-blue-600"
+                        >
+                            <div className="w-10 h-10 rounded-full bg-white/30 flex items-center justify-center mb-1 group-hover/chat:scale-110 transition-transform">
+                                <MessageSquare size={20} className="opacity-70" />
+                            </div>
+                            <span className="text-sm font-bold">尚無留言，點擊開始討論</span>
+                        </div>
+                    )}
+                </div>
 
                 {/* 主要操作按鈕 */}
                 <div className="mt-auto pt-2">
