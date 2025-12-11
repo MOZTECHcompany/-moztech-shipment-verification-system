@@ -7,35 +7,13 @@ const logger = require('../utils/logger');
 
 class UserService {
     /**
-     * 創建新用戶
+     * 創建新用戶 (ERP Integration: Simplified, might fail on role)
      */
     async createUser({ username, password, name, role }) {
-        try {
-            // 檢查用戶名是否已存在
-            const existing = await pool.query(
-                'SELECT id FROM users WHERE username = $1',
-                [username]
-            );
-
-            if (existing.rows.length > 0) {
-                throw new Error('用戶名已存在');
-            }
-
-            // 加密密碼
-            const hashedPassword = await bcrypt.hash(password, 10);
-
-            // 插入新用戶
-            const result = await pool.query(
-                'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, username, name, role, created_at',
-                [username, hashedPassword, name, role]
-            );
-
-            logger.info(`新用戶已創建: ${username} (${role})`);
-            return result.rows[0];
-        } catch (error) {
-            logger.error('創建用戶失敗:', error);
-            throw error;
-        }
+        // ERP uses email, not username. We assume username is email.
+        // ERP uses password_hash.
+        // Role requires separate insert.
+        throw new Error('ERP Integration: Create User not fully supported yet via legacy API');
     }
 
     /**
@@ -43,9 +21,15 @@ class UserService {
      */
     async getAllUsers() {
         try {
-            const result = await pool.query(
-                'SELECT id, username, name, role, created_at FROM users ORDER BY created_at DESC'
-            );
+            // Map ERP users to legacy format
+            // We assume the first role found is the primary role
+            const result = await pool.query(`
+                SELECT u.id, u.email as username, u.name, r.name as role, u.created_at 
+                FROM users u
+                LEFT JOIN user_roles ur ON u.id = ur.user_id
+                LEFT JOIN roles r ON ur.role_id = r.id
+                ORDER BY u.created_at DESC
+            `);
             return result.rows;
         } catch (error) {
             logger.error('獲取用戶列表失敗:', error);
@@ -58,10 +42,13 @@ class UserService {
      */
     async getUserById(userId) {
         try {
-            const result = await pool.query(
-                'SELECT id, username, name, role, created_at FROM users WHERE id = $1',
-                [userId]
-            );
+            const result = await pool.query(`
+                SELECT u.id, u.email as username, u.name, r.name as role, u.created_at 
+                FROM users u
+                LEFT JOIN user_roles ur ON u.id = ur.user_id
+                LEFT JOIN roles r ON ur.role_id = r.id
+                WHERE u.id = $1
+            `, [userId]);
 
             if (result.rows.length === 0) {
                 throw new Error('用戶不存在');
@@ -78,68 +65,13 @@ class UserService {
      * 更新用戶
      */
     async updateUser(userId, { name, role, password }) {
-        try {
-            const fields = [];
-            const values = [];
-            let paramIndex = 1;
-
-            if (name !== undefined) {
-                fields.push(`name = $${paramIndex++}`);
-                values.push(name);
-            }
-
-            if (role !== undefined) {
-                fields.push(`role = $${paramIndex++}`);
-                values.push(role);
-            }
-
-            if (password) {
-                const hashedPassword = await bcrypt.hash(password, 10);
-                fields.push(`password = $${paramIndex++}`);
-                values.push(hashedPassword);
-            }
-
-            if (fields.length === 0) {
-                throw new Error('沒有提供要更新的欄位');
-            }
-
-            values.push(userId);
-            const query = `UPDATE users SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, username, name, role`;
-
-            const result = await pool.query(query, values);
-
-            if (result.rows.length === 0) {
-                throw new Error('用戶不存在');
-            }
-
-            logger.info(`用戶已更新: ID ${userId}`);
-            return result.rows[0];
-        } catch (error) {
-            logger.error(`更新用戶失敗 (ID: ${userId}):`, error);
-            throw error;
-        }
+        // ERP Integration: Update not fully supported
+        throw new Error('ERP Integration: Update User not fully supported yet via legacy API');
     }
-
-    /**
-     * 刪除用戶
-     */
+    
     async deleteUser(userId) {
-        try {
-            const result = await pool.query(
-                'DELETE FROM users WHERE id = $1 RETURNING username',
-                [userId]
-            );
-
-            if (result.rows.length === 0) {
-                throw new Error('用戶不存在');
-            }
-
-            logger.info(`用戶已刪除: ${result.rows[0].username} (ID: ${userId})`);
-            return result.rows[0];
-        } catch (error) {
-            logger.error(`刪除用戶失敗 (ID: ${userId}):`, error);
-            throw error;
-        }
+         // ERP Integration: Delete not fully supported
+        throw new Error('ERP Integration: Delete User not fully supported yet via legacy API');
     }
 }
 

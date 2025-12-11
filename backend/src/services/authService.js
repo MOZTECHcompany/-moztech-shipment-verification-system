@@ -9,7 +9,7 @@ const logger = require('../utils/logger');
 class AuthService {
     /**
      * 用戶登入
-     * @param {string} username - 用戶名
+     * @param {string} username - 用戶名 (ERP: Email)
      * @param {string} password - 密碼
      * @returns {Object} - { token, user }
      */
@@ -17,11 +17,15 @@ class AuthService {
         try {
             logger.debug(`登入嘗試: ${username}`);
 
-            // 查詢用戶（忽略大小寫）
-            const result = await pool.query(
-                'SELECT id, username, password, name, role FROM users WHERE LOWER(username) = LOWER($1)',
-                [username]
-            );
+            // ERP uses email. We assume username input is email.
+            // Join roles to get role name.
+            const result = await pool.query(`
+                SELECT u.id, u.email as username, u.password_hash as password, u.name, r.name as role 
+                FROM users u
+                LEFT JOIN user_roles ur ON u.id = ur.user_id
+                LEFT JOIN roles r ON ur.role_id = r.id
+                WHERE LOWER(u.email) = LOWER($1)
+            `, [username]);
 
             if (result.rows.length === 0) {
                 logger.warn(`登入失敗: 用戶不存在 - ${username}`);
@@ -48,13 +52,13 @@ class AuthService {
                     role: cleanedRole
                 },
                 process.env.JWT_SECRET,
-                { expiresIn: '8h' }
+                { expiresIn: '12h' } // 延長 Token 效期
             );
 
-            logger.info(`用戶登入成功: ${username} (${cleanedRole || 'unknown'})`);
+            logger.info(`登入成功: ${username} (${cleanedRole})`);
 
             return {
-                accessToken,
+                token: accessToken,
                 user: {
                     id: user.id,
                     username: user.username,
@@ -63,69 +67,53 @@ class AuthService {
                 }
             };
         } catch (error) {
-            logger.error('登入服務錯誤:', error);
+            logger.error('登入過程發生錯誤:', error);
             throw error;
         }
     }
 
     /**
-     * 驗證 Token
-     * @param {string} token - JWT token
-     * @returns {Object} - 解碼後的用戶資訊
+     * 刷新 Token (保持不變，只要 payload 結構一致)
      */
-    async verifyToken(token) {
+    async refreshToken(token) {
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            return decoded;
-        } catch (error) {
-            logger.warn('Token 驗證失敗:', error.message);
-            throw new Error('Token 無效或已過期');
-        }
-    }
+            const result = await pool.query(
+                'SELECT id, email as username, name FROM users WHERE id = $1',
+                [decoded.id]
+            );
 
-    /**
-     * 刷新 Token
-     * @param {string} oldToken - 舊的 JWT token
-     * @returns {string} - 新的 token
-     */
-    async refreshToken(oldToken) {
-        try {
-            const decoded = await this.verifyToken(oldToken);
-
-            const userId = decoded.id ?? decoded.userId;
-            if (!userId) {
-                throw new Error('Token 無效或已過期');
+            if (result.rows.length === 0) {
+                throw new Error('用戶不存在');
             }
 
-            let username = decoded.username;
-            let name = decoded.name;
-            let role = decoded.role ? String(decoded.role).trim().toLowerCase() : null;
+            const user = result.rows[0];
+            // We need role again
+             const roleResult = await pool.query(`
+                SELECT r.name as role 
+                FROM user_roles ur
+                JOIN roles r ON ur.role_id = r.id
+                WHERE ur.user_id = $1
+            `, [user.id]);
+            
+            const role = roleResult.rows[0]?.role;
+            const cleanedRole = role ? String(role).trim().toLowerCase() : null;
 
-            if (!username || !name || !role) {
-                const userResult = await pool.query(
-                    'SELECT username, name, role FROM users WHERE id = $1',
-                    [userId]
-                );
+            const newToken = jwt.sign(
+                {
+                    id: user.id,
+                    username: user.username,
+                    name: user.name,
+                    role: cleanedRole
+                },
+                process.env.JWT_SECRET,
+                { expiresIn: '12h' }
+            );
 
-                if (userResult.rowCount === 0) {
-                    throw new Error('找不到用戶');
-                }
-
-                const dbUser = userResult.rows[0];
-                username = username || dbUser.username;
-                name = name || dbUser.name;
-                role = role || (dbUser.role ? String(dbUser.role).trim().toLowerCase() : null);
-            }
-
-            const payload = { id: userId, username, name, role };
-
-            const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
-
-            logger.info(`Token 已刷新: ${username}`);
             return newToken;
         } catch (error) {
             logger.error('刷新 Token 失敗:', error);
-            throw error;
+            throw new Error('無效的 Token');
         }
     }
 }

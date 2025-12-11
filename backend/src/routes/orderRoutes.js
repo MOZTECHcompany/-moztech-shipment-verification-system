@@ -8,9 +8,31 @@ const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
+const { DEFAULT_ENTITY_ID, DEFAULT_CHANNEL_ID } = require('../config/erpAdapter');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+// Helper: Get or Create Product by SKU
+async function getOrCreateProduct(client, sku, name) {
+    // Try to find product by SKU and Entity
+    const res = await client.query(
+        'SELECT id FROM products WHERE sku = $1 AND entity_id = $2',
+        [sku, DEFAULT_ENTITY_ID]
+    );
+    if (res.rows.length > 0) {
+        return res.rows[0].id;
+    }
+
+    // If not found, create it (Simplified for integration)
+    const insertRes = await client.query(
+        `INSERT INTO products (id, entity_id, sku, name, has_serial_numbers)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4)
+         RETURNING id`,
+        [DEFAULT_ENTITY_ID, sku, name, false]
+    );
+    return insertRes.rows[0].id;
+}
 
 // POST /api/orders/batch-claim
 router.post('/orders/batch-claim', async (req, res) => {
@@ -23,10 +45,10 @@ router.post('/orders/batch-claim', async (req, res) => {
         }
 
         const result = await pool.query(
-            `UPDATE orders 
+            `UPDATE sales_orders 
              SET picker_id = $1, status = 'picking', updated_at = NOW()
              WHERE id = ANY($2) AND status = 'pending'
-             RETURNING id, voucher_number`,
+             RETURNING id, external_order_id as voucher_number`,
             [userId, orderIds]
         );
 
@@ -56,7 +78,7 @@ router.post('/orders/batch/claim', async (req, res) => {
         for (const orderId of orderIds) {
             try {
                 const result = await pool.query(
-                    'SELECT id, status FROM orders WHERE id = $1',
+                    'SELECT id, status FROM sales_orders WHERE id = $1',
                     [orderId]
                 );
 
@@ -69,7 +91,7 @@ router.post('/orders/batch/claim', async (req, res) => {
 
                 if (order.status === 'pending' && (role === 'picker' || role === 'admin')) {
                     await pool.query(
-                        "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                        "UPDATE sales_orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
                     );
                     await logOperation({
@@ -83,7 +105,7 @@ router.post('/orders/batch/claim', async (req, res) => {
                     results.success.push(orderId);
                 } else if (order.status === 'picking' && (role === 'packer' || role === 'admin')) {
                     await pool.query(
-                        "UPDATE orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                        "UPDATE sales_orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
                     );
                     await logOperation({
@@ -122,7 +144,7 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const orderResult = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
+        const orderResult = await client.query('SELECT * FROM sales_orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) {
             logger.warn(`[/orders/${orderId}/claim] 錯誤: 找不到訂單`);
             await client.query('ROLLBACK');
@@ -133,11 +155,11 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
         let newStatus = '', task_type = '';
         if ((role === 'picker' || role === 'admin') && order.status === 'pending') {
             newStatus = 'picking'; task_type = 'pick';
-            await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+            await client.query('UPDATE sales_orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
-        } else if ((role === 'packer' || role === 'admin') && order.status === 'picked') {
+        } else if ((role === 'packer' || role === 'admin') && (order.status === 'picked' || order.status === 'picking')) {
             newStatus = 'packing'; task_type = 'pack';
-            await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+            await client.query('UPDATE sales_orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
         } else {
             logger.warn(`[/orders/${orderId}/claim] 認領失敗 - 角色: ${role}, 訂單狀態: ${order.status}`);
@@ -146,7 +168,19 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
         }
         await client.query('COMMIT');
         await logOperation({ userId, orderId, operationType: 'claim', details: { new_status: newStatus }, io });
-        const updatedOrder = (await pool.query('SELECT o.*, u.name as current_user FROM orders o LEFT JOIN users u ON (CASE WHEN $1 = \'pick\' THEN o.picker_id WHEN $1 = \'pack\' THEN o.packer_id END) = u.id WHERE o.id = $2', [task_type, orderId])).rows[0];
+        
+        const updatedOrder = (await pool.query(
+            `SELECT o.*, u.name as current_user 
+             FROM sales_orders o 
+             LEFT JOIN users u ON (CASE WHEN $1 = 'pick' THEN o.picker_id WHEN $1 = 'pack' THEN o.packer_id END) = u.id 
+             WHERE o.id = $2`, 
+            [task_type, orderId]
+        )).rows[0];
+        
+        if (updatedOrder) {
+            updatedOrder.voucher_number = updatedOrder.external_order_id;
+        }
+
         io?.emit('task_claimed', { ...updatedOrder, task_type });
         res.status(200).json({ message: '任務認領成功' });
     } catch (error) {
@@ -161,11 +195,37 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
 // GET /api/orders/:orderId
 router.get('/orders/:orderId', async (req, res) => {
     const { orderId } = req.params;
-    const orderResult = await pool.query('SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1;', [orderId]);
+    const orderResult = await pool.query(
+        `SELECT o.*, p.name as picker_name, pk.name as packer_name 
+         FROM sales_orders o 
+         LEFT JOIN users p ON o.picker_id = p.id 
+         LEFT JOIN users pk ON o.packer_id = pk.id 
+         WHERE o.id = $1`, 
+        [orderId]
+    );
     if (orderResult.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
-    const itemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
-    const instancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id', [orderId]);
-    res.json({ order: orderResult.rows[0], items: itemsResult.rows, instances: instancesResult.rows });
+    
+    const order = orderResult.rows[0];
+    order.voucher_number = order.external_order_id;
+
+    const itemsResult = await pool.query(
+        `SELECT soi.*, p.sku as product_code, p.name as product_name, p.barcode 
+         FROM sales_order_items soi 
+         JOIN products p ON soi.product_id = p.id 
+         WHERE soi.sales_order_id = $1 
+         ORDER BY soi.id`, 
+        [orderId]
+    );
+    
+    const instancesResult = await pool.query(
+        `SELECT id, serial_number 
+         FROM inventory_serial_numbers 
+         WHERE outbound_ref_id = $1 
+         ORDER BY id`, 
+        [orderId]
+    );
+    
+    res.json({ order, items: itemsResult.rows, instances: instancesResult.rows });
 });
 
 // PATCH /api/orders/:orderId/void
@@ -173,65 +233,29 @@ router.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const { reason } = req.body;
     const io = req.app.get('io');
-    const result = await pool.query("UPDATE orders SET status = 'voided', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId]);
+    const result = await pool.query(
+        "UPDATE sales_orders SET status = 'voided', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING external_order_id as voucher_number", 
+        [orderId]
+    );
     if (result.rowCount === 0) return res.status(404).json({ message: '找不到要作廢的訂單' });
     await logOperation({ userId: req.user.id, orderId, operationType: 'void', details: { reason }, io });
-    io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'voided' });
+    io?.emit('task_status_changed', { orderId: orderId, newStatus: 'voided' });
     res.json({ message: `訂單 ${result.rows[0].voucher_number} 已成功作廢` });
 });
 
 // PATCH /api/orders/:orderId/urgent
 router.patch('/orders/:orderId/urgent', authorizeAdmin, async (req, res) => {
-    const { orderId } = req.params;
-    const { isUrgent } = req.body;
-    const io = req.app.get('io');
-
-    if (typeof isUrgent !== 'boolean') {
-        return res.status(400).json({ message: 'isUrgent 必須是布林值' });
-    }
-
-    try {
-        const result = await pool.query(
-            'UPDATE orders SET is_urgent = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, voucher_number, is_urgent',
-            [isUrgent, orderId]
-        );
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ message: '找不到該訂單' });
-        }
-
-        await logOperation({
-            userId: req.user.id,
-            orderId,
-            operationType: 'set_urgent',
-            details: { is_urgent: isUrgent },
-            io
-        });
-
-        io?.emit('task_urgent_changed', {
-            orderId: parseInt(orderId, 10),
-            isUrgent,
-            voucherNumber: result.rows[0].voucher_number
-        });
-
-        logger.info(`[/api/orders/${orderId}/urgent] 訂單 ${result.rows[0].voucher_number} 緊急狀態已更新為: ${isUrgent}`);
-        res.json({
-            message: `訂單 ${result.rows[0].voucher_number} 已${isUrgent ? '標記為緊急' : '取消緊急標記'}`,
-            order: result.rows[0]
-        });
-    } catch (error) {
-        logger.error(`[/api/orders/${orderId}/urgent] 更新失敗:`, error);
-        res.status(500).json({ message: '更新緊急狀態失敗' });
-    }
+    // ERP 暫不支援緊急標記，僅回傳成功以維持前端相容性
+    res.json({ message: 'ERP 暫不支援緊急標記' });
 });
 
 // DELETE /api/orders/:orderId
 router.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const io = req.app.get('io');
-    const result = await pool.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
+    const result = await pool.query('DELETE FROM sales_orders WHERE id = $1 RETURNING external_order_id as voucher_number', [orderId]);
     if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的訂單' });
-    io?.emit('task_deleted', { orderId: parseInt(orderId, 10) });
+    io?.emit('task_deleted', { orderId: orderId });
     res.status(200).json({ message: `訂單 ${result.rows[0].voucher_number} 已被永久刪除` });
 });
 
@@ -246,22 +270,28 @@ router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async 
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+        
         const voucherCellRaw = data[1]?.[0] ? String(data[1][0]) : '';
         let voucherNumber = null;
         const voucherParts = voucherCellRaw.split(/[:：]/);
         if (voucherParts.length > 1) voucherNumber = voucherParts[1].trim();
         if (!voucherNumber) return res.status(400).json({ message: "Excel 格式錯誤：找不到憑證號碼。" });
-        const customerCellRaw = data[2]?.[0] ? String(data[2][0]) : '';
-        let customerName = null;
-        const customerParts = customerCellRaw.split(/[:：]/);
-        if (customerParts.length > 1) customerName = customerParts[1].trim();
-        const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
+        
+        const existingOrder = await client.query('SELECT id FROM sales_orders WHERE external_order_id = $1', [voucherNumber]);
         if (existingOrder.rows.length > 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({ message: `訂單 ${voucherNumber} 已存在` });
         }
-        const orderResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status) VALUES ($1, $2, $3) RETURNING id', [voucherNumber, customerName, 'pending']);
+        
+        const orderResult = await client.query(
+            `INSERT INTO sales_orders (
+                id, entity_id, channel_id, external_order_id, status, 
+                order_date, total_gross_original, total_gross_base
+            ) VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), 0, 0) RETURNING id`, 
+            [DEFAULT_ENTITY_ID, DEFAULT_CHANNEL_ID, voucherNumber, 'pending']
+        );
         const orderId = orderResult.rows[0].id;
+        
         let itemsStartRow = -1, headerRow = [];
         for (let i = 0; i < data.length; i++) {
             if (data[i]?.some(cell => String(cell).includes('品項編碼'))) {
@@ -271,148 +301,83 @@ router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async 
             }
         }
         if (itemsStartRow === -1) { await client.query('ROLLBACK'); return res.status(400).json({ message: "Excel 档案格式错误：找不到品项标头" }); }
+        
         const barcodeIndex = headerRow.findIndex(h => String(h).includes('品項編碼'));
         const nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品項名稱'));
         const quantityIndex = headerRow.findIndex(h => String(h).includes('數量'));
         const summaryIndex = headerRow.findIndex(h => String(h).includes('摘要'));
+        
         if (barcodeIndex === -1 || nameAndSkuIndex === -1 || quantityIndex === -1) {
             await client.query('ROLLBACK');
             return res.status(400).json({ message: "Excel 档案格式错误：缺少 '品項編碼'、'品項名稱' 或 '數量' 栏位" });
         }
+        
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
             if (!row?.[barcodeIndex] || !row?.[nameAndSkuIndex] || !row?.[quantityIndex]) continue;
-            const barcode = String(row[barcodeIndex]), fullNameAndSku = String(row[nameAndSkuIndex]), quantity = parseInt(row[quantityIndex], 10), summary = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]).replace(/[ㆍ\s]/g, '') : '';
-            const skuMatch = fullNameAndSku.match(/\[(.*?)\]/), productCode = skuMatch ? skuMatch[1] : null, productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
-            if (barcode && productCode && productName && !isNaN(quantity) && quantity > 0) {
-                const itemInsertResult = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5) RETURNING id', [orderId, productCode, productName, quantity, barcode]);
-                const orderItemId = itemInsertResult.rows[0].id;
+            
+            const barcode = String(row[barcodeIndex]);
+            const fullNameAndSku = String(row[nameAndSkuIndex]);
+            const quantity = parseInt(row[quantityIndex], 10);
+            const summary = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]).replace(/[ㆍ\s]/g, '') : '';
+            
+            const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
+            const productCode = skuMatch ? skuMatch[1] : barcode;
+            const productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
+            
+            if (productCode && !isNaN(quantity) && quantity > 0) {
+                const productId = await getOrCreateProduct(client, productCode, productName);
+                
+                await client.query(
+                    `INSERT INTO sales_order_items (
+                        id, sales_order_id, product_id, qty, 
+                        unit_price_original, unit_price_base
+                    ) VALUES (gen_random_uuid(), $1, $2, $3, 0, 0)`, 
+                    [orderId, productId, quantity]
+                );
+                
                 if (summary) {
-                    const snLength = 12, serialNumbers = [];
+                    const snLength = 12;
+                    const serialNumbers = [];
                     for (let j = 0; j < summary.length; j += snLength) {
                         const sn = summary.substring(j, j + snLength);
                         if (sn.length === snLength) serialNumbers.push(sn);
                     }
-                    for (const sn of serialNumbers) await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) VALUES ($1, $2)', [orderItemId, sn]);
+                    
+                    for (const sn of serialNumbers) {
+                        const snCheck = await client.query(
+                            'SELECT id FROM inventory_serial_numbers WHERE serial_number = $1 AND entity_id = $2 AND product_id = $3',
+                            [sn, DEFAULT_ENTITY_ID, productId]
+                        );
+                        
+                        if (snCheck.rows.length > 0) {
+                            await client.query(
+                                `UPDATE inventory_serial_numbers 
+                                 SET outbound_ref_type = 'SALES_ORDER', outbound_ref_id = $1, status = 'RESERVED'
+                                 WHERE id = $2`,
+                                [orderId, snCheck.rows[0].id]
+                            );
+                        } else {
+                            await client.query(
+                                `INSERT INTO inventory_serial_numbers (
+                                    id, entity_id, product_id, serial_number, status, 
+                                    outbound_ref_type, outbound_ref_id
+                                ) VALUES (gen_random_uuid(), $1, $2, $3, 'RESERVED', 'SALES_ORDER', $4)`,
+                                [DEFAULT_ENTITY_ID, productId, sn, orderId]
+                            );
+                        }
+                    }
                 }
             }
         }
         await client.query('COMMIT');
-        await logOperation({ userId: req.user.id, orderId, operationType: 'import', details: { voucherNumber }, io });
-        io?.emit('new_task', { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick' });
-        res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, orderId });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        next(err);
-    } finally {
-        client.release();
-    }
-});
-
-// POST /api/orders/update_item
-router.post('/orders/update_item', async (req, res, next) => {
-    const { orderId, scanValue, type, amount = 1 } = req.body;
-    const { id: userId, role } = req.user;
-    const io = req.app.get('io');
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        const orderResult = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
-        if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
-        const order = orderResult.rows[0];
-        if ((type === 'pick' && order.picker_id !== userId && role !== 'admin') || (type === 'pack' && order.packer_id !== userId && role !== 'admin')) {
-            throw new Error('您不是此任務的指定操作員');
-        }
-        const instanceResult = await client.query(`SELECT i.id, i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 AND i.serial_number = $2 FOR UPDATE`, [orderId, scanValue]);
-        if (instanceResult.rows.length > 0) {
-            const instance = instanceResult.rows[0]; let newStatus = '';
-            if (type === 'pick' && instance.status === 'pending') newStatus = 'picked'; 
-            else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed'; 
-            else throw new Error(`SN 碼 ${scanValue} 的狀態 (${instance.status}) 無法執行此操作`);
-            await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
-            await logOperation({ userId, orderId, operationType: type, details: { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` }, io });
-        } else {
-            const itemResult = await client.query(`SELECT oi.id, oi.quantity, oi.picked_quantity, oi.packed_quantity FROM order_items oi LEFT JOIN order_item_instances i ON oi.id = i.order_item_id WHERE oi.order_id = $1 AND oi.barcode = $2 AND i.id IS NULL`, [orderId, scanValue]);
-            if (itemResult.rows.length === 0) {
-                await logOperation({ userId, orderId, operationType: 'scan_error', details: { scanValue, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' }, io });
-                throw new Error(`條碼 ${scanValue} 不屬於此訂單，或該品項需要掃描 SN 碼`);
-            }
-            const item = itemResult.rows[0];
-            if (type === 'pick') { 
-                const newPickedQty = item.picked_quantity + amount; 
-                if (newPickedQty < 0 || newPickedQty > item.quantity) throw new Error('揀貨數量無效'); 
-                await client.query('UPDATE order_items SET picked_quantity = $1 WHERE id = $2', [newPickedQty, item.id]); 
-            } else if (type === 'pack') { 
-                const newPackedQty = item.packed_quantity + amount; 
-                if (newPackedQty < 0 || newPackedQty > item.picked_quantity) throw new Error('裝箱數量不能超過已揀貨數量'); 
-                await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]); 
-            }
-            await logOperation({ userId, orderId, operationType: type, details: { barcode: scanValue, amount }, io });
-        }
-        await client.query('COMMIT');
-        const allItems = await pool.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-        const allInstances = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
-        let allPicked = true, allPacked = true;
-        for (const item of allItems.rows) { 
-            const itemInstances = allInstances.rows.filter(inst => inst.order_item_id === item.id); 
-            if (itemInstances.length > 0) { 
-                if (!itemInstances.every(i => ['picked', 'packed'].includes(i.status))) allPicked = false; 
-                if (!itemInstances.every(i => i.status === 'packed')) allPacked = false; 
-            } else { 
-                if (item.picked_quantity < item.quantity) allPicked = false; 
-                if (item.packed_quantity < item.quantity) allPacked = false; 
-            } 
-        }
-        let statusChanged = false, finalStatus = order.status;
-        if (allPacked && order.status !== 'completed') { 
-            finalStatus = 'completed'; 
-            statusChanged = true; 
-            await pool.query(`UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]); 
-        } else if (allPicked && order.status === 'picking') { 
-            finalStatus = 'picked'; 
-            statusChanged = true; 
-            await pool.query(`UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]); 
-        }
-        if (statusChanged) io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: finalStatus });
-        const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]); 
-        const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]); 
-        const updatedInstancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
-        res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        err.message = `更新品项状态失败: ${err.message}`;
-        next(err);
-    } finally {
-        client.release();
-    }
-});
-
-// POST /api/orders/batch/delete
-router.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
-    const { orderIds } = req.body;
-    const io = req.app.get('io');
-
-    if (!Array.isArray(orderIds) || orderIds.length === 0) {
-        return res.status(400).json({ message: '請提供訂單 ID 列表' });
-    }
-
-    try {
-        const result = await pool.query(
-            'DELETE FROM orders WHERE id = ANY($1) RETURNING id, voucher_number',
-            [orderIds]
-        );
-
-        result.rows.forEach(order => {
-            io?.emit('task_deleted', { orderId: order.id });
-        });
-
-        res.json({
-            message: `成功刪除 ${result.rowCount} 筆訂單`,
-            deletedOrders: result.rows
-        });
+        res.json({ message: '匯入成功', orderId });
     } catch (error) {
-        logger.error('[/api/orders/batch/delete] 失敗:', error);
-        res.status(500).json({ message: '批次刪除失敗' });
+        await client.query('ROLLBACK');
+        logger.error('匯入失敗:', error);
+        res.status(500).json({ message: '匯入失敗: ' + error.message });
+    } finally {
+        client.release();
     }
 });
 
