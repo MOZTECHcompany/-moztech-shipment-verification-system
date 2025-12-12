@@ -168,7 +168,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
         await client.query('BEGIN');
 
         const orderResult = await client.query(
-            'SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1 FOR UPDATE;',
+            'SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1 FOR UPDATE OF o;',
             [orderId]
         );
         if (orderResult.rows.length === 0) {
