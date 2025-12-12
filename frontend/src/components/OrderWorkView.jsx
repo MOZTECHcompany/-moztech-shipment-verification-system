@@ -478,6 +478,20 @@ export function OrderWorkView({ user }) {
     // 移除對外部 mp3 的依賴，統一使用 WebAudio 產生提示音，避免 404 或自動播放限制
     useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrderData.order]);
 
+    const fetchOrderDetails = useCallback(async (id) => {
+        if (!id) return;
+        try {
+            setLoading(true);
+            const response = await apiClient.get(`/api/orders/${id}`);
+            setCurrentOrderData(response.data);
+        } catch (err) {
+            toast.error('無法獲取訂單詳情', { description: err.response?.data?.message || '請返回任務列表重試' });
+            navigate('/tasks');
+        } finally {
+            setLoading(false);
+        }
+    }, [navigate]);
+
     // 載入所有用戶（用於評論@功能）
     useEffect(() => {
         const fetchUsers = async () => {
@@ -570,20 +584,6 @@ export function OrderWorkView({ user }) {
             socket.off('task_status_changed');
         };
     }, [orderId, user.id, user.role, navigate, fetchOrderDetails]);
-
-    const fetchOrderDetails = useCallback(async (id) => {
-        if (!id) return;
-        try {
-            setLoading(true);
-            const response = await apiClient.get(`/api/orders/${id}`);
-            setCurrentOrderData(response.data);
-        } catch (err) {
-            toast.error('無法獲取訂單詳情', { description: err.response?.data?.message || '請返回任務列表重試' });
-            navigate('/tasks');
-        } finally {
-            setLoading(false);
-        }
-    }, [navigate]);
 
     useEffect(() => { fetchOrderDetails(orderId); }, [orderId, fetchOrderDetails]);
 
@@ -926,7 +926,7 @@ export function OrderWorkView({ user }) {
                             </div>
                             
                             <div className="min-h-full">
-                                {/* ErrorBoundary removed temporarily to debug ReferenceError issue */}
+                                                                <ErrorBoundary>
                                 {currentOrderData.order ? (
                                   <>
                                     <div className="space-y-3">
@@ -974,7 +974,7 @@ export function OrderWorkView({ user }) {
                                     <SkeletonText lines={4} className="h-32" />
                                   </div>
                                 )}
-                                {/* </ErrorBoundary> */}
+                                                                </ErrorBoundary>
                             </div>
                         </div>
                     </div>
