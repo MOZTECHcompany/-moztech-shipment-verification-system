@@ -60,6 +60,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS task_comments_update_timestamp ON task_comments;
 CREATE TRIGGER task_comments_update_timestamp
     BEFORE UPDATE ON task_comments
     FOR EACH ROW
