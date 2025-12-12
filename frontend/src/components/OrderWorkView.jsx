@@ -68,7 +68,7 @@ const StatusBadge = ({ status }) => {
 };
 
 // --- 进度仪表板 ---
-const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, activeSessions, order, items, isFocusMode, toggleFocusMode }) => {
+const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions, order, items, isFocusMode, toggleFocusMode }) => {
     const completionPercentage = stats.totalSkus > 0 ? (stats.packedSkus / stats.totalSkus) * 100 : 0;
     
     return (
@@ -118,7 +118,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
 
                     {/* 新品不良 SN 更換 - 快捷入口 */}
                     <button
-                        onClick={() => setDefectModalOpen(true)}
+                        onClick={() => onOpenDefectModal?.()}
                         className="px-3 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-red-200 active:scale-95 flex items-center gap-2"
                         title="新品不良 SN 更換"
                     >
@@ -838,6 +838,7 @@ export function OrderWorkView({ user }) {
                         onVoid={handleVoidOrder} 
                         user={user}
                         onOpenCamera={() => setShowCameraScanner(true)}
+                        onOpenDefectModal={() => setDefectModalOpen(true)}
                         activeSessions={activeSessions}
                         order={currentOrderData.order}
                         items={currentOrderData.items}
