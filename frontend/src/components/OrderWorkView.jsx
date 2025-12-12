@@ -567,7 +567,7 @@ export function OrderWorkView({ user }) {
                         timer: 2000,
                         showConfirmButton: false
                     }).then(() => {
-                        navigate('/tasks');
+                        navigate('/tasks', { state: { view: 'completed' } });
                     });
                 } 
                 // 如果狀態變為 picked (揀貨完成)，且當前用戶是 picker，提示完成
@@ -579,7 +579,7 @@ export function OrderWorkView({ user }) {
                         timer: 2000,
                         showConfirmButton: false
                     }).then(() => {
-                        navigate('/tasks');
+                        navigate('/tasks', { state: { view: 'completed' } });
                     });
                 }
                 // 其他狀態變更則重新載入資料

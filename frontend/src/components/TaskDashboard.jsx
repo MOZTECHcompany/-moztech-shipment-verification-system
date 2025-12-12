@@ -2,7 +2,7 @@
 // 現代化 Apple 風格任務儀表板
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
@@ -359,7 +359,9 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [currentView, setCurrentView] = useState('active'); // 'active' | 'completed'
+    const location = useLocation();
+    const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
+    const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
     
     useEffect(() => {
