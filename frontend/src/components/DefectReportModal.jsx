@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import apiClient from '@/api/api';
 import { Button } from '@/ui';
 
-const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber }) => {
+const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess }) => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [items, setItems] = useState([]);
@@ -55,6 +55,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber }) => {
                 reason
             });
             toast.success('新品不良記錄已儲存，SN已更新');
+            if (onSuccess) onSuccess();
             onClose();
         } catch (error) {
             toast.error('提交失敗', {

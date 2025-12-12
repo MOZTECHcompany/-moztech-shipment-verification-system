@@ -1034,6 +1034,7 @@ export function OrderWorkView({ user }) {
                     onClose={() => setDefectModalOpen(false)}
                     orderId={currentOrderData.order?.id}
                     voucherNumber={currentOrderData.order?.voucher_number}
+                    onSuccess={() => fetchOrderDetails(orderId)}
                 />
             </div>
         </div>

@@ -1354,6 +1354,7 @@ export function TaskDashboard({ user }) {
                 onClose={() => setDefectModalOpen(false)}
                 orderId={defectTask?.id}
                 voucherNumber={defectTask?.voucher_number}
+                onSuccess={fetchTasks}
             />
 
             {/* 浮動聊天面板 */}

@@ -30,6 +30,20 @@ export function AdminDashboard() {
         if (fileInputRef.current) { fileInputRef.current.value = null; }
     };
 
+    const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            handleExcelImport({ target: { files: [file] } });
+        }
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
     const handleExportAdminReport = async () => {
         if (!startDate || !endDate) { 
             toast.error("請選擇完整的日期範圍"); 
@@ -128,6 +142,8 @@ export function AdminDashboard() {
                             <div 
                                 className="mt-6 border-2 border-dashed border-white/30 rounded-2xl p-6 text-center hover:bg-white/10 transition-all duration-300 cursor-pointer hover:scale-[1.01]"
                                 onClick={() => fileInputRef.current?.click()}
+                                onDrop={handleDrop}
+                                onDragOver={handleDragOver}
                             >
                                 <FileSpreadsheet className="mx-auto h-10 w-10 text-white/80 mb-3" />
                                 <p className="font-medium">點擊上傳或拖放檔案</p>
