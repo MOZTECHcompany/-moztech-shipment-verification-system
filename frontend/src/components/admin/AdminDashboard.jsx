@@ -179,6 +179,24 @@ export function AdminDashboard() {
                         </CardContent>
                     </Card>
 
+                    {/* 4.5 新品不良統計 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '175ms' }}>
+                        <CardHeader>
+                            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                                <AlertTriangle size={24} />
+                            </div>
+                            <CardTitle className="text-xl font-bold">新品不良</CardTitle>
+                            <CardDescription>SN 更換記錄</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Link to="/admin/defects">
+                                <Button variant="ghost" className="w-full justify-between group-hover:bg-red-50 text-red-700 rounded-xl">
+                                    查看統計 <ArrowRight size={16} />
+                                </Button>
+                            </Link>
+                        </CardContent>
+                    </Card>
+
                     {/* 5. 匯出營運報告 (中卡片) */}
                     <Card className="md:col-span-2 lg:col-span-2 animate-scale-in border-0 glass-panel" style={{ animationDelay: '200ms' }}>
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
