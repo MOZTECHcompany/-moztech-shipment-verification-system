@@ -320,6 +320,15 @@ router.post('/orders/update_item', async (req, res, next) => {
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
+
+        // Auto-transition from picked to packing if type is pack
+        if (type === 'pack' && order.status === 'picked') {
+             await client.query("UPDATE orders SET status = 'packing', packer_id = COALESCE(packer_id, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2", [userId, orderId]);
+             order.status = 'packing';
+             if (!order.packer_id) order.packer_id = userId;
+             io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'packing' });
+        }
+
         if ((type === 'pick' && order.picker_id !== userId && role !== 'admin') || (type === 'pack' && order.packer_id !== userId && role !== 'admin')) {
             throw new Error('您不是此任務的指定操作員');
         }

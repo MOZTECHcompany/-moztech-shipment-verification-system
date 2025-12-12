@@ -50,6 +50,7 @@ const StatusBadge = ({ status }) => {
     const statusStyles = {
         pending: { color: 'text-gray-600', bg: 'bg-gray-100 border-gray-200', label: '待處理', icon: Package },
         picking: { color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200', label: '揀貨中', icon: ShoppingCart },
+        picked: { color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200', label: '已揀貨', icon: CheckCircle2 },
         packing: { color: 'text-green-600', bg: 'bg-green-50 border-green-200', label: '裝箱中', icon: Box },
         completed: { color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', label: '已完成', icon: Check },
         void: { color: 'text-red-600', bg: 'bg-red-50 border-red-200', label: '已作廢', icon: XCircle }
@@ -423,6 +424,10 @@ const OperationHint = ({ order, scanError, isUpdating }) => {
     } else if (order?.status === 'picking') {
         hint = "揀貨作業中";
         subHint = "請掃描商品進行揀貨";
+    } else if (order?.status === 'picked') {
+        hint = "揀貨完成";
+        subHint = "請掃描商品進行裝箱";
+        icon = <Box size={20} className="text-orange-400" />;
     } else if (order?.status === 'packing') {
         hint = "裝箱作業中";
         subHint = "請掃描商品進行裝箱";
@@ -619,7 +624,7 @@ export function OrderWorkView({ user }) {
         }
         let operationType = null;
         if ((user.role === 'picker' || user.role === 'admin') && status === 'picking') operationType = 'pick';
-        else if ((user.role === 'packer' || user.role === 'admin') && status === 'packing') operationType = 'pack';
+        else if ((user.role === 'packer' || user.role === 'admin') && (status === 'packing' || status === 'picked')) operationType = 'pack';
         
         if (operationType) {
             updateItemState(scanValue, operationType, 1);
