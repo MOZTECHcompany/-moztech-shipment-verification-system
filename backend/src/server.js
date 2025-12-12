@@ -4,12 +4,28 @@
 const { app, server } = require('./app');
 const { testConnection, closePool } = require('./config/database');
 const logger = require('./utils/logger');
+const { exec } = require('child_process');
+const util = require('util');
+const path = require('path');
+const execPromise = util.promisify(exec);
 
 const PORT = process.env.PORT || 3001;
 
 // 啟動伺服器
 async function startServer() {
     try {
+        // 自動執行資料庫遷移 (解決 500 錯誤: 確保 priority 欄位存在)
+        try {
+            logger.info('🔄 正在檢查並執行資料庫遷移...');
+            const { stdout, stderr } = await execPromise('node migrations/run.js', { 
+                cwd: path.join(__dirname, '..') 
+            });
+            logger.info('✅ 資料庫遷移完成');
+            if (stdout) logger.debug(stdout);
+        } catch (migrationError) {
+            logger.warn('⚠️ 資料庫遷移執行遇到問題 (若為欄位已存在可忽略):', migrationError.message);
+        }
+
         // 測試資料庫連接
         const dbConnected = await testConnection();
         if (!dbConnected) {

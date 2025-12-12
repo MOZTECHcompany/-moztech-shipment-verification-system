@@ -282,18 +282,43 @@ router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async 
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
             if (!row?.[barcodeIndex] || !row?.[nameAndSkuIndex] || !row?.[quantityIndex]) continue;
-            const barcode = String(row[barcodeIndex]), fullNameAndSku = String(row[nameAndSkuIndex]), quantity = parseInt(row[quantityIndex], 10), summary = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]).replace(/[ㆍ\s]/g, '') : '';
+            const barcode = String(row[barcodeIndex]), fullNameAndSku = String(row[nameAndSkuIndex]), quantity = parseInt(row[quantityIndex], 10);
+            const summaryRaw = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]) : '';
+            
             const skuMatch = fullNameAndSku.match(/\[(.*?)\]/), productCode = skuMatch ? skuMatch[1] : null, productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
             if (barcode && productCode && productName && !isNaN(quantity) && quantity > 0) {
                 const itemInsertResult = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5) RETURNING id', [orderId, productCode, productName, quantity, barcode]);
                 const orderItemId = itemInsertResult.rows[0].id;
-                if (summary) {
-                    const snLength = 12, serialNumbers = [];
-                    for (let j = 0; j < summary.length; j += snLength) {
-                        const sn = summary.substring(j, j + snLength);
-                        if (sn.length === snLength) serialNumbers.push(sn);
+                
+                if (summaryRaw) {
+                    const serialNumbers = [];
+                    // 1. 嘗試以常見分隔符分割 (/, space, newline, comma, etc)
+                    // 支援格式如: "Code/SN", "SN1, SN2", "SN1 SN2"
+                    const potentialSNs = summaryRaw.split(/[\/\s,，、\n\r]+/);
+                    
+                    for (const part of potentialSNs) {
+                        const cleanPart = part.trim();
+                        // 假設 SN 為 12 碼英數字 (根據用戶範例 T03K52027400)
+                        if (cleanPart.length === 12 && /^[A-Za-z0-9]+$/.test(cleanPart)) {
+                            serialNumbers.push(cleanPart);
+                        }
                     }
-                    for (const sn of serialNumbers) await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) VALUES ($1, $2)', [orderItemId, sn]);
+
+                    // 2. Fallback: 如果找不到分隔符，且字串長度是 12 的倍數，嘗試切分 (舊格式相容: 連續SN無分隔符)
+                    if (serialNumbers.length === 0) {
+                         const cleanSummary = summaryRaw.replace(/[ㆍ\s\/]/g, '');
+                         if (cleanSummary.length > 0 && cleanSummary.length % 12 === 0) {
+                             for (let j = 0; j < cleanSummary.length; j += 12) {
+                                 serialNumbers.push(cleanSummary.substring(j, j + 12));
+                             }
+                         }
+                    }
+                    
+                    // 去除重複並寫入
+                    const uniqueSNs = [...new Set(serialNumbers)];
+                    for (const sn of uniqueSNs) {
+                        await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) VALUES ($1, $2)', [orderItemId, sn]);
+                    }
                 }
             }
         }
