@@ -143,8 +143,26 @@ export function AdminDashboard() {
                         </CardContent>
                     </Card>
 
-                    {/* 3. 刷錯分析 (小卡片) */}
+                    {/* 3. 新品不良統計 (小卡片 - 優先顯示) */}
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '100ms' }}>
+                        <CardHeader>
+                            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                                <AlertTriangle size={24} />
+                            </div>
+                            <CardTitle className="text-xl font-bold">新品不良</CardTitle>
+                            <CardDescription>SN 更換記錄</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Link to="/admin/defects">
+                                <Button variant="ghost" className="w-full justify-between group-hover:bg-red-50 text-red-700 rounded-xl">
+                                    查看統計 <ArrowRight size={16} />
+                                </Button>
+                            </Link>
+                        </CardContent>
+                    </Card>
+
+                    {/* 4. 刷錯分析 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '150ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
                                 <AlertTriangle size={24} />
@@ -161,8 +179,8 @@ export function AdminDashboard() {
                         </CardContent>
                     </Card>
 
-                    {/* 4. 使用者管理 (小卡片) */}
-                    <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '150ms' }}>
+                    {/* 5. 使用者管理 (小卡片) */}
+                    <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '175ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
                                 <Users size={24} />
@@ -174,24 +192,6 @@ export function AdminDashboard() {
                             <Link to="/admin/users">
                                 <Button variant="ghost" className="w-full justify-between group-hover:bg-indigo-50 text-indigo-700 rounded-xl">
                                     前往設定 <ArrowRight size={16} />
-                                </Button>
-                            </Link>
-                        </CardContent>
-                    </Card>
-
-                    {/* 4.5 新品不良統計 (小卡片) */}
-                    <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '175ms' }}>
-                        <CardHeader>
-                            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                                <AlertTriangle size={24} />
-                            </div>
-                            <CardTitle className="text-xl font-bold">新品不良</CardTitle>
-                            <CardDescription>SN 更換記錄</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <Link to="/admin/defects">
-                                <Button variant="ghost" className="w-full justify-between group-hover:bg-red-50 text-red-700 rounded-xl">
-                                    查看統計 <ArrowRight size={16} />
                                 </Button>
                             </Link>
                         </CardContent>

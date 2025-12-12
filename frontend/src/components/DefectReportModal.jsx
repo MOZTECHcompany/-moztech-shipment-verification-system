@@ -110,11 +110,11 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber }) => {
                                         setSelectedItemId(e.target.value);
                                         setOldSn(''); // Reset SN when product changes
                                     }}
-                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500"
+                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white"
                                 >
-                                    <option value="">-- 所有產品 --</option>
+                                    <option value="" className="text-gray-500">-- 所有產品 --</option>
                                     {items.map(item => (
-                                        <option key={item.id} value={item.id}>
+                                        <option key={item.id} value={item.id} className="text-gray-900">
                                             {item.product_name} ({item.product_code})
                                         </option>
                                     ))}
@@ -130,11 +130,11 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber }) => {
                                     value={oldSn}
                                     onChange={(e) => setOldSn(e.target.value)}
                                     required
-                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500"
+                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white"
                                 >
-                                    <option value="">-- 請選擇原 SN --</option>
+                                    <option value="" className="text-gray-500">-- 請選擇原 SN --</option>
                                     {availableInstances.map(inst => (
-                                        <option key={inst.id} value={inst.serial_number}>
+                                        <option key={inst.id} value={inst.serial_number} className="text-gray-900">
                                             {inst.serial_number}
                                         </option>
                                     ))}
@@ -153,7 +153,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber }) => {
                                         onChange={(e) => setNewSn(e.target.value)}
                                         placeholder="掃描或輸入新 SN"
                                         required
-                                        className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 pl-10"
+                                        className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 pl-10 text-gray-900 bg-white placeholder:text-gray-400"
                                     />
                                     <RefreshCw className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                 </div>
@@ -170,7 +170,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber }) => {
                                     placeholder="請詳細描述不良原因..."
                                     required
                                     rows={3}
-                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500"
+                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white placeholder:text-gray-400"
                                 />
                             </div>
 
