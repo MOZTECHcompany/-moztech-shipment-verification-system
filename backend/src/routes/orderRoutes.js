@@ -264,28 +264,69 @@ router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async 
         const orderId = orderResult.rows[0].id;
         let itemsStartRow = -1, headerRow = [];
         for (let i = 0; i < data.length; i++) {
-            if (data[i]?.some(cell => String(cell).includes('品項編碼'))) {
+            // 擴充標頭識別：支援 "品項編碼"、"國際條碼"、"條碼"
+            if (data[i]?.some(cell => {
+                const h = String(cell);
+                return h.includes('品項編碼') || h.includes('國際條碼') || h.includes('條碼');
+            })) {
                 itemsStartRow = i + 1;
                 headerRow = data[i];
                 break;
             }
         }
-        if (itemsStartRow === -1) { await client.query('ROLLBACK'); return res.status(400).json({ message: "Excel 档案格式错误：找不到品项标头" }); }
-        const barcodeIndex = headerRow.findIndex(h => String(h).includes('品項編碼'));
+        if (itemsStartRow === -1) { await client.query('ROLLBACK'); return res.status(400).json({ message: "Excel 檔案格式錯誤：找不到品項標頭 (需包含 '品項編碼' 或 '國際條碼')" }); }
+        
+        // 寬鬆匹配欄位名稱
+        const barcodeIndex = headerRow.findIndex(h => {
+            const header = String(h);
+            return header.includes('品項編碼') || header.includes('國際條碼') || header.includes('條碼');
+        });
         const nameAndSkuIndex = headerRow.findIndex(h => String(h).includes('品項名稱'));
         const quantityIndex = headerRow.findIndex(h => String(h).includes('數量'));
-        const summaryIndex = headerRow.findIndex(h => String(h).includes('摘要'));
+        // 新增：支援獨立的 "品項型號" 欄位
+        const modelIndex = headerRow.findIndex(h => {
+            const header = String(h);
+            return header.includes('品項型號') || header.includes('型號') || header.includes('Product Code');
+        });
+        // 擴充 SN 欄位識別：支援 "摘要"、"SN列表"、"SN"、"序號"
+        const summaryIndex = headerRow.findIndex(h => {
+            const header = String(h).toUpperCase();
+            return header.includes('摘要') || header.includes('SN') || header.includes('序號');
+        });
+
         if (barcodeIndex === -1 || nameAndSkuIndex === -1 || quantityIndex === -1) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ message: "Excel 档案格式错误：缺少 '品項編碼'、'品項名稱' 或 '數量' 栏位" });
+            return res.status(400).json({ message: "Excel 檔案格式錯誤：缺少 '品項編碼/國際條碼'、'品項名稱' 或 '數量' 欄位" });
         }
         for (let i = itemsStartRow; i < data.length; i++) {
             const row = data[i];
             if (!row?.[barcodeIndex] || !row?.[nameAndSkuIndex] || !row?.[quantityIndex]) continue;
-            const barcode = String(row[barcodeIndex]), fullNameAndSku = String(row[nameAndSkuIndex]), quantity = parseInt(row[quantityIndex], 10);
+            
+            // 關鍵修正：加入 .trim() 去除條碼前後空白，避免掃描失敗
+            const barcode = String(row[barcodeIndex]).trim();
+            const fullNameAndSku = String(row[nameAndSkuIndex]).trim();
+            const quantity = parseInt(row[quantityIndex], 10);
             const summaryRaw = summaryIndex > -1 && row[summaryIndex] ? String(row[summaryIndex]) : '';
             
-            const skuMatch = fullNameAndSku.match(/\[(.*?)\]/), productCode = skuMatch ? skuMatch[1] : null, productName = skuMatch ? fullNameAndSku.substring(0, skuMatch.index).trim() : fullNameAndSku.trim();
+            // 優先從 "品項型號" 欄位獲取，若無則嘗試從 "品項名稱" 解析 [CODE]
+            let productCode = null;
+            let productName = fullNameAndSku;
+
+            if (modelIndex > -1 && row[modelIndex]) {
+                productCode = String(row[modelIndex]).trim();
+            } else {
+                const skuMatch = fullNameAndSku.match(/\[(.*?)\]/);
+                if (skuMatch) {
+                    productCode = skuMatch[1];
+                    productName = fullNameAndSku.substring(0, skuMatch.index).trim();
+                }
+            }
+
+            // 如果還是沒有 productCode，但有 barcode 和 name，則使用 barcode 或 name 當作 code (避免漏單)
+            if (!productCode) {
+                productCode = barcode; // Fallback
+            }
+
             if (barcode && productCode && productName && !isNaN(quantity) && quantity > 0) {
                 const itemInsertResult = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5) RETURNING id', [orderId, productCode, productName, quantity, barcode]);
                 const orderItemId = itemInsertResult.rows[0].id;
