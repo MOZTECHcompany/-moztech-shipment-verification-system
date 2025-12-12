@@ -817,6 +817,16 @@ export function TaskDashboard({ user }) {
     const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
     const completedTasks = sortedVisibleTasks.filter(t => t.task_type === 'done' || t.task_type === 'picked');
 
+    // 管理員在「已完成」視圖需要把已完成訂單分成：揀貨完成(待裝箱/裝箱中) vs 裝箱完成(已完成)
+    const completedPickPhaseTasks = useMemo(
+        () => completedTasks.filter(t => t.task_type === 'picked'),
+        [completedTasks]
+    );
+    const completedPackDoneTasks = useMemo(
+        () => completedTasks.filter(t => t.task_type === 'done'),
+        [completedTasks]
+    );
+
     // 當待揀貨數量變動時，短暫高亮
     useEffect(() => {
         setPickHighlight(true);
@@ -1150,7 +1160,7 @@ export function TaskDashboard({ user }) {
                                 </span>
                             </div>
                         </div>
-                        
+
                         {completedTasks.length === 0 ? (
                             <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
                                 <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
@@ -1160,28 +1170,92 @@ export function TaskDashboard({ user }) {
                                 <p className="text-gray-400 text-sm mt-1">完成的任務將會顯示在這裡</p>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {completedTasks.map((task, index) => (
-                                    <div 
-                                        key={task.id} 
-                                        style={{ animationDelay: `${index * 50}ms` }}
-                                        className="animate-fade-in"
-                                    >
-                                        <ModernTaskCard
-                                            task={task}
-                                            user={user}
-                                            onClaim={() => {}} // Completed tasks cannot be claimed
-                                            onDelete={handleDeleteOrder}
-                                            batchMode={false}
-                                            selectedTasks={[]}
-                                            toggleTaskSelection={() => {}}
-                                            onOpenChat={handleOpenChat}
-                                            isPinned={pinnedTaskIds.includes(task.id)}
-                                            onTogglePin={togglePinTask}
-                                            onReportDefect={handleReportDefect}
-                                        />
+                            <div className="space-y-6">
+                                {/* 已完成揀貨 */}
+                                <div className="glass-panel rounded-2xl p-1.5 shadow-lg">
+                                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">
+                                                <Box size={20} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-lg font-bold text-gray-900 leading-none">已完成揀貨</h3>
+                                                <p className="text-xs text-emerald-600/80 font-medium mt-1">等待裝箱</p>
+                                            </div>
+                                        </div>
+                                        <span className="px-3 py-1 rounded-lg bg-white text-emerald-600 text-sm font-bold shadow-sm border border-emerald-100">
+                                            {completedPickPhaseTasks.length}
+                                        </span>
                                     </div>
-                                ))}
+                                </div>
+                                {completedPickPhaseTasks.length > 0 && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                        {completedPickPhaseTasks.map((task, index) => (
+                                            <div
+                                                key={task.id}
+                                                style={{ animationDelay: `${index * 50}ms` }}
+                                                className="animate-fade-in"
+                                            >
+                                                <ModernTaskCard
+                                                    task={task}
+                                                    user={user}
+                                                    onClaim={() => {}} // Completed view items cannot be claimed
+                                                    onDelete={handleDeleteOrder}
+                                                    batchMode={false}
+                                                    selectedTasks={[]}
+                                                    toggleTaskSelection={() => {}}
+                                                    onOpenChat={handleOpenChat}
+                                                    isPinned={pinnedTaskIds.includes(task.id)}
+                                                    onTogglePin={togglePinTask}
+                                                    onReportDefect={handleReportDefect}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* 已完成裝箱 */}
+                                <div className="glass-panel rounded-2xl p-1.5 shadow-lg">
+                                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-white text-green-500 flex items-center justify-center shadow-sm">
+                                                <CheckCircle2 size={20} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-lg font-bold text-gray-900 leading-none">已完成裝箱</h3>
+                                                <p className="text-xs text-green-600/80 font-medium mt-1">訂單已完成</p>
+                                            </div>
+                                        </div>
+                                        <span className="px-3 py-1 rounded-lg bg-white text-green-600 text-sm font-bold shadow-sm border border-green-100">
+                                            {completedPackDoneTasks.length}
+                                        </span>
+                                    </div>
+                                </div>
+                                {completedPackDoneTasks.length > 0 && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                        {completedPackDoneTasks.map((task, index) => (
+                                            <div
+                                                key={task.id}
+                                                style={{ animationDelay: `${index * 50}ms` }}
+                                                className="animate-fade-in"
+                                            >
+                                                <ModernTaskCard
+                                                    task={task}
+                                                    user={user}
+                                                    onClaim={() => {}} // Completed view items cannot be claimed
+                                                    onDelete={handleDeleteOrder}
+                                                    batchMode={false}
+                                                    selectedTasks={[]}
+                                                    toggleTaskSelection={() => {}}
+                                                    onOpenChat={handleOpenChat}
+                                                    isPinned={pinnedTaskIds.includes(task.id)}
+                                                    onTogglePin={togglePinTask}
+                                                    onReportDefect={handleReportDefect}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
