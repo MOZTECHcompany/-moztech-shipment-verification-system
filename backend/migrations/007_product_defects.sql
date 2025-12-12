@@ -10,6 +10,6 @@ CREATE TABLE IF NOT EXISTS product_defects (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_product_defects_order_id ON product_defects(order_id);
-CREATE INDEX idx_product_defects_product_barcode ON product_defects(product_barcode);
-CREATE INDEX idx_product_defects_created_at ON product_defects(created_at);
+CREATE INDEX IF NOT EXISTS idx_product_defects_order_id ON product_defects(order_id);
+CREATE INDEX IF NOT EXISTS idx_product_defects_product_barcode ON product_defects(product_barcode);
+CREATE INDEX IF NOT EXISTS idx_product_defects_created_at ON product_defects(created_at);
