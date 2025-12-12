@@ -364,6 +364,78 @@ apiRouter.get('/users/basic', async (req, res) => {
     }
 });
 
+// 取得已完成任務（給前端 /tasks 已完成視圖使用）
+// GET /api/tasks/completed?limit=200
+apiRouter.get('/tasks/completed', async (req, res) => {
+    try {
+        const { id: userId, role } = req.user;
+        if (!role) return res.status(403).json({ message: '使用者角色無效' });
+
+        const parsedLimit = parseInt(req.query.limit || '50', 10);
+        const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
+
+        let whereSql = '';
+        if (role === 'admin') {
+            whereSql = "o.status = 'completed'";
+        } else if (role === 'picker') {
+            // 撿貨員：顯示自己處理過、且已撿貨後(含裝箱/完成)的訂單
+            whereSql = "o.picker_id = $1 AND o.status IN ('picked', 'packing', 'completed')";
+        } else if (role === 'packer') {
+            // 裝箱員：顯示自己裝箱完成的訂單
+            whereSql = "o.packer_id = $1 AND o.status = 'completed'";
+        } else {
+            return res.json([]);
+        }
+
+        const query = `
+            SELECT 
+                o.id,
+                o.voucher_number,
+                o.customer_name,
+                o.status,
+                p.name as picker_name,
+                pk.name as packer_name,
+                COALESCE(o.completed_at, o.updated_at) as completed_at,
+                (CASE WHEN o.status = 'completed' THEN 'done' ELSE 'picked' END) as task_type,
+                COALESCE(o.is_urgent, FALSE) as is_urgent,
+                COUNT(DISTINCT tc.id) as total_comments,
+                COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_comments,
+                COUNT(DISTINCT CASE 
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM task_comment_reads tcr 
+                        WHERE tcr.comment_id = tc.id AND tcr.user_id = $1
+                    ) AND tc.user_id != $1
+                    THEN tc.id 
+                END) as unread_comments,
+                (SELECT json_build_object(
+                    'content', tc2.content,
+                    'user_name', u.name,
+                    'priority', tc2.priority,
+                    'created_at', tc2.created_at
+                ) FROM task_comments tc2
+                LEFT JOIN users u ON tc2.user_id = u.id
+                WHERE tc2.order_id = o.id
+                ORDER BY tc2.created_at DESC
+                LIMIT 1) as latest_comment
+            FROM orders o
+            LEFT JOIN users p ON o.picker_id = p.id 
+            LEFT JOIN users pk ON o.packer_id = pk.id
+            LEFT JOIN task_comments tc ON tc.order_id = o.id
+            WHERE ${whereSql}
+            GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.completed_at, o.updated_at, p.name, pk.name
+            ORDER BY COALESCE(o.completed_at, o.updated_at) DESC
+            LIMIT $2;
+        `;
+
+        logger.debug(`[/api/tasks/completed] 執行查詢，參數: userId=${userId}, role=${role}, limit=${limit}`);
+        const result = await pool.query(query, [userId, limit]);
+        res.json(result.rows);
+    } catch (error) {
+        logger.error('[/api/tasks/completed] 獲取已完成任務失敗:', error);
+        res.status(500).json({ message: '獲取已完成任務失敗' });
+    }
+});
+
 // 批次操作端點
 apiRouter.post('/orders/batch-claim', async (req, res) => {
     try {

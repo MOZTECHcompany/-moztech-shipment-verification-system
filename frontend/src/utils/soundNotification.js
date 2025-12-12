@@ -11,6 +11,12 @@ class SoundNotification {
         
         // 延遲初始化 AudioContext（避免瀏覽器自動播放政策問題）
         this.initAudioContext = async () => {
+            // 避免在使用者尚未互動時就建立/啟動 AudioContext，否則會觸發瀏覽器自動播放限制警告。
+            // 真正需要音效時，會在首次互動 (click/keydown/touchstart) 後再初始化。
+            if (!this.userInteracted) {
+                return null;
+            }
+
             if (!this.audioContext) {
                 try {
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -81,7 +87,10 @@ class SoundNotification {
         // 畫面從背景回來時，嘗試恢復（避免某些瀏覽器暫停 AudioContext）
         document.addEventListener('visibilitychange', async () => {
             if (!document.hidden) {
-                await this.initAudioContext();
+                // 只在使用者已互動後才嘗試恢復，避免自動播放政策警告
+                if (this.userInteracted) {
+                    await this.initAudioContext();
+                }
             }
         });
     }
