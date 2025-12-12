@@ -9,7 +9,7 @@ import {
     Loader2, ArrowLeft, Check, ScanLine, Barcode, Tag, Package, 
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
     ChevronUp, ShoppingCart, Box, Camera, MessageSquare, Printer, Users,
-    Maximize2, Minimize2, Focus, Eye, EyeOff, CheckCircle2
+    Maximize2, Minimize2, Eye, EyeOff, CheckCircle2
 } from 'lucide-react';
 import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge } from '@/ui';
 import Swal from 'sweetalert2';
@@ -451,6 +451,15 @@ export function OrderWorkView({ user }) {
     const { orderId } = useParams();
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
+
+    // 安全檢查：如果 user 為空，顯示載入中或重導向
+    if (!user) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+            </div>
+        );
+    }
 
     const [currentOrderData, setCurrentOrderData] = useState({ order: null, items: [], instances: [] });
     const [loading, setLoading] = useState(true);
