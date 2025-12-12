@@ -424,34 +424,54 @@ router.post('/orders/update_item', async (req, res, next) => {
             }
             await logOperation({ userId, orderId, operationType: type, details: { barcode: scanValue, amount }, io });
         }
+        // 在同一個 transaction 內判斷是否已 100% 完成，並原子性更新訂單狀態
+        const allItems = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
+        const allInstances = await client.query(
+            'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
+            [orderId]
+        );
+
+        let allPicked = true;
+        let allPacked = true;
+        for (const item of allItems.rows) {
+            const itemInstances = allInstances.rows.filter(inst => inst.order_item_id === item.id);
+            if (itemInstances.length > 0) {
+                if (!itemInstances.every(i => ['picked', 'packed'].includes(i.status))) allPicked = false;
+                if (!itemInstances.every(i => i.status === 'packed')) allPacked = false;
+            } else {
+                if (item.picked_quantity < item.quantity) allPicked = false;
+                if (item.packed_quantity < item.quantity) allPacked = false;
+            }
+        }
+
+        let statusChanged = false;
+        let finalStatus = order.status;
+
+        if (allPacked && order.status !== 'completed') {
+            finalStatus = 'completed';
+            statusChanged = true;
+            await client.query(
+                "UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
+                [userId, orderId]
+            );
+        } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
+            finalStatus = 'picked';
+            statusChanged = true;
+            await client.query("UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
+        }
+
         await client.query('COMMIT');
-        const allItems = await pool.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-        const allInstances = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
-        let allPicked = true, allPacked = true;
-        for (const item of allItems.rows) { 
-            const itemInstances = allInstances.rows.filter(inst => inst.order_item_id === item.id); 
-            if (itemInstances.length > 0) { 
-                if (!itemInstances.every(i => ['picked', 'packed'].includes(i.status))) allPicked = false; 
-                if (!itemInstances.every(i => i.status === 'packed')) allPacked = false; 
-            } else { 
-                if (item.picked_quantity < item.quantity) allPicked = false; 
-                if (item.packed_quantity < item.quantity) allPacked = false; 
-            } 
+
+        if (statusChanged) {
+            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: finalStatus });
         }
-        let statusChanged = false, finalStatus = order.status;
-        if (allPacked && order.status !== 'completed') { 
-            finalStatus = 'completed'; 
-            statusChanged = true; 
-            await pool.query(`UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]); 
-        } else if (allPicked && order.status === 'picking') { 
-            finalStatus = 'picked'; 
-            statusChanged = true; 
-            await pool.query(`UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [orderId]); 
-        }
-        if (statusChanged) io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: finalStatus });
-        const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]); 
-        const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]); 
-        const updatedInstancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
+
+        const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+        const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        const updatedInstancesResult = await pool.query(
+            'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
+            [orderId]
+        );
         res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows });
     } catch (err) {
         await client.query('ROLLBACK');
