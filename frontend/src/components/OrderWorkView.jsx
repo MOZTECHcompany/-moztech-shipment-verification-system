@@ -519,12 +519,47 @@ export function OrderWorkView({ user }) {
             }
         });
 
+        // 監聽任務狀態變更 (自動跳轉或更新 UI)
+        socket.on('task_status_changed', (data) => {
+            if (data.orderId === parseInt(orderId)) {
+                // 如果狀態變為 completed，顯示完成動畫並跳轉
+                if (data.newStatus === 'completed') {
+                    MySwal.fire({
+                        title: '🎉 訂單已完成！',
+                        text: '所有品項已裝箱完畢，即將返回任務列表...',
+                        icon: 'success',
+                        timer: 2000,
+                        showConfirmButton: false
+                    }).then(() => {
+                        navigate('/tasks');
+                    });
+                } 
+                // 如果狀態變為 picked (揀貨完成)，且當前用戶是 picker，提示完成
+                else if (data.newStatus === 'picked' && user.role === 'picker') {
+                    MySwal.fire({
+                        title: '✅ 揀貨完成！',
+                        text: '此訂單已完成揀貨，即將返回任務列表...',
+                        icon: 'success',
+                        timer: 2000,
+                        showConfirmButton: false
+                    }).then(() => {
+                        navigate('/tasks');
+                    });
+                }
+                // 其他狀態變更則重新載入資料
+                else {
+                    fetchOrderDetails(orderId);
+                }
+            }
+        });
+
         return () => {
             clearInterval(interval);
             socket.off('active_sessions_update');
             socket.off('new_comment');
+            socket.off('task_status_changed');
         };
-    }, [orderId, user.id]);
+    }, [orderId, user.id, user.role, navigate, fetchOrderDetails]);
 
     const fetchOrderDetails = useCallback(async (id) => {
         if (!id) return;

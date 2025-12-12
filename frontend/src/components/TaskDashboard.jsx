@@ -555,15 +555,33 @@ export function TaskDashboard({ user }) {
             );
         };
         
-        const handleTaskUpdate = (updatedTask) => {
+        const handleTaskUpdate = (payload) => {
+             // 兼容不同的 payload 格式 (完整 task 物件 或 { orderId, newStatus })
+             const taskId = payload.id || payload.orderId;
+             const newStatus = payload.status || payload.newStatus;
+             
+             if (!taskId) return;
+
              setTasks(currentTasks => {
-                const index = currentTasks.findIndex(t => t.id === updatedTask.id);
+                const index = currentTasks.findIndex(t => t.id === taskId);
+                
+                // 如果任務不在列表中
                 if (index === -1) {
-                    if ((user.role === 'picker' || user.role === 'admin') && updatedTask.task_type === 'pick') return [...currentTasks, updatedTask];
-                    if ((user.role === 'packer' || user.role === 'admin') && updatedTask.task_type === 'pack') return [...currentTasks, updatedTask];
+                    // 如果 payload 是完整任務物件，且符合當前用戶角色，則加入列表
+                    if (payload.id && payload.task_type) {
+                        if ((user.role === 'picker' || user.role === 'admin') && payload.task_type === 'pick') return [...currentTasks, payload];
+                        if ((user.role === 'packer' || user.role === 'admin') && payload.task_type === 'pack') return [...currentTasks, payload];
+                    }
                     return currentTasks;
                 }
                 
+                // 構建更新後的任務物件
+                const currentTask = currentTasks[index];
+                const updatedTask = { ...currentTask, status: newStatus || currentTask.status };
+                // 如果 payload 有其他欄位也合併進去
+                if (payload.id) Object.assign(updatedTask, payload);
+
+                // 檢查是否需要從列表中移除
                 if (
                     (updatedTask.status === 'picked' && user.role === 'picker') ||
                     (updatedTask.status === 'completed') || 
@@ -572,7 +590,7 @@ export function TaskDashboard({ user }) {
                     if (updatedTask.status === 'completed') {
                         soundNotification.play('taskCompleted');
                     }
-                    return currentTasks.filter(t => t.id !== updatedTask.id);
+                    return currentTasks.filter(t => t.id !== taskId);
                 }
                 
                 const newTasks = [...currentTasks];
