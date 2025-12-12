@@ -381,4 +381,99 @@ router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async 
     }
 });
 
+// POST /api/orders/:orderId/defect
+router.post('/orders/:orderId/defect', authorizeAdmin, async (req, res) => {
+    const { orderId } = req.params;
+    const { oldSn, newSn, reason } = req.body;
+    const userId = req.user.id;
+    const io = req.app.get('io');
+
+    if (!oldSn || !newSn || !reason) {
+        return res.status(400).json({ message: '請提供舊SN、新SN及更換原因' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Find the instance and verify it belongs to the order
+        const instanceQuery = `
+            SELECT i.id, i.order_item_id, oi.product_code, oi.product_name, oi.barcode
+            FROM order_item_instances i
+            JOIN order_items oi ON i.order_item_id = oi.id
+            WHERE i.serial_number = $1 AND oi.order_id = $2
+        `;
+        const instanceResult = await client.query(instanceQuery, [oldSn, orderId]);
+
+        if (instanceResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '找不到該訂單中對應的舊SN' });
+        }
+
+        const instance = instanceResult.rows[0];
+
+        // 2. Update the SN
+        await client.query(
+            'UPDATE order_item_instances SET serial_number = $1 WHERE id = $2',
+            [newSn, instance.id]
+        );
+
+        // 3. Record the defect
+        await client.query(
+            `INSERT INTO product_defects 
+            (order_id, user_id, original_sn, new_sn, product_barcode, product_name, reason)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [orderId, userId, oldSn, newSn, instance.barcode, instance.product_name, reason]
+        );
+
+        await client.query('COMMIT');
+
+        // 4. Log operation
+        await logOperation({
+            userId,
+            orderId,
+            operationType: 'defect_exchange',
+            details: { oldSn, newSn, reason, product: instance.product_name },
+            io
+        });
+
+        res.json({ message: 'SN更換成功並已記錄新品不良' });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        logger.error('[/api/orders/:orderId/defect] 失敗:', error);
+        res.status(500).json({ message: '處理失敗: ' + error.message });
+    } finally {
+        client.release();
+    }
+});
+
+// GET /api/admin/defects/stats
+router.get('/admin/defects/stats', authorizeAdmin, async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                product_barcode,
+                product_name,
+                COUNT(*) as defect_count,
+                json_agg(json_build_object(
+                    'order_id', order_id,
+                    'original_sn', original_sn,
+                    'new_sn', new_sn,
+                    'reason', reason,
+                    'created_at', created_at,
+                    'reporter', (SELECT name FROM users WHERE id = product_defects.user_id)
+                )) as details
+            FROM product_defects
+            GROUP BY product_barcode, product_name
+            ORDER BY defect_count DESC
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (error) {
+        logger.error('[/api/admin/defects/stats] 失敗:', error);
+        res.status(500).json({ message: '獲取統計失敗' });
+    }
+});
+
 module.exports = router;

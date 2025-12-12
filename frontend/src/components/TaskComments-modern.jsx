@@ -691,7 +691,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                                     }
                                 }}
                                 placeholder={replyTo ? `回覆 ${replyTo.user_name}...` : "輸入訊息..."}
-                                className="w-full px-5 py-3 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[48px] text-sm placeholder:text-gray-400"
+                                className="w-full px-5 py-3 bg-transparent border-none focus:ring-0 focus-visible:ring-0 focus-visible:outline-none resize-none max-h-32 min-h-[48px] text-sm text-gray-900 placeholder:text-gray-400 caret-blue-500"
                                 rows={1}
                                 style={{ height: 'auto', minHeight: '48px' }}
                             />

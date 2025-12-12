@@ -6,7 +6,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell, Flame, AlertTriangle, Pin } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell, Flame, AlertTriangle, Pin, RefreshCw } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
@@ -14,6 +14,7 @@ import { voiceNotification } from '@/utils/voiceNotification.js';
 import { desktopNotification } from '@/utils/desktopNotification.js';
 import FloatingChatPanel from './FloatingChatPanel';
 import NotificationCenter from './NotificationCenter';
+import DefectReportModal from './DefectReportModal';
 import { PageHeader, FilterBar, Button, Skeleton, SkeletonText } from '@/ui';
 
 // 可調整：任務分區數字徽章呼吸動畫秒數與光暈強度
@@ -99,7 +100,7 @@ const statusConfig = {
 };
 
 // 現代化任務卡片 - 2025 重構版 (Spatial Style)
-const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin, onReportDefect }) => {
     const isMyTask = task.current_user;
     const isUrgent = task.is_urgent || false;
     const hasComments = task.total_comments > 0;
@@ -227,6 +228,9 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 <button onClick={handleSetUrgent} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-red-600 transition-colors backdrop-blur-sm">
                                     <AlertTriangle size={18} />
                                 </button>
+                                <button onClick={(e) => { e.stopPropagation(); onReportDefect(task); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-orange-600 transition-colors backdrop-blur-sm" title="新品不良更換">
+                                    <RefreshCw size={18} />
+                                </button>
                                 <button onClick={() => onDelete(task.id, task.voucher_number)} className="p-2 hover:bg-red-50/50 rounded-full text-gray-400 hover:text-red-600 transition-colors backdrop-blur-sm">
                                     <Trash2 size={18} />
                                 </button>
@@ -246,8 +250,8 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                 )}
 
                 {/* 評論區塊 - 依照第二張圖設計重構 */}
-                {hasComments && (
-                    <div className="mt-auto mb-6">
+                <div className="mt-auto mb-6">
+                    {hasComments ? (
                         <div 
                             onClick={handleOpenChat}
                             className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/40 backdrop-blur-md border border-white/40 transition-all hover:bg-white/60 hover:shadow-lg group/chat"
@@ -298,8 +302,18 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 </span>
                             </div>
                         </div>
-                    </div>
-                )}
+                    ) : (
+                        <div 
+                            onClick={handleOpenChat}
+                            className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/20 backdrop-blur-sm border border-white/20 border-dashed transition-all hover:bg-white/40 hover:border-white/40 hover:shadow-md group/chat flex flex-col items-center justify-center py-6 gap-2 text-gray-500 hover:text-blue-600"
+                        >
+                            <div className="w-10 h-10 rounded-full bg-white/30 flex items-center justify-center mb-1 group-hover/chat:scale-110 transition-transform">
+                                <MessageSquare size={20} className="opacity-70" />
+                            </div>
+                            <span className="text-sm font-bold">尚無留言，點擊開始討論</span>
+                        </div>
+                    )}
+                </div>
 
                 {/* 主要操作按鈕 */}
                 <div className="mt-auto pt-2">
@@ -348,6 +362,15 @@ export function TaskDashboard({ user }) {
     const [search, setSearch] = useState('');
     const [pickHighlight, setPickHighlight] = useState(false);
     const [pinnedTaskIds, setPinnedTaskIds] = useState([]);
+    
+    // Defect Reporting Modal State
+    const [defectModalOpen, setDefectModalOpen] = useState(false);
+    const [defectTask, setDefectTask] = useState(null);
+
+    const handleReportDefect = (task) => {
+        setDefectTask(task);
+        setDefectModalOpen(true);
+    };
     
     // 浮動聊天面板狀態
     const [openChats, setOpenChats] = useState([]);
@@ -927,6 +950,7 @@ export function TaskDashboard({ user }) {
                                             onOpenChat={handleOpenChat}
                                             isPinned={pinnedTaskIds.includes(task.id)}
                                             onTogglePin={togglePinTask}
+                                            onReportDefect={handleReportDefect}
                                         />
                                     </div>
                                 ))
@@ -982,6 +1006,7 @@ export function TaskDashboard({ user }) {
                                             onOpenChat={handleOpenChat}
                                             isPinned={pinnedTaskIds.includes(task.id)}
                                             onTogglePin={togglePinTask}
+                                            onReportDefect={handleReportDefect}
                                         />
                                     </div>
                                 ))
@@ -1009,6 +1034,14 @@ export function TaskDashboard({ user }) {
                     </div>
                 )}
             </div>
+
+            {/* Defect Report Modal */}
+            <DefectReportModal
+                isOpen={defectModalOpen}
+                onClose={() => setDefectModalOpen(false)}
+                orderId={defectTask?.id}
+                voucherNumber={defectTask?.voucher_number}
+            />
 
             {/* 浮動聊天面板 */}
             {openChats.map((chat, index) => (
