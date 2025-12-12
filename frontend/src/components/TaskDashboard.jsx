@@ -97,6 +97,12 @@ const statusConfig = {
         icon: Box,
         dot: 'bg-apple-green animate-pulse'
     },
+    completed: {
+        text: '已完成',
+        color: 'bg-gradient-to-r from-green-50/80 to-emerald-50/80 text-green-700 border border-green-200/50',
+        icon: CheckCircle2,
+        dot: 'bg-green-500'
+    },
 };
 
 // 現代化任務卡片 - 2025 重構版 (Spatial Style)
@@ -353,7 +359,13 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [currentView, setCurrentView] = useState('tasks'); // 'tasks' 或 'my-tasks'
+    const [currentView, setCurrentView] = useState('active'); // 'active' | 'completed'
+    const currentViewRef = useRef(currentView);
+    
+    useEffect(() => {
+        currentViewRef.current = currentView;
+    }, [currentView]);
+
     const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
     const [voiceEnabled, setVoiceEnabled] = useState(voiceNotification.isEnabled());
     const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
@@ -528,7 +540,8 @@ export function TaskDashboard({ user }) {
         if (user) { 
             try {
                 setLoading(true);
-                const response = await apiClient.get('/api/tasks');
+                const endpoint = currentView === 'completed' ? '/api/tasks/completed' : '/api/tasks';
+                const response = await apiClient.get(endpoint);
                 setTasks(response.data);
             } catch (error) {
                 if (error.response?.status !== 401) {
@@ -538,7 +551,7 @@ export function TaskDashboard({ user }) {
                 setLoading(false);
             }
         }
-    }, [user]);
+    }, [user, currentView]);
 
     useEffect(() => {
         fetchTasks();
@@ -582,15 +595,31 @@ export function TaskDashboard({ user }) {
                 if (payload.id) Object.assign(updatedTask, payload);
 
                 // 檢查是否需要從列表中移除
-                if (
-                    (updatedTask.status === 'picked' && user.role === 'picker') ||
-                    (updatedTask.status === 'completed') || 
-                    (updatedTask.status === 'voided')
-                ) {
-                    if (updatedTask.status === 'completed') {
-                        soundNotification.play('taskCompleted');
-                    }
+                const isCompletedView = currentViewRef.current === 'completed';
+
+                // 1. 作廢的任務在任何視圖都應該移除
+                if (updatedTask.status === 'voided') {
                     return currentTasks.filter(t => t.id !== taskId);
+                }
+
+                // 2. Active View 邏輯：完成或已撿貨(對撿貨員)的任務應移除
+                if (!isCompletedView) {
+                    if (
+                        (updatedTask.status === 'picked' && user.role === 'picker') ||
+                        (updatedTask.status === 'completed')
+                    ) {
+                        if (updatedTask.status === 'completed') {
+                            soundNotification.play('taskCompleted');
+                        }
+                        return currentTasks.filter(t => t.id !== taskId);
+                    }
+                }
+
+                // 3. Completed View 邏輯：如果任務變回未完成狀態(pending)，應該移除
+                if (isCompletedView) {
+                    if (updatedTask.status === 'pending') {
+                        return currentTasks.filter(t => t.id !== taskId);
+                    }
                 }
                 
                 const newTasks = [...currentTasks];
@@ -741,6 +770,7 @@ export function TaskDashboard({ user }) {
 
     const pickTasks = sortedVisibleTasks.filter(t => t.task_type === 'pick');
     const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
+    const completedTasks = sortedVisibleTasks.filter(t => t.task_type === 'done' || t.task_type === 'picked');
 
     // 當待揀貨數量變動時，短暫高亮
     useEffect(() => {
@@ -798,6 +828,22 @@ export function TaskDashboard({ user }) {
                   className="relative z-50"
                                     actions={(
                                         <div className="flex flex-wrap items-center gap-2 justify-end">
+                      {/* 視圖切換 */}
+                      <div className="flex bg-gray-100/80 p-1 rounded-xl mr-2">
+                          <button 
+                              onClick={() => setCurrentView('active')}
+                              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${currentView === 'active' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                          >
+                              進行中
+                          </button>
+                          <button 
+                              onClick={() => setCurrentView('completed')}
+                              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${currentView === 'completed' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                          >
+                              已完成
+                          </button>
+                      </div>
+
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
@@ -927,6 +973,7 @@ export function TaskDashboard({ user }) {
                 
 
                 {/* 任務列表 */}
+                {currentView === 'active' ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
                     {/* 揀貨任務區 */}
                     <section className="animate-slide-up flex flex-col h-full">
@@ -1040,9 +1087,63 @@ export function TaskDashboard({ user }) {
                         </div>
                     </section>
                 </div>
+                ) : (
+                    <div className="space-y-6">
+                        <div className="glass-panel rounded-2xl p-1.5 mb-4 shadow-lg">
+                            <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-white text-green-500 flex items-center justify-center shadow-sm">
+                                        <CheckCircle2 size={20} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg font-bold text-gray-900 leading-none">已完成任務</h2>
+                                        <p className="text-xs text-green-600/80 font-medium mt-1">近期完成的訂單</p>
+                                    </div>
+                                </div>
+                                <span className="px-3 py-1 rounded-lg bg-white text-green-600 text-sm font-bold shadow-sm border border-green-100">
+                                    {completedTasks.length}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        {completedTasks.length === 0 ? (
+                            <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
+                                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                                    <CheckCircle2 className="text-gray-300" size={40} />
+                                </div>
+                                <p className="text-gray-500 font-medium">尚無已完成任務</p>
+                                <p className="text-gray-400 text-sm mt-1">完成的任務將會顯示在這裡</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                {completedTasks.map((task, index) => (
+                                    <div 
+                                        key={task.id} 
+                                        style={{ animationDelay: `${index * 50}ms` }}
+                                        className="animate-fade-in"
+                                    >
+                                        <ModernTaskCard
+                                            task={task}
+                                            user={user}
+                                            onClaim={() => {}} // Completed tasks cannot be claimed
+                                            onDelete={handleDeleteOrder}
+                                            batchMode={false}
+                                            selectedTasks={[]}
+                                            toggleTaskSelection={() => {}}
+                                            onOpenChat={handleOpenChat}
+                                            isPinned={pinnedTaskIds.includes(task.id)}
+                                            onTogglePin={togglePinTask}
+                                            onReportDefect={handleReportDefect}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* 全部完成狀態 */}
-                {visibleTasks.length === 0 && !loading && (
+                {currentView === 'active' && visibleTasks.length === 0 && !loading && (
                     <div className="text-center py-24 animate-fade-in">
                         <div className="glass rounded-3xl p-12 max-w-md mx-auto">
                             <CheckCircle2 size={80} className="mx-auto mb-6 text-green-500" />

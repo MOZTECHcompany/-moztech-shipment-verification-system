@@ -89,4 +89,69 @@ router.get('/users/basic', async (req, res) => {
     }
 });
 
+// GET /api/tasks/completed
+// 獲取已完成的任務列表
+router.get('/tasks/completed', async (req, res) => {
+    try {
+        const { id: userId, role } = req.user;
+        const limit = parseInt(req.query.limit) || 50;
+        
+        let query = `
+            SELECT 
+                o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                pk.name as packer_name,
+                o.updated_at as completed_at,
+                (CASE WHEN o.status = 'completed' THEN 'done' ELSE 'picked' END) as task_type
+            FROM orders o
+            LEFT JOIN users p ON o.picker_id = p.id 
+            LEFT JOIN users pk ON o.packer_id = pk.id
+            WHERE 
+        `;
+        
+        const params = [userId, limit];
+        
+        if (role === 'admin') {
+            query += `o.status = 'completed'`;
+            // Admin doesn't need userId param for filtering, but we keep it in params array for index consistency if needed, 
+            // actually let's adjust params.
+            // For admin, we just want completed orders.
+            // Let's rewrite the params logic.
+        } else if (role === 'picker') {
+            // Picker sees orders they picked that are now picked, packing or completed
+            query += `o.picker_id = $1 AND o.status IN ('picked', 'packing', 'completed')`;
+        } else if (role === 'packer') {
+            // Packer sees orders they packed that are now completed
+            query += `o.packer_id = $1 AND o.status = 'completed'`;
+        } else {
+            return res.json([]);
+        }
+        
+        query += ` ORDER BY o.updated_at DESC LIMIT $2`;
+        
+        // Adjust params based on role
+        const queryParams = role === 'admin' ? [limit] : [userId, limit];
+        // Fix query placeholder for admin
+        if (role === 'admin') {
+             query = `
+                SELECT 
+                    o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                    pk.name as packer_name,
+                    o.updated_at as completed_at,
+                    'done' as task_type
+                FROM orders o
+                LEFT JOIN users p ON o.picker_id = p.id 
+                LEFT JOIN users pk ON o.packer_id = pk.id
+                WHERE o.status = 'completed'
+                ORDER BY o.updated_at DESC LIMIT $1
+            `;
+        }
+
+        const result = await pool.query(query, queryParams);
+        res.json(result.rows);
+    } catch (error) {
+        logger.error('[/api/tasks/completed] 獲取已完成任務失敗:', error);
+        res.status(500).json({ message: '獲取已完成任務失敗' });
+    }
+});
+
 module.exports = router;
