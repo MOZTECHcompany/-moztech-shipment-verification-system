@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/48</span>
+                <span class='fraction'>0/49</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/18</span>
+                <span class='fraction'>0/20</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/47</span>
+                <span class='fraction'>0/48</span>
             </div>
         
             
@@ -220,7 +220,9 @@
 <a name='L155'></a><a href='#L155'>155</a>
 <a name='L156'></a><a href='#L156'>156</a>
 <a name='L157'></a><a href='#L157'>157</a>
-<a name='L158'></a><a href='#L158'>158</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -317,22 +319,24 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -473,7 +477,8 @@ const logger = <span class="cstat-no" title="statement not covered" >require('..
 <span class="cstat-no" title="statement not covered" >router.get('/tasks/completed', <span class="fstat-no" title="function not covered" >as</span>ync (req, res) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >    try {</span>
         const { id: userId, role } = <span class="cstat-no" title="statement not covered" >req.user;</span>
-        const limit = <span class="cstat-no" title="statement not covered" >parseInt(req.query.limit) || 50;</span>
+        const parsedLimit = <span class="cstat-no" title="statement not covered" >parseInt(req.query.limit || '50', 10);</span>
+        const limit = <span class="cstat-no" title="statement not covered" >Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;</span>
         
         let query = <span class="cstat-no" title="statement not covered" >`</span>
             SELECT 
@@ -490,7 +495,8 @@ const logger = <span class="cstat-no" title="statement not covered" >require('..
         const params = <span class="cstat-no" title="statement not covered" >[userId, limit];</span>
         
 <span class="cstat-no" title="statement not covered" >        if (role === 'admin') {</span>
-<span class="cstat-no" title="statement not covered" >            query += `o.status = 'completed'`;</span>
+            // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
+<span class="cstat-no" title="statement not covered" >            query += `o.status IN ('picked', 'packing', 'completed')`;</span>
             // Admin doesn't need userId param for filtering, but we keep it in params array for index consistency if needed, 
             // actually let's adjust params.
             // For admin, we just want completed orders.
@@ -516,11 +522,11 @@ const logger = <span class="cstat-no" title="statement not covered" >require('..
                     o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
                     pk.name as packer_name,
                     o.updated_at as completed_at,
-                    'done' as task_type
+                    (CASE WHEN o.status = 'completed' THEN 'done' ELSE 'picked' END) as task_type
                 FROM orders o
                 LEFT JOIN users p ON o.picker_id = p.id 
                 LEFT JOIN users pk ON o.packer_id = pk.id
-                WHERE o.status = 'completed'
+                WHERE o.status IN ('picked', 'packing', 'completed')
                 ORDER BY o.updated_at DESC LIMIT $1
             `;
         }
@@ -541,7 +547,7 @@ const logger = <span class="cstat-no" title="statement not covered" >require('..
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-12T12:45:45.232Z
+                at 2025-12-12T13:08:11.488Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

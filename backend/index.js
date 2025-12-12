@@ -376,7 +376,8 @@ apiRouter.get('/tasks/completed', async (req, res) => {
 
         let whereSql = '';
         if (role === 'admin') {
-            whereSql = "o.status = 'completed'";
+            // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
+            whereSql = "o.status IN ('picked', 'packing', 'completed')";
         } else if (role === 'picker') {
             // 撿貨員：顯示自己處理過、且已撿貨後(含裝箱/完成)的訂單
             whereSql = "o.picker_id = $1 AND o.status IN ('picked', 'packing', 'completed')";

@@ -94,7 +94,8 @@ router.get('/users/basic', async (req, res) => {
 router.get('/tasks/completed', async (req, res) => {
     try {
         const { id: userId, role } = req.user;
-        const limit = parseInt(req.query.limit) || 50;
+        const parsedLimit = parseInt(req.query.limit || '50', 10);
+        const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
         
         let query = `
             SELECT 
@@ -111,7 +112,8 @@ router.get('/tasks/completed', async (req, res) => {
         const params = [userId, limit];
         
         if (role === 'admin') {
-            query += `o.status = 'completed'`;
+            // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
+            query += `o.status IN ('picked', 'packing', 'completed')`;
             // Admin doesn't need userId param for filtering, but we keep it in params array for index consistency if needed, 
             // actually let's adjust params.
             // For admin, we just want completed orders.
@@ -137,11 +139,11 @@ router.get('/tasks/completed', async (req, res) => {
                     o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
                     pk.name as packer_name,
                     o.updated_at as completed_at,
-                    'done' as task_type
+                    (CASE WHEN o.status = 'completed' THEN 'done' ELSE 'picked' END) as task_type
                 FROM orders o
                 LEFT JOIN users p ON o.picker_id = p.id 
                 LEFT JOIN users pk ON o.packer_id = pk.id
-                WHERE o.status = 'completed'
+                WHERE o.status IN ('picked', 'packing', 'completed')
                 ORDER BY o.updated_at DESC LIMIT $1
             `;
         }
