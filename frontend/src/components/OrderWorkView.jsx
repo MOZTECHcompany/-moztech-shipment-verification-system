@@ -24,6 +24,7 @@ import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
 import { ShippingLabel, PickingList } from './LabelPrinter';
 import ErrorBoundary from './ErrorBoundary';
+import DefectReportModal from './DefectReportModal';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" }) => {
@@ -113,6 +114,16 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, active
                     >
                         <Camera size={16} />
                         <span>掃描</span>
+                    </button>
+
+                    {/* 新品不良 SN 更換 - 快捷入口 */}
+                    <button
+                        onClick={() => setDefectModalOpen(true)}
+                        className="px-3 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-red-200 active:scale-95 flex items-center gap-2"
+                        title="新品不良 SN 更換"
+                    >
+                        <AlertTriangle size={16} />
+                        <span>新品不良更換</span>
                     </button>
                     
                     {/* 列印按鈕群組 */}
@@ -473,6 +484,7 @@ export function OrderWorkView({ user }) {
     const [activeSessions, setActiveSessions] = useState([]);
     const [allUsers, setAllUsers] = useState([]);
     const [isFocusMode, setIsFocusMode] = useState(false); // 專注模式狀態
+    const [defectModalOpen, setDefectModalOpen] = useState(false);
 
     const barcodeInputRef = useRef(null);
     // 移除對外部 mp3 的依賴，統一使用 WebAudio 產生提示音，避免 404 或自動播放限制
@@ -988,6 +1000,13 @@ export function OrderWorkView({ user }) {
                         mode="single"
                     />
                 )}
+
+                <DefectReportModal
+                    isOpen={defectModalOpen}
+                    onClose={() => setDefectModalOpen(false)}
+                    orderId={currentOrderData.order?.id}
+                    voucherNumber={currentOrderData.order?.voucher_number}
+                />
             </div>
         </div>
     );
