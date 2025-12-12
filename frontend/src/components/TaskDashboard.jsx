@@ -106,13 +106,15 @@ const statusConfig = {
 };
 
 // 現代化任務卡片 - 2025 重構版 (Spatial Style)
-const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin, onReportDefect }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin, onReportDefect, viewMode = 'active', onViewOrder }) => {
     const isMyTask = task.current_user;
     const isUrgent = task.is_urgent || false;
     const hasComments = task.total_comments > 0;
     const hasUnread = task.unread_comments > 0;
     const hasUrgentComments = task.urgent_comments > 0;
     const latestComment = task.latest_comment;
+
+    const isCompletedView = viewMode === 'completed';
     
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
@@ -323,7 +325,18 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
                 {/* 主要操作按鈕 */}
                 <div className="mt-auto pt-2">
-                    {isMyTask ? (
+                    {isCompletedView ? (
+                        <Button
+                            variant="secondary"
+                            size="lg"
+                            className="w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all active:scale-95"
+                            onClick={() => onViewOrder?.(task.id)}
+                        >
+                            <span className="flex items-center gap-2">
+                                查看訂單 <ArrowRight size={20} />
+                            </span>
+                        </Button>
+                    ) : isMyTask ? (
                         <Button
                             variant="primary"
                             size="lg"
@@ -817,7 +830,7 @@ export function TaskDashboard({ user }) {
     const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
     const completedTasks = sortedVisibleTasks.filter(t => t.task_type === 'done' || t.task_type === 'picked');
 
-    // 管理員在「已完成」視圖需要把已完成訂單分成：揀貨完成(待裝箱/裝箱中) vs 裝箱完成(已完成)
+    // 「已完成」視圖：分成已完成揀貨(待裝箱/裝箱中) vs 已完成裝箱(已完成)
     const completedPickPhaseTasks = useMemo(
         () => completedTasks.filter(t => t.task_type === 'picked'),
         [completedTasks]
@@ -826,6 +839,81 @@ export function TaskDashboard({ user }) {
         () => completedTasks.filter(t => t.task_type === 'done'),
         [completedTasks]
     );
+
+    const statCards = useMemo(() => {
+        if (currentView === 'completed') {
+            return [
+                {
+                    label: '揀貨待裝箱',
+                    value: completedPickPhaseTasks.length,
+                    color: 'from-emerald-500 to-teal-500',
+                    bg: 'bg-emerald-50',
+                    text: 'text-emerald-600',
+                    icon: Box,
+                },
+                {
+                    label: '已完成裝箱',
+                    value: completedPackDoneTasks.length,
+                    color: 'from-green-500 to-emerald-500',
+                    bg: 'bg-green-50',
+                    text: 'text-green-600',
+                    icon: CheckCircle2,
+                },
+                {
+                    label: '已完成總數',
+                    value: completedTasks.length,
+                    color: 'from-blue-500 to-indigo-500',
+                    bg: 'bg-blue-50',
+                    text: 'text-blue-600',
+                    icon: LayoutDashboard,
+                },
+                {
+                    label: '我的任務',
+                    value: visibleTasks.filter(t => t.current_user).length,
+                    color: 'from-purple-500 to-pink-500',
+                    bg: 'bg-purple-50',
+                    text: 'text-purple-600',
+                    icon: User,
+                },
+            ];
+        }
+
+        return [
+            {
+                label:'待揀貨',
+                value: pickTasks.length,
+                color:'from-orange-500 to-amber-500',
+                bg: 'bg-orange-50',
+                text: 'text-orange-600',
+                icon: Package,
+                highlight: pickHighlight
+            },
+            {
+                label:'待裝箱',
+                value: packTasks.length,
+                color:'from-emerald-500 to-teal-500',
+                bg: 'bg-emerald-50',
+                text: 'text-emerald-600',
+                icon: Box
+            },
+            {
+                label:'總任務',
+                value: visibleTasks.length,
+                color:'from-blue-500 to-indigo-500',
+                bg: 'bg-blue-50',
+                text: 'text-blue-600',
+                icon: LayoutDashboard
+            },
+            {
+                label:'我的任務',
+                value: visibleTasks.filter(t=>t.current_user).length,
+                color:'from-purple-500 to-pink-500',
+                bg: 'bg-purple-50',
+                text: 'text-purple-600',
+                icon: User
+            },
+        ];
+    }, [currentView, completedPickPhaseTasks.length, completedPackDoneTasks.length, completedTasks.length, visibleTasks, pickTasks.length, packTasks.length, pickHighlight]);
 
     // 當待揀貨數量變動時，短暫高亮
     useEffect(() => {
@@ -969,42 +1057,8 @@ export function TaskDashboard({ user }) {
                 </div>
 
                 {/* 統計卡片 Widget 風格 */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 mt-6 mb-8">
-                  {[
-                    {
-                        label:'待揀貨', 
-                        value: pickTasks.length, 
-                        color:'from-orange-500 to-amber-500', 
-                        bg: 'bg-orange-50',
-                        text: 'text-orange-600',
-                        icon: Package,
-                        highlight: pickHighlight
-                    },
-                    {
-                        label:'待裝箱', 
-                        value: packTasks.length, 
-                        color:'from-emerald-500 to-teal-500', 
-                        bg: 'bg-emerald-50',
-                        text: 'text-emerald-600',
-                        icon: Box
-                    },
-                    {
-                        label:'總任務', 
-                        value: visibleTasks.length, 
-                        color:'from-blue-500 to-indigo-500', 
-                        bg: 'bg-blue-50',
-                        text: 'text-blue-600',
-                        icon: LayoutDashboard
-                    },
-                    {
-                        label:'我的任務', 
-                        value: visibleTasks.filter(t=>t.current_user).length, 
-                        color:'from-purple-500 to-pink-500', 
-                        bg: 'bg-purple-50',
-                        text: 'text-purple-600',
-                        icon: User
-                    },
-                  ].map((c, i)=>{
+                                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 mt-6 mb-8">
+                                    {statCards.map((c, i)=>{
                     const Icon = c.icon;
                     return (
                       <div key={i} className="relative group overflow-hidden bg-white/80 backdrop-blur-md rounded-2xl p-5 border border-white/60 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
@@ -1199,7 +1253,9 @@ export function TaskDashboard({ user }) {
                                                 <ModernTaskCard
                                                     task={task}
                                                     user={user}
-                                                    onClaim={() => {}} // Completed view items cannot be claimed
+                                                    onClaim={() => {}}
+                                                    viewMode="completed"
+                                                    onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
                                                     onDelete={handleDeleteOrder}
                                                     batchMode={false}
                                                     selectedTasks={[]}
@@ -1211,6 +1267,12 @@ export function TaskDashboard({ user }) {
                                                 />
                                             </div>
                                         ))}
+                                    </div>
+                                )}
+                                {completedPickPhaseTasks.length === 0 && (
+                                    <div className="h-40 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border border-white/30">
+                                        <p className="text-gray-500 font-medium">目前沒有揀貨待裝箱的訂單</p>
+                                        <p className="text-gray-400 text-sm mt-1">完成揀貨後會顯示在這裡</p>
                                     </div>
                                 )}
 
@@ -1242,7 +1304,9 @@ export function TaskDashboard({ user }) {
                                                 <ModernTaskCard
                                                     task={task}
                                                     user={user}
-                                                    onClaim={() => {}} // Completed view items cannot be claimed
+                                                    onClaim={() => {}}
+                                                    viewMode="completed"
+                                                    onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
                                                     onDelete={handleDeleteOrder}
                                                     batchMode={false}
                                                     selectedTasks={[]}
@@ -1254,6 +1318,12 @@ export function TaskDashboard({ user }) {
                                                 />
                                             </div>
                                         ))}
+                                    </div>
+                                )}
+                                {completedPackDoneTasks.length === 0 && (
+                                    <div className="h-40 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border border-white/30">
+                                        <p className="text-gray-500 font-medium">目前沒有已完成裝箱的訂單</p>
+                                        <p className="text-gray-400 text-sm mt-1">訂單完成後會顯示在這裡</p>
                                     </div>
                                 )}
                             </div>
