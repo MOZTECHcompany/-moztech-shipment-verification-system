@@ -610,6 +610,33 @@ export function OrderWorkView({ user }) {
                 amount
             });
             setCurrentOrderData(response.data);
+
+            // 不只依賴 socket：若回應已更新狀態，直接提示並導回任務列表
+            const newStatus = response.data?.order?.status;
+            if (newStatus === 'completed') {
+                MySwal.fire({
+                    title: '🎉 訂單已完成！',
+                    text: '所有品項已裝箱完畢，即將返回任務列表...',
+                    icon: 'success',
+                    timer: 2000,
+                    showConfirmButton: false
+                }).then(() => {
+                    navigate('/tasks', { state: { view: 'completed' } });
+                });
+                return;
+            }
+            if (newStatus === 'picked' && user.role === 'picker') {
+                MySwal.fire({
+                    title: '✅ 揀貨完成！',
+                    text: '此訂單已完成揀貨，即將返回任務列表...',
+                    icon: 'success',
+                    timer: 2000,
+                    showConfirmButton: false
+                }).then(() => {
+                    navigate('/tasks', { state: { view: 'completed' } });
+                });
+                return;
+            }
             
             // 正確計算已掃描和剩餘數量（包含 instances）
             let totalScanned = 0;

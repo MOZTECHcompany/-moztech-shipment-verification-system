@@ -159,13 +159,89 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
 });
 
 // GET /api/orders/:orderId
-router.get('/orders/:orderId', async (req, res) => {
+router.get('/orders/:orderId', async (req, res, next) => {
     const { orderId } = req.params;
-    const orderResult = await pool.query('SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1;', [orderId]);
-    if (orderResult.rows.length === 0) return res.status(404).json({ message: '找不到訂單' });
-    const itemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
-    const instancesResult = await pool.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id', [orderId]);
-    res.json({ order: orderResult.rows[0], items: itemsResult.rows, instances: instancesResult.rows });
+    const io = req.app.get('io');
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const orderResult = await client.query(
+            'SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1 FOR UPDATE;',
+            [orderId]
+        );
+        if (orderResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '找不到訂單' });
+        }
+        const order = orderResult.rows[0];
+
+        const itemsResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        const instancesResult = await client.query(
+            'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id',
+            [orderId]
+        );
+
+        // 自動修正卡住的狀態（例：畫面顯示都已完成但還停在裝箱中）
+        let allPicked = true;
+        let allPacked = true;
+
+        for (const item of itemsResult.rows) {
+            const itemInstances = instancesResult.rows.filter(inst => inst.order_item_id === item.id);
+            if (itemInstances.length > 0) {
+                if (!itemInstances.every(i => ['picked', 'packed'].includes(i.status))) allPicked = false;
+                if (!itemInstances.every(i => i.status === 'packed')) allPacked = false;
+            } else {
+                const qty = Number(item.quantity ?? 0);
+                const pickedQty = Number(item.picked_quantity ?? 0);
+                const packedQty = Number(item.packed_quantity ?? 0);
+
+                if (pickedQty < qty) allPicked = false;
+                const requiredPackQty = Math.min(qty, pickedQty);
+                if (packedQty < requiredPackQty) allPacked = false;
+            }
+        }
+
+        let statusChanged = false;
+        let newStatus = order.status;
+
+        if (allPacked && order.status !== 'completed') {
+            newStatus = 'completed';
+            statusChanged = true;
+            await client.query(
+                "UPDATE orders SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
+                [req.user?.id || null, orderId]
+            );
+        } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
+            newStatus = 'picked';
+            statusChanged = true;
+            await client.query("UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
+        }
+
+        await client.query('COMMIT');
+
+        if (statusChanged) {
+            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus });
+        }
+
+        const refreshedOrder = await pool.query(
+            'SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1;',
+            [orderId]
+        );
+        const refreshedItems = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        const refreshedInstances = await pool.query(
+            'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id',
+            [orderId]
+        );
+
+        res.json({ order: refreshedOrder.rows[0], items: refreshedItems.rows, instances: refreshedInstances.rows });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
 });
 
 // PATCH /api/orders/:orderId/void
@@ -439,8 +515,14 @@ router.post('/orders/update_item', async (req, res, next) => {
                 if (!itemInstances.every(i => ['picked', 'packed'].includes(i.status))) allPicked = false;
                 if (!itemInstances.every(i => i.status === 'packed')) allPacked = false;
             } else {
-                if (item.picked_quantity < item.quantity) allPicked = false;
-                if (item.packed_quantity < item.quantity) allPacked = false;
+                    const qty = Number(item.quantity ?? 0);
+                    const pickedQty = Number(item.picked_quantity ?? 0);
+                    const packedQty = Number(item.packed_quantity ?? 0);
+
+                    if (pickedQty < qty) allPicked = false;
+                    // 裝箱以「已揀貨數」為基準（避免部分揀貨/異常資料導致永遠無法完成）
+                    const requiredPackQty = Math.min(qty, pickedQty);
+                    if (packedQty < requiredPackQty) allPacked = false;
             }
         }
 
