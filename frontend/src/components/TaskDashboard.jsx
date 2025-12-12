@@ -542,7 +542,8 @@ export function TaskDashboard({ user }) {
         if (user) { 
             try {
                 setLoading(true);
-                const endpoint = currentView === 'completed' ? '/api/tasks/completed' : '/api/tasks';
+                // 已完成清單後端預設 limit=50；這裡拉高一點避免「明明已完成但看不到」
+                const endpoint = currentView === 'completed' ? '/api/tasks/completed?limit=200' : '/api/tasks';
                 const response = await apiClient.get(endpoint);
                 setTasks(response.data);
             } catch (error) {
@@ -589,7 +590,7 @@ export function TaskDashboard({ user }) {
                 if (!shouldAppearInCompleted) return;
 
                 try {
-                    const response = await apiClient.get('/api/tasks/completed');
+                    const response = await apiClient.get('/api/tasks/completed?limit=200');
                     // 避免切換視圖後的 race condition
                     if (currentViewRef.current === 'completed') {
                         setTasks(response.data);
