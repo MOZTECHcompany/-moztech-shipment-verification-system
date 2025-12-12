@@ -23,35 +23,7 @@ import { CameraScanner } from './CameraScanner';
 import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
 import { ShippingLabel, PickingList } from './LabelPrinter';
-
-// --- 錯誤邊界組件 ---
-class ErrorBoundary extends React.Component {
-    constructor(props) {
-        super(props);
-        this.state = { hasError: false, error: null };
-    }
-
-    static getDerivedStateFromError(error) {
-        return { hasError: true, error };
-    }
-
-    componentDidCatch(error, errorInfo) {
-        console.error("ErrorBoundary caught an error", error, errorInfo);
-    }
-
-    render() {
-        if (this.state.hasError) {
-            return (
-                <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-600">
-                    <h3 className="font-bold mb-1">組件發生錯誤</h3>
-                    <p className="text-sm">{this.state.error?.message}</p>
-                </div>
-            );
-        }
-
-        return this.props.children; 
-    }
-}
+import ErrorBoundary from './ErrorBoundary';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" }) => {

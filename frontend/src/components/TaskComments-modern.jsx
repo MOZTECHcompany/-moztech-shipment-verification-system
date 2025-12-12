@@ -15,8 +15,8 @@ import {
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
 import { useComments } from '@/api/useComments';
-import DesktopNotification from '@/utils/desktopNotification';
-import SoundNotification from '@/utils/soundNotification';
+import desktopNotification from '@/utils/desktopNotification';
+import soundNotification from '@/utils/soundNotification';
 import { Button, Skeleton } from '@/ui';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
@@ -109,8 +109,6 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     const commentsEndRef = useRef(null);
     const scrollContainerRef = useRef(null);
     const mentionPulseRef = useRef(new Set());
-    const notifierRef = useRef(null);
-    const soundRef = useRef(null);
 
     // 建立評論 ID 對照表，用於快速查找父評論
     const commentMap = useMemo(() => {
@@ -154,8 +152,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                     // 播放音效
                     if (data.userId !== currentUser.id) {
                         try {
-                            if (!soundRef.current) soundRef.current = new SoundNotification();
-                            soundRef.current.play('message');
+                            soundNotification.play('message');
                         } catch {}
                     }
                 }
@@ -178,16 +175,14 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                 if (String(payload.orderId) === String(orderId) && Number(payload.userId) === Number(currentUser.id)) {
                     mentionPulseRef.current.add(payload.commentId);
                     try {
-                        if (!notifierRef.current) notifierRef.current = new DesktopNotification();
-                        notifierRef.current.show('有人提及了你', {
+                        desktopNotification.show('有人提及了你', {
                             body: payload.content || '新提及',
                             duration: 4000,
                             onClick: () => {}
                         });
                     } catch {}
                     try {
-                        if (!soundRef.current) soundRef.current = new SoundNotification();
-                        soundRef.current.play('newTask');
+                        soundNotification.play('newTask');
                     } catch {}
                     invalidate();
                     fetchMentions();
