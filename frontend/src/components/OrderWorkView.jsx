@@ -6,10 +6,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { 
-    Loader2, ArrowLeft, Check, ScanLine, Barcode, Tag, Package, 
+    Loader2, ArrowLeft, Check, ScanLine, Package, 
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
-    ChevronUp, ShoppingCart, Box, Camera, MessageSquare, Printer, Users,
-    Maximize2, Minimize2, Eye, EyeOff, CheckCircle2
+    ChevronUp, ShoppingCart, Box, Camera, MessageSquare,
+    Maximize2, Minimize2, CheckCircle2
 } from 'lucide-react';
 import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge } from '@/ui';
 import Swal from 'sweetalert2';
@@ -23,6 +23,35 @@ import { CameraScanner } from './CameraScanner';
 import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
 import { ShippingLabel, PickingList } from './LabelPrinter';
+
+// --- 錯誤邊界組件 ---
+class ErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+
+    componentDidCatch(error, errorInfo) {
+        console.error("ErrorBoundary caught an error", error, errorInfo);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-600">
+                    <h3 className="font-bold mb-1">組件發生錯誤</h3>
+                    <p className="text-sm">{this.state.error?.message}</p>
+                </div>
+            );
+        }
+
+        return this.props.children; 
+    }
+}
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" }) => {
@@ -818,18 +847,20 @@ export function OrderWorkView({ user }) {
                 )}
                 
                 { !(loading || !currentOrderData.order) && (
-                  <ProgressDashboard 
-                    stats={progressStats} 
-                    onExport={handleExportReport} 
-                    onVoid={handleVoidOrder} 
-                    user={user}
-                    onOpenCamera={() => setShowCameraScanner(true)}
-                    activeSessions={activeSessions}
-                    order={currentOrderData.order}
-                    items={currentOrderData.items}
-                    isFocusMode={isFocusMode}
-                    toggleFocusMode={() => setIsFocusMode(!isFocusMode)}
-                  />
+                  <ErrorBoundary>
+                    <ProgressDashboard 
+                        stats={progressStats} 
+                        onExport={handleExportReport} 
+                        onVoid={handleVoidOrder} 
+                        user={user}
+                        onOpenCamera={() => setShowCameraScanner(true)}
+                        activeSessions={activeSessions}
+                        order={currentOrderData.order}
+                        items={currentOrderData.items}
+                        isFocusMode={isFocusMode}
+                        toggleFocusMode={() => setIsFocusMode(!isFocusMode)}
+                    />
+                  </ErrorBoundary>
                 )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -891,7 +922,9 @@ export function OrderWorkView({ user }) {
                         {/* 討論區塊 */}
                         <div className="bg-white/30 backdrop-blur-md rounded-2xl shadow-sm border border-white/20 overflow-hidden flex flex-col h-[600px]">
                             <div className="flex-1 overflow-hidden relative">
-                                <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} mode="embedded" />
+                                <ErrorBoundary>
+                                    <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} mode="embedded" />
+                                </ErrorBoundary>
                             </div>
                         </div>
                     </div>
@@ -921,6 +954,7 @@ export function OrderWorkView({ user }) {
                             </div>
                             
                             <div className="min-h-full">
+                                <ErrorBoundary>
                                 {currentOrderData.order ? (
                                   <>
                                     <div className="space-y-3">
@@ -968,6 +1002,7 @@ export function OrderWorkView({ user }) {
                                     <SkeletonText lines={4} className="h-32" />
                                   </div>
                                 )}
+                                </ErrorBoundary>
                             </div>
                         </div>
                     </div>
