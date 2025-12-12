@@ -85,7 +85,7 @@ const UserAvatar = ({ name, size = "md" }) => {
     );
 };
 
-export ㄔdefault function TaskComments({ orderId, currentUser, allUsers, mode = 'embedded' }) {
+export default function TaskComments({ orderId, currentUser, allUsers, mode = 'embedded' }) {
     const { data, isLoading, fetchNextPage, hasNextPage, addOptimistic, invalidate } = useComments(orderId);
     const comments = (data?.pages || []).flatMap(p => p.items ?? []);
     const [newComment, setNewComment] = useState('');
