@@ -575,6 +575,28 @@ export function TaskDashboard({ user }) {
              
              if (!taskId) return;
 
+             const maybeRefetchCompleted = async () => {
+                // Socket 事件常只有 { orderId, newStatus }，缺少 voucher_number 等欄位。
+                // 若使用者目前在「已完成」視圖，且事件代表此訂單應出現在已完成清單，
+                // 就直接 refetch，確保新完成訂單會同步顯示。
+                if (currentViewRef.current !== 'completed') return;
+                const shouldAppearInCompleted =
+                    newStatus === 'completed' ||
+                    (user.role === 'picker' && (newStatus === 'picked' || newStatus === 'packing'));
+
+                if (!shouldAppearInCompleted) return;
+
+                try {
+                    const response = await apiClient.get('/api/tasks/completed');
+                    // 避免切換視圖後的 race condition
+                    if (currentViewRef.current === 'completed') {
+                        setTasks(response.data);
+                    }
+                } catch {
+                    // 靜默失敗：避免 Socket 事件頻繁時干擾使用者
+                }
+             };
+
              setTasks(currentTasks => {
                 const index = currentTasks.findIndex(t => t.id === taskId);
                 
@@ -585,6 +607,9 @@ export function TaskDashboard({ user }) {
                         if ((user.role === 'picker' || user.role === 'admin') && payload.task_type === 'pick') return [...currentTasks, payload];
                         if ((user.role === 'packer' || user.role === 'admin') && payload.task_type === 'pack') return [...currentTasks, payload];
                     }
+
+                    // 已完成視圖：若收到狀態變更但缺少完整資料，改用 refetch 同步
+                    void maybeRefetchCompleted();
                     return currentTasks;
                 }
                 
