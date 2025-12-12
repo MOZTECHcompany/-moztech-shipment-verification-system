@@ -749,13 +749,30 @@ export function TaskDashboard({ user }) {
     };
 
     const normalizedSearch = search.trim().toLowerCase();
+
+    // 寬鬆正規化：保留中英文/數字，移除空白與常見分隔符，讓「2025/12/12 -2」或「202512122」可命中「2025/12/12-2」
+    const normalizeLoose = useCallback((value) => {
+        return String(value ?? '')
+            .toLowerCase()
+            .replace(/[\s\/_\-().]+/g, '')
+            .replace(/[^0-9a-z\u4e00-\u9fff]/g, '');
+    }, []);
+
+    const normalizedLooseSearch = useMemo(() => normalizeLoose(search), [search, normalizeLoose]);
+
     const visibleTasks = useMemo(() => {
-        if (!normalizedSearch) return tasks;
+        if (!normalizedSearch && !normalizedLooseSearch) return tasks;
         return tasks.filter((t) => {
-            const hay = `${t.voucher_number || ''} ${t.customer_name || ''}`.toLowerCase();
-            return hay.includes(normalizedSearch);
+            const parts = [t.voucher_number, t.customer_name].filter(Boolean);
+            const hay = parts.join(' ').toLowerCase();
+            if (normalizedSearch && hay.includes(normalizedSearch)) return true;
+            if (normalizedLooseSearch) {
+                const looseHay = normalizeLoose(hay);
+                if (looseHay.includes(normalizedLooseSearch)) return true;
+            }
+            return false;
         });
-    }, [tasks, normalizedSearch]);
+    }, [tasks, normalizedSearch, normalizedLooseSearch, normalizeLoose]);
 
     // 依置頂/緊急排序後，再切分揀貨/裝箱
     const sortedVisibleTasks = useMemo(() => {
