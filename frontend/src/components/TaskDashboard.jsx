@@ -828,15 +828,16 @@ export function TaskDashboard({ user }) {
 
     const pickTasks = sortedVisibleTasks.filter(t => t.task_type === 'pick');
     const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
-    const completedTasks = sortedVisibleTasks.filter(t => t.task_type === 'done' || t.task_type === 'picked');
+    // 已完成視圖資料來源為 /api/tasks/completed，但仍用 status 做分類，避免 task_type 缺失/不一致導致顯示錯誤
+    const completedTasks = sortedVisibleTasks.filter(t => ['picked', 'packing', 'completed'].includes(t.status));
 
     // 「已完成」視圖：分成已完成揀貨(待裝箱/裝箱中) vs 已完成裝箱(已完成)
     const completedPickPhaseTasks = useMemo(
-        () => completedTasks.filter(t => t.task_type === 'picked'),
+        () => completedTasks.filter(t => t.status === 'picked' || t.status === 'packing'),
         [completedTasks]
     );
     const completedPackDoneTasks = useMemo(
-        () => completedTasks.filter(t => t.task_type === 'done'),
+        () => completedTasks.filter(t => t.status === 'completed'),
         [completedTasks]
     );
 
@@ -1224,108 +1225,112 @@ export function TaskDashboard({ user }) {
                                 <p className="text-gray-400 text-sm mt-1">完成的任務將會顯示在這裡</p>
                             </div>
                         ) : (
-                            <div className="space-y-6">
-                                {/* 已完成揀貨 */}
-                                <div className="glass-panel rounded-2xl p-1.5 shadow-lg">
-                                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">
-                                                <Box size={20} />
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+                                {/* 左欄：已完成揀貨（待裝箱/裝箱中） */}
+                                <section className="flex flex-col">
+                                    <div className="glass-panel rounded-2xl p-1.5 shadow-lg mb-4 lg:sticky lg:top-28 z-20">
+                                        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">
+                                                    <Box size={20} />
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-lg font-bold text-gray-900 leading-none">已完成揀貨</h3>
+                                                    <p className="text-xs text-emerald-600/80 font-medium mt-1">待裝箱／裝箱中</p>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <h3 className="text-lg font-bold text-gray-900 leading-none">已完成揀貨</h3>
-                                                <p className="text-xs text-emerald-600/80 font-medium mt-1">等待裝箱</p>
-                                            </div>
+                                            <span className="px-3 py-1 rounded-lg bg-white text-emerald-600 text-sm font-bold shadow-sm border border-emerald-100">
+                                                {completedPickPhaseTasks.length}
+                                            </span>
                                         </div>
-                                        <span className="px-3 py-1 rounded-lg bg-white text-emerald-600 text-sm font-bold shadow-sm border border-emerald-100">
-                                            {completedPickPhaseTasks.length}
-                                        </span>
                                     </div>
-                                </div>
-                                {completedPickPhaseTasks.length > 0 && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                        {completedPickPhaseTasks.map((task, index) => (
-                                            <div
-                                                key={task.id}
-                                                style={{ animationDelay: `${index * 50}ms` }}
-                                                className="animate-fade-in"
-                                            >
-                                                <ModernTaskCard
-                                                    task={task}
-                                                    user={user}
-                                                    onClaim={() => {}}
-                                                    viewMode="completed"
-                                                    onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
-                                                    onDelete={handleDeleteOrder}
-                                                    batchMode={false}
-                                                    selectedTasks={[]}
-                                                    toggleTaskSelection={() => {}}
-                                                    onOpenChat={handleOpenChat}
-                                                    isPinned={pinnedTaskIds.includes(task.id)}
-                                                    onTogglePin={togglePinTask}
-                                                    onReportDefect={handleReportDefect}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                                {completedPickPhaseTasks.length === 0 && (
-                                    <div className="h-40 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border border-white/30">
-                                        <p className="text-gray-500 font-medium">目前沒有揀貨待裝箱的訂單</p>
-                                        <p className="text-gray-400 text-sm mt-1">完成揀貨後會顯示在這裡</p>
-                                    </div>
-                                )}
 
-                                {/* 已完成裝箱 */}
-                                <div className="glass-panel rounded-2xl p-1.5 shadow-lg">
-                                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-white text-green-500 flex items-center justify-center shadow-sm">
-                                                <CheckCircle2 size={20} />
-                                            </div>
-                                            <div>
-                                                <h3 className="text-lg font-bold text-gray-900 leading-none">已完成裝箱</h3>
-                                                <p className="text-xs text-green-600/80 font-medium mt-1">訂單已完成</p>
-                                            </div>
+                                    {completedPickPhaseTasks.length === 0 ? (
+                                        <div className="h-48 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border border-white/30">
+                                            <p className="text-gray-500 font-medium">目前沒有揀貨待裝箱的訂單</p>
+                                            <p className="text-gray-400 text-sm mt-1">完成揀貨後會顯示在這裡</p>
                                         </div>
-                                        <span className="px-3 py-1 rounded-lg bg-white text-green-600 text-sm font-bold shadow-sm border border-green-100">
-                                            {completedPackDoneTasks.length}
-                                        </span>
-                                    </div>
-                                </div>
-                                {completedPackDoneTasks.length > 0 && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                        {completedPackDoneTasks.map((task, index) => (
-                                            <div
-                                                key={task.id}
-                                                style={{ animationDelay: `${index * 50}ms` }}
-                                                className="animate-fade-in"
-                                            >
-                                                <ModernTaskCard
-                                                    task={task}
-                                                    user={user}
-                                                    onClaim={() => {}}
-                                                    viewMode="completed"
-                                                    onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
-                                                    onDelete={handleDeleteOrder}
-                                                    batchMode={false}
-                                                    selectedTasks={[]}
-                                                    toggleTaskSelection={() => {}}
-                                                    onOpenChat={handleOpenChat}
-                                                    isPinned={pinnedTaskIds.includes(task.id)}
-                                                    onTogglePin={togglePinTask}
-                                                    onReportDefect={handleReportDefect}
-                                                />
+                                    ) : (
+                                        <div className="flex flex-col gap-6">
+                                            {completedPickPhaseTasks.map((task, index) => (
+                                                <div
+                                                    key={task.id}
+                                                    style={{ animationDelay: `${index * 50}ms` }}
+                                                    className="animate-fade-in"
+                                                >
+                                                    <ModernTaskCard
+                                                        task={task}
+                                                        user={user}
+                                                        onClaim={() => {}}
+                                                        viewMode="completed"
+                                                        onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
+                                                        onDelete={handleDeleteOrder}
+                                                        batchMode={false}
+                                                        selectedTasks={[]}
+                                                        toggleTaskSelection={() => {}}
+                                                        onOpenChat={handleOpenChat}
+                                                        isPinned={pinnedTaskIds.includes(task.id)}
+                                                        onTogglePin={togglePinTask}
+                                                        onReportDefect={handleReportDefect}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </section>
+
+                                {/* 右欄：已完成裝箱（訂單已完成） */}
+                                <section className="flex flex-col">
+                                    <div className="glass-panel rounded-2xl p-1.5 shadow-lg mb-4 lg:sticky lg:top-28 z-20">
+                                        <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-xl bg-white text-green-500 flex items-center justify-center shadow-sm">
+                                                    <CheckCircle2 size={20} />
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-lg font-bold text-gray-900 leading-none">已完成裝箱</h3>
+                                                    <p className="text-xs text-green-600/80 font-medium mt-1">訂單已完成</p>
+                                                </div>
                                             </div>
-                                        ))}
+                                            <span className="px-3 py-1 rounded-lg bg-white text-green-600 text-sm font-bold shadow-sm border border-green-100">
+                                                {completedPackDoneTasks.length}
+                                            </span>
+                                        </div>
                                     </div>
-                                )}
-                                {completedPackDoneTasks.length === 0 && (
-                                    <div className="h-40 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border border-white/30">
-                                        <p className="text-gray-500 font-medium">目前沒有已完成裝箱的訂單</p>
-                                        <p className="text-gray-400 text-sm mt-1">訂單完成後會顯示在這裡</p>
-                                    </div>
-                                )}
+
+                                    {completedPackDoneTasks.length === 0 ? (
+                                        <div className="h-48 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border border-white/30">
+                                            <p className="text-gray-500 font-medium">目前沒有已完成裝箱的訂單</p>
+                                            <p className="text-gray-400 text-sm mt-1">訂單完成後會顯示在這裡</p>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col gap-6">
+                                            {completedPackDoneTasks.map((task, index) => (
+                                                <div
+                                                    key={task.id}
+                                                    style={{ animationDelay: `${index * 50}ms` }}
+                                                    className="animate-fade-in"
+                                                >
+                                                    <ModernTaskCard
+                                                        task={task}
+                                                        user={user}
+                                                        onClaim={() => {}}
+                                                        viewMode="completed"
+                                                        onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
+                                                        onDelete={handleDeleteOrder}
+                                                        batchMode={false}
+                                                        selectedTasks={[]}
+                                                        toggleTaskSelection={() => {}}
+                                                        onOpenChat={handleOpenChat}
+                                                        isPinned={pinnedTaskIds.includes(task.id)}
+                                                        onTogglePin={togglePinTask}
+                                                        onReportDefect={handleReportDefect}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </section>
                             </div>
                         )}
                     </div>
