@@ -14,11 +14,11 @@ import {
 import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge } from '@/ui';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
-import apiClient from '../api/api';
-import { socket } from '../api/socket';
-import soundNotification from '../utils/soundNotification';
-import voiceNotification from '../utils/voiceNotification';
-import desktopNotification from '../utils/desktopNotification';
+import apiClient from '@/api/api';
+import { socket } from '@/api/socket';
+import soundNotification from '@/utils/soundNotification';
+import voiceNotification from '@/utils/voiceNotification';
+import desktopNotification from '@/utils/desktopNotification';
 import { CameraScanner } from './CameraScanner';
 import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
@@ -926,7 +926,7 @@ export function OrderWorkView({ user }) {
                             </div>
                             
                             <div className="min-h-full">
-                                <ErrorBoundary>
+                                {/* ErrorBoundary removed temporarily to debug ReferenceError issue */}
                                 {currentOrderData.order ? (
                                   <>
                                     <div className="space-y-3">
@@ -974,7 +974,7 @@ export function OrderWorkView({ user }) {
                                     <SkeletonText lines={4} className="h-32" />
                                   </div>
                                 )}
-                                </ErrorBoundary>
+                                {/* </ErrorBoundary> */}
                             </div>
                         </div>
                     </div>
