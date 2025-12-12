@@ -10,7 +10,7 @@ const pool = new Pool({
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
     max: 20, // 最大連接數
     idleTimeoutMillis: 30000, // 空閒連接超時
-    connectionTimeoutMillis: 2000, // 連接超時
+    connectionTimeoutMillis: 10000, // 連接超時 (從 2000ms 增加到 10000ms)
 });
 
 // 連接池事件監聽
