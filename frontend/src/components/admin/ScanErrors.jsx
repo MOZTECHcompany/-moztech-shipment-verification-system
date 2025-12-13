@@ -144,12 +144,17 @@ export function ScanErrors() {
     });
 
         return (
-            <div className="min-h-screen p-6 md:p-8 bg-gradient-to-br from-red-50/40 via-white to-orange-50/40">
+            <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
                 <PageHeader
                     title="刷錯條碼分析"
                     description="分析掃描錯誤，找出問題根源"
                     actions={
-                        <div className="flex gap-2 items-center">
+                        <div className="flex gap-3 items-center">
+                            <Link to="/admin">
+                                <Button variant="secondary" size="sm" className="gap-1">
+                                    <ArrowLeft className="h-4 w-4" /> 返回
+                                </Button>
+                            </Link>
                             <select
                                 value={dateRange}
                                 onChange={(e) => setDateRange(e.target.value)}
@@ -159,14 +164,9 @@ export function ScanErrors() {
                                 <option value="30days">近 30 天</option>
                                 <option value="90days">近 90 天</option>
                             </select>
-                            <Button variant="success" size="sm" className="gap-1" onClick={exportToCSV}>
+                            <Button variant="primary" size="sm" className="gap-1" onClick={exportToCSV}>
                                 <Download className="h-4 w-4" /> 匯出 CSV
                             </Button>
-                            <Link to="/admin">
-                                <Button variant="secondary" size="sm" className="gap-1">
-                                    <ArrowLeft className="h-4 w-4" /> 返回
-                                </Button>
-                            </Link>
                         </div>
                     }
                 />

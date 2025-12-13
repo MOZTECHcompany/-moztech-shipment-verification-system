@@ -181,12 +181,12 @@ export function OperationLogs() {
     };
 
         return (
-            <div className="min-h-screen p-6 md:p-8 bg-gradient-to-br from-gray-50 via-white to-gray-100">
+            <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
                 <PageHeader
                     title="操作日誌查詢"
                     description="追蹤系統中所有操作記錄"
                     actions={
-                        <div className="flex gap-2">
+                        <div className="flex gap-3">
                             <Link to="/admin">
                                 <Button variant="secondary" size="sm" className="gap-1">
                                     <ArrowLeft className="h-4 w-4" /> 返回
@@ -246,19 +246,19 @@ export function OperationLogs() {
                                 placeholder="訂單編號"
                                 value={filters.orderId}
                                 onChange={(e) => handleFilterChange('orderId', e.target.value)}
-                                className="input-apple"
+                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
                             />
                             <input
                                 type="text"
                                 placeholder="使用者 ID"
                                 value={filters.userId}
                                 onChange={(e) => handleFilterChange('userId', e.target.value)}
-                                className="input-apple"
+                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
                             />
                             <select
                                 value={filters.actionType}
                                 onChange={(e) => handleFilterChange('actionType', e.target.value)}
-                                className="input-apple"
+                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
                             >
                                 <option value="">所有類型</option>
                                 {Object.entries(actionTypeMap).map(([key, value]) => (
@@ -269,13 +269,13 @@ export function OperationLogs() {
                                 type="date"
                                 value={filters.startDate}
                                 onChange={(e) => handleFilterChange('startDate', e.target.value)}
-                                className="input-apple"
+                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
                             />
                             <input
                                 type="date"
                                 value={filters.endDate}
                                 onChange={(e) => handleFilterChange('endDate', e.target.value)}
-                                className="input-apple"
+                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
                             />
                             <select
                                 value={filters.limit}
