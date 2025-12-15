@@ -497,7 +497,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 >
                     <Reply className="w-3.5 h-3.5" />
                 </button>
-                {((currentUser?.id && currentUser.id === comment.user_id) || (currentUser?.role === 'admin')) && (
+                {((currentUser?.id && currentUser.id === comment.user_id) || (currentUser?.role === 'admin' || currentUser?.role === 'superadmin')) && (
                     <>
                         <button
                             onClick={async () => {

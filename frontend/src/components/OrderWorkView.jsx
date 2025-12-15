@@ -150,7 +150,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, onOpen
                             <FileDown size={18} />
                         </button>
                         
-                        {user.role === 'admin' && (
+                        {(user.role === 'admin' || user.role === 'superadmin') && (
                             <button 
                                 onClick={onVoid} 
                                 className="p-2 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 transition-all duration-200 hover:shadow-sm active:scale-95"
@@ -332,8 +332,8 @@ const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
 
 // --- 数量模式的品项卡片 ---
 const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFocusMode, lineInfo }) => {
-    const canAdjustPick = (user.role === 'picker' || user.role === 'admin') && orderStatus === 'picking';
-    const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && orderStatus === 'packing';
+    const canAdjustPick = (user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && orderStatus === 'picking';
+    const canAdjustPack = (user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && orderStatus === 'packing';
     const isComplete = item.packed_quantity >= item.quantity;
     
     if (isFocusMode && isComplete) return null;
@@ -718,8 +718,8 @@ export function OrderWorkView({ user }) {
             return;
         }
         let operationType = null;
-        if ((user.role === 'picker' || user.role === 'admin') && status === 'picking') operationType = 'pick';
-        else if ((user.role === 'packer' || user.role === 'admin') && (status === 'packing' || status === 'picked')) operationType = 'pack';
+        if ((user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && status === 'picking') operationType = 'pick';
+        else if ((user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && (status === 'packing' || status === 'picked')) operationType = 'pack';
         
         if (operationType) {
             updateItemState(scanValue, operationType, 1);
@@ -752,7 +752,7 @@ export function OrderWorkView({ user }) {
         setBarcodeInput('');
     };
 
-    const canOperate = user?.role === 'admin' || user?.role === 'picker' || user?.role === 'packer';
+    const canOperate = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'picker' || user?.role === 'packer';
 
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
     const handleClick = () => { handleScan(); };

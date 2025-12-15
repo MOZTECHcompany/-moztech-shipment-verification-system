@@ -481,7 +481,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                                     <Reply size={14} />
                                 </button>
                                 
-                                {(isMine || currentUser.role === 'admin') && (
+                                {(isMine || currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
                                     <div className="relative">
                                         <button 
                                             onClick={(e) => {

@@ -12,7 +12,7 @@ import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsh
 import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button } from '../../ui';
 
 export function AdminDashboard({ user }) {
-    const isAdmin = user?.role === 'admin';
+    const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
     const [dateRange, setDateRange] = useState([null, null]);
     const [startDate, endDate] = dateRange;
     const fileInputRef = useRef(null);

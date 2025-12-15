@@ -54,8 +54,8 @@ const TaskCard = ({ task, user, onClaim, onDelete, isMyTask, isSelected, onToggl
     const navigate = useNavigate();
     
     const canClaim = (
-        (task.status === 'pending' && (user.role === 'picker' || user.role === 'admin')) ||
-        (task.status === 'picking' && (user.role === 'packer' || user.role === 'admin'))
+        (task.status === 'pending' && (user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin')) ||
+        (task.status === 'picking' && (user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin'))
     );
 
     return (
@@ -137,7 +137,7 @@ const TaskCard = ({ task, user, onClaim, onDelete, isMyTask, isSelected, onToggl
                                 認領任務
                             </button>
                         )}
-                        {user.role === 'admin' && (
+                        {(user.role === 'admin' || user.role === 'superadmin') && (
                             <button
                                 onClick={() => onDelete(task.id, task.voucher_number)}
                                 className="btn-apple bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white shadow-apple-lg"
@@ -402,7 +402,7 @@ export function TaskDashboard({ user }) {
                             <span className="hidden sm:inline">批次模式</span>
                         </button>
 
-                        {user && user.role === 'admin' && (
+                        {user && (user.role === 'admin' || user.role === 'superadmin') && (
                             <>
                                 <Link 
                                     to="/admin/analytics" 
@@ -453,7 +453,7 @@ export function TaskDashboard({ user }) {
                                     <HandMetal size={18} />
                                     批次認領
                                 </button>
-                                {user.role === 'admin' && (
+                                {(user.role === 'admin' || user.role === 'superadmin') && (
                                     <button
                                         onClick={handleBatchDelete}
                                         disabled={selectedTasks.size === 0}

@@ -233,7 +233,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         )}
                         
                         {/* Admin Actions - Hover Reveal */}
-                        {user && user.role === 'admin' && (
+                        {user && (user.role === 'admin' || user.role === 'superadmin') && (
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-4 group-hover:translate-x-0 ml-2">
                                 <button onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-blue-600 transition-colors backdrop-blur-sm">
                                     <Pin size={18} />
@@ -646,7 +646,7 @@ export function TaskDashboard({ user }) {
                 const shouldAppearInCompleted =
                     newStatus === 'completed' ||
                     (user.role === 'picker' && (newStatus === 'picked' || newStatus === 'packing')) ||
-                    ((user.role === 'admin' || user.role === 'dispatcher') && (newStatus === 'picked' || newStatus === 'packing'));
+                    (((user.role === 'admin' || user.role === 'superadmin') || user.role === 'dispatcher') && (newStatus === 'picked' || newStatus === 'packing'));
 
                 if (!shouldAppearInCompleted) return;
 
@@ -668,8 +668,8 @@ export function TaskDashboard({ user }) {
                 if (index === -1) {
                     // 如果 payload 是完整任務物件，且符合當前用戶角色，則加入列表
                     if (payload.id && payload.task_type) {
-                        if ((user.role === 'picker' || user.role === 'admin') && payload.task_type === 'pick') return [...currentTasks, payload];
-                        if ((user.role === 'packer' || user.role === 'admin') && payload.task_type === 'pack') return [...currentTasks, payload];
+                        if ((user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && payload.task_type === 'pick') return [...currentTasks, payload];
+                        if ((user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && payload.task_type === 'pack') return [...currentTasks, payload];
                         if (user.role === 'dispatcher') return [...currentTasks, payload];
                     }
 
@@ -1065,7 +1065,7 @@ export function TaskDashboard({ user }) {
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
-                      {user && user.role === 'admin' && (
+                      {user && (user.role === 'admin' || user.role === 'superadmin') && (
                         <Button 
                             variant={batchMode ? 'primary' : 'secondary'} 
                             size="sm" 
@@ -1110,7 +1110,7 @@ export function TaskDashboard({ user }) {
                           </button>
                       </div>
 
-                                            {user && (user.role === 'admin' || user.role === 'dispatcher') && (
+                                            {user && ((user.role === 'admin' || user.role === 'superadmin') || user.role === 'dispatcher') && (
                         <Button as={Link} to="/admin" variant="secondary" size="sm" leadingIcon={LayoutDashboard}>
                           管理中心
                         </Button>
