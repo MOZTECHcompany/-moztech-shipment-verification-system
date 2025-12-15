@@ -464,6 +464,10 @@ router.post('/orders/update_item', async (req, res, next) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        const amountNum = Number(amount ?? 1);
+        if (!Number.isFinite(amountNum) || amountNum === 0) {
+            throw new Error('數量 amount 無效');
+        }
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
@@ -488,22 +492,53 @@ router.post('/orders/update_item', async (req, res, next) => {
             await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
             await logOperation({ userId, orderId, operationType: type, details: { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` }, io });
         } else {
-            const itemResult = await client.query(`SELECT oi.id, oi.quantity, oi.picked_quantity, oi.packed_quantity FROM order_items oi LEFT JOIN order_item_instances i ON oi.id = i.order_item_id WHERE oi.order_id = $1 AND oi.barcode = $2 AND i.id IS NULL`, [orderId, scanValue]);
+            // 非 SN 條碼：同一張訂單內可能有多行相同條碼，必須挑選「仍可更新」的那一行
+            // pick: picked_quantity + amount 需落在 [0, quantity]
+            // pack: packed_quantity + amount 需落在 [0, picked_quantity]
+            const itemResult = await client.query(
+                `
+                SELECT
+                    oi.id,
+                    oi.quantity,
+                    COALESCE(oi.picked_quantity, 0) as picked_quantity,
+                    COALESCE(oi.packed_quantity, 0) as packed_quantity
+                FROM order_items oi
+                WHERE oi.order_id = $1
+                  AND oi.barcode = $2
+                  AND NOT EXISTS (
+                      SELECT 1 FROM order_item_instances i WHERE i.order_item_id = oi.id
+                  )
+                  AND (
+                      (
+                        $4 = 'pick'
+                        AND (COALESCE(oi.picked_quantity, 0) + $3) BETWEEN 0 AND COALESCE(oi.quantity, 0)
+                      )
+                      OR (
+                        $4 = 'pack'
+                        AND (COALESCE(oi.packed_quantity, 0) + $3) BETWEEN 0 AND COALESCE(oi.picked_quantity, 0)
+                      )
+                  )
+                ORDER BY oi.id ASC
+                LIMIT 1
+                FOR UPDATE
+                `,
+                [orderId, scanValue, amountNum, type]
+            );
             if (itemResult.rows.length === 0) {
                 await logOperation({ userId, orderId, operationType: 'scan_error', details: { scanValue, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' }, io });
-                throw new Error(`條碼 ${scanValue} 不屬於此訂單，或該品項需要掃描 SN 碼`);
+                throw new Error(`條碼 ${scanValue} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`);
             }
             const item = itemResult.rows[0];
             if (type === 'pick') { 
-                const newPickedQty = item.picked_quantity + amount; 
+                const newPickedQty = item.picked_quantity + amountNum; 
                 if (newPickedQty < 0 || newPickedQty > item.quantity) throw new Error('揀貨數量無效'); 
                 await client.query('UPDATE order_items SET picked_quantity = $1 WHERE id = $2', [newPickedQty, item.id]); 
             } else if (type === 'pack') { 
-                const newPackedQty = item.packed_quantity + amount; 
+                const newPackedQty = item.packed_quantity + amountNum; 
                 if (newPackedQty < 0 || newPackedQty > item.picked_quantity) throw new Error('裝箱數量不能超過已揀貨數量'); 
                 await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]); 
             }
-            await logOperation({ userId, orderId, operationType: type, details: { barcode: scanValue, amount }, io });
+            await logOperation({ userId, orderId, operationType: type, details: { barcode: scanValue, amount: amountNum, orderItemId: item.id }, io });
         }
         // 在同一個 transaction 內判斷是否已 100% 完成，並原子性更新訂單狀態
         const allItems = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
