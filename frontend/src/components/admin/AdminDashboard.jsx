@@ -266,6 +266,7 @@ export function AdminDashboard({ user }) {
 
                     {/* 6. 操作日誌 (小卡片) */}
                     {isAdmin && (
+                    <>
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '250ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-gray-100 text-gray-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
@@ -310,6 +311,7 @@ export function AdminDashboard({ user }) {
                         </CardContent>
                     </Card>
 
+                    </>
                     )}
 
                 </div>

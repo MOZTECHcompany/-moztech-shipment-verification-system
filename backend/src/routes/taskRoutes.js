@@ -44,6 +44,13 @@ router.get('/tasks', async (req, res) => {
             LEFT JOIN users picker_u ON o.picker_id = picker_u.id 
             LEFT JOIN users packer_u ON o.packer_id = packer_u.id
             LEFT JOIN task_comments tc ON tc.order_id = o.id
+            LEFT JOIN LATERAL (
+                SELECT ol.user_id
+                FROM operation_logs ol
+                WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                ORDER BY ol.created_at DESC
+                LIMIT 1
+            ) import_log ON TRUE
             WHERE 
                 ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'dispatcher' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
@@ -51,6 +58,7 @@ router.get('/tasks', async (req, res) => {
                 ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 
+                (CASE WHEN $2 = 'dispatcher' AND import_log.user_id = $1 THEN 1 ELSE 0 END) DESC,
                 COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
                 COALESCE(o.is_urgent, FALSE) DESC, 
                 o.created_at ASC;
@@ -105,12 +113,20 @@ router.get('/tasks/completed', async (req, res) => {
         let paramIndex = 1;
 
         // 角色篩選
+        let orderBy = 'o.updated_at DESC';
         if (role === 'admin') {
             // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
             conditions.push("o.status IN ('picked', 'packing', 'completed')");
         } else if (role === 'dispatcher') {
             // 拋單員：可檢視所有「完成階段」訂單（用於追蹤進度/留言），但不允許實際操作
             conditions.push("o.status IN ('picked', 'packing', 'completed')");
+            // 先顯示自己拋的單，再依完成時間排序
+            params.push(userId);
+            const myUserParam = `$${paramIndex++}`;
+            orderBy = `
+                (CASE WHEN import_log.user_id = ${myUserParam} THEN 1 ELSE 0 END) DESC,
+                o.updated_at DESC
+            `;
         } else if (role === 'picker') {
             conditions.push(`o.picker_id = $${paramIndex++}`);
             params.push(userId);
@@ -144,8 +160,15 @@ router.get('/tasks/completed', async (req, res) => {
             FROM orders o
             LEFT JOIN users p ON o.picker_id = p.id 
             LEFT JOIN users pk ON o.packer_id = pk.id
+            LEFT JOIN LATERAL (
+                SELECT ol.user_id
+                FROM operation_logs ol
+                WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                ORDER BY ol.created_at DESC
+                LIMIT 1
+            ) import_log ON TRUE
             WHERE ${conditions.join(' AND ')}
-            ORDER BY o.updated_at DESC
+            ORDER BY ${orderBy}
             LIMIT $${paramIndex}
         `;
 
