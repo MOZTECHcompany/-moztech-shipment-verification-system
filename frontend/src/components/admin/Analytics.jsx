@@ -209,121 +209,110 @@ export function Analytics() {
     };
 
     return (
-        <div className="min-h-screen p-6 md:p-8 bg-gradient-to-br from-gray-50 via-white to-gray-100 pb-20">
-            <div className="max-w-[1600px] mx-auto">
-                <PageHeader
-                    title="數據分析儀表板"
-                    description="全面掌握倉儲營運數據與績效指標"
-                    actions={
-                        <div className="flex gap-3 items-center">
-                            <div className="bg-white rounded-xl p-1 border border-gray-200 shadow-sm flex">
-                                {['7days', '30days', '90days'].map((range) => (
-                                    <button
-                                        key={range}
-                                        onClick={() => setDateRange(range)}
-                                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                                            dateRange === range 
-                                                ? 'bg-gray-900 text-white shadow-md' 
-                                                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                                        }`}
-                                    >
-                                        {range === '7days' ? '7天' : range === '30days' ? '30天' : '90天'}
-                                    </button>
-                                ))}
-                            </div>
-                            <Link to="/admin">
-                                <Button variant="secondary" size="sm" className="gap-1 h-[42px]">
-                                    <ArrowLeft className="h-4 w-4" /> 返回
-                                </Button>
-                            </Link>
-                        </div>
-                    }
-                />
-
-                {loading ? (
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        {Array.from({ length: 4 }).map((_, i) => (
-                            <Skeleton key={i} className="h-32 rounded-2xl" />
-                        ))}
-                        <Skeleton className="col-span-full h-96 rounded-2xl mt-4" />
+        <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
+            <PageHeader
+                title="數據分析儀表板"
+                description="全面掌握倉儲營運數據與績效指標"
+                actions={
+                    <div className="flex gap-3 items-center">
+                        <Link to="/admin">
+                            <Button variant="secondary" size="sm" className="gap-1">
+                                <ArrowLeft className="h-4 w-4" /> 返回
+                            </Button>
+                        </Link>
+                        <select
+                            value={dateRange}
+                            onChange={(e) => setDateRange(e.target.value)}
+                            className="px-3 py-2 rounded-xl border-2 border-gray-200 bg-white text-sm font-medium focus:border-apple-blue focus:outline-none"
+                        >
+                            <option value="7days">近 7 天</option>
+                            <option value="30days">近 30 天</option>
+                            <option value="90days">近 90 天</option>
+                        </select>
                     </div>
-                ) : (
-                    <div className="mt-8 space-y-8 animate-fade-in">
-                        {/* 1. 關鍵指標卡片 (KPI Cards) */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                            <Card className="border-0 shadow-apple-sm hover:shadow-apple-md transition-all bg-gradient-to-br from-blue-50 to-white">
-                                <CardContent className="p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
-                                            <Package size={24} />
-                                        </div>
-                                        <Badge variant={analytics.overview.totalOrders > 0 ? 'success' : 'secondary'}>
-                                            總量
-                                        </Badge>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <h3 className="text-3xl font-black text-gray-900">{analytics.overview.totalOrders}</h3>
-                                        <p className="text-sm text-gray-500 font-medium">期間總訂單數</p>
-                                    </div>
-                                </CardContent>
-                            </Card>
+                }
+            />
 
-                            <Card className="border-0 shadow-apple-sm hover:shadow-apple-md transition-all bg-gradient-to-br from-emerald-50 to-white">
-                                <CardContent className="p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl">
-                                            <Target size={24} />
-                                        </div>
-                                        <Badge variant="success">
-                                            {formatPercentage(analytics.overview.completedOrders / (analytics.overview.totalOrders || 1))} 完成率
-                                        </Badge>
+            {loading ? (
+                <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                        <Card key={i} className="p-4">
+                            <Skeleton className="h-5 w-24 mb-3" />
+                            <Skeleton className="h-10 w-20" />
+                            <Skeleton className="h-3 w-28 mt-2" />
+                        </Card>
+                    ))}
+                </div>
+            ) : (
+                <div className="mt-8 space-y-8 animate-fade-in">
+                    {/* 1. 關鍵指標卡片 (KPI Cards) */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">期間總訂單數</p>
+                                        <p className="text-3xl font-bold text-apple-blue">{analytics.overview.totalOrders}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">總量</p>
                                     </div>
-                                    <div className="space-y-1">
-                                        <h3 className="text-3xl font-black text-gray-900">{analytics.overview.completedOrders}</h3>
-                                        <p className="text-sm text-gray-500 font-medium">已完成訂單</p>
+                                    <div className="w-12 h-12 rounded-xl bg-apple-blue/10 flex items-center justify-center">
+                                        <Package className="text-apple-blue" size={22} />
                                     </div>
-                                </CardContent>
-                            </Card>
-
-                            <Card className="border-0 shadow-apple-sm hover:shadow-apple-md transition-all bg-gradient-to-br from-purple-50 to-white">
-                                <CardContent className="p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-purple-100 text-purple-600 rounded-xl">
-                                            <Clock size={24} />
-                                        </div>
-                                        <span className="text-xs font-bold text-purple-600 bg-purple-100 px-2 py-1 rounded-lg">平均耗時</span>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">已完成訂單</p>
+                                        <p className="text-3xl font-bold text-emerald-600">{analytics.overview.completedOrders}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">
+                                            完成率 {formatPercentage(analytics.overview.completedOrders / (analytics.overview.totalOrders || 1))}
+                                        </p>
                                     </div>
-                                    <div className="space-y-1">
-                                        <h3 className="text-3xl font-black text-gray-900">{formatTime(analytics.overview.avgPickingTime)}</h3>
-                                        <p className="text-sm text-gray-500 font-medium">平均揀貨時間</p>
+                                    <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                                        <Target className="text-emerald-600" size={22} />
                                     </div>
-                                </CardContent>
-                            </Card>
-
-                            <Card className="border-0 shadow-apple-sm hover:shadow-apple-md transition-all bg-gradient-to-br from-orange-50 to-white">
-                                <CardContent className="p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-orange-100 text-orange-600 rounded-xl">
-                                            <AlertTriangle size={24} />
-                                        </div>
-                                        <Badge variant={analytics.overview.errorRate > 0.05 ? 'destructive' : 'secondary'}>
-                                            {formatPercentage(analytics.overview.errorRate)} 異常率
-                                        </Badge>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">平均揀貨時間</p>
+                                        <p className="text-3xl font-bold text-apple-indigo">{formatTime(analytics.overview.avgPickingTime)}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">平均耗時</p>
                                     </div>
-                                    <div className="space-y-1">
-                                        <h3 className="text-3xl font-black text-gray-900">{analytics.overview.voidedOrders}</h3>
-                                        <p className="text-sm text-gray-500 font-medium">作廢/異常訂單</p>
+                                    <div className="w-12 h-12 rounded-xl bg-apple-indigo/10 flex items-center justify-center">
+                                        <Clock className="text-apple-indigo" size={22} />
                                     </div>
-                                </CardContent>
-                            </Card>
-                        </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-600 mb-1">作廢/異常訂單</p>
+                                        <p className="text-3xl font-bold text-apple-orange">{analytics.overview.voidedOrders}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1">異常率 {formatPercentage(analytics.overview.errorRate)}</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-apple-orange/10 flex items-center justify-center">
+                                        <AlertTriangle className="text-apple-orange" size={22} />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
 
                         {/* 2. 主要圖表區 */}
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             {/* 訂單趨勢圖 (佔 2/3) */}
-                            <Card className="lg:col-span-2 border-0 shadow-apple-md">
+                            <Card className="lg:col-span-2">
                                 <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
+                                    <CardTitle className="text-lg flex items-center gap-2">
                                         <TrendingUp className="text-blue-500" size={20} />
                                         訂單趨勢分析
                                     </CardTitle>
@@ -337,9 +326,9 @@ export function Analytics() {
                             </Card>
 
                             {/* 狀態分佈 (佔 1/3) */}
-                            <Card className="border-0 shadow-apple-md">
+                            <Card>
                                 <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
+                                    <CardTitle className="text-lg flex items-center gap-2">
                                         <Activity className="text-orange-500" size={20} />
                                         訂單狀態分佈
                                     </CardTitle>
@@ -360,9 +349,9 @@ export function Analytics() {
                         {/* 3. 績效與熱門商品 */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* 員工績效排行 */}
-                            <Card className="border-0 shadow-apple-md">
+                            <Card>
                                 <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
+                                    <CardTitle className="text-lg flex items-center gap-2">
                                         <Award className="text-yellow-500" size={20} />
                                         人員績效排行
                                     </CardTitle>
@@ -376,9 +365,9 @@ export function Analytics() {
                             </Card>
 
                             {/* 熱門商品列表 */}
-                            <Card className="border-0 shadow-apple-md flex flex-col">
+                            <Card className="flex flex-col">
                                 <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
+                                    <CardTitle className="text-lg flex items-center gap-2">
                                         <BarChart3 className="text-purple-500" size={20} />
                                         熱門商品 Top 5
                                     </CardTitle>
@@ -419,7 +408,6 @@ export function Analytics() {
                         </div>
                     </div>
                 )}
-            </div>
         </div>
     );
 }
