@@ -11,7 +11,8 @@ import apiClient from '@/api/api.js';
 import { LayoutDashboard, FileDown, Users, LayoutGrid, UploadCloud, FileSpreadsheet, FileText, Sparkles, TrendingUp, AlertTriangle, ArrowRight, Database, History } from 'lucide-react';
 import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button } from '../../ui';
 
-export function AdminDashboard() {
+export function AdminDashboard({ user }) {
+    const isAdmin = user?.role === 'admin';
     const [dateRange, setDateRange] = useState([null, null]);
     const [startDate, endDate] = dateRange;
     const fileInputRef = useRef(null);
@@ -93,6 +94,7 @@ export function AdminDashboard() {
                 <div className="mt-8 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 auto-rows-[minmax(180px,auto)]">
                     
                     {/* 1. 數據分析 (大卡片) */}
+                    {isAdmin && (
                     <Card className="md:col-span-2 lg:col-span-2 row-span-2 animate-scale-in relative overflow-hidden group border-0 glass-panel">
                         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-400/20 rounded-full blur-[80px] -mr-16 -mt-16 transition-all group-hover:bg-blue-400/30"></div>
                         <CardHeader className="relative z-10">
@@ -122,6 +124,7 @@ export function AdminDashboard() {
                             </Link>
                         </CardContent>
                     </Card>
+                    )}
 
                     {/* 2. 建立新任務 (中卡片 - 重點功能) */}
                     <Card className="md:col-span-1 lg:col-span-2 animate-scale-in border-0 glass-panel bg-gradient-to-br from-purple-500/90 to-indigo-600/90 text-white overflow-hidden relative group" style={{ animationDelay: '50ms' }}>
@@ -160,6 +163,7 @@ export function AdminDashboard() {
                     </Card>
 
                     {/* 3. 新品不良統計 (小卡片 - 優先顯示) */}
+                    {isAdmin && (
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '100ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
@@ -176,8 +180,10 @@ export function AdminDashboard() {
                             </Link>
                         </CardContent>
                     </Card>
+                    )}
 
                     {/* 4. 刷錯分析 (小卡片) */}
+                    {isAdmin && (
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '150ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
@@ -194,8 +200,10 @@ export function AdminDashboard() {
                             </Link>
                         </CardContent>
                     </Card>
+                    )}
 
                     {/* 5. 使用者管理 (小卡片) */}
+                    {isAdmin && (
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '175ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
@@ -212,8 +220,10 @@ export function AdminDashboard() {
                             </Link>
                         </CardContent>
                     </Card>
+                    )}
 
                     {/* 5. 匯出營運報告 (中卡片) */}
+                    {isAdmin && (
                     <Card className="md:col-span-2 lg:col-span-2 animate-scale-in border-0 glass-panel" style={{ animationDelay: '200ms' }}>
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
                             <div className="flex items-center gap-4">
@@ -252,8 +262,10 @@ export function AdminDashboard() {
                             </div>
                         </CardContent>
                     </Card>
+                    )}
 
                     {/* 6. 操作日誌 (小卡片) */}
+                    {isAdmin && (
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '250ms' }}>
                         <CardHeader>
                             <div className="w-12 h-12 rounded-2xl bg-gray-100 text-gray-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
@@ -297,6 +309,8 @@ export function AdminDashboard() {
                             </Button>
                         </CardContent>
                     </Card>
+
+                    )}
 
                 </div>
 

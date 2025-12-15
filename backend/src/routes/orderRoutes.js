@@ -6,7 +6,7 @@ const multer = require('multer');
 const xlsx = require('xlsx');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
-const { authorizeAdmin } = require('../middleware/auth');
+const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 
 const router = express.Router();
@@ -17,6 +17,11 @@ router.post('/orders/batch-claim', async (req, res) => {
     try {
         const { orderIds } = req.body;
         const userId = req.user.id;
+        const role = req.user.role;
+
+        if (!(role === 'picker' || role === 'admin')) {
+            return res.status(403).json({ message: '權限不足' });
+        }
 
         if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
             return res.status(400).json({ message: '請提供訂單ID列表' });
@@ -119,6 +124,11 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
     const { id: userId, role } = req.user;
     const io = req.app.get('io');
     logger.debug(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);
+
+    if (role === 'dispatcher') {
+        return res.status(403).json({ message: '拋單員不可認領任務' });
+    }
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -317,7 +327,7 @@ router.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
 });
 
 // POST /api/orders/import
-router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async (req, res, next) => {
+router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), upload.single('orderFile'), async (req, res, next) => {
     const io = req.app.get('io');
     if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
     const client = await pool.connect();
@@ -461,6 +471,11 @@ router.post('/orders/update_item', async (req, res, next) => {
     const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
     const { id: userId, role } = req.user;
     const io = req.app.get('io');
+
+    if (!(role === 'admin' || role === 'picker' || role === 'packer')) {
+        return res.status(403).json({ message: '權限不足' });
+    }
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');

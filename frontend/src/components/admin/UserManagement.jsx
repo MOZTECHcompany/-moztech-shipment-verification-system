@@ -93,6 +93,7 @@ const UserFormModal = ({ user, open, onClose, onSave }) => {
                     >
                         <option value="picker">揀貨員</option>
                         <option value="packer">裝箱員</option>
+                            <option value="dispatcher">拋單員</option>
                         <option value="admin">管理員</option>
                     </select>
                 </div>
@@ -186,6 +187,7 @@ export function UserManagement() {
         admin: { label: '管理員', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: Shield },
         picker: { label: '揀貨員', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: UserIcon },
         packer: { label: '裝箱員', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: UserIcon }
+            dispatcher: { label: '拋單員', color: 'bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800 border-purple-200', icon: UserIcon }
     };
 
         return (
@@ -258,11 +260,12 @@ export function UserManagement() {
                                                 </TD>
                                                 <TD>{user.name}</TD>
                                                 <TD>
-                                                    <Badge variant={user.role === 'admin' ? 'danger' : user.role === 'picker' ? 'info' : 'success'} className="inline-flex items-center gap-1">
+                                                    <Badge variant={user.role === 'admin' ? 'danger' : (user.role === 'picker' || user.role === 'dispatcher') ? 'info' : 'success'} className="inline-flex items-center gap-1">
                                                         {user.role === 'admin' && <Shield className="h-3 w-3" />}
                                                         {user.role === 'picker' && <UserIcon className="h-3 w-3" />}
                                                         {user.role === 'packer' && <UserIcon className="h-3 w-3" />}
-                                                        {user.role === 'admin' ? '管理員' : user.role === 'picker' ? '揀貨員' : '裝箱員'}
+                                                        {user.role === 'dispatcher' && <UserIcon className="h-3 w-3" />}
+                                                        {user.role === 'admin' ? '管理員' : user.role === 'picker' ? '揀貨員' : user.role === 'dispatcher' ? '拋單員' : '裝箱員'}
                                                     </Badge>
                                                 </TD>
                                                 <TD className="text-xs text-gray-600">{new Date(user.created_at).toLocaleDateString('zh-TW')}</TD>

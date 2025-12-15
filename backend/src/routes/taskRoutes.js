@@ -46,6 +46,7 @@ router.get('/tasks', async (req, res) => {
             LEFT JOIN task_comments tc ON tc.order_id = o.id
             WHERE 
                 ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
+                ($2 = 'dispatcher' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
                 ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
@@ -106,6 +107,9 @@ router.get('/tasks/completed', async (req, res) => {
         // 角色篩選
         if (role === 'admin') {
             // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
+            conditions.push("o.status IN ('picked', 'packing', 'completed')");
+        } else if (role === 'dispatcher') {
+            // 拋單員：可檢視所有「完成階段」訂單（用於追蹤進度/留言），但不允許實際操作
             conditions.push("o.status IN ('picked', 'packing', 'completed')");
         } else if (role === 'picker') {
             conditions.push(`o.picker_id = $${paramIndex++}`);

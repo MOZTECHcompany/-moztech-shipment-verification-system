@@ -336,6 +336,17 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 查看訂單 <ArrowRight size={20} />
                             </span>
                         </Button>
+                    ) : user?.role === 'dispatcher' ? (
+                        <Button
+                            variant="secondary"
+                            size="lg"
+                            className="w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all active:scale-95"
+                            onClick={() => onViewOrder?.(task.id)}
+                        >
+                            <span className="flex items-center gap-2">
+                                查看訂單 <ArrowRight size={20} />
+                            </span>
+                        </Button>
                     ) : isMyTask ? (
                         <Button
                             variant="primary"
@@ -629,7 +640,8 @@ export function TaskDashboard({ user }) {
 
                 const shouldAppearInCompleted =
                     newStatus === 'completed' ||
-                    (user.role === 'picker' && (newStatus === 'picked' || newStatus === 'packing'));
+                    (user.role === 'picker' && (newStatus === 'picked' || newStatus === 'packing')) ||
+                    ((user.role === 'admin' || user.role === 'dispatcher') && (newStatus === 'picked' || newStatus === 'packing'));
 
                 if (!shouldAppearInCompleted) return;
 
@@ -653,6 +665,7 @@ export function TaskDashboard({ user }) {
                     if (payload.id && payload.task_type) {
                         if ((user.role === 'picker' || user.role === 'admin') && payload.task_type === 'pick') return [...currentTasks, payload];
                         if ((user.role === 'packer' || user.role === 'admin') && payload.task_type === 'pack') return [...currentTasks, payload];
+                        if (user.role === 'dispatcher') return [...currentTasks, payload];
                     }
 
                     // 已完成視圖：若收到狀態變更但缺少完整資料，改用 refetch 同步
@@ -1087,7 +1100,7 @@ export function TaskDashboard({ user }) {
                           </button>
                       </div>
 
-                      {user && user.role === 'admin' && (
+                                            {user && (user.role === 'admin' || user.role === 'dispatcher') && (
                         <Button as={Link} to="/admin" variant="secondary" size="sm" leadingIcon={LayoutDashboard}>
                           管理中心
                         </Button>
@@ -1177,6 +1190,7 @@ export function TaskDashboard({ user }) {
                                             isPinned={pinnedTaskIds.includes(task.id)}
                                             onTogglePin={togglePinTask}
                                             onReportDefect={handleReportDefect}
+                                            onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
                                         />
                                     </div>
                                 ))
@@ -1233,6 +1247,7 @@ export function TaskDashboard({ user }) {
                                             isPinned={pinnedTaskIds.includes(task.id)}
                                             onTogglePin={togglePinTask}
                                             onReportDefect={handleReportDefect}
+                                            onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
                                         />
                                     </div>
                                 ))

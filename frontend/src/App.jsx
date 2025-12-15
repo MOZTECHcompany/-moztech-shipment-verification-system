@@ -59,7 +59,7 @@ function App() {
     
     const getHomeRoute = () => {
         if (!user || !token) return "/login";
-        if (user.role === 'admin') return "/admin";
+        if (user.role === 'admin' || user.role === 'dispatcher') return "/admin";
         return "/tasks";
     };
 
@@ -72,7 +72,7 @@ function App() {
                     
                     <Route element={<ProtectedRoute user={user} token={token} />}>
                         <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
-                            <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/users" element={user?.role === 'admin' ? <UserManagement /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={user?.role === 'admin' ? <OperationLogs /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/analytics" element={user?.role === 'admin' ? <Analytics /> : <Navigate to="/tasks" />} />

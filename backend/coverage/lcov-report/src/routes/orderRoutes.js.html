@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/417</span>
+                <span class='fraction'>0/424</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/232</span>
+                <span class='fraction'>0/243</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/380</span>
+                <span class='fraction'>0/387</span>
             </div>
         
             
@@ -825,7 +825,22 @@
 <a name='L760'></a><a href='#L760'>760</a>
 <a name='L761'></a><a href='#L761'>761</a>
 <a name='L762'></a><a href='#L762'>762</a>
-<a name='L763'></a><a href='#L763'>763</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L763'></a><a href='#L763'>763</a>
+<a name='L764'></a><a href='#L764'>764</a>
+<a name='L765'></a><a href='#L765'>765</a>
+<a name='L766'></a><a href='#L766'>766</a>
+<a name='L767'></a><a href='#L767'>767</a>
+<a name='L768'></a><a href='#L768'>768</a>
+<a name='L769'></a><a href='#L769'>769</a>
+<a name='L770'></a><a href='#L770'>770</a>
+<a name='L771'></a><a href='#L771'>771</a>
+<a name='L772'></a><a href='#L772'>772</a>
+<a name='L773'></a><a href='#L773'>773</a>
+<a name='L774'></a><a href='#L774'>774</a>
+<a name='L775'></a><a href='#L775'>775</a>
+<a name='L776'></a><a href='#L776'>776</a>
+<a name='L777'></a><a href='#L777'>777</a>
+<a name='L778'></a><a href='#L778'>778</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -844,6 +859,11 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -941,11 +961,16 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1284,10 +1309,15 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1595,7 +1625,7 @@ const multer = <span class="cstat-no" title="statement not covered" >require('mu
 const xlsx = <span class="cstat-no" title="statement not covered" >require('xlsx');</span>
 const { pool } = <span class="cstat-no" title="statement not covered" >require('../config/database');</span>
 const logger = <span class="cstat-no" title="statement not covered" >require('../utils/logger');</span>
-const { authorizeAdmin } = <span class="cstat-no" title="statement not covered" >require('../middleware/auth');</span>
+const { authorizeAdmin, authorizeRoles } = <span class="cstat-no" title="statement not covered" >require('../middleware/auth');</span>
 const { logOperation } = <span class="cstat-no" title="statement not covered" >require('../services/operationLogService');</span>
 &nbsp;
 const router = <span class="cstat-no" title="statement not covered" >express.Router();</span>
@@ -1606,6 +1636,11 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
 <span class="cstat-no" title="statement not covered" >    try {</span>
         const { orderIds } = <span class="cstat-no" title="statement not covered" >req.body;</span>
         const userId = <span class="cstat-no" title="statement not covered" >req.user.id;</span>
+        const role = <span class="cstat-no" title="statement not covered" >req.user.role;</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >        if (!(role === 'picker' || role === 'admin')) {</span>
+<span class="cstat-no" title="statement not covered" >            return res.status(403).json({ message: '權限不足' });</span>
+        }
 &nbsp;
 <span class="cstat-no" title="statement not covered" >        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {</span>
 <span class="cstat-no" title="statement not covered" >            return res.status(400).json({ message: '請提供訂單ID列表' });</span>
@@ -1708,6 +1743,11 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
     const { id: userId, role } = <span class="cstat-no" title="statement not covered" >req.user;</span>
     const io = <span class="cstat-no" title="statement not covered" >req.app.get('io');</span>
 <span class="cstat-no" title="statement not covered" >    logger.debug(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >    if (role === 'dispatcher') {</span>
+<span class="cstat-no" title="statement not covered" >        return res.status(403).json({ message: '拋單員不可認領任務' });</span>
+    }
+&nbsp;
     const client = <span class="cstat-no" title="statement not covered" >await pool.connect();</span>
 <span class="cstat-no" title="statement not covered" >    try {</span>
 <span class="cstat-no" title="statement not covered" >        await client.query('BEGIN');</span>
@@ -1906,7 +1946,7 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
 });
 &nbsp;
 // POST /api/orders/import
-<span class="cstat-no" title="statement not covered" >router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), <span class="fstat-no" title="function not covered" >as</span>ync (req, res, next) =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), upload.single('orderFile'), <span class="fstat-no" title="function not covered" >as</span>ync (req, res, next) =&gt; {</span>
     const io = <span class="cstat-no" title="statement not covered" >req.app.get('io');</span>
 <span class="cstat-no" title="statement not covered" >    if (!req.file) <span class="cstat-no" title="statement not covered" >return res.status(400).json({ message: '沒有上傳檔案' });</span></span>
     const client = <span class="cstat-no" title="statement not covered" >await pool.connect();</span>
@@ -2050,6 +2090,11 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
     const { orderId, scanValue, type, amount = <span class="branch-0 cbranch-no" title="branch not covered" >1,</span> orderItemId } = <span class="cstat-no" title="statement not covered" >req.body;</span>
     const { id: userId, role } = <span class="cstat-no" title="statement not covered" >req.user;</span>
     const io = <span class="cstat-no" title="statement not covered" >req.app.get('io');</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >    if (!(role === 'admin' || role === 'picker' || role === 'packer')) {</span>
+<span class="cstat-no" title="statement not covered" >        return res.status(403).json({ message: '權限不足' });</span>
+    }
+&nbsp;
     const client = <span class="cstat-no" title="statement not covered" >await pool.connect();</span>
 <span class="cstat-no" title="statement not covered" >    try {</span>
 <span class="cstat-no" title="statement not covered" >        await client.query('BEGIN');</span>
@@ -2356,7 +2401,7 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-15T10:03:19.096Z
+                at 2025-12-15T18:17:38.062Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

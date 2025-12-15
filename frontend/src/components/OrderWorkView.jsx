@@ -752,6 +752,8 @@ export function OrderWorkView({ user }) {
         setBarcodeInput('');
     };
 
+    const canOperate = user?.role === 'admin' || user?.role === 'picker' || user?.role === 'packer';
+
     const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
     const handleClick = () => { handleScan(); };
     
@@ -930,10 +932,11 @@ export function OrderWorkView({ user }) {
                                     <input
                                         ref={barcodeInputRef}
                                         type="text"
-                                        placeholder="點擊掃描..."
+                                        placeholder={canOperate ? '點擊掃描...' : '僅檢視模式（不可掃描）'}
                                         value={barcodeInput}
                                         onChange={(e) => setBarcodeInput(e.target.value)}
                                         onKeyDown={handleKeyDown}
+                                        disabled={!canOperate}
                                         className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-gray-800 border-2 text-white placeholder-gray-500 focus:outline-none transition-all ${
                                             scanError 
                                                 ? 'border-red-500 animate-shake' 
@@ -943,7 +946,7 @@ export function OrderWorkView({ user }) {
                                     <div className="absolute right-2 top-1/2 -translate-y-1/2">
                                         <button 
                                             onClick={handleClick}
-                                            disabled={isUpdating}
+                                            disabled={isUpdating || !canOperate}
                                             className="p-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-colors"
                                         >
                                             {isUpdating ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} className="rotate-180" />}
