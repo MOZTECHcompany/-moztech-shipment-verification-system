@@ -206,6 +206,11 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
                                     {statusInfo.text}
                                 </div>
+                                {user?.role === 'dispatcher' && Number(task?.imported_by_user_id) === Number(user?.id) && (
+                                    <div className="flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full backdrop-blur-md border border-white/30 shadow-sm bg-white/40 text-gray-700">
+                                        我的拋單
+                                    </div>
+                                )}
                                 <div className="flex items-center gap-1.5 text-gray-600 font-bold bg-white/40 backdrop-blur-md border border-white/30 px-2.5 py-1 rounded-full text-[11px] sm:text-[12px] shadow-sm">
                                     <User size={10} />
                                     <span className="truncate max-w-[100px]">{task.customer_name}</span>
@@ -863,12 +868,17 @@ export function TaskDashboard({ user }) {
     const sortedVisibleTasks = useMemo(() => {
         const arr = [...visibleTasks];
         arr.sort((a, b) => {
+            const isDispatcher = user?.role === 'dispatcher';
+            const aMine = isDispatcher && Number(a?.imported_by_user_id) === Number(user?.id);
+            const bMine = isDispatcher && Number(b?.imported_by_user_id) === Number(user?.id);
+            const aMineScore = aMine ? 4 : 0;
+            const bMineScore = bMine ? 4 : 0;
             const aScore = (pinnedTaskIds.includes(a.id) ? 2 : 0) + (a.is_urgent ? 1 : 0);
             const bScore = (pinnedTaskIds.includes(b.id) ? 2 : 0) + (b.is_urgent ? 1 : 0);
-            return bScore - aScore;
+            return (bMineScore + bScore) - (aMineScore + aScore);
         });
         return arr;
-    }, [visibleTasks, pinnedTaskIds]);
+    }, [visibleTasks, pinnedTaskIds, user?.role, user?.id]);
 
     const pickTasks = sortedVisibleTasks.filter(t => t.task_type === 'pick');
     const packTasks = sortedVisibleTasks.filter(t => t.task_type === 'pack');
