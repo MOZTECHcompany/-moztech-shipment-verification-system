@@ -4,13 +4,55 @@
 const express = require('express');
 const multer = require('multer');
 const xlsx = require('xlsx');
+const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage() });
+
+const allowedImportMimeTypes = new Set([
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'text/csv',
+    'application/csv',
+    'text/plain'
+]);
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { files: 1 },
+    fileFilter: (req, file, cb) => {
+        const filename = file?.originalname ? String(file.originalname) : '';
+        const ext = filename.toLowerCase().split('.').pop();
+        const allowedExt = ext === 'xlsx' || ext === 'xls' || ext === 'csv';
+        const allowedMime = file?.mimetype ? allowedImportMimeTypes.has(String(file.mimetype).toLowerCase()) : false;
+
+        if (allowedExt || allowedMime) {
+            return cb(null, true);
+        }
+
+        const err = new Error('不支援的檔案格式，請上傳 .xlsx / .xls / .csv');
+        // 交給 globalErrorHandler 統一處理
+        return cb(err);
+    }
+});
+
+const importLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        // 匯入是已登入操作，優先按 userId 限流，避免同 IP 共享影響
+        const userId = req.user?.id ? String(req.user.id) : '';
+        return userId ? `user:${userId}` : `ip:${req.ip}`;
+    },
+    handler: (req, res) => {
+        return res.status(429).json({ message: '匯入嘗試次數過多，請稍後再試' });
+    }
+});
 
 // POST /api/orders/batch-claim
 router.post('/orders/batch-claim', async (req, res) => {
@@ -327,7 +369,7 @@ router.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
 });
 
 // POST /api/orders/import
-router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), upload.single('orderFile'), async (req, res, next) => {
+router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimiter, upload.single('orderFile'), async (req, res, next) => {
     const io = req.app.get('io');
     if (!req.file) return res.status(400).json({ message: '沒有上傳檔案' });
     const client = await pool.connect();
