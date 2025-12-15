@@ -12,7 +12,8 @@
     "migrate": "node migrations/run.js",
     "migrate:single": "node migrations/run-single.js",
     "retention": "node src/maintenance/retention.js",
-    "retention:prod": "NODE_ENV=production node src/maintenance/retention.js"
+    "retention:prod": "NODE_ENV=production node src/maintenance/retention.js",
+    "maintenance:fix-miscompleted-orders": "node maintenance/fix-miscompleted-orders.js"
   },
   "keywords": [
     "wms",
