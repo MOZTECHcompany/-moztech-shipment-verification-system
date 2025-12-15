@@ -376,10 +376,24 @@ export function TaskDashboard({ user }) {
     const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
     const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
+
+    const getLocalISODate = useCallback(() => {
+        // 以使用者瀏覽器本地時間產生 YYYY-MM-DD
+        const now = new Date();
+        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+        return local.toISOString().slice(0, 10);
+    }, []);
+
+    const [completedDate, setCompletedDate] = useState(() => getLocalISODate());
+    const completedDateRef = useRef(completedDate);
     
     useEffect(() => {
         currentViewRef.current = currentView;
     }, [currentView]);
+
+    useEffect(() => {
+        completedDateRef.current = completedDate;
+    }, [completedDate]);
 
     const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
     const [voiceEnabled, setVoiceEnabled] = useState(voiceNotification.isEnabled());
@@ -556,7 +570,9 @@ export function TaskDashboard({ user }) {
             try {
                 setLoading(true);
                 // 已完成清單後端預設 limit=50；這裡拉高一點避免「明明已完成但看不到」
-                const endpoint = currentView === 'completed' ? '/api/tasks/completed?limit=200' : '/api/tasks';
+                const endpoint = currentView === 'completed'
+                    ? `/api/tasks/completed?limit=200&date=${encodeURIComponent(completedDate)}`
+                    : '/api/tasks';
                 const response = await apiClient.get(endpoint);
                 setTasks(response.data);
             } catch (error) {
@@ -567,7 +583,7 @@ export function TaskDashboard({ user }) {
                 setLoading(false);
             }
         }
-    }, [user, currentView]);
+    }, [user, currentView, completedDate]);
 
     useEffect(() => {
         fetchTasks();
@@ -596,6 +612,11 @@ export function TaskDashboard({ user }) {
                 // 若使用者目前在「已完成」視圖，且事件代表此訂單應出現在已完成清單，
                 // 就直接 refetch，確保新完成訂單會同步顯示。
                 if (currentViewRef.current !== 'completed') return;
+
+                // 已完成視圖預設是「今天」；若使用者選了非今日日期，避免 socket 事件打亂結果
+                const today = getLocalISODate();
+                if (completedDateRef.current !== today) return;
+
                 const shouldAppearInCompleted =
                     newStatus === 'completed' ||
                     (user.role === 'picker' && (newStatus === 'picked' || newStatus === 'packing'));
@@ -603,7 +624,7 @@ export function TaskDashboard({ user }) {
                 if (!shouldAppearInCompleted) return;
 
                 try {
-                    const response = await apiClient.get('/api/tasks/completed?limit=200');
+                    const response = await apiClient.get(`/api/tasks/completed?limit=200&date=${encodeURIComponent(today)}`);
                     // 避免切換視圖後的 race condition
                     if (currentViewRef.current === 'completed') {
                         setTasks(response.data);
@@ -987,6 +1008,26 @@ export function TaskDashboard({ user }) {
                               已完成
                           </button>
                       </div>
+
+                                            {/* 已完成：日期篩選（預設今天，可選日期） */}
+                                            {currentView === 'completed' && (
+                                                <div className="flex items-center gap-2 bg-white/50 backdrop-blur-sm rounded-xl px-3 py-1.5 border border-gray-200/50 shadow-sm">
+                                                    <span className="text-xs font-bold text-gray-600">日期</span>
+                                                    <input
+                                                        type="date"
+                                                        value={completedDate}
+                                                        onChange={(e) => setCompletedDate(e.target.value)}
+                                                        className="text-sm bg-white/70 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                                    />
+                                                    <button
+                                                        onClick={() => setCompletedDate(getLocalISODate())}
+                                                        className="text-xs font-bold text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100/70"
+                                                        title="回到今天"
+                                                    >
+                                                        今天
+                                                    </button>
+                                                </div>
+                                            )}
 
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       

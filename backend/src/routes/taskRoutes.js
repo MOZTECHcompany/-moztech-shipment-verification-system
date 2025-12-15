@@ -96,8 +96,42 @@ router.get('/tasks/completed', async (req, res) => {
         const { id: userId, role } = req.user;
         const parsedLimit = parseInt(req.query.limit || '50', 10);
         const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
+        const date = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+        const hasDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
         
-        let query = `
+        const conditions = [];
+        const params = [];
+        let paramIndex = 1;
+
+        // 角色篩選
+        if (role === 'admin') {
+            // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
+            conditions.push("o.status IN ('picked', 'packing', 'completed')");
+        } else if (role === 'picker') {
+            conditions.push(`o.picker_id = $${paramIndex++}`);
+            params.push(userId);
+            conditions.push("o.status IN ('picked', 'packing', 'completed')");
+        } else if (role === 'packer') {
+            conditions.push(`o.packer_id = $${paramIndex++}`);
+            params.push(userId);
+            conditions.push("o.status = 'completed'");
+        } else {
+            return res.json([]);
+        }
+
+        // 日期篩選（預設用台灣時區切日）
+        if (hasDate) {
+            conditions.push(
+                `(
+                    (o.updated_at AT TIME ZONE 'Asia/Taipei') >= ($${paramIndex}::date)::timestamp
+                    AND (o.updated_at AT TIME ZONE 'Asia/Taipei') < (($${paramIndex}::date + INTERVAL '1 day')::timestamp)
+                )`
+            );
+            params.push(date);
+            paramIndex += 1;
+        }
+
+        const query = `
             SELECT 
                 o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
                 pk.name as packer_name,
@@ -106,49 +140,14 @@ router.get('/tasks/completed', async (req, res) => {
             FROM orders o
             LEFT JOIN users p ON o.picker_id = p.id 
             LEFT JOIN users pk ON o.packer_id = pk.id
-            WHERE 
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY o.updated_at DESC
+            LIMIT $${paramIndex}
         `;
-        
-        const params = [userId, limit];
-        
-        if (role === 'admin') {
-            // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
-            query += `o.status IN ('picked', 'packing', 'completed')`;
-            // Admin doesn't need userId param for filtering, but we keep it in params array for index consistency if needed, 
-            // actually let's adjust params.
-            // For admin, we just want completed orders.
-            // Let's rewrite the params logic.
-        } else if (role === 'picker') {
-            // Picker sees orders they picked that are now picked, packing or completed
-            query += `o.picker_id = $1 AND o.status IN ('picked', 'packing', 'completed')`;
-        } else if (role === 'packer') {
-            // Packer sees orders they packed that are now completed
-            query += `o.packer_id = $1 AND o.status = 'completed'`;
-        } else {
-            return res.json([]);
-        }
-        
-        query += ` ORDER BY o.updated_at DESC LIMIT $2`;
-        
-        // Adjust params based on role
-        const queryParams = role === 'admin' ? [limit] : [userId, limit];
-        // Fix query placeholder for admin
-        if (role === 'admin') {
-             query = `
-                SELECT 
-                    o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
-                    pk.name as packer_name,
-                    o.updated_at as completed_at,
-                    (CASE WHEN o.status = 'completed' THEN 'done' ELSE 'picked' END) as task_type
-                FROM orders o
-                LEFT JOIN users p ON o.picker_id = p.id 
-                LEFT JOIN users pk ON o.packer_id = pk.id
-                WHERE o.status IN ('picked', 'packing', 'completed')
-                ORDER BY o.updated_at DESC LIMIT $1
-            `;
-        }
 
-        const result = await pool.query(query, queryParams);
+        params.push(limit);
+
+        const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (error) {
         logger.error('[/api/tasks/completed] 獲取已完成任務失敗:', error);
