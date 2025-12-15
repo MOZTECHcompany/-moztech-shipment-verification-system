@@ -3,14 +3,40 @@
 
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const authService = require('../services/authService');
 const logger = require('../utils/logger');
+
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req) => {
+        const rawUsername = req.body && req.body.username ? String(req.body.username) : '';
+        return `${req.ip}:${rawUsername.trim().toLowerCase()}`;
+    },
+    handler: (req, res) => {
+        return res.status(429).json({ message: '嘗試次數過多，請稍後再試' });
+    }
+});
+
+const refreshLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (req, res) => {
+        return res.status(429).json({ message: '嘗試次數過多，請稍後再試' });
+    }
+});
 
 /**
  * POST /api/auth/login
  * 用戶登入
  */
-router.post('/login', async (req, res, next) => {
+router.post('/login', loginLimiter, async (req, res, next) => {
     try {
         const { username, password } = req.body;
 
@@ -33,7 +59,7 @@ router.post('/login', async (req, res, next) => {
  * POST /api/auth/refresh
  * 刷新 Token
  */
-router.post('/refresh', async (req, res, next) => {
+router.post('/refresh', refreshLimiter, async (req, res, next) => {
     try {
         const { token } = req.body;
 

@@ -19,15 +19,27 @@ const jwt = require('jsonwebtoken');
 const Papa = require('papaparse');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const logger = require('./utils/logger'); // 引入環境感知的 logger
 
 // --- 环境设定 ---
 require('dotenv').config();
 
+// 安全性：JWT_SECRET 缺失時直接拒絕啟動（避免 token 可被偽造或驗證行為異常）
+if (process.env.NODE_ENV !== 'test' && !process.env.JWT_SECRET) {
+    logger.error('Missing required env: JWT_SECRET');
+    throw new Error('Missing required env: JWT_SECRET');
+}
+
 // --- 应用程式与伺服器初始化 ---
 const app = express();
 const port = process.env.PORT || 3001;
 const server = http.createServer(app);
+
+// Render / reverse proxy 環境下，讓 req.ip 取到正確的 client IP
+if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+}
 
 // =================================================================
 // #region 全域中介软体 (Global Middlewares)
@@ -192,7 +204,22 @@ publicRouter.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'))
 
 // 獨立的認證路由 (必須在其他 /api 路由之前註冊)
 const authRouter = express.Router();
-authRouter.post('/login', async (req, res) => {
+const legacyLoginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req) => {
+        const rawUsername = req.body && req.body.username ? String(req.body.username) : '';
+        return `${req.ip}:${rawUsername.trim().toLowerCase()}`;
+    },
+    handler: (req, res) => {
+        return res.status(429).json({ message: '嘗試次數過多，請稍後再試' });
+    }
+});
+
+authRouter.post('/login', legacyLoginLimiter, async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ message: '請提供使用者名稱和密碼' });
     const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);

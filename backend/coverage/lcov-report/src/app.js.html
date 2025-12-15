@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/64</span>
+                <span class='fraction'>0/69</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/9</span>
+                <span class='fraction'>0/15</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/63</span>
+                <span class='fraction'>0/68</span>
             </div>
         
             
@@ -221,7 +221,34 @@
 <a name='L156'></a><a href='#L156'>156</a>
 <a name='L157'></a><a href='#L157'>157</a>
 <a name='L158'></a><a href='#L158'>158</a>
-<a name='L159'></a><a href='#L159'>159</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -234,28 +261,23 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -391,6 +413,8 @@ const helmet = <span class="cstat-no" title="statement not covered" >require('he
 const morgan = <span class="cstat-no" title="statement not covered" >require('morgan');</span>
 const logger = <span class="cstat-no" title="statement not covered" >require('./utils/logger');</span>
 &nbsp;
+<span class="cstat-no" title="statement not covered" >require('dotenv').config();</span>
+&nbsp;
 // 中間件
 const { authenticateToken, authorizeAdmin } = <span class="cstat-no" title="statement not covered" >require('./middleware/auth');</span>
 const { notFoundHandler, globalErrorHandler } = <span class="cstat-no" title="statement not covered" >require('./middleware/errorHandler');</span>
@@ -409,11 +433,20 @@ const maintenanceRoutes = <span class="cstat-no" title="statement not covered" >
 // const taskRoutes = require('./routes/taskRoutes');
 // const reportRoutes = require('./routes/reportRoutes');
 &nbsp;
-<span class="cstat-no" title="statement not covered" >require('dotenv').config();</span>
-&nbsp;
 // 創建應用
 const app = <span class="cstat-no" title="statement not covered" >express();</span>
 const server = <span class="cstat-no" title="statement not covered" >http.createServer(app);</span>
+&nbsp;
+// Render / reverse proxy 環境下，讓 req.ip 取到正確的 client IP
+<span class="cstat-no" title="statement not covered" >if (process.env.NODE_ENV === 'production') {</span>
+<span class="cstat-no" title="statement not covered" >    app.set('trust proxy', 1);</span>
+}
+&nbsp;
+// 安全性：JWT_SECRET 缺失時直接拒絕啟動（避免 token 可被偽造或驗證行為異常）
+<span class="cstat-no" title="statement not covered" >if (process.env.NODE_ENV !== 'test' &amp;&amp; !process.env.JWT_SECRET) {</span>
+<span class="cstat-no" title="statement not covered" >    logger.error('Missing required env: JWT_SECRET');</span>
+<span class="cstat-no" title="statement not covered" >    throw new Error('Missing required env: JWT_SECRET');</span>
+}
 &nbsp;
 // =================================================================
 // CORS 配置
@@ -544,7 +577,7 @@ const io = <span class="cstat-no" title="statement not covered" >new Server(serv
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-15T19:20:32.786Z
+                at 2025-12-15T19:36:13.708Z
             </div>
         <script src="../prettify.js"></script>
         <script>

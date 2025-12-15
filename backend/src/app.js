@@ -10,6 +10,8 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const logger = require('./utils/logger');
 
+require('dotenv').config();
+
 // 中間件
 const { authenticateToken, authorizeAdmin } = require('./middleware/auth');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
@@ -28,11 +30,20 @@ const maintenanceRoutes = require('./routes/maintenanceRoutes');
 // const taskRoutes = require('./routes/taskRoutes');
 // const reportRoutes = require('./routes/reportRoutes');
 
-require('dotenv').config();
-
 // 創建應用
 const app = express();
 const server = http.createServer(app);
+
+// Render / reverse proxy 環境下，讓 req.ip 取到正確的 client IP
+if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+}
+
+// 安全性：JWT_SECRET 缺失時直接拒絕啟動（避免 token 可被偽造或驗證行為異常）
+if (process.env.NODE_ENV !== 'test' && !process.env.JWT_SECRET) {
+    logger.error('Missing required env: JWT_SECRET');
+    throw new Error('Missing required env: JWT_SECRET');
+}
 
 // =================================================================
 // CORS 配置
