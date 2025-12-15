@@ -50,7 +50,7 @@ function authorizeAdmin(req, res, next) {
         return res.status(401).json({ message: '需要認證' });
     }
 
-    if (req.user.role !== 'admin') {
+    if (!(req.user.role === 'admin' || req.user.role === 'superadmin')) {
         logger.warn(`授權失敗: ${req.user.username} (${req.user.role}) 嘗試存取管理員功能`);
         return res.status(403).json({ message: '需要管理員權限' });
     }
@@ -69,6 +69,11 @@ function authorizeRoles(...roles) {
             return res.status(401).json({ message: '需要認證' });
         }
 
+        // 最高管理員：允許存取所有 role-based 端點（但 superadmin-only 的限制會在各路由內另行檢查）
+        if (req.user.role === 'superadmin') {
+            return next();
+        }
+
         if (!roles.includes(req.user.role)) {
             logger.warn(`授權失敗: ${req.user.username} (${req.user.role}) 需要角色: ${roles.join(', ')}`);
             return res.status(403).json({ message: '權限不足' });
@@ -78,8 +83,25 @@ function authorizeRoles(...roles) {
     };
 }
 
+/**
+ * 最高管理員授權中間件
+ */
+function authorizeSuperAdmin(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({ message: '需要認證' });
+    }
+
+    if (req.user.role !== 'superadmin') {
+        logger.warn(`授權失敗: ${req.user.username} (${req.user.role}) 需要最高管理員權限`);
+        return res.status(403).json({ message: '需要最高管理員權限' });
+    }
+
+    next();
+}
+
 module.exports = {
     authenticateToken,
     authorizeAdmin,
-    authorizeRoles
+    authorizeRoles,
+    authorizeSuperAdmin
 };

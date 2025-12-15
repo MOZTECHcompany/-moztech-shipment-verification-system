@@ -29,7 +29,7 @@ export function LoginPage({ onLogin }) {
       const responseData = response.data;
       toast.success(`🎉 歡迎回來，${responseData.user.name || responseData.user.username}！`);
       onLogin(responseData);
-      if (responseData.user.role === 'admin') {
+      if (responseData.user.role === 'admin' || responseData.user.role === 'superadmin') {
         navigate('/admin');
       } else {
         navigate('/tasks');

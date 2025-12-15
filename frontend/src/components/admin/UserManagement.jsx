@@ -13,7 +13,7 @@ import { PageHeader, Button, Card, CardHeader, CardTitle, CardDescription, CardC
 const MySwal = withReactContent(Swal);
 
 // 使用者表單 Modal (使用設計系統 Modal + Input + Button)
-const UserFormModal = ({ user, open, onClose, onSave }) => {
+const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
     const [formData, setFormData] = useState({
         username: user?.username || '',
         name: user?.name || '',
@@ -22,6 +22,7 @@ const UserFormModal = ({ user, open, onClose, onSave }) => {
     });
     const [isSaving, setIsSaving] = useState(false);
     const isEditMode = !!user;
+    const isSuperAdminActor = (currentUser?.role || '').toLowerCase() === 'superadmin';
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -94,15 +95,18 @@ const UserFormModal = ({ user, open, onClose, onSave }) => {
                         <option value="picker">揀貨員</option>
                         <option value="packer">裝箱員</option>
                             <option value="dispatcher">拋單員</option>
-                        <option value="admin">管理員</option>
+                        {isSuperAdminActor && <option value="admin">管理員</option>}
                     </select>
+                    {!isSuperAdminActor && (
+                        <p className="mt-2 text-xs text-gray-500">只有最高管理員可以建立/指派管理員角色</p>
+                    )}
                 </div>
             </form>
         </Modal>
     );
 };
 
-export function UserManagement() {
+export function UserManagement({ currentUser }) {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -125,6 +129,12 @@ export function UserManagement() {
     }, [fetchUsers]);
 
     const handleOpenModal = (user = null) => {
+        const actorRole = (currentUser?.role || '').toLowerCase();
+        const targetRole = (user?.role || '').toLowerCase();
+        if (user && targetRole === 'superadmin' && actorRole !== 'superadmin') {
+            toast.error('權限不足', { description: '管理員不可編輯最高管理員帳號' });
+            return;
+        }
         setEditingUser(user);
         setIsModalOpen(true);
     };
@@ -184,6 +194,7 @@ export function UserManagement() {
     };
 
     const roleMap = { 
+        superadmin: { label: '最高管理員', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: Shield },
         admin: { label: '管理員', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: Shield },
         picker: { label: '揀貨員', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: UserIcon },
         packer: { label: '裝箱員', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: UserIcon },
@@ -260,28 +271,32 @@ export function UserManagement() {
                                                 </TD>
                                                 <TD>{user.name}</TD>
                                                 <TD>
-                                                    <Badge variant={user.role === 'admin' ? 'danger' : (user.role === 'picker' || user.role === 'dispatcher') ? 'info' : 'success'} className="inline-flex items-center gap-1">
-                                                        {user.role === 'admin' && <Shield className="h-3 w-3" />}
+                                                    <Badge variant={(user.role === 'admin' || user.role === 'superadmin') ? 'danger' : (user.role === 'picker' || user.role === 'dispatcher') ? 'info' : 'success'} className="inline-flex items-center gap-1">
+                                                        {(user.role === 'admin' || user.role === 'superadmin') && <Shield className="h-3 w-3" />}
                                                         {user.role === 'picker' && <UserIcon className="h-3 w-3" />}
                                                         {user.role === 'packer' && <UserIcon className="h-3 w-3" />}
                                                         {user.role === 'dispatcher' && <UserIcon className="h-3 w-3" />}
-                                                        {user.role === 'admin' ? '管理員' : user.role === 'picker' ? '揀貨員' : user.role === 'dispatcher' ? '拋單員' : '裝箱員'}
+                                                        {user.role === 'superadmin' ? '最高管理員' : user.role === 'admin' ? '管理員' : user.role === 'picker' ? '揀貨員' : user.role === 'dispatcher' ? '拋單員' : '裝箱員'}
                                                     </Badge>
                                                 </TD>
                                                 <TD className="text-xs text-gray-600">{new Date(user.created_at).toLocaleDateString('zh-TW')}</TD>
                                                 <TD className="text-right">
                                                     <div className="flex justify-end gap-2">
-                                                        <Button variant="secondary" size="xs" className="gap-1" onClick={() => handleOpenModal(user)}>
-                                                            <Edit className="h-3 w-3" /> 編輯
-                                                        </Button>
-                                                        <Button
-                                                            variant="danger"
-                                                            size="xs"
-                                                            className="gap-1"
-                                                            onClick={() => handleDeleteUser(user)}
-                                                        >
-                                                            <Trash2 className="h-3 w-3" /> 刪除
-                                                        </Button>
+                                                        {((user.role || '').toLowerCase() !== 'superadmin' || (currentUser?.role || '').toLowerCase() === 'superadmin') && (
+                                                            <>
+                                                                <Button variant="secondary" size="xs" className="gap-1" onClick={() => handleOpenModal(user)}>
+                                                                    <Edit className="h-3 w-3" /> 編輯
+                                                                </Button>
+                                                                <Button
+                                                                    variant="danger"
+                                                                    size="xs"
+                                                                    className="gap-1"
+                                                                    onClick={() => handleDeleteUser(user)}
+                                                                >
+                                                                    <Trash2 className="h-3 w-3" /> 刪除
+                                                                </Button>
+                                                            </>
+                                                        )}
                                                     </div>
                                                 </TD>
                                             </TR>
@@ -293,7 +308,7 @@ export function UserManagement() {
                     </Card>
                 )}
 
-                <UserFormModal user={editingUser} open={isModalOpen} onClose={handleCloseModal} onSave={handleSaveUser} />
+                <UserFormModal user={editingUser} open={isModalOpen} onClose={handleCloseModal} onSave={handleSaveUser} currentUser={currentUser} />
             </div>
         );
 }

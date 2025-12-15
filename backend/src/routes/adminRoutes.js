@@ -6,6 +6,65 @@ const router = express.Router();
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const userService = require('../services/userService');
+const jwt = require('jsonwebtoken');
+
+// POST /api/admin/bootstrap/superadmin
+// 用途：初始化最高管理員（通常只需要執行一次）
+// 安全：需提供 SUPERADMIN_BOOTSTRAP_SECRET（以 header 或 body），且資料庫目前不能已有 superadmin
+router.post('/bootstrap/superadmin', async (req, res) => {
+  try {
+    const secret =
+      req.headers['x-superadmin-bootstrap'] ||
+      req.headers['x-superadmin-bootstrap-secret'] ||
+      (req.body && (req.body.secret || req.body.bootstrapSecret));
+
+    if (!process.env.SUPERADMIN_BOOTSTRAP_SECRET) {
+      return res.status(400).json({ message: '伺服器未設定 SUPERADMIN_BOOTSTRAP_SECRET，無法執行初始化' });
+    }
+
+    if (!secret || String(secret) !== String(process.env.SUPERADMIN_BOOTSTRAP_SECRET)) {
+      return res.status(403).json({ message: '初始化密鑰錯誤' });
+    }
+
+    const existing = await pool.query("SELECT id FROM users WHERE LOWER(role) = 'superadmin' LIMIT 1");
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ message: '系統已存在最高管理員，無法再次初始化' });
+    }
+
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.status(401).json({ message: '需要認證' });
+    }
+
+    const updated = await pool.query(
+      "UPDATE users SET role = 'superadmin' WHERE id = $1 RETURNING id, username, name, role",
+      [actorId]
+    );
+
+    if (updated.rowCount === 0) {
+      return res.status(404).json({ message: '找不到用戶' });
+    }
+
+    const user = updated.rows[0];
+
+    // 回傳新的 accessToken，讓前端不用重新登入
+    const accessToken = jwt.sign(
+      { id: user.id, username: user.username, name: user.name, role: 'superadmin' },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    logger.warn(`Superadmin bootstrap completed by userId=${actorId}`);
+    return res.json({
+      message: '最高管理員初始化完成',
+      accessToken,
+      user
+    });
+  } catch (err) {
+    logger.error('Bootstrap superadmin failed:', err);
+    return res.status(500).json({ message: '初始化最高管理員失敗', error: err.message });
+  }
+});
 
 // 與舊版 API 兼容：POST /api/admin/create-user
 router.post('/create-user', async (req, res) => {
@@ -16,6 +75,12 @@ router.post('/create-user', async (req, res) => {
     }
 
     role = String(role).trim().toLowerCase();
+
+    // 只有最高管理員可以新增/指定管理員（admin/superadmin）
+    const actorRole = req.user?.role;
+    if ((role === 'admin' || role === 'superadmin') && actorRole !== 'superadmin') {
+      return res.status(403).json({ message: '只有最高管理員可以新增管理員' });
+    }
     const user = await userService.createUser({ username, password, name, role });
 
     return res.status(201).json({

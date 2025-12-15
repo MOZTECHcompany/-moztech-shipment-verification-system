@@ -19,7 +19,7 @@ const jwt = require('jsonwebtoken');
 const Papa = require('papaparse');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const rateLimit = require('express-rate-limit');
+const expressRateLimit = require('express-rate-limit');
 const logger = require('./utils/logger'); // 引入環境感知的 logger
 
 // --- 环境设定 ---
@@ -149,7 +149,8 @@ const authorizeAdmin = (req, res, next) => {
         logger.error('[authorizeAdmin] req.user 不存在');
         return res.status(401).json({ code: 'AUTH_REQUIRED', message: '未認證的請求' });
     }
-    if (req.user.role !== 'admin') {
+    const actorRole = req.user.role ? String(req.user.role).trim().toLowerCase() : null;
+    if (actorRole !== 'admin' && actorRole !== 'superadmin') {
         logger.error(`[authorizeAdmin] 權限不足 - role: ${req.user.role}`);
         return res.status(403).json({ code: 'FORBIDDEN', message: '權限不足，此操作需要管理員權限' });
     }
@@ -204,7 +205,7 @@ publicRouter.get('/', (req, res) => res.send('Moztech WMS API 正在運行！'))
 
 // 獨立的認證路由 (必須在其他 /api 路由之前註冊)
 const authRouter = express.Router();
-const legacyLoginLimiter = rateLimit({
+const legacyLoginLimiter = expressRateLimit({
     windowMs: 15 * 60 * 1000,
     max: 30,
     standardHeaders: 'draft-7',
@@ -242,6 +243,13 @@ adminRouter.post('/create-user', async (req, res) => {
     let { username, password, name, role } = req.body;
     if (!username || !password || !name || !role) return res.status(400).json({ message: '缺少必要欄位' });
     role = String(role).trim().toLowerCase();
+
+    // 只有最高管理員可以新增/指定管理員（admin/superadmin）
+    const actorRole = req.user?.role ? String(req.user.role).trim().toLowerCase() : null;
+    if ((role === 'admin' || role === 'superadmin') && actorRole !== 'superadmin') {
+        return res.status(403).json({ message: '只有最高管理員可以新增管理員' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     await pool.query('INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)', [username, hashedPassword, name, role]);
     res.status(201).json({ message: `使用者 ${username} (${role}) 已成功建立` });
@@ -254,7 +262,33 @@ adminRouter.put('/users/:userId', async (req, res) => {
     const { userId } = req.params;
     let { name, role, password } = req.body;
     if (!name && !role && !password) return res.status(400).json({ message: '請提供至少一項要更新的資訊' });
-    if (Number(userId) === req.user.id && role && String(role).trim().toLowerCase() !== 'admin') return res.status(400).json({ message: '無法修改自己的管理員權限' });
+
+    const actorRole = req.user?.role ? String(req.user.role).trim().toLowerCase() : null;
+
+    // 保護 superadmin 帳號：非 superadmin 不可編輯 superadmin
+    const targetResult = await pool.query('SELECT id, role FROM users WHERE id = $1', [userId]);
+    if (targetResult.rows.length === 0) return res.status(404).json({ message: '找不到該使用者' });
+    const targetRole = targetResult.rows[0].role ? String(targetResult.rows[0].role).trim().toLowerCase() : null;
+    if (targetRole === 'superadmin' && actorRole !== 'superadmin') {
+        return res.status(403).json({ message: '管理員不可編輯最高管理員帳號' });
+    }
+
+    // 只有 superadmin 可以把人設成 admin/superadmin
+    if (role) {
+        const nextRole = String(role).trim().toLowerCase();
+        if ((nextRole === 'admin' || nextRole === 'superadmin') && actorRole !== 'superadmin') {
+            return res.status(403).json({ message: '只有最高管理員可以指派管理員角色' });
+        }
+    }
+
+    // 防止自己把自己降權（admin/superadmin）
+    if (Number(userId) === req.user.id && role) {
+        const nextRole = String(role).trim().toLowerCase();
+        if (nextRole !== actorRole) {
+            return res.status(400).json({ message: '無法修改自己的權限角色' });
+        }
+    }
+
     let query = 'UPDATE users SET ';
     const values = []; let valueCount = 1;
     if (name) { query += `name = $${valueCount++}, `; values.push(name); }
@@ -275,8 +309,16 @@ adminRouter.put('/users/:userId', async (req, res) => {
 adminRouter.delete('/users/:userId', async (req, res) => {
     const { userId } = req.params;
     if (Number(userId) === req.user.id) return res.status(400).json({ message: '無法刪除自己的帳號' });
+
+    const actorRole = req.user?.role ? String(req.user.role).trim().toLowerCase() : null;
+    const targetResult = await pool.query('SELECT id, role FROM users WHERE id = $1', [userId]);
+    if (targetResult.rows.length === 0) return res.status(404).json({ message: '找不到要刪除的使用者' });
+    const targetRole = targetResult.rows[0].role ? String(targetResult.rows[0].role).trim().toLowerCase() : null;
+    if (targetRole === 'superadmin' && actorRole !== 'superadmin') {
+        return res.status(403).json({ message: '管理員不可刪除最高管理員帳號' });
+    }
+
     const result = await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-    if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的使用者' });
     res.status(200).json({ message: '使用者已成功刪除' });
 });
 
