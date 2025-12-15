@@ -376,6 +376,7 @@ export function TaskDashboard({ user }) {
     const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
     const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
+    const prevViewRef = useRef(currentView);
 
     const getLocalISODate = useCallback(() => {
         // 以使用者瀏覽器本地時間產生 YYYY-MM-DD
@@ -390,6 +391,15 @@ export function TaskDashboard({ user }) {
     useEffect(() => {
         currentViewRef.current = currentView;
     }, [currentView]);
+
+    useEffect(() => {
+        // 每次「切換到已完成」都強制回到今天（避免保留上次選的日期）
+        const prev = prevViewRef.current;
+        if (currentView === 'completed' && prev !== 'completed') {
+            setCompletedDate(getLocalISODate());
+        }
+        prevViewRef.current = currentView;
+    }, [currentView, getLocalISODate]);
 
     useEffect(() => {
         completedDateRef.current = completedDate;
