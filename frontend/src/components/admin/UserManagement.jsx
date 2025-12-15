@@ -186,8 +186,8 @@ export function UserManagement() {
     const roleMap = { 
         admin: { label: '管理員', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: Shield },
         picker: { label: '揀貨員', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: UserIcon },
-        packer: { label: '裝箱員', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: UserIcon }
-            dispatcher: { label: '拋單員', color: 'bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800 border-purple-200', icon: UserIcon }
+        packer: { label: '裝箱員', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: UserIcon },
+        dispatcher: { label: '拋單員', color: 'bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800 border-purple-200', icon: UserIcon }
     };
 
         return (
