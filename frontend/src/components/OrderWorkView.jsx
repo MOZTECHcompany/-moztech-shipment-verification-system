@@ -231,7 +231,7 @@ const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, onOpen
 };
 
 // --- SN模式的品项卡片 ---
-const SNItemCard = ({ item, instances, isFocusMode }) => {
+const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
     const [expanded, setExpanded] = useState(false);
     
     const pickedCount = instances.filter(i => i.status === 'picked' || i.status === 'packed').length;
@@ -262,6 +262,11 @@ const SNItemCard = ({ item, instances, isFocusMode }) => {
                             <span className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                                 {item.barcode}
                             </span>
+                            {lineInfo && (
+                                <span className="text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                                    同條碼第 {lineInfo.index}/{lineInfo.total} 行
+                                </span>
+                            )}
                         </div>
                         
                         {/* 進度條 */}
@@ -326,7 +331,7 @@ const SNItemCard = ({ item, instances, isFocusMode }) => {
 };
 
 // --- 数量模式的品项卡片 ---
-const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFocusMode }) => {
+const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFocusMode, lineInfo }) => {
     const canAdjustPick = (user.role === 'picker' || user.role === 'admin') && orderStatus === 'picking';
     const canAdjustPack = (user.role === 'packer' || user.role === 'admin') && orderStatus === 'packing';
     const isComplete = item.packed_quantity >= item.quantity;
@@ -354,6 +359,11 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                         <span className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                             {item.barcode}
                         </span>
+                        {lineInfo && (
+                            <span className="text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                                同條碼第 {lineInfo.index}/{lineInfo.total} 行
+                            </span>
+                        )}
                     </div>
 
                     {/* 進度條 */}
@@ -371,7 +381,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                     <div className={`flex items-center gap-2 p-1.5 rounded-lg border transition-all ${
                         item.picked_quantity >= item.quantity ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100'
                     }`}>
-                        <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pick', -1)} 
+                        <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pick', -1, item.id)} 
                             disabled={!canAdjustPick || item.picked_quantity <= 0} isUpdating={isUpdating} />
                         
                         <div className="flex flex-col items-center min-w-[50px]">
@@ -384,7 +394,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                             </div>
                         </div>
 
-                        <QuantityButton icon={Plus} onClick={() => onUpdate(item.barcode, 'pick', 1)} 
+                        <QuantityButton icon={Plus} onClick={() => onUpdate(item.barcode, 'pick', 1, item.id)} 
                             disabled={!canAdjustPick || item.picked_quantity >= item.quantity} isUpdating={isUpdating} />
                     </div>
                     
@@ -392,7 +402,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                     <div className={`flex items-center gap-2 p-1.5 rounded-lg border transition-all ${
                         item.packed_quantity >= item.quantity ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
                     }`}>
-                        <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pack', -1)} 
+                        <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pack', -1, item.id)} 
                             disabled={!canAdjustPack || item.packed_quantity <= 0} isUpdating={isUpdating} />
                         
                         <div className="flex flex-col items-center min-w-[50px]">
@@ -405,7 +415,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                             </div>
                         </div>
 
-                        <QuantityButton icon={Plus} onClick={() => onUpdate(item.barcode, 'pack', 1)} 
+                        <QuantityButton icon={Plus} onClick={() => onUpdate(item.barcode, 'pack', 1, item.id)} 
                             disabled={!canAdjustPack || item.packed_quantity >= item.picked_quantity} isUpdating={isUpdating} />
                     </div>
                 </div>
@@ -599,7 +609,7 @@ export function OrderWorkView({ user }) {
 
     useEffect(() => { fetchOrderDetails(orderId); }, [orderId, fetchOrderDetails]);
 
-    const updateItemState = async (scanValue, type, amount = 1) => {
+    const updateItemState = async (scanValue, type, amount = 1, orderItemId) => {
         if (isUpdating || !currentOrderData.order) return;
         setIsUpdating(true);
         try {
@@ -607,7 +617,8 @@ export function OrderWorkView({ user }) {
                 orderId: currentOrderData.order.id,
                 scanValue,
                 type,
-                amount
+                amount,
+                ...(orderItemId ? { orderItemId } : {})
             });
             setCurrentOrderData(response.data);
 
@@ -843,6 +854,30 @@ export function OrderWorkView({ user }) {
         });
     }, [currentOrderData]);
 
+    // 同一張訂單內，若有相同條碼的多行品項，顯示「第 X/N 行」提示
+    const barcodeLineInfoByItemId = useMemo(() => {
+        const items = currentOrderData.items || [];
+        const groups = new Map();
+
+        for (const item of items) {
+            const barcode = String(item?.barcode ?? '').trim();
+            if (!barcode) continue;
+            const list = groups.get(barcode) || [];
+            list.push(item);
+            groups.set(barcode, list);
+        }
+
+        const map = {};
+        for (const [, list] of groups.entries()) {
+            if (list.length <= 1) continue;
+            const sorted = [...list].sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+            sorted.forEach((item, idx) => {
+                map[item.id] = { index: idx + 1, total: sorted.length };
+            });
+        }
+        return map;
+    }, [currentOrderData.items]);
+
     return (
         <div className="min-h-screen bg-transparent pb-20">
             <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -973,12 +1008,13 @@ export function OrderWorkView({ user }) {
                                         {sortedItems.map((item, index) => {
                                             const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
                                             const hasSN = itemInstances.length > 0;
+                                            const lineInfo = barcodeLineInfoByItemId[item.id];
                                             return (
                                                 <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 30}ms` }}>
                                                     {hasSN ? (
-                                                        <SNItemCard item={item} instances={itemInstances} isFocusMode={isFocusMode} />
+                                                        <SNItemCard item={item} instances={itemInstances} isFocusMode={isFocusMode} lineInfo={lineInfo} />
                                                     ) : (
-                                                        <QuantityItemCard item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating} isFocusMode={isFocusMode} />
+                                                        <QuantityItemCard item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating} isFocusMode={isFocusMode} lineInfo={lineInfo} />
                                                     )}
                                                 </div>
                                             );

@@ -458,7 +458,7 @@ router.post('/orders/import', authorizeAdmin, upload.single('orderFile'), async 
 
 // POST /api/orders/update_item
 router.post('/orders/update_item', async (req, res, next) => {
-    const { orderId, scanValue, type, amount = 1 } = req.body;
+    const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
     const { id: userId, role } = req.user;
     const io = req.app.get('io');
     const client = await pool.connect();
@@ -492,38 +492,65 @@ router.post('/orders/update_item', async (req, res, next) => {
             await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
             await logOperation({ userId, orderId, operationType: type, details: { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` }, io });
         } else {
-            // 非 SN 條碼：同一張訂單內可能有多行相同條碼，必須挑選「仍可更新」的那一行
-            // pick: picked_quantity + amount 需落在 [0, quantity]
-            // pack: packed_quantity + amount 需落在 [0, picked_quantity]
-            const itemResult = await client.query(
-                `
-                SELECT
-                    oi.id,
-                    oi.quantity,
-                    COALESCE(oi.picked_quantity, 0) as picked_quantity,
-                    COALESCE(oi.packed_quantity, 0) as packed_quantity
-                FROM order_items oi
-                WHERE oi.order_id = $1
-                  AND oi.barcode = $2
-                  AND NOT EXISTS (
-                      SELECT 1 FROM order_item_instances i WHERE i.order_item_id = oi.id
-                  )
-                  AND (
-                      (
-                        $4 = 'pick'
-                        AND (COALESCE(oi.picked_quantity, 0) + $3) BETWEEN 0 AND COALESCE(oi.quantity, 0)
+            // 非 SN 條碼：
+            // - 若帶 orderItemId：精準更新指定那一行品項（避免同條碼多行時按鈕誤更新）
+            // - 否則：掃碼情境下，自動挑選「仍可更新」的一行
+
+            let itemResult;
+            if (orderItemId) {
+                itemResult = await client.query(
+                    `
+                    SELECT
+                        oi.id,
+                        oi.quantity,
+                        COALESCE(oi.picked_quantity, 0) as picked_quantity,
+                        COALESCE(oi.packed_quantity, 0) as packed_quantity
+                    FROM order_items oi
+                    WHERE oi.order_id = $1
+                      AND oi.id = $2
+                      AND oi.barcode = $3
+                      AND NOT EXISTS (
+                          SELECT 1 FROM order_item_instances i WHERE i.order_item_id = oi.id
                       )
-                      OR (
-                        $4 = 'pack'
-                        AND (COALESCE(oi.packed_quantity, 0) + $3) BETWEEN 0 AND COALESCE(oi.picked_quantity, 0)
+                    LIMIT 1
+                    FOR UPDATE
+                    `,
+                    [orderId, orderItemId, scanValue]
+                );
+            } else {
+                // 同一張訂單內可能有多行相同條碼，必須挑選「仍可更新」的那一行
+                // pick: picked_quantity + amount 需落在 [0, quantity]
+                // pack: packed_quantity + amount 需落在 [0, picked_quantity]
+                itemResult = await client.query(
+                    `
+                    SELECT
+                        oi.id,
+                        oi.quantity,
+                        COALESCE(oi.picked_quantity, 0) as picked_quantity,
+                        COALESCE(oi.packed_quantity, 0) as packed_quantity
+                    FROM order_items oi
+                    WHERE oi.order_id = $1
+                      AND oi.barcode = $2
+                      AND NOT EXISTS (
+                          SELECT 1 FROM order_item_instances i WHERE i.order_item_id = oi.id
                       )
-                  )
-                ORDER BY oi.id ASC
-                LIMIT 1
-                FOR UPDATE
-                `,
-                [orderId, scanValue, amountNum, type]
-            );
+                      AND (
+                          (
+                            $4 = 'pick'
+                            AND (COALESCE(oi.picked_quantity, 0) + $3) BETWEEN 0 AND COALESCE(oi.quantity, 0)
+                          )
+                          OR (
+                            $4 = 'pack'
+                            AND (COALESCE(oi.packed_quantity, 0) + $3) BETWEEN 0 AND COALESCE(oi.picked_quantity, 0)
+                          )
+                      )
+                    ORDER BY oi.id ASC
+                    LIMIT 1
+                    FOR UPDATE
+                    `,
+                    [orderId, scanValue, amountNum, type]
+                );
+            }
             if (itemResult.rows.length === 0) {
                 await logOperation({ userId, orderId, operationType: 'scan_error', details: { scanValue, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' }, io });
                 throw new Error(`條碼 ${scanValue} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`);
