@@ -58,7 +58,7 @@ router.get('/tasks', async (req, res) => {
                 ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 
-                (CASE WHEN $2 = 'dispatcher' AND import_log.user_id = $1 THEN 1 ELSE 0 END) DESC,
+                (CASE WHEN $2 = 'dispatcher' THEN MAX(CASE WHEN import_log.user_id = $1 THEN 1 ELSE 0 END) ELSE 0 END) DESC,
                 COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') DESC,
                 COALESCE(o.is_urgent, FALSE) DESC, 
                 o.created_at ASC;
