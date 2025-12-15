@@ -197,21 +197,26 @@ router.get('/orders/:orderId', async (req, res, next) => {
                 const pickedQty = Number(item.picked_quantity ?? 0);
                 const packedQty = Number(item.packed_quantity ?? 0);
 
-                if (pickedQty < qty) allPicked = false;
-                const requiredPackQty = Math.min(qty, pickedQty);
-                if (packedQty < requiredPackQty) allPacked = false;
+                // 若揀貨未達需求，不能被視為「裝箱完成」
+                if (pickedQty < qty) {
+                    allPicked = false;
+                    allPacked = false;
+                } else {
+                    if (packedQty < qty) allPacked = false;
+                }
             }
         }
 
         let statusChanged = false;
         let newStatus = order.status;
 
-        if (allPacked && order.status !== 'completed') {
+        // 完成必須同時滿足揀貨完成 + 裝箱完成
+        if (allPicked && allPacked && order.status !== 'completed') {
             newStatus = 'completed';
             statusChanged = true;
             await client.query(
-                "UPDATE orders SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
-                [req.user?.id || null, orderId]
+                "UPDATE orders SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                [orderId]
             );
         } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
             newStatus = 'picked';
@@ -519,17 +524,21 @@ router.post('/orders/update_item', async (req, res, next) => {
                     const pickedQty = Number(item.picked_quantity ?? 0);
                     const packedQty = Number(item.packed_quantity ?? 0);
 
-                    if (pickedQty < qty) allPicked = false;
-                    // 裝箱以「已揀貨數」為基準（避免部分揀貨/異常資料導致永遠無法完成）
-                    const requiredPackQty = Math.min(qty, pickedQty);
-                    if (packedQty < requiredPackQty) allPacked = false;
+                    // 若揀貨未達需求，不能被視為「裝箱完成」
+                    if (pickedQty < qty) {
+                        allPicked = false;
+                        allPacked = false;
+                    } else {
+                        if (packedQty < qty) allPacked = false;
+                    }
             }
         }
 
         let statusChanged = false;
         let finalStatus = order.status;
 
-        if (allPacked && order.status !== 'completed') {
+        // 完成必須同時滿足揀貨完成 + 裝箱完成
+        if (allPicked && allPacked && order.status !== 'completed') {
             finalStatus = 'completed';
             statusChanged = true;
             await client.query(

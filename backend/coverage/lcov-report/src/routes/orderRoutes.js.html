@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/373</span>
+                <span class='fraction'>0/375</span>
             </div>
         
             
@@ -754,7 +754,16 @@
 <a name='L689'></a><a href='#L689'>689</a>
 <a name='L690'></a><a href='#L690'>690</a>
 <a name='L691'></a><a href='#L691'>691</a>
-<a name='L692'></a><a href='#L692'>692</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L692'></a><a href='#L692'>692</a>
+<a name='L693'></a><a href='#L693'>693</a>
+<a name='L694'></a><a href='#L694'>694</a>
+<a name='L695'></a><a href='#L695'>695</a>
+<a name='L696'></a><a href='#L696'>696</a>
+<a name='L697'></a><a href='#L697'>697</a>
+<a name='L698'></a><a href='#L698'>698</a>
+<a name='L699'></a><a href='#L699'>699</a>
+<a name='L700'></a><a href='#L700'>700</a>
+<a name='L701'></a><a href='#L701'>701</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -953,14 +962,19 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1275,15 +1289,19 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1644,21 +1662,26 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
                 const pickedQty = <span class="cstat-no" title="statement not covered" >Number(item.picked_quantity ?? 0);</span>
                 const packedQty = <span class="cstat-no" title="statement not covered" >Number(item.packed_quantity ?? 0);</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >                if (pickedQty &lt; qty) <span class="cstat-no" title="statement not covered" >allPicked = false;</span></span>
-                const requiredPackQty = <span class="cstat-no" title="statement not covered" >Math.min(qty, pickedQty);</span>
-<span class="cstat-no" title="statement not covered" >                if (packedQty &lt; requiredPackQty) <span class="cstat-no" title="statement not covered" >allPacked = false;</span></span>
+                // 若揀貨未達需求，不能被視為「裝箱完成」
+<span class="cstat-no" title="statement not covered" >                if (pickedQty &lt; qty) {</span>
+<span class="cstat-no" title="statement not covered" >                    allPicked = false;</span>
+<span class="cstat-no" title="statement not covered" >                    allPacked = false;</span>
+                } else {
+<span class="cstat-no" title="statement not covered" >                    if (packedQty &lt; qty) <span class="cstat-no" title="statement not covered" >allPacked = false;</span></span>
+                }
             }
         }
 &nbsp;
         let statusChanged = <span class="cstat-no" title="statement not covered" >false;</span>
         let newStatus = <span class="cstat-no" title="statement not covered" >order.status;</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >        if (allPacked &amp;&amp; order.status !== 'completed') {</span>
+        // 完成必須同時滿足揀貨完成 + 裝箱完成
+<span class="cstat-no" title="statement not covered" >        if (allPicked &amp;&amp; allPacked &amp;&amp; order.status !== 'completed') {</span>
 <span class="cstat-no" title="statement not covered" >            newStatus = 'completed';</span>
 <span class="cstat-no" title="statement not covered" >            statusChanged = true;</span>
 <span class="cstat-no" title="statement not covered" >            await client.query(</span>
-                "UPDATE orders SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
-                [req.user?.id || null, orderId]
+                "UPDATE orders SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                [orderId]
             );
         } else <span class="cstat-no" title="statement not covered" >if (allPicked &amp;&amp; (order.status === 'picking' || order.status === 'pending')) {</span>
 <span class="cstat-no" title="statement not covered" >            newStatus = 'picked';</span>
@@ -1966,17 +1989,21 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
                     const pickedQty = <span class="cstat-no" title="statement not covered" >Number(item.picked_quantity ?? 0);</span>
                     const packedQty = <span class="cstat-no" title="statement not covered" >Number(item.packed_quantity ?? 0);</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >                    if (pickedQty &lt; qty) <span class="cstat-no" title="statement not covered" >allPicked = false;</span></span>
-                    // 裝箱以「已揀貨數」為基準（避免部分揀貨/異常資料導致永遠無法完成）
-                    const requiredPackQty = <span class="cstat-no" title="statement not covered" >Math.min(qty, pickedQty);</span>
-<span class="cstat-no" title="statement not covered" >                    if (packedQty &lt; requiredPackQty) <span class="cstat-no" title="statement not covered" >allPacked = false;</span></span>
+                    // 若揀貨未達需求，不能被視為「裝箱完成」
+<span class="cstat-no" title="statement not covered" >                    if (pickedQty &lt; qty) {</span>
+<span class="cstat-no" title="statement not covered" >                        allPicked = false;</span>
+<span class="cstat-no" title="statement not covered" >                        allPacked = false;</span>
+                    } else {
+<span class="cstat-no" title="statement not covered" >                        if (packedQty &lt; qty) <span class="cstat-no" title="statement not covered" >allPacked = false;</span></span>
+                    }
             }
         }
 &nbsp;
         let statusChanged = <span class="cstat-no" title="statement not covered" >false;</span>
         let finalStatus = <span class="cstat-no" title="statement not covered" >order.status;</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >        if (allPacked &amp;&amp; order.status !== 'completed') {</span>
+        // 完成必須同時滿足揀貨完成 + 裝箱完成
+<span class="cstat-no" title="statement not covered" >        if (allPicked &amp;&amp; allPacked &amp;&amp; order.status !== 'completed') {</span>
 <span class="cstat-no" title="statement not covered" >            finalStatus = 'completed';</span>
 <span class="cstat-no" title="statement not covered" >            statusChanged = true;</span>
 <span class="cstat-no" title="statement not covered" >            await client.query(</span>
@@ -2143,7 +2170,7 @@ const upload = <span class="cstat-no" title="statement not covered" >multer({ st
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-12T16:03:13.086Z
+                at 2025-12-15T09:30:08.170Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
