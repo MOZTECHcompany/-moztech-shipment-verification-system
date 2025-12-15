@@ -11,8 +11,9 @@ const logger = require('../utils/logger');
 router.get('/tasks', async (req, res) => {
     try {
         const { id: userId, role } = req.user;
-        logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role}`);
-        if (!role) return res.status(403).json({ message: '使用者角色無效' });
+        const effectiveRole = role === 'superadmin' ? 'admin' : role;
+        logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role} (effective=${effectiveRole})`);
+        if (!effectiveRole) return res.status(403).json({ message: '使用者角色無效' });
 
         const query = `
             SELECT 
@@ -65,8 +66,8 @@ router.get('/tasks', async (req, res) => {
                 o.created_at ASC;
         `;
 
-        logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${role}`);
-        const result = await pool.query(query, [userId, role]);
+        logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${effectiveRole}`);
+        const result = await pool.query(query, [userId, effectiveRole]);
         logger.info(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
         if (result.rows.length > 0) {
             logger.debug(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
@@ -104,6 +105,7 @@ router.get('/users/basic', async (req, res) => {
 router.get('/tasks/completed', async (req, res) => {
     try {
         const { id: userId, role } = req.user;
+        const effectiveRole = role === 'superadmin' ? 'admin' : role;
         const parsedLimit = parseInt(req.query.limit || '50', 10);
         const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
         const date = typeof req.query.date === 'string' ? req.query.date.trim() : '';
@@ -115,10 +117,10 @@ router.get('/tasks/completed', async (req, res) => {
 
         // 角色篩選
         let orderBy = 'o.updated_at DESC';
-        if (role === 'admin') {
+        if (effectiveRole === 'admin') {
             // 管理員：可檢視所有「完成階段」訂單（已揀貨 / 裝箱中 / 已完成）
             conditions.push("o.status IN ('picked', 'packing', 'completed')");
-        } else if (role === 'dispatcher') {
+        } else if (effectiveRole === 'dispatcher') {
             // 拋單員：可檢視所有「完成階段」訂單（用於追蹤進度/留言），但不允許實際操作
             conditions.push("o.status IN ('picked', 'packing', 'completed')");
             // 先顯示自己拋的單，再依完成時間排序
@@ -128,11 +130,11 @@ router.get('/tasks/completed', async (req, res) => {
                 (CASE WHEN import_log.user_id = ${myUserParam} THEN 1 ELSE 0 END) DESC,
                 o.updated_at DESC
             `;
-        } else if (role === 'picker') {
+        } else if (effectiveRole === 'picker') {
             conditions.push(`o.picker_id = $${paramIndex++}`);
             params.push(userId);
             conditions.push("o.status IN ('picked', 'packing', 'completed')");
-        } else if (role === 'packer') {
+        } else if (effectiveRole === 'packer') {
             conditions.push(`o.packer_id = $${paramIndex++}`);
             params.push(userId);
             conditions.push("o.status = 'completed'");

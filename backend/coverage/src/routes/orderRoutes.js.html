@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/438</span>
+                <span class='fraction'>0/442</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/258</span>
+                <span class='fraction'>0/266</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/401</span>
+                <span class='fraction'>0/405</span>
             </div>
         
             
@@ -882,7 +882,11 @@
 <a name='L817'></a><a href='#L817'>817</a>
 <a name='L818'></a><a href='#L818'>818</a>
 <a name='L819'></a><a href='#L819'>819</a>
-<a name='L820'></a><a href='#L820'>820</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L820'></a><a href='#L820'>820</a>
+<a name='L821'></a><a href='#L821'>821</a>
+<a name='L822'></a><a href='#L822'>822</a>
+<a name='L823'></a><a href='#L823'>823</a>
+<a name='L824'></a><a href='#L824'>824</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -944,6 +948,7 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -972,6 +977,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1050,6 +1056,7 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1393,6 +1400,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1763,8 +1771,9 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
         const { orderIds } = <span class="cstat-no" title="statement not covered" >req.body;</span>
         const userId = <span class="cstat-no" title="statement not covered" >req.user.id;</span>
         const role = <span class="cstat-no" title="statement not covered" >req.user.role;</span>
+        const isAdminLike = <span class="cstat-no" title="statement not covered" >role === 'admin' || role === 'superadmin';</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >        if (!(role === 'picker' || role === 'admin')) {</span>
+<span class="cstat-no" title="statement not covered" >        if (!(role === 'picker' || isAdminLike)) {</span>
 <span class="cstat-no" title="statement not covered" >            return res.status(403).json({ message: '權限不足' });</span>
         }
 &nbsp;
@@ -1794,6 +1803,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >router.post('/orders/batch/claim', <span class="fstat-no" title="function not covered" >as</span>ync (req, res) =&gt; {</span>
     const { orderIds } = <span class="cstat-no" title="statement not covered" >req.body;</span>
     const { id: userId, role } = <span class="cstat-no" title="statement not covered" >req.user;</span>
+    const isAdminLike = <span class="cstat-no" title="statement not covered" >role === 'admin' || role === 'superadmin';</span>
     const io = <span class="cstat-no" title="statement not covered" >req.app.get('io');</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    if (!Array.isArray(orderIds) || orderIds.length === 0) {</span>
@@ -1817,7 +1827,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 &nbsp;
                 const order = <span class="cstat-no" title="statement not covered" >result.rows[0];</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >                if (order.status === 'pending' &amp;&amp; (role === 'picker' || role === 'admin')) {</span>
+<span class="cstat-no" title="statement not covered" >                if (order.status === 'pending' &amp;&amp; (role === 'picker' || isAdminLike)) {</span>
 <span class="cstat-no" title="statement not covered" >                    await pool.query(</span>
                         "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -1831,7 +1841,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
                     });
 <span class="cstat-no" title="statement not covered" >                    io?.emit('task_status_changed', { orderId, newStatus: 'picking' });</span>
 <span class="cstat-no" title="statement not covered" >                    results.success.push(orderId);</span>
-                } else <span class="cstat-no" title="statement not covered" >if (order.status === 'picking' &amp;&amp; (role === 'packer' || role === 'admin')) {</span>
+                } else <span class="cstat-no" title="statement not covered" >if (order.status === 'picking' &amp;&amp; (role === 'packer' || isAdminLike)) {</span>
 <span class="cstat-no" title="statement not covered" >                    await pool.query(</span>
                         "UPDATE orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -1867,6 +1877,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >router.post('/orders/:orderId/claim', <span class="fstat-no" title="function not covered" >as</span>ync (req, res, next) =&gt; {</span>
     const { orderId } = <span class="cstat-no" title="statement not covered" >req.params;</span>
     const { id: userId, role } = <span class="cstat-no" title="statement not covered" >req.user;</span>
+    const isAdminLike = <span class="cstat-no" title="statement not covered" >role === 'admin' || role === 'superadmin';</span>
     const io = <span class="cstat-no" title="statement not covered" >req.app.get('io');</span>
 <span class="cstat-no" title="statement not covered" >    logger.debug(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);</span>
 &nbsp;
@@ -1886,11 +1897,11 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
         const order = <span class="cstat-no" title="statement not covered" >orderResult.rows[0];</span>
 <span class="cstat-no" title="statement not covered" >        logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);</span>
         let newStatus = <span class="cstat-no" title="statement not covered" >'',</span> task_type = <span class="cstat-no" title="statement not covered" >'';</span>
-<span class="cstat-no" title="statement not covered" >        if ((role === 'picker' || role === 'admin') &amp;&amp; order.status === 'pending') {</span>
+<span class="cstat-no" title="statement not covered" >        if ((role === 'picker' || isAdminLike) &amp;&amp; order.status === 'pending') {</span>
 <span class="cstat-no" title="statement not covered" >            newStatus = 'picking'; <span class="cstat-no" title="statement not covered" ></span>task_type = 'pick';</span>
 <span class="cstat-no" title="statement not covered" >            await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);</span>
 <span class="cstat-no" title="statement not covered" >            logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);</span>
-        } else <span class="cstat-no" title="statement not covered" >if ((role === 'packer' || role === 'admin') &amp;&amp; order.status === 'picked') {</span>
+        } else <span class="cstat-no" title="statement not covered" >if ((role === 'packer' || isAdminLike) &amp;&amp; order.status === 'picked') {</span>
 <span class="cstat-no" title="statement not covered" >            newStatus = 'packing'; <span class="cstat-no" title="statement not covered" ></span>task_type = 'pack';</span>
 <span class="cstat-no" title="statement not covered" >            await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);</span>
 <span class="cstat-no" title="statement not covered" >            logger.info(`[/orders/${orderId}/claim] 成功認領裝箱任務`);</span>
@@ -2215,9 +2226,10 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >router.post('/orders/update_item', <span class="fstat-no" title="function not covered" >as</span>ync (req, res, next) =&gt; {</span>
     const { orderId, scanValue, type, amount = <span class="branch-0 cbranch-no" title="branch not covered" >1,</span> orderItemId } = <span class="cstat-no" title="statement not covered" >req.body;</span>
     const { id: userId, role } = <span class="cstat-no" title="statement not covered" >req.user;</span>
+    const isAdminLike = <span class="cstat-no" title="statement not covered" >role === 'admin' || role === 'superadmin';</span>
     const io = <span class="cstat-no" title="statement not covered" >req.app.get('io');</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >    if (!(role === 'admin' || role === 'picker' || role === 'packer')) {</span>
+<span class="cstat-no" title="statement not covered" >    if (!(isAdminLike || role === 'picker' || role === 'packer')) {</span>
 <span class="cstat-no" title="statement not covered" >        return res.status(403).json({ message: '權限不足' });</span>
     }
 &nbsp;
@@ -2240,7 +2252,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >             io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'packing' });</span>
         }
 &nbsp;
-<span class="cstat-no" title="statement not covered" >        if ((type === 'pick' &amp;&amp; order.picker_id !== userId &amp;&amp; role !== 'admin') || (type === 'pack' &amp;&amp; order.packer_id !== userId &amp;&amp; role !== 'admin')) {</span>
+<span class="cstat-no" title="statement not covered" >        if ((type === 'pick' &amp;&amp; order.picker_id !== userId &amp;&amp; !isAdminLike) || (type === 'pack' &amp;&amp; order.packer_id !== userId &amp;&amp; !isAdminLike)) {</span>
 <span class="cstat-no" title="statement not covered" >            throw new Error('您不是此任務的指定操作員');</span>
         }
         const instanceResult = <span class="cstat-no" title="statement not covered" >await client.query(`SELECT i.id, i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 AND i.serial_number = $2 FOR UPDATE`, [orderId, scanValue]);</span>
@@ -2527,7 +2539,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-15T20:58:54.954Z
+                at 2025-12-15T22:16:18.952Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -60,8 +60,9 @@ router.post('/orders/batch-claim', async (req, res) => {
         const { orderIds } = req.body;
         const userId = req.user.id;
         const role = req.user.role;
+        const isAdminLike = role === 'admin' || role === 'superadmin';
 
-        if (!(role === 'picker' || role === 'admin')) {
+        if (!(role === 'picker' || isAdminLike)) {
             return res.status(403).json({ message: '權限不足' });
         }
 
@@ -91,6 +92,7 @@ router.post('/orders/batch-claim', async (req, res) => {
 router.post('/orders/batch/claim', async (req, res) => {
     const { orderIds } = req.body;
     const { id: userId, role } = req.user;
+    const isAdminLike = role === 'admin' || role === 'superadmin';
     const io = req.app.get('io');
 
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
@@ -114,7 +116,7 @@ router.post('/orders/batch/claim', async (req, res) => {
 
                 const order = result.rows[0];
 
-                if (order.status === 'pending' && (role === 'picker' || role === 'admin')) {
+                if (order.status === 'pending' && (role === 'picker' || isAdminLike)) {
                     await pool.query(
                         "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -128,7 +130,7 @@ router.post('/orders/batch/claim', async (req, res) => {
                     });
                     io?.emit('task_status_changed', { orderId, newStatus: 'picking' });
                     results.success.push(orderId);
-                } else if (order.status === 'picking' && (role === 'packer' || role === 'admin')) {
+                } else if (order.status === 'picking' && (role === 'packer' || isAdminLike)) {
                     await pool.query(
                         "UPDATE orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -164,6 +166,7 @@ router.post('/orders/batch/claim', async (req, res) => {
 router.post('/orders/:orderId/claim', async (req, res, next) => {
     const { orderId } = req.params;
     const { id: userId, role } = req.user;
+    const isAdminLike = role === 'admin' || role === 'superadmin';
     const io = req.app.get('io');
     logger.debug(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);
 
@@ -183,11 +186,11 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
         const order = orderResult.rows[0];
         logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
         let newStatus = '', task_type = '';
-        if ((role === 'picker' || role === 'admin') && order.status === 'pending') {
+        if ((role === 'picker' || isAdminLike) && order.status === 'pending') {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
-        } else if ((role === 'packer' || role === 'admin') && order.status === 'picked') {
+        } else if ((role === 'packer' || isAdminLike) && order.status === 'picked') {
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
@@ -512,9 +515,10 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 router.post('/orders/update_item', async (req, res, next) => {
     const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
     const { id: userId, role } = req.user;
+    const isAdminLike = role === 'admin' || role === 'superadmin';
     const io = req.app.get('io');
 
-    if (!(role === 'admin' || role === 'picker' || role === 'packer')) {
+    if (!(isAdminLike || role === 'picker' || role === 'packer')) {
         return res.status(403).json({ message: '權限不足' });
     }
 
@@ -537,7 +541,7 @@ router.post('/orders/update_item', async (req, res, next) => {
              io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'packing' });
         }
 
-        if ((type === 'pick' && order.picker_id !== userId && role !== 'admin') || (type === 'pack' && order.packer_id !== userId && role !== 'admin')) {
+        if ((type === 'pick' && order.picker_id !== userId && !isAdminLike) || (type === 'pack' && order.packer_id !== userId && !isAdminLike)) {
             throw new Error('您不是此任務的指定操作員');
         }
         const instanceResult = await client.query(`SELECT i.id, i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 AND i.serial_number = $2 FOR UPDATE`, [orderId, scanValue]);
