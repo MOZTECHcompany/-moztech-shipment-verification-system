@@ -21,7 +21,7 @@ const typeLabel = (type) => {
 };
 
 const statusLabel = (status) => {
-  const map = { open: 'Open', ack: 'Ack', resolved: 'Resolved' };
+  const map = { open: '待核可', ack: '已核可', resolved: '已結案' };
   return map[status] || status;
 };
 
@@ -196,11 +196,16 @@ export function Exceptions() {
       <div className="p-6 md:p-8 lg:p-10 max-w-[1600px] mx-auto">
         <PageHeader
           title="例外總覽"
-          description={`SLA：Open 超過 ${slaMinutes} 分鐘未核可需處理${tab === 'open' ? `（目前逾時 ${overdueCount} 筆）` : ''}`}
+          description={`SLA（時限）：待核可 超過 ${slaMinutes} 分鐘未核可需處理${tab === 'open' ? `（目前逾時 ${overdueCount} 筆）` : ''}`}
           actions={
-            <Button variant="secondary" onClick={fetchList} disabled={loading}>
-              重新整理
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button as={Link} to="/admin" variant="secondary">
+                返回管理中心
+              </Button>
+              <Button variant="secondary" onClick={fetchList} disabled={loading}>
+                重新整理
+              </Button>
+            </div>
           }
         />
 
@@ -209,19 +214,19 @@ export function Exceptions() {
             <Card className="border-0 glass-panel">
               <CardHeader>
                 <CardTitle className="text-base">狀態</CardTitle>
-                <CardDescription>依 open / ack / resolved 分頁</CardDescription>
+                <CardDescription>依狀態分頁</CardDescription>
               </CardHeader>
               <CardContent className="flex gap-2 flex-wrap">
-                <Button variant={tab === 'open' ? 'primary' : 'secondary'} onClick={() => setTab('open')}>Open</Button>
-                <Button variant={tab === 'ack' ? 'primary' : 'secondary'} onClick={() => setTab('ack')}>Ack</Button>
-                <Button variant={tab === 'resolved' ? 'primary' : 'secondary'} onClick={() => setTab('resolved')}>Resolved</Button>
+                <Button variant={tab === 'open' ? 'primary' : 'secondary'} onClick={() => setTab('open')}>待核可</Button>
+                <Button variant={tab === 'ack' ? 'primary' : 'secondary'} onClick={() => setTab('ack')}>已核可</Button>
+                <Button variant={tab === 'resolved' ? 'primary' : 'secondary'} onClick={() => setTab('resolved')}>已結案</Button>
               </CardContent>
             </Card>
 
             <Card className="border-0 glass-panel mt-6">
               <CardHeader>
                 <CardTitle className="text-base">搜尋</CardTitle>
-                <CardDescription>支援訂單號（voucher）或訂單 ID</CardDescription>
+                <CardDescription>支援訂單號或訂單 ID</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <Input
