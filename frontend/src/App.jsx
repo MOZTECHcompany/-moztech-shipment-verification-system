@@ -13,6 +13,7 @@ import { OperationLogs } from './components/admin/OperationLogs';
 import { Analytics } from './components/admin/Analytics';
 import { ScanErrors } from './components/admin/ScanErrors';
 import { DefectStats } from './components/admin/DefectStats';
+import { Exceptions } from './components/admin/Exceptions';
 import { TaskDashboard } from './components/TaskDashboard';
 import { OrderWorkView } from './components/OrderWorkView';
 import { useLocalStorage } from './hooks/useLocalStorage';
@@ -78,6 +79,7 @@ function App() {
                             <Route path="/admin/analytics" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Analytics /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/scan-errors" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <ScanErrors /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/defects" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <DefectStats /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions /> : <Navigate to="/tasks" />} />
                             <Route path="/tasks" element={<TaskDashboard user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
                         </Route>

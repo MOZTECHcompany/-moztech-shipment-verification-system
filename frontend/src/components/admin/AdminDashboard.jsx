@@ -202,6 +202,26 @@ export function AdminDashboard({ user }) {
                     </Card>
                     )}
 
+                    {/* 4.5 例外總覽 (小卡片) */}
+                    {isAdmin && (
+                    <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '165ms' }}>
+                        <CardHeader>
+                            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                                <AlertTriangle size={24} />
+                            </div>
+                            <CardTitle className="text-xl font-bold">例外總覽</CardTitle>
+                            <CardDescription>open / ack / resolved</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Link to="/admin/exceptions">
+                                <Button variant="ghost" className="w-full justify-between group-hover:bg-amber-50 text-amber-800 rounded-xl">
+                                    前往處理 <ArrowRight size={16} />
+                                </Button>
+                            </Link>
+                        </CardContent>
+                    </Card>
+                    )}
+
                     {/* 5. 使用者管理 (小卡片) */}
                     {isAdmin && (
                     <Card className="md:col-span-1 animate-scale-in border-0 glass-panel hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1" style={{ animationDelay: '175ms' }}>

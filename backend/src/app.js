@@ -26,6 +26,7 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const maintenanceRoutes = require('./routes/maintenanceRoutes');
 const exceptionRoutes = require('./routes/exceptionRoutes');
+const adminExceptionRoutes = require('./routes/adminExceptionRoutes');
 // TODO: 添加其他路由
 // const orderRoutes = require('./routes/orderRoutes');
 // const taskRoutes = require('./routes/taskRoutes');
@@ -156,6 +157,7 @@ app.use('/api/auth', authRoutes);
 // 以下路由需要認證
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
+app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);
 app.use('/api', authenticateToken, taskRoutes);
 app.use('/api', authenticateToken, orderRoutes);
 app.use('/api', authenticateToken, analyticsRoutes);

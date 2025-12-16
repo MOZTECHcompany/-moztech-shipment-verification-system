@@ -492,6 +492,10 @@ export function OrderWorkView({ user }) {
     // 例外事件（open/ack/resolved）
     const [orderExceptions, setOrderExceptions] = useState([]);
     const [exceptionsLoading, setExceptionsLoading] = useState(false);
+
+    // 例外附件（證據鏈）
+    const [exceptionAttachmentsById, setExceptionAttachmentsById] = useState({});
+    const [attachmentsLoadingById, setAttachmentsLoadingById] = useState({});
     
     // 新功能狀態
     const [showCameraScanner, setShowCameraScanner] = useState(false);
@@ -532,6 +536,71 @@ export function OrderWorkView({ user }) {
             setExceptionsLoading(false);
         }
     }, []);
+
+    const fetchExceptionAttachments = useCallback(async (exceptionId) => {
+        if (!orderId || !exceptionId) return;
+        try {
+            setAttachmentsLoadingById((prev) => ({ ...prev, [exceptionId]: true }));
+            const res = await apiClient.get(`/api/orders/${orderId}/exceptions/${exceptionId}/attachments`);
+            const list = res.data?.items || [];
+            setExceptionAttachmentsById((prev) => ({ ...prev, [exceptionId]: list }));
+        } catch (err) {
+            toast.error('載入附件失敗', { description: err.response?.data?.message || err.message });
+            setExceptionAttachmentsById((prev) => ({ ...prev, [exceptionId]: [] }));
+        } finally {
+            setAttachmentsLoadingById((prev) => ({ ...prev, [exceptionId]: false }));
+        }
+    }, [orderId]);
+
+    const downloadExceptionAttachment = useCallback(async (exceptionId, attachment) => {
+        if (!orderId || !exceptionId || !attachment?.id) return;
+        try {
+            const res = await apiClient.get(
+                `/api/orders/${orderId}/exceptions/${exceptionId}/attachments/${attachment.id}/download`,
+                { responseType: 'blob' }
+            );
+            const blob = new Blob([res.data], { type: attachment.mime_type || 'application/octet-stream' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = attachment.original_name || `attachment-${attachment.id}`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            toast.error('下載附件失敗', { description: err.response?.data?.message || err.message });
+        }
+    }, [orderId]);
+
+    const uploadExceptionAttachments = useCallback(async (exceptionId) => {
+        if (!orderId || !exceptionId) return;
+
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.accept = 'image/jpeg,image/png,image/webp,application/pdf';
+        input.onchange = async () => {
+            const files = Array.from(input.files || []);
+            if (!files.length) return;
+
+            const formData = new FormData();
+            files.forEach((f) => formData.append('files', f));
+
+            try {
+                await apiClient.post(
+                    `/api/orders/${orderId}/exceptions/${exceptionId}/attachments`,
+                    formData,
+                    { headers: { 'Content-Type': 'multipart/form-data' } }
+                );
+                toast.success('附件已上傳');
+                fetchExceptionAttachments(exceptionId);
+            } catch (err) {
+                toast.error('上傳附件失敗', { description: err.response?.data?.message || err.message });
+            }
+        };
+        input.click();
+    }, [orderId, fetchExceptionAttachments]);
 
     // 載入所有用戶（用於評論@功能）
     useEffect(() => {
@@ -743,18 +812,45 @@ export function OrderWorkView({ user }) {
     };
 
     const handleResolveException = async (exceptionId) => {
-        const { value: note } = await MySwal.fire({
+        const { value } = await MySwal.fire({
             title: '結案',
-            input: 'textarea',
-            inputLabel: '結案備註（可選）',
-            inputPlaceholder: '例如：已補貨完成；已更換新品；已調整數量…',
+            html: `
+              <div style="text-align:left">
+                <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">處置類型（必填）</label>
+                <select id="resolution-action" class="swal2-input" style="margin:0 0 12px 0;width:100%">
+                  <option value="short_ship">少出</option>
+                  <option value="restock">補貨</option>
+                  <option value="exchange">換貨</option>
+                  <option value="void">作廢</option>
+                  <option value="other">其他</option>
+                </select>
+
+                <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">結案備註（可選）</label>
+                <textarea id="resolution-note" class="swal2-textarea" placeholder="例如：已補貨完成；已更換新品；已調整數量…" style="margin:0;width:100%"></textarea>
+              </div>
+            `,
+            focusConfirm: false,
             showCancelButton: true,
             confirmButtonText: '結案',
-            cancelButtonText: '取消'
+            cancelButtonText: '取消',
+            preConfirm: () => {
+                const resolutionAction = document.getElementById('resolution-action')?.value;
+                const note = document.getElementById('resolution-note')?.value;
+                if (!resolutionAction) {
+                    MySwal.showValidationMessage('請選擇處置類型');
+                    return null;
+                }
+                return { resolutionAction, note: note ? String(note).trim() : '' };
+            }
         });
 
+        if (!value) return;
+
         try {
-            await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/resolve`, { note: note || null });
+            await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/resolve`, {
+                resolutionAction: value.resolutionAction,
+                note: value.note || null
+            });
             toast.success('已結案');
             fetchOrderExceptions(orderId);
         } catch (err) {
@@ -1198,6 +1294,49 @@ export function OrderWorkView({ user }) {
                                                             {statusBadge(ex.status)}
                                                         </div>
                                                         <div className="text-xs text-gray-600 mt-1 break-words">{ex.reason_text}</div>
+
+                                                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                                            <Button
+                                                                size="sm"
+                                                                variant="secondary"
+                                                                onClick={() => fetchExceptionAttachments(ex.id)}
+                                                                disabled={!!attachmentsLoadingById[ex.id]}
+                                                            >
+                                                                查看附件
+                                                            </Button>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="secondary"
+                                                                onClick={() => uploadExceptionAttachments(ex.id)}
+                                                            >
+                                                                上傳附件
+                                                            </Button>
+                                                            <Badge variant="neutral">
+                                                                {(exceptionAttachmentsById[ex.id] || []).length} 個
+                                                            </Badge>
+                                                        </div>
+
+                                                        {(exceptionAttachmentsById[ex.id] || []).length > 0 && (
+                                                            <div className="mt-2 space-y-1">
+                                                                {(exceptionAttachmentsById[ex.id] || []).slice(0, 3).map((att) => (
+                                                                    <div key={att.id} className="flex items-center justify-between gap-2">
+                                                                        <div className="text-[11px] text-gray-600 truncate">
+                                                                            {att.original_name || `attachment-${att.id}`}
+                                                                        </div>
+                                                                        <Button
+                                                                            size="xs"
+                                                                            variant="ghost"
+                                                                            onClick={() => downloadExceptionAttachment(ex.id, att)}
+                                                                        >
+                                                                            下載
+                                                                        </Button>
+                                                                    </div>
+                                                                ))}
+                                                                {(exceptionAttachmentsById[ex.id] || []).length > 3 && (
+                                                                    <div className="text-[11px] text-gray-500">僅顯示最近 3 筆附件</div>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                         <div className="text-[11px] text-gray-400 mt-1">
                                                             建立：{ex.created_by_name || ex.created_by} · {ex.created_at ? new Date(ex.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
                                                         </div>
