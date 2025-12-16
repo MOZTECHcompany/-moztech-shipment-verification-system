@@ -488,6 +488,10 @@ export function OrderWorkView({ user }) {
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
+
+    // 例外事件（open/ack/resolved）
+    const [orderExceptions, setOrderExceptions] = useState([]);
+    const [exceptionsLoading, setExceptionsLoading] = useState(false);
     
     // 新功能狀態
     const [showCameraScanner, setShowCameraScanner] = useState(false);
@@ -513,6 +517,21 @@ export function OrderWorkView({ user }) {
             setLoading(false);
         }
     }, [navigate]);
+
+    const fetchOrderExceptions = useCallback(async (id) => {
+        if (!id) return;
+        try {
+            setExceptionsLoading(true);
+            const res = await apiClient.get(`/api/orders/${id}/exceptions`);
+            setOrderExceptions(res.data?.items || []);
+        } catch (err) {
+            // 例外清單不阻斷主要作業
+            console.error('載入例外清單失敗:', err);
+            setOrderExceptions([]);
+        } finally {
+            setExceptionsLoading(false);
+        }
+    }, []);
 
     // 載入所有用戶（用於評論@功能）
     useEffect(() => {
@@ -599,15 +618,137 @@ export function OrderWorkView({ user }) {
             }
         });
 
+        socket.on('order_exception_changed', (data) => {
+            if (data.orderId === parseInt(orderId)) {
+                fetchOrderExceptions(orderId);
+            }
+        });
+
         return () => {
             clearInterval(interval);
             socket.off('active_sessions_update');
             socket.off('new_comment');
             socket.off('task_status_changed');
+            socket.off('order_exception_changed');
         };
-    }, [orderId, user.id, user.role, navigate, fetchOrderDetails]);
+    }, [orderId, user.id, user.role, navigate, fetchOrderDetails, fetchOrderExceptions]);
 
-    useEffect(() => { fetchOrderDetails(orderId); }, [orderId, fetchOrderDetails]);
+    useEffect(() => {
+        fetchOrderDetails(orderId);
+        fetchOrderExceptions(orderId);
+    }, [orderId, fetchOrderDetails, fetchOrderExceptions]);
+
+    const typeLabel = (type) => {
+        const map = {
+            stockout: '缺貨',
+            damage: '破損',
+            over_scan: '多掃',
+            under_scan: '少掃',
+            sn_replace: 'SN更換',
+            other: '其他'
+        };
+        return map[type] || type;
+    };
+
+    const statusBadge = (status) => {
+        if (status === 'open') return <Badge variant="warning">Open</Badge>;
+        if (status === 'ack') return <Badge variant="info">Ack</Badge>;
+        if (status === 'resolved') return <Badge variant="success">Resolved</Badge>;
+        return <Badge variant="neutral">{status}</Badge>;
+    };
+
+    const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin';
+
+    const handleCreateException = async () => {
+        const { value } = await MySwal.fire({
+            title: '回報例外',
+            html: `
+              <div style="text-align:left">
+                <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">類型</label>
+                <select id="exception-type" class="swal2-input" style="margin:0 0 12px 0;width:100%">
+                  <option value="stockout">缺貨</option>
+                  <option value="damage">破損</option>
+                  <option value="over_scan">多掃</option>
+                  <option value="under_scan">少掃</option>
+                  <option value="sn_replace">SN更換</option>
+                  <option value="other">其他</option>
+                </select>
+
+                <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">原因說明</label>
+                <textarea id="exception-reason" class="swal2-textarea" placeholder="請描述原因與現場狀況（必填）" style="margin:0;width:100%"></textarea>
+              </div>
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: '建立',
+            cancelButtonText: '取消',
+            preConfirm: () => {
+                const type = document.getElementById('exception-type')?.value;
+                const reasonText = document.getElementById('exception-reason')?.value;
+                if (!reasonText || !reasonText.trim()) {
+                    MySwal.showValidationMessage('請填寫原因說明');
+                    return null;
+                }
+                return { type, reasonText: reasonText.trim() };
+            }
+        });
+
+        if (!value) return;
+
+        try {
+            await apiClient.post(`/api/orders/${orderId}/exceptions`, {
+                type: value.type,
+                reasonText: value.reasonText,
+                snapshot: {
+                    source: 'order_work_view'
+                }
+            });
+            toast.success('例外已建立');
+            fetchOrderExceptions(orderId);
+        } catch (err) {
+            toast.error('建立例外失敗', { description: err.response?.data?.message || err.message });
+        }
+    };
+
+    const handleAckException = async (exceptionId) => {
+        const { value: note } = await MySwal.fire({
+            title: '主管核可',
+            input: 'textarea',
+            inputLabel: '核可備註（可選）',
+            inputPlaceholder: '例如：已確認缺貨，允許少出；或已確認破損，需換貨…',
+            showCancelButton: true,
+            confirmButtonText: '核可',
+            cancelButtonText: '取消'
+        });
+
+        try {
+            await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/ack`, { note: note || null });
+            toast.success('已核可');
+            fetchOrderExceptions(orderId);
+        } catch (err) {
+            toast.error('核可失敗', { description: err.response?.data?.message || err.message });
+        }
+    };
+
+    const handleResolveException = async (exceptionId) => {
+        const { value: note } = await MySwal.fire({
+            title: '結案',
+            input: 'textarea',
+            inputLabel: '結案備註（可選）',
+            inputPlaceholder: '例如：已補貨完成；已更換新品；已調整數量…',
+            showCancelButton: true,
+            confirmButtonText: '結案',
+            cancelButtonText: '取消'
+        });
+
+        try {
+            await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/resolve`, { note: note || null });
+            toast.success('已結案');
+            fetchOrderExceptions(orderId);
+        } catch (err) {
+            toast.error('結案失敗', { description: err.response?.data?.message || err.message });
+        }
+    };
 
     const updateItemState = async (scanValue, type, amount = 1, orderItemId) => {
         if (isUpdating || !currentOrderData.order) return;
@@ -968,6 +1109,80 @@ export function OrderWorkView({ user }) {
                                 />
                             </div>
                         </div>
+
+                        {/* 例外處理（可追蹤狀態：open/ack/resolved） */}
+                        <Card className="border-0 shadow-sm">
+                            <CardHeader className="pb-2">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <CardTitle className="text-base">例外處理</CardTitle>
+                                        <CardDescription>缺貨 / 破損 / 多掃 / 少掃 / SN更換</CardDescription>
+                                    </div>
+                                    <Button size="sm" variant="secondary" onClick={handleCreateException}>
+                                        新增
+                                    </Button>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="pt-0">
+                                {exceptionsLoading && <SkeletonText lines={3} />}
+
+                                {!exceptionsLoading && (orderExceptions || []).length === 0 && (
+                                    <EmptyState
+                                        title="尚無例外"
+                                        description="需要時可先建立 open，待主管核可後再結案。"
+                                    />
+                                )}
+
+                                {!exceptionsLoading && (orderExceptions || []).length > 0 && (
+                                    <div className="space-y-2">
+                                        {orderExceptions.slice(0, 8).map((ex) => (
+                                            <div key={ex.id} className="rounded-xl border border-gray-200 bg-white/60 p-3">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="text-sm font-bold text-gray-900">{typeLabel(ex.type)}</span>
+                                                            {statusBadge(ex.status)}
+                                                        </div>
+                                                        <div className="text-xs text-gray-600 mt-1 break-words">{ex.reason_text}</div>
+                                                        <div className="text-[11px] text-gray-400 mt-1">
+                                                            建立：{ex.created_by_name || ex.created_by} · {ex.created_at ? new Date(ex.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
+                                                        </div>
+                                                        {ex.status === 'ack' && (
+                                                            <div className="text-[11px] text-gray-400 mt-1">
+                                                                核可：{ex.ack_by_name || ex.ack_by} · {ex.ack_at ? new Date(ex.ack_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
+                                                            </div>
+                                                        )}
+                                                        {ex.status === 'resolved' && (
+                                                            <div className="text-[11px] text-gray-400 mt-1">
+                                                                結案：{ex.resolved_by_name || ex.resolved_by} · {ex.resolved_at ? new Date(ex.resolved_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {isAdminLike && (
+                                                        <div className="flex flex-col gap-2 flex-shrink-0">
+                                                            {ex.status === 'open' && (
+                                                                <Button size="sm" onClick={() => handleAckException(ex.id)}>
+                                                                    核可
+                                                                </Button>
+                                                            )}
+                                                            {ex.status === 'ack' && (
+                                                                <Button size="sm" onClick={() => handleResolveException(ex.id)}>
+                                                                    結案
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {(orderExceptions || []).length > 8 && (
+                                            <div className="text-xs text-gray-500">僅顯示最近 8 筆例外</div>
+                                        )}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
 
                         {/* 討論區塊 */}
                         <div className="bg-white/30 backdrop-blur-md rounded-2xl shadow-sm border border-white/20 overflow-hidden flex flex-col h-[600px]">

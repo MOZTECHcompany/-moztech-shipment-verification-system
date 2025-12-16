@@ -770,6 +770,54 @@ router.post('/orders/:orderId/defect', authorizeAdmin, async (req, res) => {
             [orderId, userId, oldSn, newSn, instance.barcode, instance.product_name, reason]
         );
 
+        // 3.1 同步建立例外事件（SN更換）— 管理員操作視同已核可並結案，但仍保留審計紀錄
+        try {
+            const tableCheck = await client.query(
+                `SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'order_exceptions'
+                ) as exists`
+            );
+
+            if (tableCheck.rows[0]?.exists) {
+                await client.query(
+                    `INSERT INTO order_exceptions (
+                        order_id, type, status,
+                        reason_code, reason_text,
+                        created_by,
+                        ack_by, ack_at,
+                        resolved_by, resolved_at,
+                        snapshot
+                    ) VALUES (
+                        $1, 'sn_replace', 'resolved',
+                        $2, $3,
+                        $4,
+                        $4, NOW(),
+                        $4, NOW(),
+                        $5::jsonb
+                    )`,
+                    [
+                        orderId,
+                        'DEFECT_EXCHANGE',
+                        reason,
+                        userId,
+                        JSON.stringify({
+                            oldSn,
+                            newSn,
+                            product: {
+                                barcode: instance.barcode,
+                                name: instance.product_name,
+                                orderItemId: instance.order_item_id
+                            }
+                        })
+                    ]
+                );
+            }
+        } catch (e) {
+            // 不影響既有 SN 更換主流程
+            logger.warn('[/api/orders/:orderId/defect] 建立例外事件失敗（可忽略）:', e.message);
+        }
+
         await client.query('COMMIT');
 
         // 4. Log operation
