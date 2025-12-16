@@ -12,6 +12,26 @@ const { logOperation } = require('../services/operationLogService');
 
 const router = express.Router();
 
+async function hasOpenExceptions(db, orderId) {
+    try {
+        const result = await db.query(
+            `SELECT EXISTS(
+                SELECT 1
+                FROM order_exceptions
+                WHERE order_id = $1 AND status = 'open'
+            ) AS has_open`,
+            [orderId]
+        );
+        return !!result.rows[0]?.has_open;
+    } catch (err) {
+        // 若尚未套用 migration，避免擋住既有流程
+        if (err && (err.code === '42P01' || /order_exceptions/i.test(err.message || ''))) {
+            return false;
+        }
+        throw err;
+    }
+}
+
 const allowedImportMimeTypes = new Set([
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'application/vnd.ms-excel',
@@ -131,6 +151,12 @@ router.post('/orders/batch/claim', async (req, res) => {
                     io?.emit('task_status_changed', { orderId, newStatus: 'picking' });
                     results.success.push(orderId);
                 } else if (order.status === 'picking' && (role === 'packer' || isAdminLike)) {
+                    // 若存在未核可例外，禁止進入裝箱流程
+                    const hasOpen = await hasOpenExceptions(pool, orderId);
+                    if (hasOpen) {
+                        results.failed.push({ orderId, reason: '此訂單存在未核可例外，請先主管核可後再裝箱' });
+                        continue;
+                    }
                     await pool.query(
                         "UPDATE orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -191,6 +217,11 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
         } else if ((role === 'packer' || isAdminLike) && order.status === 'picked') {
+            const hasOpen = await hasOpenExceptions(client, orderId);
+            if (hasOpen) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ message: '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。' });
+            }
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
@@ -267,12 +298,19 @@ router.get('/orders/:orderId', async (req, res, next) => {
 
         // 完成必須同時滿足揀貨完成 + 裝箱完成
         if (allPicked && allPacked && order.status !== 'completed') {
+            const hasOpen = await hasOpenExceptions(client, orderId);
+            if (hasOpen) {
+                // 有未核可例外時，不允許自動完成
+                newStatus = order.status;
+                statusChanged = false;
+            } else {
             newStatus = 'completed';
             statusChanged = true;
             await client.query(
                 "UPDATE orders SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                 [orderId]
             );
+            }
         } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
             newStatus = 'picked';
             statusChanged = true;
@@ -533,6 +571,15 @@ router.post('/orders/update_item', async (req, res, next) => {
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
 
+        // 例外流程控管：有 open（未核可）例外時，禁止 pack 相關操作與自動完成
+        if (type === 'pack') {
+            const hasOpen = await hasOpenExceptions(client, orderId);
+            if (hasOpen) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ message: '此訂單存在未核可例外，請先主管核可（ack）後再進行裝箱作業。' });
+            }
+        }
+
         // Auto-transition from picked to packing if type is pack
         if (type === 'pack' && order.status === 'picked') {
              await client.query("UPDATE orders SET status = 'packing', packer_id = COALESCE(packer_id, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2", [userId, orderId]);
@@ -662,12 +709,15 @@ router.post('/orders/update_item', async (req, res, next) => {
 
         // 完成必須同時滿足揀貨完成 + 裝箱完成
         if (allPicked && allPacked && order.status !== 'completed') {
-            finalStatus = 'completed';
-            statusChanged = true;
-            await client.query(
-                "UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
-                [userId, orderId]
-            );
+            const hasOpen = await hasOpenExceptions(client, orderId);
+            if (!hasOpen) {
+                finalStatus = 'completed';
+                statusChanged = true;
+                await client.query(
+                    "UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
+                    [userId, orderId]
+                );
+            }
         } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
             finalStatus = 'picked';
             statusChanged = true;
