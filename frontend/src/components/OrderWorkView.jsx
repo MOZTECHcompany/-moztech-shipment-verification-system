@@ -659,6 +659,18 @@ export function OrderWorkView({ user }) {
 
     const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin';
 
+    const hasOpenExceptions = useMemo(() => {
+        return (orderExceptions || []).some((ex) => ex?.status === 'open');
+    }, [orderExceptions]);
+
+    const canPackNow = useMemo(() => {
+        const status = currentOrderData.order?.status;
+        const roleCanPack = user?.role === 'packer' || isAdminLike;
+        return roleCanPack && (status === 'packing' || status === 'picked');
+    }, [currentOrderData.order?.status, user?.role, isAdminLike]);
+
+    const packBlockedByExceptions = canPackNow && hasOpenExceptions;
+
     const handleCreateException = async () => {
         const { value } = await MySwal.fire({
             title: '回報例外',
@@ -819,8 +831,20 @@ export function OrderWorkView({ user }) {
             
             toast.success(`掃描成功: ${scanValue}`);
         } catch (err) {
-            const errorMsg = err.response?.data?.message || '發生未知錯誤';
+            const statusCode = err.response?.status;
+
+            const serverMsg = err.response?.data?.message;
+            const isExceptionBlocking = statusCode === 409;
+            const errorMsg = isExceptionBlocking
+                ? (serverMsg || '此訂單存在未核可例外，請先主管核可（ack）後再進行裝箱作業。')
+                : (serverMsg || '發生未知錯誤');
+
             setScanError(errorMsg);
+
+            if (isExceptionBlocking) {
+                // 盡量同步最新例外狀態，避免使用者一直碰到 409
+                fetchOrderExceptions(orderId);
+            }
             
             // 播放錯誤音效（WebAudio）
             soundNotification.play('error');
@@ -837,9 +861,9 @@ export function OrderWorkView({ user }) {
             }
             
             // 顯示 Toast 提醒
-            toast.error('條碼不符！', { 
+            toast.error(isExceptionBlocking ? '需先主管核可' : '掃描失敗', {
                 description: errorMsg,
-                duration: 3000
+                duration: 3500
             });
             
             setTimeout(() => setScanError(null), 3000);
@@ -863,6 +887,23 @@ export function OrderWorkView({ user }) {
         else if ((user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && (status === 'packing' || status === 'picked')) operationType = 'pack';
         
         if (operationType) {
+            if (operationType === 'pack' && hasOpenExceptions) {
+                const errorMsg = '此訂單存在未核可例外（Open），需先主管核可（ack）後才能裝箱/完成。請先在「例外處理」區塊處理。';
+                setScanError(errorMsg);
+                soundNotification.play('error');
+                voiceNotification.speakOperationError('需先主管核可');
+                desktopNotification.notifyScanError(errorMsg);
+                if (navigator.vibrate) {
+                    navigator.vibrate([200, 100, 200]);
+                }
+                toast.error('需先主管核可', {
+                    description: errorMsg,
+                    duration: 3500
+                });
+                setTimeout(() => setScanError(null), 3000);
+                setBarcodeInput('');
+                return;
+            }
             updateItemState(scanValue, operationType, 1);
         } else {
             const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
@@ -1068,16 +1109,29 @@ export function OrderWorkView({ user }) {
                                     掃描作業
                                 </h3>
                                 <p className="text-gray-400 text-sm mb-4">請掃描商品條碼或 SN 碼</p>
+
+                                {packBlockedByExceptions && (
+                                    <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-sm flex items-start gap-2 animate-fade-in">
+                                        <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                                        <div className="min-w-0">
+                                            <div className="font-bold">需先主管核可</div>
+                                            <div className="text-xs text-amber-200/80 mt-0.5 break-words">
+                                                此訂單存在 Open 例外，請先在「例外處理」按「核可」後再進行裝箱掃描。
+                                                {isAdminLike ? '（你是管理員，可直接核可，但會留痕）' : ''}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                                 
                                 <div className="relative mb-3">
                                     <input
                                         ref={barcodeInputRef}
                                         type="text"
-                                        placeholder={canOperate ? '點擊掃描...' : '僅檢視模式（不可掃描）'}
+                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (packBlockedByExceptions ? '需先主管核可（Open 例外）' : '點擊掃描...')}
                                         value={barcodeInput}
                                         onChange={(e) => setBarcodeInput(e.target.value)}
                                         onKeyDown={handleKeyDown}
-                                        disabled={!canOperate}
+                                        disabled={!canOperate || packBlockedByExceptions}
                                         className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-gray-800 border-2 text-white placeholder-gray-500 focus:outline-none transition-all ${
                                             scanError 
                                                 ? 'border-red-500 animate-shake' 
@@ -1087,7 +1141,7 @@ export function OrderWorkView({ user }) {
                                     <div className="absolute right-2 top-1/2 -translate-y-1/2">
                                         <button 
                                             onClick={handleClick}
-                                            disabled={isUpdating || !canOperate}
+                                            disabled={isUpdating || !canOperate || packBlockedByExceptions}
                                             className="p-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-colors"
                                         >
                                             {isUpdating ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} className="rotate-180" />}

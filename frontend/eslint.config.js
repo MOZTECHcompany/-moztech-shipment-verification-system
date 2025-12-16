@@ -3,13 +3,24 @@ import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
+function trimGlobals(input) {
+  const out = {}
+  for (const [key, value] of Object.entries(input || {})) {
+    const trimmed = String(key).trim()
+    if (!trimmed) continue
+    if (out[trimmed] !== undefined) continue
+    out[trimmed] = value
+  }
+  return out
+}
+
 export default [
   { ignores: ['dist'] },
   {
     files: ['**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: globals.browser,
+      globals: trimGlobals(globals.browser),
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
