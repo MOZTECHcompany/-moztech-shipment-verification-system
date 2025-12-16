@@ -8,6 +8,7 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 const VALID_STATUSES = new Set(['open', 'ack', 'resolved']);
+const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other']);
 
 function parsePositiveInt(value, fallback) {
   const n = parseInt(String(value ?? ''), 10);
@@ -27,8 +28,18 @@ router.get('/exceptions', async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const overdue = String(req.query.overdue || '').trim() === '1';
 
+  const createdBy = parseMaybeInt(req.query.createdBy);
+  const ackBy = parseMaybeInt(req.query.ackBy);
+  const resolvedBy = parseMaybeInt(req.query.resolvedBy);
+  const type = typeof req.query.type === 'string' ? req.query.type.trim() : '';
+  const orderStatus = typeof req.query.orderStatus === 'string' ? req.query.orderStatus.trim() : '';
+
   if (status && !VALID_STATUSES.has(status)) {
     return res.status(400).json({ message: 'status 無效', requestId: req.requestId });
+  }
+
+  if (type && !VALID_TYPES.has(type)) {
+    return res.status(400).json({ message: 'type 無效', requestId: req.requestId });
   }
 
   const page = Math.max(1, parsePositiveInt(req.query.page, 1));
@@ -44,6 +55,32 @@ router.get('/exceptions', async (req, res) => {
     if (status) {
       params.push(status);
       where += ` AND e.status = $${params.length}`;
+    }
+
+    if (type) {
+      params.push(type);
+      where += ` AND e.type = $${params.length}`;
+    }
+
+    if (orderStatus) {
+      // 訂單狀態不強制枚舉，避免舊資料/新狀態造成 400；仍以參數化避免注入
+      params.push(orderStatus.slice(0, 30));
+      where += ` AND o.status = $${params.length}`;
+    }
+
+    if (createdBy) {
+      params.push(createdBy);
+      where += ` AND e.created_by = $${params.length}`;
+    }
+
+    if (ackBy) {
+      params.push(ackBy);
+      where += ` AND e.ack_by = $${params.length}`;
+    }
+
+    if (resolvedBy) {
+      params.push(resolvedBy);
+      where += ` AND e.resolved_by = $${params.length}`;
     }
 
     const qAsInt = q ? parseMaybeInt(q) : null;

@@ -115,6 +115,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     const latestComment = task.latest_comment;
 
     const isCompletedView = viewMode === 'completed';
+    const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin';
     
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
@@ -352,6 +353,29 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 查看訂單 <ArrowRight size={20} />
                             </span>
                         </Button>
+                    ) : isAdminLike ? (
+                        <div className="flex gap-2">
+                            <Button
+                                variant="secondary"
+                                size="lg"
+                                className="flex-1 justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg hover:-translate-y-0.5 transition-all active:scale-95"
+                                onClick={() => onViewOrder?.(task.id)}
+                            >
+                                <span className="flex items-center gap-2">
+                                    查看訂單
+                                </span>
+                            </Button>
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                className="flex-1 justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
+                                onClick={() => onClaim(task.id, isMyTask)}
+                            >
+                                <span className="flex items-center gap-2">
+                                    {isMyTask ? '繼續作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} <ArrowRight size={20} />
+                                </span>
+                            </Button>
+                        </div>
                     ) : isMyTask ? (
                         <Button
                             variant="primary"

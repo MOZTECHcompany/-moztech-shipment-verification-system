@@ -50,9 +50,29 @@ export function Exceptions() {
   const [loading, setLoading] = useState(false);
   const [slaMinutes, setSlaMinutes] = useState(30);
 
+  const [users, setUsers] = useState([]);
+  const [createdBy, setCreatedBy] = useState('');
+  const [ackBy, setAckBy] = useState('');
+  const [resolvedBy, setResolvedBy] = useState('');
+  const [type, setType] = useState('');
+  const [orderStatus, setOrderStatus] = useState('');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+
   const overdueCount = useMemo(() => (items || []).filter((x) => x?.is_overdue).length, [items]);
 
   const [prevOverdueCount, setPrevOverdueCount] = useState(0);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await apiClient.get('/api/users/basic');
+        setUsers(res.data || []);
+      } catch (err) {
+        setUsers([]);
+      }
+    };
+    fetchUsers();
+  }, []);
 
   const fetchList = useCallback(async () => {
     try {
@@ -61,6 +81,12 @@ export function Exceptions() {
         params: {
           status: tab,
           q: q || undefined,
+          createdBy: createdBy || undefined,
+          ackBy: ackBy || undefined,
+          resolvedBy: resolvedBy || undefined,
+          type: type || undefined,
+          orderStatus: orderStatus || undefined,
+          overdue: tab === 'open' && overdueOnly ? 1 : undefined,
           page: 1,
           limit: 100,
         },
@@ -73,7 +99,7 @@ export function Exceptions() {
     } finally {
       setLoading(false);
     }
-  }, [tab, q]);
+  }, [tab, q, createdBy, ackBy, resolvedBy, type, orderStatus, overdueOnly]);
 
   useEffect(() => {
     fetchList();
@@ -212,6 +238,118 @@ export function Exceptions() {
                 <Button variant="primary" className="w-full" onClick={fetchList} disabled={loading}>
                   搜尋
                 </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-0 glass-panel mt-6">
+              <CardHeader>
+                <CardTitle className="text-base">篩選</CardTitle>
+                <CardDescription>依任務狀態 / 類型 / 人員</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">任務狀態（訂單狀態）</label>
+                  <select
+                    value={orderStatus}
+                    onChange={(e) => setOrderStatus(e.target.value)}
+                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                  >
+                    <option value="">全部</option>
+                    <option value="pending">pending</option>
+                    <option value="picking">picking</option>
+                    <option value="picked">picked</option>
+                    <option value="packing">packing</option>
+                    <option value="completed">completed</option>
+                    <option value="voided">voided</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">例外類型</label>
+                  <select
+                    value={type}
+                    onChange={(e) => setType(e.target.value)}
+                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                  >
+                    <option value="">全部</option>
+                    <option value="stockout">缺貨</option>
+                    <option value="damage">破損</option>
+                    <option value="over_scan">多掃</option>
+                    <option value="under_scan">少掃</option>
+                    <option value="sn_replace">SN更換</option>
+                    <option value="other">其他</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">建立者</label>
+                  <select
+                    value={createdBy}
+                    onChange={(e) => setCreatedBy(e.target.value)}
+                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                  >
+                    <option value="">全部</option>
+                    {(users || []).map((u) => (
+                      <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">核可者</label>
+                  <select
+                    value={ackBy}
+                    onChange={(e) => setAckBy(e.target.value)}
+                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                  >
+                    <option value="">全部</option>
+                    {(users || []).map((u) => (
+                      <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">結案者</label>
+                  <select
+                    value={resolvedBy}
+                    onChange={(e) => setResolvedBy(e.target.value)}
+                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                  >
+                    <option value="">全部</option>
+                    {(users || []).map((u) => (
+                      <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {tab === 'open' && (
+                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={overdueOnly}
+                      onChange={(e) => setOverdueOnly(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300"
+                    />
+                    只看逾時
+                  </label>
+                )}
+
+                <div className="flex gap-2">
+                  <Button variant="secondary" className="flex-1" onClick={() => {
+                    setCreatedBy('');
+                    setAckBy('');
+                    setResolvedBy('');
+                    setType('');
+                    setOrderStatus('');
+                    setOverdueOnly(false);
+                  }} disabled={loading}>
+                    清除
+                  </Button>
+                  <Button variant="primary" className="flex-1" onClick={fetchList} disabled={loading}>
+                    套用
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
