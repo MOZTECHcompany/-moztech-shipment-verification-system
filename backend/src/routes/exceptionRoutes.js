@@ -15,7 +15,7 @@ const { validateOrderChangeProposal, applyOrderChangeProposal, hasAnyOpenOrderCh
 const router = express.Router();
 
 const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change']);
-const VALID_STATUSES = new Set(['open', 'ack', 'resolved']);
+const VALID_STATUSES = new Set(['open', 'ack', 'resolved', 'rejected']);
 const VALID_RESOLUTION_ACTIONS = new Set(['short_ship', 'restock', 'exchange', 'void', 'other']);
 
 function normalizeRole(value) {
@@ -190,11 +190,13 @@ router.get('/orders/:orderId/exceptions', async (req, res) => {
                 e.*, 
                 cu.name as created_by_name,
                 au.name as ack_by_name,
-                ru.name as resolved_by_name
+                ru.name as resolved_by_name,
+                ju.name as rejected_by_name
             FROM order_exceptions e
             LEFT JOIN users cu ON cu.id = e.created_by
             LEFT JOIN users au ON au.id = e.ack_by
             LEFT JOIN users ru ON ru.id = e.resolved_by
+            LEFT JOIN users ju ON ju.id = e.rejected_by
             WHERE ${where}
             ORDER BY e.created_at DESC, e.id DESC`,
             params
@@ -211,6 +213,78 @@ router.get('/orders/:orderId/exceptions', async (req, res) => {
     } catch (error) {
         logger.error('[/api/orders/:orderId/exceptions] 失敗:', error);
         return res.status(500).json({ message: '取得例外清單失敗', requestId: req.requestId });
+    }
+});
+
+// PATCH /api/orders/:orderId/exceptions/:exceptionId/reject
+// 主管駁回（管理員）
+router.patch('/orders/:orderId/exceptions/:exceptionId/reject', authorizeAdmin, async (req, res) => {
+    const { orderId, exceptionId } = req.params;
+    const { note } = req.body || {};
+    const userId = req.user.id;
+    const io = req.app.get('io');
+
+    const rejectNote = note ? String(note).trim().slice(0, 2000) : null;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const ex = await client.query(
+            'SELECT * FROM order_exceptions WHERE id = $1 AND order_id = $2 FOR UPDATE',
+            [exceptionId, orderId]
+        );
+
+        if (ex.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '找不到例外事件', requestId: req.requestId });
+        }
+
+        const row = ex.rows[0];
+        if (row.status !== 'open') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: `無法駁回，目前狀態為 ${row.status}`, requestId: req.requestId });
+        }
+
+        const updated = await client.query(
+            `UPDATE order_exceptions
+             SET status = 'rejected',
+                 rejected_by = $1,
+                 rejected_at = NOW(),
+                 rejected_note = COALESCE($2, rejected_note)
+             WHERE id = $3 AND order_id = $4
+             RETURNING id, type, status, rejected_at`,
+            [userId, rejectNote, exceptionId, orderId]
+        );
+
+        await client.query('COMMIT');
+
+        await logOperation({
+            userId,
+            orderId,
+            operationType: String(row.type) === 'order_change' ? 'order_change_reject' : 'exception_reject',
+            details: {
+                exceptionId: parseInt(exceptionId, 10),
+                status: 'rejected',
+                note: rejectNote,
+                meta: { requestId: req.requestId }
+            },
+            io
+        });
+
+        io?.emit('order_exception_changed', {
+            orderId: parseInt(orderId, 10),
+            exceptionId: parseInt(exceptionId, 10),
+            action: 'rejected'
+        });
+
+        return res.json({ message: '例外已駁回', item: updated.rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        logger.error('[/api/orders/:orderId/exceptions/:exceptionId/reject] 失敗:', error);
+        return res.status(500).json({ message: '駁回失敗', requestId: req.requestId });
+    } finally {
+        client.release();
     }
 });
 

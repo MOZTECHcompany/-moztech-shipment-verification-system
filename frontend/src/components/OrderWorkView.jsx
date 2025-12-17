@@ -784,6 +784,7 @@ export function OrderWorkView({ user }) {
         if (status === 'open') return <Badge variant="warning">Open</Badge>;
         if (status === 'ack') return <Badge variant="info">Ack</Badge>;
         if (status === 'resolved') return <Badge variant="success">Resolved</Badge>;
+        if (status === 'rejected') return <Badge variant="danger">Rejected</Badge>;
         return <Badge variant="neutral">{status}</Badge>;
     };
 
@@ -1196,6 +1197,27 @@ export function OrderWorkView({ user }) {
             fetchOrderExceptions(orderId);
         } catch (err) {
             toast.error('核可失敗', { description: err.response?.data?.message || err.message });
+        }
+    };
+
+    const handleRejectException = async (exceptionId) => {
+        const { value: note } = await MySwal.fire({
+            title: '主管駁回',
+            input: 'textarea',
+            inputLabel: '駁回原因（可選）',
+            inputPlaceholder: '例如：資料不足、SN 不一致、需重新檢查後再送…',
+            showCancelButton: true,
+            confirmButtonText: '駁回',
+            cancelButtonText: '取消',
+            confirmButtonColor: '#ef4444'
+        });
+
+        try {
+            await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/reject`, { note: note || null });
+            toast.success('已駁回');
+            fetchOrderExceptions(orderId);
+        } catch (err) {
+            toast.error('駁回失敗', { description: err.response?.data?.message || err.message });
         }
     };
 
@@ -1837,6 +1859,12 @@ export function OrderWorkView({ user }) {
                                                                 核可：{ex.ack_by_name || ex.ack_by} · {ex.ack_at ? new Date(ex.ack_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
                                                             </div>
                                                         )}
+                                                        {ex.status === 'rejected' && (
+                                                            <div className="text-[11px] text-gray-400 mt-1">
+                                                                駁回：{ex.rejected_by_name || ex.rejected_by} · {ex.rejected_at ? new Date(ex.rejected_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
+                                                                {ex.rejected_note ? ` · ${ex.rejected_note}` : ''}
+                                                            </div>
+                                                        )}
                                                         {ex.status === 'resolved' && (
                                                             <div className="text-[11px] text-gray-400 mt-1">
                                                                 結案：{ex.resolved_by_name || ex.resolved_by} · {ex.resolved_at ? new Date(ex.resolved_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''}
@@ -1847,9 +1875,14 @@ export function OrderWorkView({ user }) {
                                                     {isAdminLike && (
                                                         <div className="flex flex-col gap-2 flex-shrink-0">
                                                             {ex.status === 'open' && (
-                                                                <Button size="sm" onClick={() => handleAckException(ex.id)}>
-                                                                    核可
-                                                                </Button>
+                                                                <>
+                                                                    <Button size="sm" onClick={() => handleAckException(ex.id)}>
+                                                                        核可
+                                                                    </Button>
+                                                                    <Button size="sm" variant="danger" onClick={() => handleRejectException(ex.id)}>
+                                                                        駁回
+                                                                    </Button>
+                                                                </>
                                                             )}
                                                             {ex.status === 'ack' && (
                                                                 <Button size="sm" onClick={() => handleResolveException(ex.id)}>

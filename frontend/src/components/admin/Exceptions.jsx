@@ -20,7 +20,7 @@ const typeLabel = (type) => {
 };
 
 const statusLabel = (status) => {
-  const map = { open: '待核可', ack: '已核可', resolved: '已結案' };
+  const map = { open: '待核可', ack: '已核可', resolved: '已結案', rejected: '已駁回' };
   return map[status] || status;
 };
 
@@ -28,6 +28,7 @@ const statusVariant = (status) => {
   if (status === 'open') return 'warning';
   if (status === 'ack') return 'info';
   if (status === 'resolved') return 'success';
+  if (status === 'rejected') return 'danger';
   return 'neutral';
 };
 

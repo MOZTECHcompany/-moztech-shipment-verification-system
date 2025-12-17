@@ -7,8 +7,8 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
-const VALID_STATUSES = new Set(['open', 'ack', 'resolved']);
-const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other']);
+const VALID_STATUSES = new Set(['open', 'ack', 'resolved', 'rejected']);
+const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change']);
 
 function parsePositiveInt(value, fallback) {
   const n = parseInt(String(value ?? ''), 10);
@@ -122,6 +122,9 @@ router.get('/exceptions', async (req, res) => {
         e.ack_by,
         e.ack_at,
         e.ack_note,
+        e.rejected_by,
+        e.rejected_at,
+        e.rejected_note,
         e.resolved_by,
         e.resolved_at,
         e.resolution_action,
@@ -130,11 +133,13 @@ router.get('/exceptions', async (req, res) => {
         ${overdueExpr} AS is_overdue,
         cu.name AS created_by_name,
         au.name AS ack_by_name,
+        ju.name AS rejected_by_name,
         ru.name AS resolved_by_name
       FROM order_exceptions e
       JOIN orders o ON o.id = e.order_id
       LEFT JOIN users cu ON cu.id = e.created_by
       LEFT JOIN users au ON au.id = e.ack_by
+      LEFT JOIN users ju ON ju.id = e.rejected_by
       LEFT JOIN users ru ON ru.id = e.resolved_by
       WHERE ${where}
       ORDER BY e.created_at DESC, e.id DESC
