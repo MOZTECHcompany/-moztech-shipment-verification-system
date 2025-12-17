@@ -419,16 +419,61 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const data = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
-        const voucherCellRaw = data[1]?.[0] ? String(data[1][0]) : '';
-        let voucherNumber = null;
-        const voucherParts = voucherCellRaw.split(/[:：]/);
-        if (voucherParts.length > 1) voucherNumber = voucherParts[1].trim();
-        if (!voucherNumber) return res.status(400).json({ message: "Excel 格式錯誤：找不到憑證號碼。" });
-        const customerCellRaw = data[2]?.[0] ? String(data[2][0]) : '';
-        let customerName = null;
-        const customerParts = customerCellRaw.split(/[:：]/);
-        if (customerParts.length > 1) customerName = customerParts[1].trim();
+        const data = xlsx.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' });
+
+        function extractLabeledValue(table, keywords) {
+            const maxRows = Math.min(Array.isArray(table) ? table.length : 0, 50);
+            for (let r = 0; r < maxRows; r++) {
+                const row = Array.isArray(table[r]) ? table[r] : [];
+                const maxCols = Math.min(row.length, 50);
+                for (let c = 0; c < maxCols; c++) {
+                    const cell = row[c];
+                    if (cell === null || cell === undefined) continue;
+                    const cellText = String(cell).trim();
+                    if (!cellText) continue;
+
+                    const hit = keywords.some((k) => cellText.includes(k));
+                    if (!hit) continue;
+
+                    // 常見格式："憑證號碼：2025/12/17-3" 或 "訂單編號: xxx"
+                    const parts = cellText.split(/[:：]/);
+                    if (parts.length > 1) {
+                        const v = parts.slice(1).join(':').trim();
+                        if (v) return v;
+                    }
+
+                    // 另一種：標籤在 A 欄、值在 B 欄
+                    const next = row[c + 1];
+                    if (next !== null && next !== undefined) {
+                        const v2 = String(next).trim();
+                        if (v2) return v2;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // 先用掃描的方式找欄位（避免模板行列變動導致抓錯）
+        let voucherNumber = extractLabeledValue(data, ['憑證號碼', '憑證號', '訂單編號', '訂單號碼', '訂單號', '單號', 'Voucher']);
+        let customerName = extractLabeledValue(data, ['客戶名稱', '客戶', '收貨人', 'Customer']);
+
+        // 相容舊模板：若掃不到，再回退到舊的固定儲存格位置
+        if (!voucherNumber) {
+            const voucherCellRaw = data[1]?.[0] ? String(data[1][0]) : '';
+            const voucherParts = voucherCellRaw.split(/[:：]/);
+            if (voucherParts.length > 1) voucherNumber = voucherParts.slice(1).join(':').trim();
+        }
+        if (!customerName) {
+            const customerCellRaw = data[2]?.[0] ? String(data[2][0]) : '';
+            const customerParts = customerCellRaw.split(/[:：]/);
+            if (customerParts.length > 1) customerName = customerParts.slice(1).join(':').trim();
+        }
+
+        voucherNumber = voucherNumber ? String(voucherNumber).trim() : '';
+        customerName = customerName ? String(customerName).trim() : null;
+
+        if (!voucherNumber) return res.status(400).json({ message: "Excel 格式錯誤：找不到訂單號碼（憑證號碼）。請確認檔案內有『憑證號碼：xxxx』或『訂單編號：xxxx』。" });
+
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
         if (existingOrder.rows.length > 0) {
             await client.query('ROLLBACK');
