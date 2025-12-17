@@ -36,6 +36,9 @@ export function TeamBoard({ user }) {
   const [items, setItems] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [allUsers, setAllUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+
   const canCreate = useMemo(() => {
     const r = String(user?.role || '').toLowerCase();
     return r === 'admin' || r === 'superadmin' || r === 'dispatcher';
@@ -46,6 +49,8 @@ export function TeamBoard({ user }) {
   const [priority, setPriority] = useState('normal');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [dueAtLocal, setDueAtLocal] = useState('');
+  const [assigneeIds, setAssigneeIds] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
   const fetchList = useCallback(async (opts = { silent: false }) => {
@@ -64,6 +69,26 @@ export function TeamBoard({ user }) {
   useEffect(() => {
     fetchList({ silent: false });
   }, [fetchList]);
+
+  // 載入用戶清單（用於指派）
+  useEffect(() => {
+    let mounted = true;
+    const fetchUsers = async () => {
+      setUsersLoading(true);
+      try {
+        const res = await apiClient.get('/api/users/basic');
+        if (!mounted) return;
+        setAllUsers(Array.isArray(res.data) ? res.data : []);
+      } catch {
+        if (!mounted) return;
+        setAllUsers([]);
+      } finally {
+        if (mounted) setUsersLoading(false);
+      }
+    };
+    fetchUsers();
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     const onChanged = () => {
@@ -88,6 +113,14 @@ export function TeamBoard({ user }) {
     if (!safeTitle) return toast.error('請輸入標題');
     if (!safeContent) return toast.error('請輸入內容');
 
+    let dueAt = null;
+    if (dueAtLocal) {
+      const d = new Date(dueAtLocal);
+      if (!Number.isNaN(d.getTime())) {
+        dueAt = d.toISOString();
+      }
+    }
+
     setSubmitting(true);
     try {
       await apiClient.post('/api/team/posts', {
@@ -95,12 +128,16 @@ export function TeamBoard({ user }) {
         title: safeTitle,
         content: safeContent,
         priority,
+        dueAt,
+        assigneeUserIds: postType === 'task' ? assigneeIds : [],
       });
       toast.success('已建立交辦');
       setTitle('');
       setContent('');
       setPostType('task');
       setPriority('normal');
+      setDueAtLocal('');
+      setAssigneeIds([]);
       setShowCreate(false);
       await fetchList({ silent: false });
     } catch (err) {
@@ -179,6 +216,41 @@ export function TeamBoard({ user }) {
                   placeholder="例如：今天要出貨：產品 XXX * 10，地址…"
                 />
               </div>
+
+              <div className="md:col-span-3">
+                <Input
+                  label="截止時間（可選）"
+                  type="datetime-local"
+                  value={dueAtLocal}
+                  onChange={(e) => setDueAtLocal(e.target.value)}
+                />
+              </div>
+
+              {postType === 'task' && (
+                <div className="md:col-span-3">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">指派給（可多選）</label>
+                  <select
+                    multiple
+                    value={assigneeIds.map(String)}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.options)
+                        .filter((o) => o.selected)
+                        .map((o) => parseInt(o.value, 10))
+                        .filter((n) => Number.isFinite(n));
+                      setAssigneeIds(selected);
+                    }}
+                    className="w-full min-h-[120px] font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3 focus:bg-white focus:border-primary/50 focus:ring-4 focus:ring-primary/10 focus:shadow-lg"
+                    disabled={usersLoading}
+                  >
+                    {(allUsers || []).map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name || u.username || `User #${u.id}`}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-2 text-xs text-gray-500 font-medium">提示：按住 Ctrl/⌘ 可多選。</div>
+                </div>
+              )}
               <div className="md:col-span-3">
                 <label className="block text-sm font-semibold text-gray-700 mb-2.5">內容</label>
                 <textarea
@@ -239,6 +311,12 @@ export function TeamBoard({ user }) {
                       <h3 className="text-lg font-semibold text-gray-900 truncate">{p.title}</h3>
                       <p className="text-sm text-gray-600 mt-1 line-clamp-2">{p.content}</p>
                     </Link>
+
+                    {p.post_type === 'task' && Array.isArray(p.assignees) && p.assignees.length > 0 ? (
+                      <div className="text-xs text-gray-600 mt-2 font-medium">
+                        指派：{p.assignees.map((a) => a?.name || `User #${a?.id}`).join('、')}
+                      </div>
+                    ) : null}
 
                     <div className="text-xs text-gray-500 mt-2 font-medium">
                       {p.created_by_name ? `建立者：${p.created_by_name}` : ''}

@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { ArrowLeft, MessageSquare } from 'lucide-react';
+import { ArrowLeft, MessageSquare, Paperclip } from 'lucide-react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, EmptyState, PageHeader, Skeleton } from '@/ui';
 
 function formatTs(ts) {
@@ -45,10 +45,18 @@ export function TeamPostView({ user }) {
   const [comment, setComment] = useState('');
   const [sending, setSending] = useState(false);
 
+  const [uploading, setUploading] = useState(false);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const fileInputRef = useRef(null);
+
   const canChangeStatus = useMemo(() => {
+    if (!user || !item) return false;
     const r = String(user?.role || '').toLowerCase();
-    return r === 'admin' || r === 'superadmin';
-  }, [user]);
+    if (r === 'admin' || r === 'superadmin') return true;
+    if (Number(item.created_by) === Number(user.id)) return true;
+    if (Array.isArray(item.assignees) && item.assignees.some((a) => Number(a?.id) === Number(user.id))) return true;
+    return false;
+  }, [user, item]);
 
   const fetchDetail = useCallback(async (opts = { silent: false }) => {
     if (!id) return;
@@ -95,6 +103,75 @@ export function TeamPostView({ user }) {
       toast.error('留言失敗', { description: err?.response?.data?.message || err.message || '請稍後再試' });
     } finally {
       setSending(false);
+    }
+  };
+
+  const uploadAttachments = async () => {
+    if (!id) return;
+    const input = fileInputRef.current;
+    const files = Array.from(input?.files || []);
+    if (!files.length) return toast.error('請先選擇附件');
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      files.forEach((f) => formData.append('files', f));
+      await apiClient.post(
+        `/api/team/posts/${id}/attachments`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      toast.success('附件已上傳');
+      if (input) input.value = '';
+      await fetchDetail({ silent: false });
+    } catch (err) {
+      toast.error('上傳附件失敗', { description: err?.response?.data?.message || err.message || '請稍後再試' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const previewAttachment = async (att) => {
+    if (!id || !att?.id) return;
+    setDownloadingId(att.id);
+    try {
+      const res = await apiClient.get(
+        `/api/team/posts/${id}/attachments/${att.id}/download?inline=1`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      // 讓瀏覽器有時間取用，延遲釋放
+      setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      toast.error('預覽附件失敗', { description: err?.response?.data?.message || err.message || '請稍後再試' });
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const downloadAttachment = async (att) => {
+    if (!id || !att?.id) return;
+    setDownloadingId(att.id);
+    try {
+      const res = await apiClient.get(
+        `/api/team/posts/${id}/attachments/${att.id}/download`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = att.original_name || `attachment-${att.id}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('下載附件失敗', { description: err?.response?.data?.message || err.message || '請稍後再試' });
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -160,7 +237,82 @@ export function TeamPostView({ user }) {
             <Badge variant="neutral">{priorityLabel(item.priority)}</Badge>
             {item.due_at ? <Badge variant="neutral">期限：{formatTs(item.due_at)}</Badge> : null}
           </div>
+          {item.post_type === 'task' && Array.isArray(item.assignees) && item.assignees.length > 0 ? (
+            <div className="text-xs text-gray-600 font-medium mb-3">
+              指派：{item.assignees.map((a) => a?.name || `User #${a?.id}`).join('、')}
+            </div>
+          ) : null}
           <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{item.content}</div>
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>附件</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col md:flex-row md:items-center gap-3 justify-between">
+            <div className="text-sm text-gray-600 font-medium">
+              支援 jpg/png/webp/pdf（最多 5 個、每個 10MB）
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                className="text-sm"
+                disabled={uploading}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                className="rounded-full"
+                onClick={uploadAttachments}
+                leadingIcon={Paperclip}
+                disabled={uploading}
+              >
+                {uploading ? '上傳中…' : '上傳附件'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {(item.attachments || []).length === 0 ? (
+              <div className="text-sm text-gray-500 font-medium">目前尚無附件。</div>
+            ) : (
+              (item.attachments || []).map((att) => (
+                <div key={att.id} className="bg-white/50 border border-gray-100 rounded-2xl px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-900 truncate">{att.original_name || `attachment-${att.id}`}</div>
+                    <div className="text-xs text-gray-500 font-medium mt-1">
+                      {att.mime_type || '檔案'}{att.size_bytes ? ` · ${Math.round(att.size_bytes / 1024)} KB` : ''}{att.uploaded_at ? ` · ${formatTs(att.uploaded_at)}` : ''}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => previewAttachment(att)}
+                      disabled={downloadingId === att.id}
+                    >
+                      預覽
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => downloadAttachment(att)}
+                      disabled={downloadingId === att.id}
+                    >
+                      下載
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </CardContent>
       </Card>
 
