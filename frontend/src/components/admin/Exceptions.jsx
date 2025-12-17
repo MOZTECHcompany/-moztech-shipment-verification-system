@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import Swal from 'sweetalert2';
-import withReactContent from 'sweetalert2-react-content';
 import { toast } from 'sonner';
 import { AlertTriangle, Search, ArrowRight } from 'lucide-react';
 
 import apiClient from '@/api/api';
-import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Badge, Input, Table, THead, TH, TBody, TR, TD } from '@/ui';
+import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Badge, Input, Table, THead, TH, TBody, TR, TD, Modal } from '@/ui';
 
 const typeLabel = (type) => {
   const map = {
@@ -42,13 +40,25 @@ function formatTs(ts) {
 }
 
 export function Exceptions() {
-  const MySwal = withReactContent(Swal);
-
   const [tab, setTab] = useState('open');
   const [q, setQ] = useState('');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [slaMinutes, setSlaMinutes] = useState(30);
+
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState(null);
+  const [detailAttachmentsLoading, setDetailAttachmentsLoading] = useState(false);
+  const [detailAttachments, setDetailAttachments] = useState([]);
+
+  const [ackNote, setAckNote] = useState('');
+  const [resolveAction, setResolveAction] = useState('short_ship');
+  const [resolveNote, setResolveNote] = useState('');
+
+  const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
+  const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState('');
+  const [attachmentPreviewName, setAttachmentPreviewName] = useState('');
+  const [attachmentPreviewMime, setAttachmentPreviewMime] = useState('');
 
   const [users, setUsers] = useState([]);
   const [createdBy, setCreatedBy] = useState('');
@@ -124,72 +134,102 @@ export function Exceptions() {
     setPrevOverdueCount(overdueCount);
   }, [tab, overdueCount, prevOverdueCount, slaMinutes]);
 
-  const handleAck = async (row) => {
-    const { value: note } = await MySwal.fire({
-      title: '主管核可',
-      input: 'textarea',
-      inputLabel: '核可備註（可選）',
-      inputPlaceholder: '例如：已確認缺貨，允許少出；或已確認破損，需換貨…',
-      showCancelButton: true,
-      confirmButtonText: '核可',
-      cancelButtonText: '取消',
-    });
+  const openDetail = useCallback(async (row) => {
+    setDetailRow(row);
+    setDetailOpen(true);
+    setAckNote('');
+    setResolveAction('short_ship');
+    setResolveNote('');
+    setDetailAttachments([]);
 
+    if (!row?.order_id || !row?.id) return;
     try {
-      await apiClient.patch(`/api/orders/${row.order_id}/exceptions/${row.id}/ack`, { note: note || null });
+      setDetailAttachmentsLoading(true);
+      const res = await apiClient.get(`/api/orders/${row.order_id}/exceptions/${row.id}/attachments`);
+      setDetailAttachments(res.data?.items || []);
+    } catch (err) {
+      setDetailAttachments([]);
+      toast.error('載入附件失敗', { description: err.response?.data?.message || err.message });
+    } finally {
+      setDetailAttachmentsLoading(false);
+    }
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    setDetailOpen(false);
+    setDetailRow(null);
+    setDetailAttachments([]);
+    setAckNote('');
+    setResolveNote('');
+  }, []);
+
+  const downloadAttachment = useCallback(async (row, att) => {
+    if (!row?.order_id || !row?.id || !att?.id) return;
+    try {
+      const res = await apiClient.get(
+        `/api/orders/${row.order_id}/exceptions/${row.id}/attachments/${att.id}/download`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = att.original_name || `attachment-${att.id}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('下載附件失敗', { description: err.response?.data?.message || err.message });
+    }
+  }, []);
+
+  const previewAttachment = useCallback(async (row, att) => {
+    if (!row?.order_id || !row?.id || !att?.id) return;
+    try {
+      const res = await apiClient.get(
+        `/api/orders/${row.order_id}/exceptions/${row.id}/attachments/${att.id}/download?inline=1`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      setAttachmentPreviewUrl(url);
+      setAttachmentPreviewMime(att.mime_type || '');
+      setAttachmentPreviewName(att.original_name || `attachment-${att.id}`);
+      setAttachmentPreviewOpen(true);
+    } catch (err) {
+      toast.error('預覽附件失敗', { description: err.response?.data?.message || err.message });
+    }
+  }, []);
+
+  const submitAck = useCallback(async () => {
+    if (!detailRow?.order_id || !detailRow?.id) return;
+    try {
+      await apiClient.patch(`/api/orders/${detailRow.order_id}/exceptions/${detailRow.id}/ack`, {
+        note: ackNote ? String(ackNote).trim() : null,
+      });
       toast.success('已核可');
+      closeDetail();
       fetchList();
     } catch (err) {
       toast.error('核可失敗', { description: err.response?.data?.message || err.message });
     }
-  };
+  }, [ackNote, closeDetail, detailRow?.id, detailRow?.order_id, fetchList]);
 
-  const handleResolve = async (row) => {
-    const { value } = await MySwal.fire({
-      title: '結案',
-      html: `
-        <div style="text-align:left">
-          <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">處置類型（必填）</label>
-          <select id="resolution-action" class="swal2-input" style="margin:0 0 12px 0;width:100%">
-            <option value="short_ship">少出</option>
-            <option value="restock">補貨</option>
-            <option value="exchange">換貨</option>
-            <option value="void">作廢</option>
-            <option value="other">其他</option>
-          </select>
-
-          <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">結案備註（可選）</label>
-          <textarea id="resolution-note" class="swal2-textarea" placeholder="例如：已補貨完成；已更換新品；已調整數量…" style="margin:0;width:100%"></textarea>
-        </div>
-      `,
-      focusConfirm: false,
-      showCancelButton: true,
-      confirmButtonText: '結案',
-      cancelButtonText: '取消',
-      preConfirm: () => {
-        const resolutionAction = document.getElementById('resolution-action')?.value;
-        const note = document.getElementById('resolution-note')?.value;
-        if (!resolutionAction) {
-          MySwal.showValidationMessage('請選擇處置類型');
-          return null;
-        }
-        return { resolutionAction, note: note ? String(note).trim() : '' };
-      },
-    });
-
-    if (!value) return;
-
+  const submitResolve = useCallback(async () => {
+    if (!detailRow?.order_id || !detailRow?.id) return;
     try {
-      await apiClient.patch(`/api/orders/${row.order_id}/exceptions/${row.id}/resolve`, {
-        resolutionAction: value.resolutionAction,
-        note: value.note || null,
+      await apiClient.patch(`/api/orders/${detailRow.order_id}/exceptions/${detailRow.id}/resolve`, {
+        resolutionAction: resolveAction,
+        note: resolveNote ? String(resolveNote).trim() : null,
       });
       toast.success('已結案');
+      closeDetail();
       fetchList();
     } catch (err) {
       toast.error('結案失敗', { description: err.response?.data?.message || err.message });
     }
-  };
+  }, [closeDetail, detailRow?.id, detailRow?.order_id, fetchList, resolveAction, resolveNote]);
 
   return (
     <div className="min-h-screen bg-transparent pb-20">
@@ -414,13 +454,16 @@ export function Exceptions() {
                         </TD>
                         <TD className="text-right">
                           <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => openDetail(row)} disabled={loading}>
+                              查看
+                            </Button>
                             {row.status === 'open' && (
-                              <Button size="sm" onClick={() => handleAck(row)} disabled={loading}>
+                              <Button size="sm" onClick={() => openDetail(row)} disabled={loading}>
                                 核可
                               </Button>
                             )}
                             {row.status === 'ack' && (
-                              <Button size="sm" onClick={() => handleResolve(row)} disabled={loading}>
+                              <Button size="sm" onClick={() => openDetail(row)} disabled={loading}>
                                 結案
                               </Button>
                             )}
@@ -449,6 +492,187 @@ export function Exceptions() {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={detailOpen}
+        onClose={closeDetail}
+        title="例外詳情"
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeDetail}>關閉</Button>
+            {detailRow?.status === 'open' && (
+              <Button onClick={submitAck}>
+                核可
+              </Button>
+            )}
+            {detailRow?.status === 'ack' && (
+              <Button onClick={submitResolve}>
+                結案
+              </Button>
+            )}
+          </>
+        }
+      >
+        {!detailRow ? (
+          <div className="text-sm text-gray-500">尚未選取資料</div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-200 bg-white/60 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-bold text-gray-900">{detailRow.voucher_number || `#${detailRow.order_id}`}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{detailRow.customer_name || ''}</div>
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <Badge variant={statusVariant(detailRow.status)}>{statusLabel(detailRow.status)}</Badge>
+                    <Badge variant="neutral">{typeLabel(detailRow.type)}</Badge>
+                    <Badge variant="neutral">附件 {detailRow.attachment_count || 0}</Badge>
+                  </div>
+                </div>
+                <div className="flex-shrink-0">
+                  <Link to={`/order/${detailRow.order_id}`} className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline">
+                    開啟訂單 <ArrowRight size={12} />
+                  </Link>
+                </div>
+              </div>
+
+              <div className="text-sm text-gray-800 mt-3 whitespace-pre-wrap break-words">{detailRow.reason_text}</div>
+            </div>
+
+            {detailRow?.snapshot?.proposal && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <div className="text-sm font-bold text-gray-900">拋單員處理內容（待審核）</div>
+                <div className="text-sm text-gray-700 mt-2">處理方式：{detailRow.snapshot.proposal?.resolutionAction || '-'}</div>
+                {detailRow.snapshot.proposal?.newSn && (
+                  <div className="text-sm text-gray-700">異動 SN：{detailRow.snapshot.proposal.newSn}</div>
+                )}
+                {detailRow.snapshot.proposal?.correctBarcode && (
+                  <div className="text-sm text-gray-700">正確條碼：{detailRow.snapshot.proposal.correctBarcode}</div>
+                )}
+                {detailRow.snapshot.proposal?.note && (
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap break-words">備註：{detailRow.snapshot.proposal.note}</div>
+                )}
+              </div>
+            )}
+
+            {detailRow?.status === 'open' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">核可備註（可選）</label>
+                <textarea
+                  value={ackNote}
+                  onChange={(e) => setAckNote(e.target.value)}
+                  placeholder="例如：已確認缺貨，允許少出；或已確認破損，需換貨…"
+                  className="w-full min-h-[96px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 text-gray-900 outline-none"
+                />
+              </div>
+            )}
+
+            {detailRow?.status === 'ack' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">處置類型（必填）</label>
+                  <select
+                    value={resolveAction}
+                    onChange={(e) => setResolveAction(e.target.value)}
+                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                  >
+                    <option value="short_ship">少出</option>
+                    <option value="restock">補貨</option>
+                    <option value="exchange">換貨</option>
+                    <option value="void">作廢</option>
+                    <option value="other">其他</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">結案備註（可選）</label>
+                  <textarea
+                    value={resolveNote}
+                    onChange={(e) => setResolveNote(e.target.value)}
+                    placeholder="例如：已補貨完成；已更換新品；已調整數量…"
+                    className="w-full min-h-[96px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 text-gray-900 outline-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold text-gray-900">附件</div>
+                {detailAttachmentsLoading && <div className="text-xs text-gray-500">載入中…</div>}
+              </div>
+              {(detailAttachments || []).length === 0 && !detailAttachmentsLoading && (
+                <div className="text-sm text-gray-500 mt-2">無附件</div>
+              )}
+              {(detailAttachments || []).length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {(detailAttachments || []).map((att) => (
+                    <div key={att.id} className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-gray-900 truncate">{att.original_name || `attachment-${att.id}`}</div>
+                        <div className="text-xs text-gray-500">{att.mime_type || ''}</div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Button size="sm" variant="secondary" onClick={() => previewAttachment(detailRow, att)}>
+                          預覽
+                        </Button>
+                        <Button size="sm" variant="secondary" onClick={() => downloadAttachment(detailRow, att)}>
+                          下載
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={attachmentPreviewOpen}
+        onClose={() => {
+          if (attachmentPreviewUrl) {
+            try { window.URL.revokeObjectURL(attachmentPreviewUrl); } catch { /* ignore */ }
+          }
+          setAttachmentPreviewOpen(false);
+          setAttachmentPreviewUrl('');
+          setAttachmentPreviewName('');
+          setAttachmentPreviewMime('');
+        }}
+        title={attachmentPreviewName ? `附件預覽：${attachmentPreviewName}` : '附件預覽'}
+        footer={<Button variant="secondary" onClick={() => {
+          if (attachmentPreviewUrl) {
+            try { window.URL.revokeObjectURL(attachmentPreviewUrl); } catch { /* ignore */ }
+          }
+          setAttachmentPreviewOpen(false);
+          setAttachmentPreviewUrl('');
+          setAttachmentPreviewName('');
+          setAttachmentPreviewMime('');
+        }}>關閉</Button>}
+      >
+        {!attachmentPreviewUrl ? (
+          <div className="text-sm text-gray-500">尚未載入預覽內容</div>
+        ) : (
+          <div className="w-full">
+            {String(attachmentPreviewMime || '').startsWith('image/') && (
+              <img
+                src={attachmentPreviewUrl}
+                alt={attachmentPreviewName || 'attachment'}
+                className="w-full max-h-[70vh] object-contain rounded-xl border border-gray-200"
+              />
+            )}
+            {String(attachmentPreviewMime || '').toLowerCase() === 'application/pdf' && (
+              <iframe
+                title={attachmentPreviewName || 'pdf'}
+                src={attachmentPreviewUrl}
+                className="w-full h-[70vh] rounded-xl border border-gray-200"
+              />
+            )}
+            {!String(attachmentPreviewMime || '').startsWith('image/') && String(attachmentPreviewMime || '').toLowerCase() !== 'application/pdf' && (
+              <div className="text-sm text-gray-600">此附件格式不支援內嵌預覽（{attachmentPreviewMime || 'unknown'}），請改用下載。</div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

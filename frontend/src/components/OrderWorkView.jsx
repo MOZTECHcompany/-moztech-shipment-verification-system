@@ -11,7 +11,7 @@ import {
     ChevronUp, ShoppingCart, Box, Camera, MessageSquare,
     Maximize2, Minimize2, CheckCircle2
 } from 'lucide-react';
-import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge } from '@/ui';
+import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge, Modal } from '@/ui';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '@/api/api';
@@ -504,6 +504,29 @@ export function OrderWorkView({ user }) {
     const [isFocusMode, setIsFocusMode] = useState(false); // 專注模式狀態
     const [defectModalOpen, setDefectModalOpen] = useState(false);
 
+    // 例外清單 meta（責任人/拋單員）
+    const [exceptionsMeta, setExceptionsMeta] = useState({
+        responsibleUserId: null,
+        responsibleRole: null,
+        responsibleName: null
+    });
+
+    // 例外處理：拋單員提交處理內容（待管理員審核）
+    const [proposalOpen, setProposalOpen] = useState(false);
+    const [proposalException, setProposalException] = useState(null);
+    const [proposalAction, setProposalAction] = useState('exchange');
+    const [proposalNote, setProposalNote] = useState('');
+    const [proposalNewSn, setProposalNewSn] = useState('');
+    const [proposalCorrectBarcode, setProposalCorrectBarcode] = useState('');
+    const [proposalSubmitting, setProposalSubmitting] = useState(false);
+
+    // 例外附件預覽
+    const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
+    const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState('');
+    const [attachmentPreviewName, setAttachmentPreviewName] = useState('');
+    const [attachmentPreviewMime, setAttachmentPreviewMime] = useState('');
+    const [attachmentPreviewLoading, setAttachmentPreviewLoading] = useState(false);
+
     const barcodeInputRef = useRef(null);
     // 移除對外部 mp3 的依賴，統一使用 WebAudio 產生提示音，避免 404 或自動播放限制
     useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrderData.order]);
@@ -528,10 +551,12 @@ export function OrderWorkView({ user }) {
             setExceptionsLoading(true);
             const res = await apiClient.get(`/api/orders/${id}/exceptions`);
             setOrderExceptions(res.data?.items || []);
+            setExceptionsMeta(res.data?.meta || { responsibleUserId: null, responsibleRole: null, responsibleName: null });
         } catch (err) {
             // 例外清單不阻斷主要作業
             console.error('載入例外清單失敗:', err);
             setOrderExceptions([]);
+            setExceptionsMeta({ responsibleUserId: null, responsibleRole: null, responsibleName: null });
         } finally {
             setExceptionsLoading(false);
         }
@@ -570,6 +595,27 @@ export function OrderWorkView({ user }) {
             window.URL.revokeObjectURL(url);
         } catch (err) {
             toast.error('下載附件失敗', { description: err.response?.data?.message || err.message });
+        }
+    }, [orderId]);
+
+    const previewExceptionAttachment = useCallback(async (exceptionId, attachment) => {
+        if (!orderId || !exceptionId || !attachment?.id) return;
+        setAttachmentPreviewLoading(true);
+        try {
+            const res = await apiClient.get(
+                `/api/orders/${orderId}/exceptions/${exceptionId}/attachments/${attachment.id}/download?inline=1`,
+                { responseType: 'blob' }
+            );
+            const blob = new Blob([res.data], { type: attachment.mime_type || 'application/octet-stream' });
+            const url = window.URL.createObjectURL(blob);
+            setAttachmentPreviewUrl(url);
+            setAttachmentPreviewMime(attachment.mime_type || '');
+            setAttachmentPreviewName(attachment.original_name || `attachment-${attachment.id}`);
+            setAttachmentPreviewOpen(true);
+        } catch (err) {
+            toast.error('預覽附件失敗', { description: err.response?.data?.message || err.message });
+        } finally {
+            setAttachmentPreviewLoading(false);
         }
     }, [orderId]);
 
@@ -727,6 +773,73 @@ export function OrderWorkView({ user }) {
     };
 
     const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin';
+    const isDispatcher = user?.role === 'dispatcher';
+    const canDispatcherPropose = useMemo(() => {
+        if (!isDispatcher) return false;
+        const role = exceptionsMeta?.responsibleRole ? String(exceptionsMeta.responsibleRole).toLowerCase() : '';
+        const responsibleUserId = exceptionsMeta?.responsibleUserId;
+        if (role !== 'dispatcher' || !responsibleUserId) return false;
+        return String(responsibleUserId) === String(user?.id);
+    }, [exceptionsMeta?.responsibleRole, exceptionsMeta?.responsibleUserId, isDispatcher, user?.id]);
+
+    const resolutionActionLabel = (action) => {
+        const map = { short_ship: '少出', restock: '補貨', exchange: '換貨', void: '作廢', other: '其他' };
+        return map[action] || action || '-';
+    };
+
+    const openProposalModal = (ex) => {
+        const proposal = ex?.snapshot?.proposal || null;
+        setProposalException(ex);
+        setProposalAction(proposal?.resolutionAction || 'exchange');
+        setProposalNote(proposal?.note || '');
+        setProposalNewSn(proposal?.newSn || '');
+        setProposalCorrectBarcode(proposal?.correctBarcode || '');
+        setProposalOpen(true);
+    };
+
+    const closeProposalModal = () => {
+        if (proposalSubmitting) return;
+        setProposalOpen(false);
+        setProposalException(null);
+        setProposalAction('exchange');
+        setProposalNote('');
+        setProposalNewSn('');
+        setProposalCorrectBarcode('');
+    };
+
+    const submitProposal = async () => {
+        if (!proposalException?.id) return;
+        if (!proposalAction) {
+            toast.error('請選擇處理方式');
+            return;
+        }
+
+        const note = proposalNote.trim();
+        const newSn = proposalNewSn.trim();
+        const correctBarcode = proposalCorrectBarcode.trim();
+
+        if (!note && !newSn && !correctBarcode) {
+            toast.error('請至少填寫備註或異動 SN/條碼');
+            return;
+        }
+
+        try {
+            setProposalSubmitting(true);
+            await apiClient.patch(`/api/orders/${orderId}/exceptions/${proposalException.id}/propose`, {
+                resolutionAction: proposalAction,
+                note: note || null,
+                newSn: newSn || null,
+                correctBarcode: correctBarcode || null,
+            });
+            toast.success('已送出處理內容，等待管理員審核');
+            closeProposalModal();
+            fetchOrderExceptions(orderId);
+        } catch (err) {
+            toast.error('送出失敗', { description: err.response?.data?.message || err.message });
+        } finally {
+            setProposalSubmitting(false);
+        }
+    };
 
     const hasOpenExceptions = useMemo(() => {
         return (orderExceptions || []).some((ex) => ex?.status === 'open');
@@ -1295,6 +1408,26 @@ export function OrderWorkView({ user }) {
                                                         </div>
                                                         <div className="text-xs text-gray-600 mt-1 break-words">{ex.reason_text}</div>
 
+                                                        {ex?.snapshot?.proposal && (
+                                                            <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200">
+                                                                <div className="text-[11px] text-gray-700 font-semibold">
+                                                                    拋單員處理內容（待審核）
+                                                                </div>
+                                                                <div className="text-[11px] text-gray-600 mt-1">
+                                                                    處理方式：{resolutionActionLabel(ex.snapshot.proposal?.resolutionAction)}
+                                                                </div>
+                                                                {ex.snapshot.proposal?.newSn && (
+                                                                    <div className="text-[11px] text-gray-600">異動 SN：{ex.snapshot.proposal.newSn}</div>
+                                                                )}
+                                                                {ex.snapshot.proposal?.correctBarcode && (
+                                                                    <div className="text-[11px] text-gray-600">正確條碼：{ex.snapshot.proposal.correctBarcode}</div>
+                                                                )}
+                                                                {ex.snapshot.proposal?.note && (
+                                                                    <div className="text-[11px] text-gray-600 break-words">備註：{ex.snapshot.proposal.note}</div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
                                                         <div className="mt-2 flex items-center gap-2 flex-wrap">
                                                             <Button
                                                                 size="sm"
@@ -1323,13 +1456,23 @@ export function OrderWorkView({ user }) {
                                                                         <div className="text-[11px] text-gray-600 truncate">
                                                                             {att.original_name || `attachment-${att.id}`}
                                                                         </div>
-                                                                        <Button
-                                                                            size="xs"
-                                                                            variant="ghost"
-                                                                            onClick={() => downloadExceptionAttachment(ex.id, att)}
-                                                                        >
-                                                                            下載
-                                                                        </Button>
+                                                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                                                            <Button
+                                                                                size="xs"
+                                                                                variant="ghost"
+                                                                                onClick={() => previewExceptionAttachment(ex.id, att)}
+                                                                                disabled={attachmentPreviewLoading}
+                                                                            >
+                                                                                預覽
+                                                                            </Button>
+                                                                            <Button
+                                                                                size="xs"
+                                                                                variant="ghost"
+                                                                                onClick={() => downloadExceptionAttachment(ex.id, att)}
+                                                                            >
+                                                                                下載
+                                                                            </Button>
+                                                                        </div>
                                                                     </div>
                                                                 ))}
                                                                 {(exceptionAttachmentsById[ex.id] || []).length > 3 && (
@@ -1362,6 +1505,16 @@ export function OrderWorkView({ user }) {
                                                             {ex.status === 'ack' && (
                                                                 <Button size="sm" onClick={() => handleResolveException(ex.id)}>
                                                                     結案
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {(!isAdminLike && canDispatcherPropose) && (
+                                                        <div className="flex flex-col gap-2 flex-shrink-0">
+                                                            {ex.status === 'open' && (
+                                                                <Button size="sm" variant="secondary" onClick={() => openProposalModal(ex)}>
+                                                                    填處理
                                                                 </Button>
                                                             )}
                                                         </div>
@@ -1483,6 +1636,131 @@ export function OrderWorkView({ user }) {
                     voucherNumber={currentOrderData.order?.voucher_number}
                     onSuccess={() => fetchOrderDetails(orderId)}
                 />
+
+                <Modal
+                    open={proposalOpen}
+                    onClose={closeProposalModal}
+                    title="例外處理：填寫處理內容（待審核）"
+                    footer={
+                        <>
+                            <Button variant="secondary" onClick={closeProposalModal} disabled={proposalSubmitting}>取消</Button>
+                            <Button onClick={submitProposal} disabled={proposalSubmitting}>
+                                {proposalSubmitting ? '送出中…' : '送出審核'}
+                            </Button>
+                        </>
+                    }
+                >
+                    <div className="space-y-3">
+                        <div className="text-sm text-gray-700">
+                            <div className="font-semibold">類型：{typeLabel(proposalException?.type)}</div>
+                            <div className="text-xs text-gray-500 mt-1">管理員核可後才會放行（解除 Open 阻擋）。</div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">處理方式（必填）</label>
+                            <select
+                                value={proposalAction}
+                                onChange={(e) => setProposalAction(e.target.value)}
+                                className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3 text-gray-900"
+                            >
+                                <option value="short_ship">少出</option>
+                                <option value="restock">補貨</option>
+                                <option value="exchange">換貨</option>
+                                <option value="void">作廢</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">異動 SN（可選）</label>
+                            <input
+                                type="text"
+                                value={proposalNewSn}
+                                onChange={(e) => setProposalNewSn(e.target.value)}
+                                placeholder="例如：B19B52004754 或 52004754"
+                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">正確條碼（可選）</label>
+                            <input
+                                type="text"
+                                value={proposalCorrectBarcode}
+                                onChange={(e) => setProposalCorrectBarcode(e.target.value)}
+                                placeholder="若現場掃到錯條碼，可填正確值供管理員核准"
+                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">處理備註（可選）</label>
+                            <textarea
+                                value={proposalNote}
+                                onChange={(e) => setProposalNote(e.target.value)}
+                                rows={3}
+                                placeholder="請描述處理方式與原因，管理員會依此審核"
+                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                            />
+                        </div>
+                    </div>
+                </Modal>
+
+                <Modal
+                    open={attachmentPreviewOpen}
+                    onClose={() => {
+                        if (attachmentPreviewUrl) {
+                            try { window.URL.revokeObjectURL(attachmentPreviewUrl); } catch { /* ignore */ }
+                        }
+                        setAttachmentPreviewOpen(false);
+                        setAttachmentPreviewUrl('');
+                        setAttachmentPreviewName('');
+                        setAttachmentPreviewMime('');
+                    }}
+                    title={attachmentPreviewName ? `附件預覽：${attachmentPreviewName}` : '附件預覽'}
+                    footer={
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
+                                if (attachmentPreviewUrl) {
+                                    try { window.URL.revokeObjectURL(attachmentPreviewUrl); } catch { /* ignore */ }
+                                }
+                                setAttachmentPreviewOpen(false);
+                                setAttachmentPreviewUrl('');
+                                setAttachmentPreviewName('');
+                                setAttachmentPreviewMime('');
+                            }}
+                        >
+                            關閉
+                        </Button>
+                    }
+                >
+                    {!attachmentPreviewUrl ? (
+                        <div className="text-sm text-gray-500">尚未載入預覽內容</div>
+                    ) : (
+                        <div className="w-full">
+                            {String(attachmentPreviewMime || '').startsWith('image/') && (
+                                <img
+                                    src={attachmentPreviewUrl}
+                                    alt={attachmentPreviewName || 'attachment'}
+                                    className="w-full max-h-[70vh] object-contain rounded-xl border border-gray-200"
+                                />
+                            )}
+                            {String(attachmentPreviewMime || '').toLowerCase() === 'application/pdf' && (
+                                <iframe
+                                    title={attachmentPreviewName || 'pdf'}
+                                    src={attachmentPreviewUrl}
+                                    className="w-full h-[70vh] rounded-xl border border-gray-200"
+                                />
+                            )}
+                            {!String(attachmentPreviewMime || '').startsWith('image/') && String(attachmentPreviewMime || '').toLowerCase() !== 'application/pdf' && (
+                                <div className="text-sm text-gray-600">
+                                    此附件格式不支援內嵌預覽（{attachmentPreviewMime || 'unknown'}），請改用下載。
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </Modal>
             </div>
         </div>
     );

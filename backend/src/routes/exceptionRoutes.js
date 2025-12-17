@@ -4,7 +4,7 @@
 const express = require('express');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
-const { authorizeAdmin } = require('../middleware/auth');
+const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 const multer = require('multer');
 const fs = require('fs');
@@ -16,6 +16,86 @@ const router = express.Router();
 const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other']);
 const VALID_STATUSES = new Set(['open', 'ack', 'resolved']);
 const VALID_RESOLUTION_ACTIONS = new Set(['short_ship', 'restock', 'exchange', 'void', 'other']);
+
+async function fetchOrderResponsibleUser(client, orderId) {
+    const result = await client.query(
+        `SELECT
+            import_log.user_id AS user_id,
+            u.role AS role,
+            u.name AS name
+         FROM orders o
+         LEFT JOIN LATERAL (
+            SELECT ol.user_id
+            FROM operation_logs ol
+            WHERE ol.order_id = o.id AND ol.action_type = 'import'
+            ORDER BY ol.created_at DESC
+            LIMIT 1
+         ) import_log ON TRUE
+         LEFT JOIN users u ON u.id = import_log.user_id
+         WHERE o.id = $1`,
+        [orderId]
+    );
+
+    if (result.rowCount === 0) return null;
+    const row = result.rows[0];
+    const userId = row.user_id ? parseInt(row.user_id, 10) : null;
+    return {
+        userId: userId || null,
+        role: row.role || null,
+        name: row.name || null
+    };
+}
+
+async function createTaskCommentAndMentions({ client, orderId, authorUserId, content, priority, mentionUserIds, io }) {
+    const safeContent = String(content || '').trim().slice(0, 2000);
+    if (!safeContent) return null;
+
+    const safePriority = (priority === 'urgent' || priority === 'important' || priority === 'normal') ? priority : 'normal';
+    const mentioned = Array.isArray(mentionUserIds) ? mentionUserIds.filter(Boolean) : [];
+    const dedupMentionIds = Array.from(new Set(mentioned.map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n) && n > 0))).slice(0, 20);
+
+    const commentResult = await client.query(
+        `INSERT INTO task_comments (order_id, user_id, content, parent_id, priority)
+         VALUES ($1, $2, $3, NULL, $4)
+         RETURNING id, created_at`,
+        [orderId, authorUserId, safeContent, safePriority]
+    );
+
+    const commentId = commentResult.rows[0].id;
+
+    for (const mentionedUserId of dedupMentionIds) {
+        await client.query(
+            `INSERT INTO task_mentions (comment_id, mentioned_user_id)
+             VALUES ($1, $2)`,
+            [commentId, mentionedUserId]
+        );
+        io?.emit('new_mention', {
+            userId: mentionedUserId,
+            orderId: parseInt(orderId, 10),
+            commentId,
+            content: safeContent.slice(0, 100),
+            priority: safePriority
+        });
+    }
+
+    io?.emit('new_comment', {
+        orderId: parseInt(orderId, 10),
+        commentId,
+        userId: authorUserId,
+        content: safeContent,
+        priority: safePriority
+    });
+
+    return { commentId, createdAt: commentResult.rows[0].created_at };
+}
+
+async function fetchAdminUserIds(client, limit = 10) {
+    const rows = await client.query(
+        `SELECT id FROM users WHERE role IN ('admin','superadmin') ORDER BY id ASC LIMIT $1`,
+        [Math.max(1, Math.min(50, parseInt(limit, 10) || 10))]
+    );
+    return (rows.rows || []).map((r) => r.id);
+}
 
 const attachmentUpload = multer({
     storage: multer.memoryStorage(),
@@ -81,6 +161,18 @@ router.get('/orders/:orderId/exceptions', async (req, res) => {
             where += ` AND e.status = $${params.length}`;
         }
 
+        let responsible = null;
+        try {
+            const metaClient = await pool.connect();
+            try {
+                responsible = await fetchOrderResponsibleUser(metaClient, orderId);
+            } finally {
+                metaClient.release();
+            }
+        } catch (e) {
+            responsible = null;
+        }
+
         const result = await pool.query(
             `SELECT
                 e.*, 
@@ -96,7 +188,14 @@ router.get('/orders/:orderId/exceptions', async (req, res) => {
             params
         );
 
-        return res.json({ items: result.rows });
+        return res.json({
+            items: result.rows,
+            meta: {
+                responsibleUserId: responsible?.userId ?? null,
+                responsibleRole: responsible?.role ?? null,
+                responsibleName: responsible?.name ?? null
+            }
+        });
     } catch (error) {
         logger.error('[/api/orders/:orderId/exceptions] 失敗:', error);
         return res.status(500).json({ message: '取得例外清單失敗', requestId: req.requestId });
@@ -129,7 +228,26 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        const orderExist = await client.query('SELECT id, status FROM orders WHERE id = $1', [orderId]);
+        const orderExist = await client.query(
+            `SELECT
+                o.id,
+                o.status,
+                o.voucher_number,
+                     import_log.user_id AS imported_by_user_id,
+                     iu.role AS imported_by_role,
+                     iu.name AS imported_by_name
+             FROM orders o
+             LEFT JOIN LATERAL (
+                SELECT ol.user_id
+                FROM operation_logs ol
+                WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                ORDER BY ol.created_at DESC
+                LIMIT 1
+             ) import_log ON TRUE
+                 LEFT JOIN users iu ON iu.id = import_log.user_id
+             WHERE o.id = $1`,
+            [orderId]
+        );
         if (orderExist.rowCount === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ message: '找不到指定訂單', requestId: req.requestId });
@@ -206,6 +324,44 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             action: 'created'
         });
 
+        // 通知責任人（拋單員 / 管理員建立者）：以 task comment + mention 方式推送到通知中心
+        try {
+            const importedByUserId = orderExist.rows[0]?.imported_by_user_id ? parseInt(orderExist.rows[0].imported_by_user_id, 10) : null;
+            const importedByRole = orderExist.rows[0]?.imported_by_role ? String(orderExist.rows[0].imported_by_role).toLowerCase() : null;
+            const voucherNumber = orderExist.rows[0]?.voucher_number;
+
+            const content = `【例外回報】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`} 類型: ${String(type)}\n原因: ${normalizedReasonText}`;
+
+            // 若由拋單員建立 -> 通知該拋單員；否則 -> 通知管理員
+            const mentionIds = (importedByUserId && importedByRole === 'dispatcher')
+                ? [importedByUserId]
+                : await fetchAdminUserIds(client, 10);
+
+            if (mentionIds.length > 0) {
+                const notifyClient = await pool.connect();
+                try {
+                    await notifyClient.query('BEGIN');
+                    await createTaskCommentAndMentions({
+                        client: notifyClient,
+                        orderId,
+                        authorUserId: userId,
+                        content,
+                        priority: 'urgent',
+                        mentionUserIds: mentionIds,
+                        io
+                    });
+                    await notifyClient.query('COMMIT');
+                } catch (e) {
+                    await notifyClient.query('ROLLBACK');
+                    logger.warn('exception_create: 建立通知 comment/mention 失敗（可忽略）:', e.message);
+                } finally {
+                    notifyClient.release();
+                }
+            }
+        } catch (e) {
+            logger.warn('exception_create: 通知責任人失敗（可忽略）:', e.message);
+        }
+
         return res.status(201).json({
             message: '例外已建立',
             id: exceptionId,
@@ -215,6 +371,131 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
         await client.query('ROLLBACK');
         logger.error('[/api/orders/:orderId/exceptions] 建立失敗:', error);
         return res.status(500).json({ message: '建立例外失敗', requestId: req.requestId });
+    } finally {
+        client.release();
+    }
+});
+
+// PATCH /api/orders/:orderId/exceptions/:exceptionId/propose
+// 拋單員（dispatcher）填寫處理方式/異動值 -> 管理員審核後再核可（ack）放行
+router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
+    const { orderId, exceptionId } = req.params;
+    const userId = req.user.id;
+    const role = req.user.role;
+    const io = req.app.get('io');
+
+    const { resolutionAction, note, newSn, correctBarcode } = req.body || {};
+
+    const action = resolutionAction ? String(resolutionAction).trim() : '';
+    if (!action || !VALID_RESOLUTION_ACTIONS.has(action)) {
+        return res.status(400).json({
+            message: '請提供有效的處理方式（resolutionAction）',
+            allowed: Array.from(VALID_RESOLUTION_ACTIONS),
+            requestId: req.requestId
+        });
+    }
+
+    const proposalNote = note ? String(note).trim().slice(0, 2000) : null;
+    const proposedNewSn = newSn ? String(newSn).trim().slice(0, 100) : null;
+    const proposedBarcode = correctBarcode ? String(correctBarcode).trim().slice(0, 200) : null;
+
+    if (!proposalNote && !proposedNewSn && !proposedBarcode) {
+        return res.status(400).json({ message: '請至少提供處理備註或異動 SN/條碼', requestId: req.requestId });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // dispatcher：僅允許該訂單「拋單員」提交處理內容；若訂單由管理員建立，dispatcher 不可提案
+        if (role === 'dispatcher') {
+            const responsible = await fetchOrderResponsibleUser(client, orderId);
+            const responsibleUserId = responsible?.userId ?? null;
+            const responsibleRole = responsible?.role ? String(responsible.role).toLowerCase() : null;
+
+            if (!responsibleUserId || responsibleRole !== 'dispatcher' || String(responsibleUserId) !== String(userId)) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: '僅允許該訂單拋單員提交處理內容', requestId: req.requestId });
+            }
+        }
+
+        const exists = await client.query(
+            'SELECT id, type, status FROM order_exceptions WHERE id = $1 AND order_id = $2',
+            [exceptionId, orderId]
+        );
+        if (exists.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '找不到例外事件', requestId: req.requestId });
+        }
+
+        if (exists.rows[0].status !== 'open') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: `目前狀態為 ${exists.rows[0].status}，不可再更新處理內容`, requestId: req.requestId });
+        }
+
+        const proposal = {
+            resolutionAction: action,
+            note: proposalNote,
+            newSn: proposedNewSn,
+            correctBarcode: proposedBarcode,
+            proposedBy: userId,
+            proposedAt: new Date().toISOString(),
+            requestId: req.requestId
+        };
+
+        const updated = await client.query(
+            `UPDATE order_exceptions
+             SET snapshot = jsonb_set(COALESCE(snapshot, '{}'::jsonb), '{proposal}', $1::jsonb, true)
+             WHERE id = $2 AND order_id = $3
+             RETURNING id, order_id, type, status, snapshot`,
+            [JSON.stringify(proposal), exceptionId, orderId]
+        );
+
+        // 通知管理員審核：建立 task comment + mention all admins
+        try {
+            const adminIds = await fetchAdminUserIds(client, 10);
+            if (adminIds.length > 0) {
+                const orderRow = await client.query('SELECT voucher_number FROM orders WHERE id = $1', [orderId]);
+                const voucherNumber = orderRow.rows[0]?.voucher_number;
+                await createTaskCommentAndMentions({
+                    client,
+                    orderId,
+                    authorUserId: userId,
+                    content: `【例外待審核】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`}\n處理方式: ${action}${proposalNote ? `\n備註: ${proposalNote}` : ''}${proposedNewSn ? `\n異動 SN: ${proposedNewSn}` : ''}${proposedBarcode ? `\n正確條碼: ${proposedBarcode}` : ''}`,
+                    priority: 'urgent',
+                    mentionUserIds: adminIds,
+                    io
+                });
+            }
+        } catch (e) {
+            logger.warn('exception_propose: 通知管理員失敗（可忽略）:', e.message);
+        }
+
+        await client.query('COMMIT');
+
+        await logOperation({
+            userId,
+            orderId,
+            operationType: 'exception_propose',
+            details: {
+                exceptionId: parseInt(exceptionId, 10),
+                proposal: { resolutionAction: action, note: proposalNote, newSn: proposedNewSn, correctBarcode: proposedBarcode },
+                meta: { requestId: req.requestId }
+            },
+            io
+        });
+
+        io?.emit('order_exception_changed', {
+            orderId: parseInt(orderId, 10),
+            exceptionId: parseInt(exceptionId, 10),
+            action: 'proposed'
+        });
+
+        return res.json({ message: '已送出處理內容，等待管理員審核', item: updated.rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        logger.error('[/api/orders/:orderId/exceptions/:exceptionId/propose] failed:', error);
+        return res.status(500).json({ message: '送出處理內容失敗', requestId: req.requestId });
     } finally {
         client.release();
     }
@@ -393,7 +674,8 @@ router.get('/orders/:orderId/exceptions/:exceptionId/attachments/:attachmentId/d
 
         res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
         const filename = row.original_name ? String(row.original_name).replace(/\r|\n/g, '') : `attachment-${attachmentId}`;
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+        const inline = String(req.query.inline || '').trim() === '1' || String(req.query.inline || '').toLowerCase() === 'true';
+        res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(filename)}"`);
 
         const stream = fs.createReadStream(filePath);
         stream.on('error', (e) => {
