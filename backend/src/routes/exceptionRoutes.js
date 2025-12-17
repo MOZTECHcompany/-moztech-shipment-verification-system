@@ -613,7 +613,19 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
 
         let applyResult = null;
         if (String(row.type) === 'order_change') {
-            const proposal = row.snapshot?.proposal || null;
+            let snapshotObj = row.snapshot;
+            if (typeof snapshotObj === 'string') {
+                try { snapshotObj = JSON.parse(snapshotObj); } catch { snapshotObj = {}; }
+            }
+            if (!snapshotObj || typeof snapshotObj !== 'object' || Array.isArray(snapshotObj)) {
+                snapshotObj = {};
+            }
+
+            const proposal = snapshotObj?.proposal || null;
+            if (!proposal) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: '此訂單異動缺少 proposal，無法核可套用', requestId: req.requestId });
+            }
             applyResult = await applyOrderChangeProposal({
                 client,
                 orderId,
@@ -664,7 +676,12 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
     } catch (error) {
         await client.query('ROLLBACK');
         logger.error('[/api/orders/:orderId/exceptions/:exceptionId/ack] 失敗:', error);
-        return res.status(500).json({ message: '核可失敗', requestId: req.requestId });
+        const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+        const safeStatus = status >= 400 && status < 600 ? status : 500;
+        const message = safeStatus >= 500
+            ? '核可失敗'
+            : (error?.message || '核可失敗');
+        return res.status(safeStatus).json({ message, requestId: req.requestId });
     } finally {
         client.release();
     }
