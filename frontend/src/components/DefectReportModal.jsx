@@ -139,7 +139,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     value={itemSearch}
                                     onChange={(e) => setItemSearch(e.target.value)}
                                     placeholder="搜尋產品名稱 / 料號..."
-                                    className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white placeholder:text-gray-400"
+                                    className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
                                 />
                                 <select
                                     value={selectedItemId}
@@ -168,7 +168,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     value={oldSnSearch}
                                     onChange={(e) => setOldSnSearch(e.target.value)}
                                     placeholder="搜尋 SN..."
-                                    className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white placeholder:text-gray-400"
+                                    className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
                                 />
                                 <select
                                     value={oldSn}
@@ -214,7 +214,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     placeholder="請詳細描述不良原因..."
                                     required
                                     rows={3}
-                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white placeholder:text-gray-400"
+                                    className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
                                 />
                             </div>
 
