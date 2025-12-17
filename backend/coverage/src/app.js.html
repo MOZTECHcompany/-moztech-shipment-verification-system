@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/69</span>
+                <span class='fraction'>0/75</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/68</span>
+                <span class='fraction'>0/74</span>
             </div>
         
             
@@ -239,7 +239,13 @@
 <a name='L174'></a><a href='#L174'>174</a>
 <a name='L175'></a><a href='#L175'>175</a>
 <a name='L176'></a><a href='#L176'>176</a>
-<a name='L177'></a><a href='#L177'>177</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -266,6 +272,9 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -394,6 +403,9 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -442,6 +454,9 @@ const orderRoutes = <span class="cstat-no" title="statement not covered" >requir
 const analyticsRoutes = <span class="cstat-no" title="statement not covered" >require('./routes/analyticsRoutes');</span>
 const commentRoutes = <span class="cstat-no" title="statement not covered" >require('./routes/commentRoutes');</span>
 const maintenanceRoutes = <span class="cstat-no" title="statement not covered" >require('./routes/maintenanceRoutes');</span>
+const exceptionRoutes = <span class="cstat-no" title="statement not covered" >require('./routes/exceptionRoutes');</span>
+const adminExceptionRoutes = <span class="cstat-no" title="statement not covered" >require('./routes/adminExceptionRoutes');</span>
+const teamBoardRoutes = <span class="cstat-no" title="statement not covered" >require('./routes/teamBoardRoutes');</span>
 // TODO: 添加其他路由
 // const orderRoutes = require('./routes/orderRoutes');
 // const taskRoutes = require('./routes/taskRoutes');
@@ -572,11 +587,14 @@ const io = <span class="cstat-no" title="statement not covered" >new Server(serv
 // 以下路由需要認證
 <span class="cstat-no" title="statement not covered" >app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);</span>
 <span class="cstat-no" title="statement not covered" >app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);</span>
+<span class="cstat-no" title="statement not covered" >app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);</span>
 <span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, taskRoutes);</span>
 <span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, orderRoutes);</span>
 <span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, analyticsRoutes);</span>
 <span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, commentRoutes);</span>
 <span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, maintenanceRoutes);</span>
+<span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, exceptionRoutes);</span>
+<span class="cstat-no" title="statement not covered" >app.use('/api', authenticateToken, teamBoardRoutes);</span>
 &nbsp;
 // TODO: 添加其他需要認證的路由
 // app.use('/api/orders', authenticateToken, orderRoutes);
@@ -598,7 +616,7 @@ const io = <span class="cstat-no" title="statement not covered" >new Server(serv
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-15T22:16:18.952Z
+                at 2025-12-17T13:58:48.561Z
             </div>
         <script src="../prettify.js"></script>
         <script>

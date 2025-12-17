@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/283</span>
+                <span class='fraction'>0/287</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/98</span>
+                <span class='fraction'>0/102</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/273</span>
+                <span class='fraction'>0/277</span>
             </div>
         
             
@@ -680,7 +680,21 @@
 <a name='L615'></a><a href='#L615'>615</a>
 <a name='L616'></a><a href='#L616'>616</a>
 <a name='L617'></a><a href='#L617'>617</a>
-<a name='L618'></a><a href='#L618'>618</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L618'></a><a href='#L618'>618</a>
+<a name='L619'></a><a href='#L619'>619</a>
+<a name='L620'></a><a href='#L620'>620</a>
+<a name='L621'></a><a href='#L621'>621</a>
+<a name='L622'></a><a href='#L622'>622</a>
+<a name='L623'></a><a href='#L623'>623</a>
+<a name='L624'></a><a href='#L624'>624</a>
+<a name='L625'></a><a href='#L625'>625</a>
+<a name='L626'></a><a href='#L626'>626</a>
+<a name='L627'></a><a href='#L627'>627</a>
+<a name='L628'></a><a href='#L628'>628</a>
+<a name='L629'></a><a href='#L629'>629</a>
+<a name='L630'></a><a href='#L630'>630</a>
+<a name='L631'></a><a href='#L631'>631</a>
+<a name='L632'></a><a href='#L632'>632</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1088,14 +1102,28 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1303,7 +1331,7 @@
 const express = <span class="cstat-no" title="statement not covered" >require('express');</span>
 const { pool } = <span class="cstat-no" title="statement not covered" >require('../config/database');</span>
 const logger = <span class="cstat-no" title="statement not covered" >require('../utils/logger');</span>
-const { authorizeAdmin } = <span class="cstat-no" title="statement not covered" >require('../middleware/auth');</span>
+const { authorizeAdmin, authorizeRoles } = <span class="cstat-no" title="statement not covered" >require('../middleware/auth');</span>
 const { logOperation } = <span class="cstat-no" title="statement not covered" >require('../services/operationLogService');</span>
 &nbsp;
 const router = <span class="cstat-no" title="statement not covered" >express.Router();</span>
@@ -1705,7 +1733,10 @@ async function <span class="fstat-no" title="function not covered" >ensureTaskPi
     } finally { <span class="cstat-no" title="statement not covered" >client.release(); </span>}
 });
 &nbsp;
-<span class="cstat-no" title="statement not covered" >router.put('/tasks/pins/:orderId', authorizeAdmin, <span class="fstat-no" title="function not covered" >as</span>ync (req, res) =&gt; {</span>
+// 設定/取消任務置頂（團隊共享）
+// admin/superadmin：可操作所有訂單
+// dispatcher：僅可操作自己拋單(imported_by_user_id)的訂單
+<span class="cstat-no" title="statement not covered" >router.put('/tasks/pins/:orderId', authorizeRoles('admin', 'dispatcher'), <span class="fstat-no" title="function not covered" >as</span>ync (req, res) =&gt; {</span>
     const { orderId } = <span class="cstat-no" title="statement not covered" >req.params;</span>
     const { pinned } = <span class="cstat-no" title="statement not covered" >req.body;</span>
     const userId = <span class="cstat-no" title="statement not covered" >req.user?.id || null;</span>
@@ -1713,6 +1744,17 @@ async function <span class="fstat-no" title="function not covered" >ensureTaskPi
     const client = <span class="cstat-no" title="statement not covered" >await pool.connect();</span>
 <span class="cstat-no" title="statement not covered" >    try {</span>
 <span class="cstat-no" title="statement not covered" >        await ensureTaskPinsTable(client);</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >        if (req.user?.role === 'dispatcher') {</span>
+            const own = <span class="cstat-no" title="statement not covered" >await client.query(</span>
+                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                [orderId, userId]
+            );
+<span class="cstat-no" title="statement not covered" >            if (own.rowCount === 0) {</span>
+<span class="cstat-no" title="statement not covered" >                return res.status(403).json({ message: '僅允許操作自己拋單的訂單' });</span>
+            }
+        }
+&nbsp;
 <span class="cstat-no" title="statement not covered" >        if (pinned) {</span>
 <span class="cstat-no" title="statement not covered" >            await client.query('INSERT INTO task_pins (order_id, created_by) VALUES ($1, $2) ON CONFLICT (order_id) DO NOTHING', [orderId, userId]);</span>
         } else {
@@ -1921,7 +1963,7 @@ async function <span class="fstat-no" title="function not covered" >ensureTaskPi
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-15T22:16:18.952Z
+                at 2025-12-17T13:58:48.561Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
