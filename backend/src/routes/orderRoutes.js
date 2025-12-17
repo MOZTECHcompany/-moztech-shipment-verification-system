@@ -33,6 +33,26 @@ async function hasOpenExceptions(db, orderId) {
     }
 }
 
+async function hasOpenOrderChange(db, orderId) {
+    try {
+        const result = await db.query(
+            `SELECT EXISTS(
+                SELECT 1
+                FROM order_exceptions
+                WHERE order_id = $1 AND status = 'open' AND type = 'order_change'
+            ) AS has_open`,
+            [orderId]
+        );
+        return !!result.rows[0]?.has_open;
+    } catch (err) {
+        // 若尚未套用 migration，避免擋住既有流程
+        if (err && (err.code === '42P01' || /order_exceptions/i.test(err.message || ''))) {
+            return false;
+        }
+        throw err;
+    }
+}
+
 const allowedImportMimeTypes = new Set([
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'application/vnd.ms-excel',
@@ -211,6 +231,13 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
             return res.status(404).json({ message: '找不到該訂單' });
         }
         const order = orderResult.rows[0];
+
+        // 訂單異動審核中：禁止認領/作業
+        const hasPendingChange = await hasOpenOrderChange(client, orderId);
+        if (hasPendingChange) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: '此訂單異動審核中，請先主管核可後再作業。' });
+        }
         logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
         let newStatus = '', task_type = '';
         if ((role === 'picker' || isAdminLike) && order.status === 'pending') {
@@ -644,6 +671,13 @@ router.post('/orders/update_item', async (req, res, next) => {
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
+
+        // 訂單異動審核中：禁止揀貨/裝箱
+        const hasPendingChange = await hasOpenOrderChange(client, orderId);
+        if (hasPendingChange) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: '此訂單異動審核中，請先主管核可後再作業。' });
+        }
 
         // 例外流程控管：有 open（未核可）例外時，禁止 pack 相關操作與自動完成
         if (type === 'pack') {

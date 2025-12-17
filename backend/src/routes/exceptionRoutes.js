@@ -10,12 +10,24 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { validateOrderChangeProposal, applyOrderChangeProposal, hasAnyOpenOrderChange } = require('../services/orderChangeService');
 
 const router = express.Router();
 
-const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other']);
+const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change']);
 const VALID_STATUSES = new Set(['open', 'ack', 'resolved']);
 const VALID_RESOLUTION_ACTIONS = new Set(['short_ship', 'restock', 'exchange', 'void', 'other']);
+
+function normalizeRole(value) {
+    return value ? String(value).trim().toLowerCase() : '';
+}
+
+function extractOrderChangeProposal({ reasonText, snapshotObj }) {
+    const proposal = snapshotObj?.proposal && typeof snapshotObj.proposal === 'object' ? snapshotObj.proposal : null;
+    const note = String((proposal?.note ?? reasonText) || '').trim();
+    const items = Array.isArray(proposal?.items) ? proposal.items : [];
+    return { note, items };
+}
 
 async function fetchOrderResponsibleUser(client, orderId) {
     const result = await client.query(
@@ -207,7 +219,7 @@ router.get('/orders/:orderId/exceptions', async (req, res) => {
 router.post('/orders/:orderId/exceptions', async (req, res) => {
     const { orderId } = req.params;
     const { type, reasonCode, reasonText, orderItemId, instanceId, snapshot } = req.body || {};
-    const { id: userId } = req.user;
+    const { id: userId, role } = req.user;
     const io = req.app.get('io');
 
     if (!type || !VALID_TYPES.has(String(type))) {
@@ -251,6 +263,40 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
         if (orderExist.rowCount === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ message: '找不到指定訂單', requestId: req.requestId });
+        }
+
+        const importedByUserId = orderExist.rows[0]?.imported_by_user_id ? parseInt(orderExist.rows[0].imported_by_user_id, 10) : null;
+        const importedByRole = normalizeRole(orderExist.rows[0]?.imported_by_role);
+        const actorRole = normalizeRole(role);
+
+        // order_change: dispatcher only for own imported orders
+        if (String(type) === 'order_change' && actorRole === 'dispatcher') {
+            if (!importedByUserId || importedByRole !== 'dispatcher' || String(importedByUserId) !== String(userId)) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: '僅允許該訂單拋單員申請訂單異動', requestId: req.requestId });
+            }
+        }
+
+        // order_change: prevent multiple concurrent requests
+        if (String(type) === 'order_change') {
+            const hasOpen = await hasAnyOpenOrderChange(client, orderId);
+            if (hasOpen) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ message: '此訂單已有待審核的異動申請，請先完成審核', requestId: req.requestId });
+            }
+
+            const proposal = extractOrderChangeProposal({ reasonText: normalizedReasonText, snapshotObj });
+            const validated = validateOrderChangeProposal(proposal);
+            if (!validated.ok) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: validated.message, requestId: req.requestId });
+            }
+            snapshotObj.proposal = {
+                ...validated.value,
+                proposedBy: userId,
+                proposedAt: new Date().toISOString(),
+                requestId: req.requestId
+            };
         }
 
         // 可選：驗證 orderItemId/instanceId 是否屬於此訂單（避免亂塞）
@@ -299,9 +345,35 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             ]
         );
 
-        await client.query('COMMIT');
-
         const exceptionId = inserted.rows[0].id;
+        let orderChangeAutoApproved = false;
+
+        // 管理員自拋單：可直接異動，不需審核，但仍留痕
+        if (String(type) === 'order_change') {
+            const isAdminLike = actorRole === 'admin' || actorRole === 'superadmin';
+            const isSelfImported = importedByUserId && String(importedByUserId) === String(userId) && (importedByRole === 'admin' || importedByRole === 'superadmin');
+
+            if (isAdminLike && isSelfImported) {
+                const applyResult = await applyOrderChangeProposal({
+                    client,
+                    orderId,
+                    proposal: snapshotObj.proposal,
+                    actorUserId: userId
+                });
+
+                await client.query(
+                    `UPDATE order_exceptions
+                     SET status = 'ack', ack_by = $1, ack_at = NOW(), ack_note = COALESCE($2, ack_note),
+                         snapshot = jsonb_set(COALESCE(snapshot, '{}'::jsonb), '{applyResult}', $3::jsonb, true)
+                     WHERE id = $4 AND order_id = $5`,
+                    [userId, '管理員自拋單：自動放行並套用異動', JSON.stringify(applyResult), exceptionId, orderId]
+                );
+
+                orderChangeAutoApproved = true;
+            }
+        }
+
+        await client.query('COMMIT');
 
         await logOperation({
             userId,
@@ -324,18 +396,26 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             action: 'created'
         });
 
+        // 若為 order_change 且自動放行，訂單狀態已被強制退回撿貨
+        if (String(type) === 'order_change' && orderChangeAutoApproved) {
+            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'picking' });
+        }
+
         // 通知責任人（拋單員 / 管理員建立者）：以 task comment + mention 方式推送到通知中心
         try {
-            const importedByUserId = orderExist.rows[0]?.imported_by_user_id ? parseInt(orderExist.rows[0].imported_by_user_id, 10) : null;
-            const importedByRole = orderExist.rows[0]?.imported_by_role ? String(orderExist.rows[0].imported_by_role).toLowerCase() : null;
             const voucherNumber = orderExist.rows[0]?.voucher_number;
 
-            const content = `【例外回報】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`} 類型: ${String(type)}\n原因: ${normalizedReasonText}`;
+            const isOrderChange = String(type) === 'order_change';
+            const content = isOrderChange
+                ? `【訂單異動待審核】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`}\n原因: ${normalizedReasonText}`
+                : `【例外回報】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`} 類型: ${String(type)}\n原因: ${normalizedReasonText}`;
 
-            // 若由拋單員建立 -> 通知該拋單員；否則 -> 通知管理員
-            const mentionIds = (importedByUserId && importedByRole === 'dispatcher')
-                ? [importedByUserId]
-                : await fetchAdminUserIds(client, 10);
+            // order_change 一律通知管理員審核；其他例外維持既有策略
+            const mentionIds = isOrderChange
+                ? await fetchAdminUserIds(client, 10)
+                : ((importedByUserId && importedByRole === 'dispatcher')
+                    ? [importedByUserId]
+                    : await fetchAdminUserIds(client, 10));
 
             if (mentionIds.length > 0) {
                 const notifyClient = await pool.connect();
@@ -511,32 +591,60 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
 
     const ackNote = note ? String(note).trim().slice(0, 2000) : null;
 
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
-            `UPDATE order_exceptions
-             SET status = 'ack', ack_by = $1, ack_at = NOW(), ack_note = COALESCE($2, ack_note)
-             WHERE id = $3 AND order_id = $4 AND status = 'open'
-             RETURNING id, type, status, ack_at`,
-            [userId, ackNote, exceptionId, orderId]
+        await client.query('BEGIN');
+
+        const ex = await client.query(
+            'SELECT * FROM order_exceptions WHERE id = $1 AND order_id = $2 FOR UPDATE',
+            [exceptionId, orderId]
         );
 
-        if (result.rowCount === 0) {
-            // 可能是不存在、或已不是 open
-            const exists = await pool.query('SELECT status FROM order_exceptions WHERE id = $1 AND order_id = $2', [exceptionId, orderId]);
-            if (exists.rowCount === 0) {
-                return res.status(404).json({ message: '找不到例外事件', requestId: req.requestId });
-            }
-            return res.status(409).json({ message: `無法核可，目前狀態為 ${exists.rows[0].status}`, requestId: req.requestId });
+        if (ex.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: '找不到例外事件', requestId: req.requestId });
         }
+
+        const row = ex.rows[0];
+        if (row.status !== 'open') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: `無法核可，目前狀態為 ${row.status}`, requestId: req.requestId });
+        }
+
+        let applyResult = null;
+        if (String(row.type) === 'order_change') {
+            const proposal = row.snapshot?.proposal || null;
+            applyResult = await applyOrderChangeProposal({
+                client,
+                orderId,
+                proposal,
+                actorUserId: userId
+            });
+        }
+
+        const updated = await client.query(
+            `UPDATE order_exceptions
+             SET status = 'ack', ack_by = $1, ack_at = NOW(), ack_note = COALESCE($2, ack_note),
+                 snapshot = CASE
+                     WHEN $3::jsonb IS NULL THEN snapshot
+                     ELSE jsonb_set(COALESCE(snapshot, '{}'::jsonb), '{applyResult}', $3::jsonb, true)
+                 END
+             WHERE id = $4 AND order_id = $5
+             RETURNING id, type, status, ack_at`,
+            [userId, ackNote, applyResult ? JSON.stringify(applyResult) : null, exceptionId, orderId]
+        );
+
+        await client.query('COMMIT');
 
         await logOperation({
             userId,
             orderId,
-            operationType: 'exception_ack',
+            operationType: String(row.type) === 'order_change' ? 'order_change_ack' : 'exception_ack',
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 status: 'ack',
                 note: ackNote,
+                ...(applyResult ? { applyResult } : {}),
                 meta: { requestId: req.requestId }
             },
             io
@@ -548,10 +656,17 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
             action: 'acked'
         });
 
-        return res.json({ message: '例外已核可', item: result.rows[0] });
+        if (String(row.type) === 'order_change') {
+            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'picking' });
+        }
+
+        return res.json({ message: '例外已核可', item: updated.rows[0] });
     } catch (error) {
+        await client.query('ROLLBACK');
         logger.error('[/api/orders/:orderId/exceptions/:exceptionId/ack] 失敗:', error);
         return res.status(500).json({ message: '核可失敗', requestId: req.requestId });
+    } finally {
+        client.release();
     }
 });
 

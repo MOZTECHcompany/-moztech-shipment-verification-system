@@ -526,6 +526,14 @@ export function OrderWorkView({ user }) {
     const [proposalCorrectBarcode, setProposalCorrectBarcode] = useState('');
     const [proposalSubmitting, setProposalSubmitting] = useState(false);
 
+    // 訂單異動申請（order_change）：拋單員送審，主管核可後才放行
+    const [orderChangeOpen, setOrderChangeOpen] = useState(false);
+    const [orderChangeReason, setOrderChangeReason] = useState('');
+    const [orderChangeSubmitting, setOrderChangeSubmitting] = useState(false);
+    const [orderChangeItems, setOrderChangeItems] = useState([
+        { barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }
+    ]);
+
     // 例外附件預覽
     const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
     const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState('');
@@ -766,6 +774,7 @@ export function OrderWorkView({ user }) {
             over_scan: '多掃',
             under_scan: '少掃',
             sn_replace: 'SN更換',
+            order_change: '訂單異動',
             other: '其他'
         };
         return map[type] || type;
@@ -851,6 +860,10 @@ export function OrderWorkView({ user }) {
         return (orderExceptions || []).some((ex) => ex?.status === 'open');
     }, [orderExceptions]);
 
+    const hasOpenOrderChange = useMemo(() => {
+        return (orderExceptions || []).some((ex) => ex?.status === 'open' && String(ex?.type) === 'order_change');
+    }, [orderExceptions]);
+
     const canPackNow = useMemo(() => {
         const status = currentOrderData.order?.status;
         const roleCanPack = user?.role === 'packer' || isAdminLike;
@@ -858,6 +871,119 @@ export function OrderWorkView({ user }) {
     }, [currentOrderData.order?.status, user?.role, isAdminLike]);
 
     const packBlockedByExceptions = canPackNow && hasOpenExceptions;
+    const operationBlockedByOrderChange = hasOpenOrderChange;
+
+    const parseSnText = (text) => {
+        const raw = String(text || '');
+        const parts = raw.split(/[\s,，、\n\r\/ㆍ·・•]+/).map((x) => x.trim()).filter(Boolean);
+        const cleaned = parts.map((x) => x.replace(/^SN\s*[:：]/i, '').trim()).filter(Boolean);
+        const seen = new Set();
+        const unique = [];
+        for (const sn of cleaned) {
+            const k = sn.toUpperCase();
+            if (seen.has(k)) continue;
+            seen.add(k);
+            unique.push(sn);
+        }
+        return unique;
+    };
+
+    const updateOrderChangeItem = (index, patch) => {
+        setOrderChangeItems((prev) =>
+            (prev || []).map((row, i) => (i === index ? { ...row, ...patch } : row))
+        );
+    };
+
+    const addOrderChangeItemRow = () => {
+        setOrderChangeItems((prev) => [
+            ...(prev || []),
+            { barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }
+        ]);
+    };
+
+    const removeOrderChangeItemRow = (index) => {
+        setOrderChangeItems((prev) => {
+            const list = prev || [];
+            if (list.length <= 1) return list;
+            return list.filter((_, i) => i !== index);
+        });
+    };
+
+    const submitOrderChange = async () => {
+        const reason = String(orderChangeReason || '').trim();
+        if (!reason) {
+            toast.error('請填寫異動原因（必填）');
+            return;
+        }
+
+        const normalizedItems = (orderChangeItems || [])
+            .map((row) => {
+                const barcode = String(row.barcode || '').trim();
+                const productName = String(row.productName || '').trim();
+                const quantityChangeNum = Number(row.quantityChange);
+                const quantityChange = Number.isFinite(quantityChangeNum) ? Math.trunc(quantityChangeNum) : NaN;
+                const noSn = !!row.noSn;
+                const snList = !noSn ? parseSnText(row.snText) : [];
+                return { barcode, productName, quantityChange, noSn, snList };
+            })
+            .filter((x) => x.barcode || x.productName || Number.isFinite(x.quantityChange));
+
+        if (!normalizedItems.length) {
+            toast.error('請至少新增一筆異動品項');
+            return;
+        }
+
+        for (const it of normalizedItems) {
+            if (!it.barcode) {
+                toast.error('品項條碼必填');
+                return;
+            }
+            if (!it.productName) {
+                toast.error(`品項 ${it.barcode} 產品名稱必填`);
+                return;
+            }
+            if (!Number.isFinite(it.quantityChange) || it.quantityChange === 0) {
+                toast.error(`品項 ${it.barcode} 異動數量不可為 0`);
+                return;
+            }
+            if (!it.noSn && it.quantityChange > 0) {
+                if (it.snList.length !== it.quantityChange) {
+                    toast.error(`品項 ${it.barcode} 為有 SN，新增數量 ${it.quantityChange} 必須提供同數量 SN（目前 ${it.snList.length}）`);
+                    return;
+                }
+            }
+        }
+
+        try {
+            setOrderChangeSubmitting(true);
+            await apiClient.post(`/api/orders/${orderId}/exceptions`, {
+                type: 'order_change',
+                reasonText: reason,
+                snapshot: {
+                    proposal: {
+                        note: reason,
+                        items: normalizedItems.map(({ barcode, productName, quantityChange, noSn, snList }) => ({
+                            barcode,
+                            productName,
+                            quantityChange,
+                            noSn,
+                            ...(noSn ? {} : { snList })
+                        }))
+                    },
+                    source: 'order_work_view'
+                }
+            });
+            toast.success('已送出訂單異動申請，等待管理員核可');
+            setOrderChangeOpen(false);
+            setOrderChangeReason('');
+            setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
+            fetchOrderExceptions(orderId);
+        } catch (err) {
+            toast.error('送出失敗', { description: err.response?.data?.message || err.message });
+        } finally {
+            setOrderChangeSubmitting(false);
+        }
+    };
 
     const handleCreateException = async () => {
         const reasonText = String(createExceptionReason || '').trim();
@@ -1078,6 +1204,23 @@ export function OrderWorkView({ user }) {
         else if ((user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && (status === 'packing' || status === 'picked')) operationType = 'pack';
         
         if (operationType) {
+            if (hasOpenOrderChange) {
+                const errorMsg = '此訂單異動審核中，需先主管核可後才能繼續作業。';
+                setScanError(errorMsg);
+                soundNotification.play('error');
+                voiceNotification.speakOperationError('需先主管核可');
+                desktopNotification.notifyScanError(errorMsg);
+                if (navigator.vibrate) {
+                    navigator.vibrate([200, 100, 200]);
+                }
+                toast.error('需先主管核可', {
+                    description: errorMsg,
+                    duration: 3500
+                });
+                setTimeout(() => setScanError(null), 3000);
+                setBarcodeInput('');
+                return;
+            }
             if (operationType === 'pack' && hasOpenExceptions) {
                 const errorMsg = '此訂單存在未核可例外（Open），需先主管核可（ack）後才能裝箱/完成。請先在「例外處理」區塊處理。';
                 setScanError(errorMsg);
@@ -1318,11 +1461,11 @@ export function OrderWorkView({ user }) {
                                     <input
                                         ref={barcodeInputRef}
                                         type="text"
-                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (packBlockedByExceptions ? '需先主管核可（Open 例外）' : '點擊掃描...')}
+                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (operationBlockedByOrderChange ? '訂單異動審核中（需先主管核可）' : (packBlockedByExceptions ? '需先主管核可（Open 例外）' : '點擊掃描...'))}
                                         value={barcodeInput}
                                         onChange={(e) => setBarcodeInput(e.target.value)}
                                         onKeyDown={handleKeyDown}
-                                        disabled={!canOperate || packBlockedByExceptions}
+                                        disabled={!canOperate || packBlockedByExceptions || operationBlockedByOrderChange}
                                         className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-gray-800 border-2 text-white placeholder-gray-500 focus:outline-none transition-all ${
                                             scanError 
                                                 ? 'border-red-500 animate-shake' 
@@ -1332,7 +1475,7 @@ export function OrderWorkView({ user }) {
                                     <div className="absolute right-2 top-1/2 -translate-y-1/2">
                                         <button 
                                             onClick={handleClick}
-                                            disabled={isUpdating || !canOperate || packBlockedByExceptions}
+                                            disabled={isUpdating || !canOperate || packBlockedByExceptions || operationBlockedByOrderChange}
                                             className="p-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-colors"
                                         >
                                             {isUpdating ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} className="rotate-180" />}
@@ -1374,6 +1517,20 @@ export function OrderWorkView({ user }) {
                                     >
                                         新增
                                     </Button>
+
+                                    {canDispatcherPropose && (
+                                        <Button
+                                            size="sm"
+                                            disabled={hasOpenOrderChange}
+                                            onClick={() => {
+                                                setOrderChangeReason('');
+                                                setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
+                                                setOrderChangeOpen(true);
+                                            }}
+                                        >
+                                            申請異動
+                                        </Button>
+                                    )}
                                 </div>
                             </CardHeader>
                             <CardContent className="pt-0">
@@ -1398,7 +1555,28 @@ export function OrderWorkView({ user }) {
                                                         </div>
                                                         <div className="text-xs text-gray-600 mt-1 break-words">{ex.reason_text}</div>
 
-                                                        {ex?.snapshot?.proposal && (
+                                                        {String(ex?.type) === 'order_change' && ex?.snapshot?.proposal && (
+                                                            <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200">
+                                                                <div className="text-[11px] text-gray-700 font-semibold">異動內容（待審核）</div>
+                                                                {ex.snapshot.proposal?.note && (
+                                                                    <div className="text-[11px] text-gray-600 break-words mt-1">原因：{ex.snapshot.proposal.note}</div>
+                                                                )}
+                                                                {Array.isArray(ex.snapshot.proposal?.items) && ex.snapshot.proposal.items.length > 0 && (
+                                                                    <div className="mt-2 space-y-1">
+                                                                        {ex.snapshot.proposal.items.slice(0, 8).map((it, idx) => (
+                                                                            <div key={`${ex.id}-chg-${idx}`} className="text-[11px] text-gray-600 break-words">
+                                                                                {it.barcode} · {it.productName} · 異動 {it.quantityChange}{it.noSn ? ' · 無SN' : ' · 有SN'}
+                                                                            </div>
+                                                                        ))}
+                                                                        {ex.snapshot.proposal.items.length > 8 && (
+                                                                            <div className="text-[11px] text-gray-500">僅顯示前 8 筆</div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        {String(ex?.type) !== 'order_change' && ex?.snapshot?.proposal && (
                                                             <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200">
                                                                 <div className="text-[11px] text-gray-700 font-semibold">
                                                                     拋單員處理內容（待審核）
@@ -1502,7 +1680,7 @@ export function OrderWorkView({ user }) {
 
                                                     {(!isAdminLike && canDispatcherPropose) && (
                                                         <div className="flex flex-col gap-2 flex-shrink-0">
-                                                            {ex.status === 'open' && (
+                                                            {ex.status === 'open' && String(ex?.type) !== 'order_change' && (
                                                                 <Button size="sm" variant="secondary" onClick={() => openProposalModal(ex)}>
                                                                     填處理
                                                                 </Button>
@@ -1752,6 +1930,147 @@ export function OrderWorkView({ user }) {
                                 placeholder="請描述處理方式與原因，管理員會依此審核"
                                 className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
                             />
+                        </div>
+                    </div>
+                </Modal>
+
+                <Modal
+                    open={orderChangeOpen}
+                    onClose={() => {
+                        if (orderChangeSubmitting) return;
+                        setOrderChangeOpen(false);
+                    }}
+                    title="申請訂單異動（待主管核可）"
+                    footer={
+                        <>
+                            <Button
+                                variant="secondary"
+                                onClick={() => setOrderChangeOpen(false)}
+                                disabled={orderChangeSubmitting}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                onClick={submitOrderChange}
+                                disabled={orderChangeSubmitting}
+                            >
+                                {orderChangeSubmitting ? '送出中…' : '送出審核'}
+                            </Button>
+                        </>
+                    }
+                >
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">異動原因（必填）</label>
+                            <textarea
+                                value={orderChangeReason}
+                                onChange={(e) => setOrderChangeReason(e.target.value)}
+                                placeholder="請描述異動原因（必填）"
+                                className="w-full min-h-[120px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 leading-6 text-gray-900 outline-none"
+                                disabled={orderChangeSubmitting}
+                            />
+                            <div className="text-xs text-gray-500 mt-2">異動數量：正數=新增，負數=減少。減少時系統會自動回沖已撿/已裝數量。</div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="text-sm font-semibold text-gray-700">異動品項</div>
+                            <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={addOrderChangeItemRow}
+                                disabled={orderChangeSubmitting}
+                            >
+                                <Plus size={14} className="mr-1" />
+                                新增一行
+                            </Button>
+                        </div>
+
+                        <div className="space-y-3">
+                            {(orderChangeItems || []).map((row, idx) => {
+                                const qtyNum = Number(row.quantityChange);
+                                const qty = Number.isFinite(qtyNum) ? Math.trunc(qtyNum) : 0;
+                                const needSn = !row.noSn && qty > 0;
+                                const parsedSnCount = needSn ? parseSnText(row.snText).length : 0;
+                                return (
+                                    <div key={`order-change-row-${idx}`} className="rounded-xl border border-gray-200 bg-white/60 p-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">條碼（必填）</label>
+                                                <input
+                                                    type="text"
+                                                    value={row.barcode}
+                                                    onChange={(e) => updateOrderChangeItem(idx, { barcode: e.target.value })}
+                                                    placeholder="例如：4712345678901"
+                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                    disabled={orderChangeSubmitting}
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">品名（必填）</label>
+                                                <input
+                                                    type="text"
+                                                    value={row.productName}
+                                                    onChange={(e) => updateOrderChangeItem(idx, { productName: e.target.value })}
+                                                    placeholder="例如：某某商品"
+                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                    disabled={orderChangeSubmitting}
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">異動數量（±，不可為 0）</label>
+                                                <input
+                                                    type="number"
+                                                    value={row.quantityChange}
+                                                    onChange={(e) => updateOrderChangeItem(idx, { quantityChange: e.target.value })}
+                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white"
+                                                    disabled={orderChangeSubmitting}
+                                                />
+                                            </div>
+
+                                            <div className="flex items-center gap-3 pt-5">
+                                                <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!!row.noSn}
+                                                        onChange={(e) => updateOrderChangeItem(idx, { noSn: e.target.checked })}
+                                                        disabled={orderChangeSubmitting}
+                                                        className="h-4 w-4 rounded border-gray-300"
+                                                    />
+                                                    無 SN
+                                                </label>
+                                                <div className="ml-auto">
+                                                    <Button
+                                                        size="xs"
+                                                        variant="secondary"
+                                                        onClick={() => removeOrderChangeItemRow(idx)}
+                                                        disabled={orderChangeSubmitting || (orderChangeItems || []).length <= 1}
+                                                    >
+                                                        <Minus size={14} className="mr-1" />
+                                                        刪除
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {needSn && (
+                                            <div className="mt-3">
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">新增 SN 清單（需要 {qty} 筆）</label>
+                                                <textarea
+                                                    value={row.snText}
+                                                    onChange={(e) => updateOrderChangeItem(idx, { snText: e.target.value })}
+                                                    placeholder="可用換行/空白/逗號分隔；支援 SN: 前綴"
+                                                    rows={3}
+                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                    disabled={orderChangeSubmitting}
+                                                />
+                                                <div className="text-xs text-gray-500 mt-1">目前 {parsedSnCount} / 需要 {qty}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 </Modal>
