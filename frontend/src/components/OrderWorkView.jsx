@@ -1506,40 +1506,42 @@ export function OrderWorkView({ user }) {
 
                         {/* 例外處理（可追蹤狀態：open/ack/resolved） */}
                         <Card className="border-0 shadow-sm">
-                            <CardHeader className="pb-2 sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100">
+                            <CardHeader className="pb-2">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
                                         <CardTitle className="text-base">例外處理</CardTitle>
                                         <CardDescription>缺貨 / 破損 / 多掃 / 少掃 / SN更換</CardDescription>
                                     </div>
-                                    <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        onClick={() => {
-                                            setCreateExceptionType('stockout');
-                                            setCreateExceptionReason('');
-                                            setCreateExceptionOpen(true);
-                                        }}
-                                    >
-                                        新增
-                                    </Button>
-
-                                    {canProposeOrderChange && (
+                                    <div className="flex items-center gap-2 flex-shrink-0">
                                         <Button
                                             size="sm"
-                                            disabled={hasOpenOrderChange}
+                                            variant="secondary"
                                             onClick={() => {
-                                                setOrderChangeReason('');
-                                                setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
-                                                setOrderChangeOpen(true);
+                                                setCreateExceptionType('stockout');
+                                                setCreateExceptionReason('');
+                                                setCreateExceptionOpen(true);
                                             }}
                                         >
-                                            申請異動
+                                            新增
                                         </Button>
-                                    )}
+
+                                        {canProposeOrderChange && (
+                                            <Button
+                                                size="sm"
+                                                disabled={hasOpenOrderChange}
+                                                onClick={() => {
+                                                    setOrderChangeReason('');
+                                                    setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
+                                                    setOrderChangeOpen(true);
+                                                }}
+                                            >
+                                                申請異動
+                                            </Button>
+                                        )}
+                                    </div>
                                 </div>
                             </CardHeader>
-                            <CardContent className="pt-0">
+                            <CardContent className="pt-0 max-h-[55vh] overflow-auto">
                                 {exceptionsLoading && <SkeletonText lines={3} />}
 
                                 {!exceptionsLoading && (orderExceptions || []).length === 0 && (

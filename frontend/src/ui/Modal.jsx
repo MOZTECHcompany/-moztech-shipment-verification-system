@@ -1,10 +1,12 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from './Button';
 import { cx } from './utils';
 
 export function Modal({ open, onClose, title, children, footer, className }) {
   if (!open) return null;
-  return (
+
+  const node = (
     <div className="fixed inset-0 z-50 animate-in fade-in duration-200">
       <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-all" onClick={onClose} />
       <div className="absolute inset-0 flex items-center justify-center p-4">
@@ -31,6 +33,9 @@ export function Modal({ open, onClose, title, children, footer, className }) {
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') return node;
+  return createPortal(node, document.body);
 }
 
 export default Modal;
