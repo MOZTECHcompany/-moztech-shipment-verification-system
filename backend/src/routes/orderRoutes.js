@@ -355,7 +355,9 @@ router.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
 });
 
 // PATCH /api/orders/:orderId/urgent
-router.patch('/orders/:orderId/urgent', authorizeAdmin, async (req, res) => {
+// admin/superadmin：可操作所有訂單
+// dispatcher：僅可操作自己拋單(imported_by_user_id)的訂單
+router.patch('/orders/:orderId/urgent', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
     const { orderId } = req.params;
     const { isUrgent } = req.body;
     const io = req.app.get('io');
@@ -365,6 +367,16 @@ router.patch('/orders/:orderId/urgent', authorizeAdmin, async (req, res) => {
     }
 
     try {
+        if (req.user?.role === 'dispatcher') {
+            const own = await pool.query(
+                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                [orderId, req.user.id]
+            );
+            if (own.rowCount === 0) {
+                return res.status(403).json({ message: '僅允許操作自己拋單的訂單' });
+            }
+        }
+
         const result = await pool.query(
             'UPDATE orders SET is_urgent = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, voucher_number, is_urgent',
             [isUrgent, orderId]
@@ -400,10 +412,14 @@ router.patch('/orders/:orderId/urgent', authorizeAdmin, async (req, res) => {
 });
 
 // DELETE /api/orders/:orderId
-router.delete('/orders/:orderId', authorizeAdmin, async (req, res) => {
+// admin/superadmin：可刪除所有訂單
+// dispatcher：僅可刪除自己拋單的訂單
+router.delete('/orders/:orderId', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
     const { orderId } = req.params;
     const io = req.app.get('io');
-    const result = await pool.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
+    const result = req.user?.role === 'dispatcher'
+        ? await pool.query('DELETE FROM orders WHERE id = $1 AND imported_by_user_id = $2 RETURNING voucher_number', [orderId, req.user.id])
+        : await pool.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
     if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的訂單' });
     io?.emit('task_deleted', { orderId: parseInt(orderId, 10) });
     res.status(200).json({ message: `訂單 ${result.rows[0].voucher_number} 已被永久刪除` });
@@ -821,7 +837,9 @@ router.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
 });
 
 // POST /api/orders/:orderId/defect
-router.post('/orders/:orderId/defect', authorizeAdmin, async (req, res) => {
+// admin/superadmin：可操作所有訂單
+// dispatcher：僅可操作自己拋單的訂單
+router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
     const { orderId } = req.params;
     const { oldSn, newSn, reason } = req.body;
     const userId = req.user.id;
@@ -834,6 +852,17 @@ router.post('/orders/:orderId/defect', authorizeAdmin, async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+
+        if (req.user?.role === 'dispatcher') {
+            const own = await client.query(
+                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                [orderId, userId]
+            );
+            if (own.rowCount === 0) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: '僅允許操作自己拋單的訂單' });
+            }
+        }
 
         // 1. Find the instance and verify it belongs to the order
         const instanceQuery = `

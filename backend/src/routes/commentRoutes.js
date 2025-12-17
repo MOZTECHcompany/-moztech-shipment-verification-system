@@ -4,7 +4,7 @@
 const express = require('express');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
-const { authorizeAdmin } = require('../middleware/auth');
+const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 
 const router = express.Router();
@@ -406,7 +406,10 @@ router.get('/tasks/pins', async (req, res) => {
     } finally { client.release(); }
 });
 
-router.put('/tasks/pins/:orderId', authorizeAdmin, async (req, res) => {
+// 設定/取消任務置頂（團隊共享）
+// admin/superadmin：可操作所有訂單
+// dispatcher：僅可操作自己拋單(imported_by_user_id)的訂單
+router.put('/tasks/pins/:orderId', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
     const { orderId } = req.params;
     const { pinned } = req.body;
     const userId = req.user?.id || null;
@@ -414,6 +417,17 @@ router.put('/tasks/pins/:orderId', authorizeAdmin, async (req, res) => {
     const client = await pool.connect();
     try {
         await ensureTaskPinsTable(client);
+
+        if (req.user?.role === 'dispatcher') {
+            const own = await client.query(
+                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                [orderId, userId]
+            );
+            if (own.rowCount === 0) {
+                return res.status(403).json({ message: '僅允許操作自己拋單的訂單' });
+            }
+        }
+
         if (pinned) {
             await client.query('INSERT INTO task_pins (order_id, created_by) VALUES ($1, $2) ON CONFLICT (order_id) DO NOTHING', [orderId, userId]);
         } else {

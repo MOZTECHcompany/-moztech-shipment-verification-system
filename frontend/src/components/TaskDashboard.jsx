@@ -116,6 +116,8 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
     const isCompletedView = viewMode === 'completed';
     const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin';
+    const isDispatcherMine = user?.role === 'dispatcher' && Number(task?.imported_by_user_id) === Number(user?.id);
+    const canManageTask = isAdminLike || isDispatcherMine;
     
     const statusInfo = statusConfig[task.status] || { 
         text: task.status, 
@@ -146,6 +148,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
     // 視覺狀態處理 - 強烈風格
     const selectionRing = selectedTasks.includes(task.id) ? 'ring-4 ring-primary/30 scale-[0.98]' : '';
+    const mineRing = isDispatcherMine ? 'ring-2 ring-blue-500/20' : '';
     
     // 根據狀態決定卡片邊框與陰影風格
     let cardStyle = 'glass-panel hover:shadow-2xl hover:scale-[1.02] hover:-rotate-1 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)]';
@@ -159,7 +162,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
         <div className={`
             group relative flex flex-col
             rounded-[32px]
-            ${cardStyle} ${selectionRing}
+            ${cardStyle} ${selectionRing} ${mineRing}
             overflow-hidden
         `}>
             {/* 頂部狀態光條 - 僅在非緊急/置頂時顯示一般顏色，緊急/置頂由邊框主導 */}
@@ -233,8 +236,8 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             </div>
                         )}
                         
-                        {/* Admin Actions - Hover Reveal */}
-                        {user && (user.role === 'admin' || user.role === 'superadmin') && (
+                        {/* 管理操作 - Hover Reveal（admin / superadmin / 自己拋單的 dispatcher） */}
+                        {user && canManageTask && (
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-4 group-hover:translate-x-0 ml-2">
                                 <button onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-blue-600 transition-colors backdrop-blur-sm">
                                     <Pin size={18} />
