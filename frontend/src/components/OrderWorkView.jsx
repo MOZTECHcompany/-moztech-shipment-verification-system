@@ -511,6 +511,12 @@ export function OrderWorkView({ user }) {
         responsibleName: null
     });
 
+    // 例外處理：現場回報（建立 open 例外）
+    const [createExceptionOpen, setCreateExceptionOpen] = useState(false);
+    const [createExceptionType, setCreateExceptionType] = useState('stockout');
+    const [createExceptionReason, setCreateExceptionReason] = useState('');
+    const [createExceptionSubmitting, setCreateExceptionSubmitting] = useState(false);
+
     // 例外處理：拋單員提交處理內容（待管理員審核）
     const [proposalOpen, setProposalOpen] = useState(false);
     const [proposalException, setProposalException] = useState(null);
@@ -854,53 +860,29 @@ export function OrderWorkView({ user }) {
     const packBlockedByExceptions = canPackNow && hasOpenExceptions;
 
     const handleCreateException = async () => {
-        const { value } = await MySwal.fire({
-            title: '回報例外',
-            html: `
-              <div style="text-align:left">
-                <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">類型</label>
-                <select id="exception-type" class="swal2-input" style="margin:0 0 12px 0;width:100%">
-                  <option value="stockout">缺貨</option>
-                  <option value="damage">破損</option>
-                  <option value="over_scan">多掃</option>
-                  <option value="under_scan">少掃</option>
-                  <option value="sn_replace">SN更換</option>
-                  <option value="other">其他</option>
-                </select>
-
-                <label style="display:block;font-size:12px;margin-bottom:6px;color:#6b7280">原因說明</label>
-                <textarea id="exception-reason" class="swal2-textarea" placeholder="請描述原因與現場狀況（必填）" style="margin:0;width:100%"></textarea>
-              </div>
-            `,
-            focusConfirm: false,
-            showCancelButton: true,
-            confirmButtonText: '建立',
-            cancelButtonText: '取消',
-            preConfirm: () => {
-                const type = document.getElementById('exception-type')?.value;
-                const reasonText = document.getElementById('exception-reason')?.value;
-                if (!reasonText || !reasonText.trim()) {
-                    MySwal.showValidationMessage('請填寫原因說明');
-                    return null;
-                }
-                return { type, reasonText: reasonText.trim() };
-            }
-        });
-
-        if (!value) return;
+        const reasonText = String(createExceptionReason || '').trim();
+        if (!reasonText) {
+            toast.error('請填寫原因說明');
+            return;
+        }
 
         try {
+            setCreateExceptionSubmitting(true);
             await apiClient.post(`/api/orders/${orderId}/exceptions`, {
-                type: value.type,
-                reasonText: value.reasonText,
+                type: createExceptionType,
+                reasonText,
                 snapshot: {
                     source: 'order_work_view'
                 }
             });
             toast.success('例外已建立');
+            setCreateExceptionOpen(false);
+            setCreateExceptionReason('');
             fetchOrderExceptions(orderId);
         } catch (err) {
             toast.error('建立例外失敗', { description: err.response?.data?.message || err.message });
+        } finally {
+            setCreateExceptionSubmitting(false);
         }
     };
 
@@ -1381,7 +1363,15 @@ export function OrderWorkView({ user }) {
                                         <CardTitle className="text-base">例外處理</CardTitle>
                                         <CardDescription>缺貨 / 破損 / 多掃 / 少掃 / SN更換</CardDescription>
                                     </div>
-                                    <Button size="sm" variant="secondary" onClick={handleCreateException}>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            setCreateExceptionType('stockout');
+                                            setCreateExceptionReason('');
+                                            setCreateExceptionOpen(true);
+                                        }}
+                                    >
                                         新增
                                     </Button>
                                 </div>
@@ -1636,6 +1626,66 @@ export function OrderWorkView({ user }) {
                     voucherNumber={currentOrderData.order?.voucher_number}
                     onSuccess={() => fetchOrderDetails(orderId)}
                 />
+
+                <Modal
+                    open={createExceptionOpen}
+                    onClose={() => {
+                        if (createExceptionSubmitting) return;
+                        setCreateExceptionOpen(false);
+                    }}
+                    title="回報例外"
+                    footer={
+                        <>
+                            <Button
+                                variant="secondary"
+                                onClick={() => setCreateExceptionOpen(false)}
+                                disabled={createExceptionSubmitting}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                onClick={handleCreateException}
+                                disabled={createExceptionSubmitting}
+                            >
+                                {createExceptionSubmitting ? '建立中…' : '建立'}
+                            </Button>
+                        </>
+                    }
+                >
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">類型</label>
+                            <select
+                                value={createExceptionType}
+                                onChange={(e) => setCreateExceptionType(e.target.value)}
+                                className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
+                                disabled={createExceptionSubmitting}
+                            >
+                                <option value="stockout">缺貨</option>
+                                <option value="damage">破損</option>
+                                <option value="over_scan">多掃</option>
+                                <option value="under_scan">少掃</option>
+                                <option value="sn_replace">SN更換</option>
+                                <option value="other">其他</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">原因說明（必填）</label>
+                            <textarea
+                                value={createExceptionReason}
+                                onChange={(e) => setCreateExceptionReason(e.target.value)}
+                                placeholder="請描述原因與現場狀況（必填）"
+                                className="w-full min-h-[140px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 leading-6 text-gray-900 outline-none"
+                                disabled={createExceptionSubmitting}
+                            />
+                        </div>
+
+                        <div className="text-xs text-gray-500">
+                            建立後可在例外卡片中上傳照片/附件。
+                        </div>
+                    </div>
+                </Modal>
 
                 <Modal
                     open={proposalOpen}
