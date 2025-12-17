@@ -2205,7 +2205,7 @@ export function OrderWorkView({ user }) {
                                     const addedList = parseSnText(row?.addSnText);
 
                                     const removeSet = new Set(removeSelected.map((x) => String(x).toUpperCase()));
-                                    const shownPending = pendingSerials.slice(0, 50);
+                                    const shownPending = pendingSerials;
 
                                     const deltaLabel = delta === 0 ? '未變更' : (delta > 0 ? `+${delta}` : `${delta}`);
 
@@ -2274,6 +2274,12 @@ export function OrderWorkView({ user }) {
                                                                 min={minTarget}
                                                                 value={row.targetQty}
                                                                 onChange={(e) => {
+                                                                    const raw = e.target.value;
+                                                                    if (raw === '') {
+                                                                        // 允許使用者先清空再輸入（避免被即時 clamp 回 minTarget）
+                                                                        updateOrderChangeDraft(row.id, { targetQty: '', removeSelected: [] });
+                                                                        return;
+                                                                    }
                                                                     const n = Number(e.target.value);
                                                                     const next = Number.isFinite(n) ? Math.max(minTarget, Math.trunc(n)) : row.targetQty;
                                                                     // SN 減少：自動幫忙挑選/補齊要移除的 pending SN（可再手動點選調整）
@@ -2307,6 +2313,12 @@ export function OrderWorkView({ user }) {
                                                                     }
 
                                                                     updateOrderChangeDraft(row.id, { targetQty: next, removeSelected: next < originalQty ? row.removeSelected : [] });
+                                                                }}
+                                                                onBlur={() => {
+                                                                    // 若留空離開，回填最低值，避免卡在無效狀態
+                                                                    if (row?.targetQty === '') {
+                                                                        updateOrderChangeDraft(row.id, { targetQty: minTarget, removeSelected: [] });
+                                                                    }
                                                                 }}
                                                                 className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white"
                                                                 disabled={orderChangeSubmitting}
@@ -2363,7 +2375,8 @@ export function OrderWorkView({ user }) {
 
                                                                 {pendingSerials.length > 0 && (
                                                                     <div className="mt-2">
-                                                                        <div className="text-xs text-gray-600 mb-2">可點選 pending SN 快速加入/移除（僅顯示前 50 筆）</div>
+                                                                        <div className="text-xs text-gray-600 mb-2">可點選 pending SN 快速加入/移除</div>
+                                                                        <div className="max-h-[240px] overflow-y-auto rounded-xl border border-gray-200 bg-white/50 p-2">
                                                                         <div className="flex flex-wrap gap-2">
                                                                             {shownPending.map((sn) => {
                                                                                 const key = String(sn).toUpperCase();
@@ -2384,9 +2397,7 @@ export function OrderWorkView({ user }) {
                                                                                     </button>
                                                                                 );
                                                                             })}
-                                                                            {pendingSerials.length > 50 && (
-                                                                                <div className="text-xs text-gray-500">…尚有 {pendingSerials.length - 50} 筆</div>
-                                                                            )}
+                                                                        </div>
                                                                         </div>
                                                                     </div>
                                                                 )}
