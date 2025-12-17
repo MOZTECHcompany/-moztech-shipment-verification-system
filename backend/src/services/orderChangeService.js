@@ -133,7 +133,7 @@ async function fetchInstancesForOrderItemIdsForUpdate(client, orderItemIds) {
         `SELECT *
          FROM order_item_instances
          WHERE order_item_id = ANY($1::int[])
-         ORDER BY updated_at DESC NULLS LAST, id DESC
+         ORDER BY id DESC
          FOR UPDATE`,
         [orderItemIds]
     );
