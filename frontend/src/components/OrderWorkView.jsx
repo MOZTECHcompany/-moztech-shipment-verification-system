@@ -1506,7 +1506,7 @@ export function OrderWorkView({ user }) {
 
                         {/* 例外處理（可追蹤狀態：open/ack/resolved） */}
                         <Card className="border-0 shadow-sm">
-                            <CardHeader className="pb-2">
+                            <CardHeader className="pb-2 sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
                                         <CardTitle className="text-base">例外處理</CardTitle>
