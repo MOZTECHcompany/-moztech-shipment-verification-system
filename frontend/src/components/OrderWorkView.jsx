@@ -1975,7 +1975,7 @@ export function OrderWorkView({ user }) {
                                 className="w-full min-h-[120px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 leading-6 text-gray-900 outline-none"
                                 disabled={orderChangeSubmitting}
                             />
-                            <div className="text-xs text-gray-500 mt-2">異動數量：正數=新增，負數=減少。減少時系統會自動回沖已撿/已裝數量。</div>
+                            <div className="text-xs text-gray-700 font-medium mt-2">異動數量：正數=新增，負數=減少。減少時系統會自動回沖已撿/已裝數量。</div>
                         </div>
 
                         <div className="flex items-center justify-between gap-2">
