@@ -9,7 +9,7 @@ import {
     Loader2, ArrowLeft, Check, ScanLine, Package, 
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
     ChevronUp, ShoppingCart, Box, Camera, MessageSquare,
-    Maximize2, Minimize2, CheckCircle2
+    Maximize2, Minimize2, CheckCircle2, Pencil
 } from 'lucide-react';
 import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge, Modal } from '@/ui';
 import Swal from 'sweetalert2';
@@ -530,9 +530,9 @@ export function OrderWorkView({ user }) {
     const [orderChangeOpen, setOrderChangeOpen] = useState(false);
     const [orderChangeReason, setOrderChangeReason] = useState('');
     const [orderChangeSubmitting, setOrderChangeSubmitting] = useState(false);
-    const [orderChangeItems, setOrderChangeItems] = useState([
-        { barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }
-    ]);
+    const [orderChangeStep, setOrderChangeStep] = useState('edit'); // edit | confirm
+    const [orderChangeDraftItems, setOrderChangeDraftItems] = useState([]);
+    const orderChangeNewIdRef = useRef(1);
 
     // 例外附件預覽
     const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
@@ -890,87 +890,246 @@ export function OrderWorkView({ user }) {
         return unique;
     };
 
-    const updateOrderChangeItem = (index, patch) => {
-        setOrderChangeItems((prev) =>
-            (prev || []).map((row, i) => (i === index ? { ...row, ...patch } : row))
-        );
+    const buildOrderChangeDraftFromOrder = useCallback(() => {
+        const items = currentOrderData.items || [];
+        const instances = currentOrderData.instances || [];
+
+        const instancesByOrderItemId = new Map();
+        for (const inst of instances) {
+            const orderItemId = inst?.order_item_id;
+            if (!orderItemId) continue;
+            const list = instancesByOrderItemId.get(orderItemId) || [];
+            list.push(inst);
+            instancesByOrderItemId.set(orderItemId, list);
+        }
+
+        const groupMap = new Map();
+        for (const row of items) {
+            const barcode = String(row?.barcode || '').trim();
+            if (!barcode) continue;
+            const g = groupMap.get(barcode) || {
+                id: `sku-${barcode}`,
+                isNew: false,
+                barcode,
+                productName: String(row?.product_name || row?.productName || '').trim(),
+                originalQty: 0,
+                pickedQty: 0,
+                packedQty: 0,
+                orderItemIds: [],
+                instances: []
+            };
+
+            g.originalQty += Number(row?.quantity ?? 0) || 0;
+            g.pickedQty += Number(row?.picked_quantity ?? 0) || 0;
+            g.packedQty += Number(row?.packed_quantity ?? 0) || 0;
+            if (row?.id) g.orderItemIds.push(row.id);
+            if (!g.productName) g.productName = String(row?.product_name || '').trim();
+            groupMap.set(barcode, g);
+        }
+
+        for (const g of groupMap.values()) {
+            for (const id of g.orderItemIds) {
+                const list = instancesByOrderItemId.get(id) || [];
+                g.instances.push(...list);
+            }
+        }
+
+        const draft = Array.from(groupMap.values())
+            .map((g) => {
+                const inst = g.instances || [];
+                const isSn = inst.length > 0;
+                const pending = [];
+                const picked = [];
+                const packed = [];
+                for (const i of inst) {
+                    const st = String(i?.status || '').toLowerCase();
+                    const sn = String(i?.serial_number || '').trim();
+                    if (!sn) continue;
+                    if (st === 'packed') packed.push(sn);
+                    else if (st === 'picked') picked.push(sn);
+                    else pending.push(sn);
+                }
+
+                return {
+                    id: g.id,
+                    isNew: false,
+                    barcode: g.barcode,
+                    productName: g.productName,
+                    isSn,
+                    originalQty: Math.max(0, Math.trunc(Number(g.originalQty) || 0)),
+                    targetQty: Math.max(0, Math.trunc(Number(g.originalQty) || 0)),
+                    pickedSnCount: picked.length,
+                    packedSnCount: packed.length,
+                    pendingSerials: pending,
+                    addSnText: '',
+                    removeSelected: [],
+                    expanded: false
+                };
+            })
+            .sort((a, b) => String(a.productName || a.barcode).localeCompare(String(b.productName || b.barcode), 'zh-Hant'));
+
+        return draft;
+    }, [currentOrderData.items, currentOrderData.instances]);
+
+    const openOrderChangeEditor = useCallback(() => {
+        setOrderChangeReason('');
+        setOrderChangeStep('edit');
+        setOrderChangeDraftItems(buildOrderChangeDraftFromOrder());
+        setOrderChangeOpen(true);
+    }, [buildOrderChangeDraftFromOrder]);
+
+    const updateOrderChangeDraft = (id, patch) => {
+        setOrderChangeDraftItems((prev) => (prev || []).map((it) => (it.id === id ? { ...it, ...patch } : it)));
     };
 
-    const addOrderChangeItemRow = () => {
-        setOrderChangeItems((prev) => [
+    const toggleOrderChangeExpanded = (id) => {
+        setOrderChangeDraftItems((prev) => (prev || []).map((it) => (it.id === id ? { ...it, expanded: !it.expanded } : it)));
+    };
+
+    const addNewOrderChangeItem = () => {
+        const nextId = orderChangeNewIdRef.current++;
+        setOrderChangeDraftItems((prev) => [
             ...(prev || []),
-            { barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }
+            {
+                id: `new-${nextId}`,
+                isNew: true,
+                barcode: '',
+                productName: '',
+                isSn: false,
+                originalQty: 0,
+                targetQty: 1,
+                pickedSnCount: 0,
+                packedSnCount: 0,
+                pendingSerials: [],
+                addSnText: '',
+                removeSelected: [],
+                expanded: true
+            }
         ]);
     };
 
-    const removeOrderChangeItemRow = (index) => {
-        setOrderChangeItems((prev) => {
-            const list = prev || [];
-            if (list.length <= 1) return list;
-            return list.filter((_, i) => i !== index);
-        });
+    const removeNewOrderChangeItem = (id) => {
+        setOrderChangeDraftItems((prev) => (prev || []).filter((it) => it.id !== id));
+    };
+
+    const buildOrderChangeProposalFromDraft = () => {
+        const reason = String(orderChangeReason || '').trim();
+        if (!reason) {
+            return { ok: false, message: '請填寫異動原因（必填）' };
+        }
+
+        const proposalItems = [];
+
+        for (const row of (orderChangeDraftItems || [])) {
+            const barcode = String(row?.barcode || '').trim();
+            const productName = String(row?.productName || '').trim();
+            const originalQty = Math.max(0, Math.trunc(Number(row?.originalQty) || 0));
+            const rawTarget = Number(row?.targetQty);
+            const targetQty = Number.isFinite(rawTarget) ? Math.max(0, Math.trunc(rawTarget)) : NaN;
+
+            if (!barcode && !productName) continue;
+            if (!barcode) return { ok: false, message: '品項條碼必填' };
+            if (!productName) return { ok: false, message: `品項 ${barcode} 產品名稱必填` };
+            if (!Number.isFinite(targetQty)) return { ok: false, message: `品項 ${barcode} 目標數量無效` };
+
+            const isSn = !!row?.isSn;
+            const delta = targetQty - originalQty;
+            if (delta === 0) {
+                // new item with 0 means ignore
+                continue;
+            }
+
+            if (isSn && delta < 0) {
+                const pickedPacked = (Number(row?.pickedSnCount) || 0) + (Number(row?.packedSnCount) || 0);
+                if (pickedPacked > 0) {
+                    return { ok: false, message: `品項 ${barcode} 已有刷過的 SN（picked/packed），不可減少數量` };
+                }
+
+                const removeCount = Math.abs(delta);
+                const pendingSet = new Set((row?.pendingSerials || []).map((x) => String(x).toUpperCase()));
+                const removedList = Array.isArray(row?.removeSelected) ? row.removeSelected : [];
+                const removed = parseSnText(removedList.join('\n'));
+                const missing = removed.filter((sn) => !pendingSet.has(String(sn).toUpperCase()));
+                if (missing.length > 0) {
+                    return { ok: false, message: `品項 ${barcode} 有 SN 不存在或非 pending，無法移除：${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '…' : ''}` };
+                }
+                if (removed.length !== removeCount) {
+                    return { ok: false, message: `品項 ${barcode} 減少 ${removeCount}，需選取/貼上 ${removeCount} 支待移除 SN（目前 ${removed.length}）` };
+                }
+
+                proposalItems.push({
+                    barcode,
+                    productName,
+                    quantityChange: delta,
+                    noSn: false,
+                    removedSnList: removed
+                });
+                continue;
+            }
+
+            if (isSn && delta > 0) {
+                const addCount = delta;
+                const added = parseSnText(row?.addSnText);
+                if (added.length !== addCount) {
+                    return { ok: false, message: `品項 ${barcode} 新增 ${addCount}，需提供同數量 SN（目前 ${added.length}）` };
+                }
+                proposalItems.push({
+                    barcode,
+                    productName,
+                    quantityChange: delta,
+                    noSn: false,
+                    snList: added
+                });
+                continue;
+            }
+
+            // non-SN items
+            proposalItems.push({
+                barcode,
+                productName,
+                quantityChange: delta,
+                noSn: true
+            });
+        }
+
+        if (proposalItems.length === 0) {
+            return { ok: false, message: '尚未修改任何品項，無法送出' };
+        }
+
+        return {
+            ok: true,
+            value: {
+                reason,
+                items: proposalItems
+            }
+        };
+    };
+
+    const goOrderChangeConfirm = () => {
+        const built = buildOrderChangeProposalFromDraft();
+        if (!built.ok) {
+            toast.error(built.message);
+            return;
+        }
+        setOrderChangeStep('confirm');
     };
 
     const submitOrderChange = async () => {
-        const reason = String(orderChangeReason || '').trim();
-        if (!reason) {
-            toast.error('請填寫異動原因（必填）');
+        const built = buildOrderChangeProposalFromDraft();
+        if (!built.ok) {
+            toast.error(built.message);
             return;
-        }
-
-        const normalizedItems = (orderChangeItems || [])
-            .map((row) => {
-                const barcode = String(row.barcode || '').trim();
-                const productName = String(row.productName || '').trim();
-                const quantityChangeNum = Number(row.quantityChange);
-                const quantityChange = Number.isFinite(quantityChangeNum) ? Math.trunc(quantityChangeNum) : NaN;
-                const noSn = !!row.noSn;
-                const snList = !noSn ? parseSnText(row.snText) : [];
-                return { barcode, productName, quantityChange, noSn, snList };
-            })
-            .filter((x) => x.barcode || x.productName || Number.isFinite(x.quantityChange));
-
-        if (!normalizedItems.length) {
-            toast.error('請至少新增一筆異動品項');
-            return;
-        }
-
-        for (const it of normalizedItems) {
-            if (!it.barcode) {
-                toast.error('品項條碼必填');
-                return;
-            }
-            if (!it.productName) {
-                toast.error(`品項 ${it.barcode} 產品名稱必填`);
-                return;
-            }
-            if (!Number.isFinite(it.quantityChange) || it.quantityChange === 0) {
-                toast.error(`品項 ${it.barcode} 異動數量不可為 0`);
-                return;
-            }
-            if (!it.noSn && it.quantityChange > 0) {
-                if (it.snList.length !== it.quantityChange) {
-                    toast.error(`品項 ${it.barcode} 為有 SN，新增數量 ${it.quantityChange} 必須提供同數量 SN（目前 ${it.snList.length}）`);
-                    return;
-                }
-            }
         }
 
         try {
             setOrderChangeSubmitting(true);
             await apiClient.post(`/api/orders/${orderId}/exceptions`, {
                 type: 'order_change',
-                reasonText: reason,
+                reasonText: built.value.reason,
                 snapshot: {
                     proposal: {
-                        note: reason,
-                        items: normalizedItems.map(({ barcode, productName, quantityChange, noSn, snList }) => ({
-                            barcode,
-                            productName,
-                            quantityChange,
-                            noSn,
-                            ...(noSn ? {} : { snList })
-                        }))
+                        note: built.value.reason,
+                        items: built.value.items
                     },
                     source: 'order_work_view'
                 }
@@ -980,9 +1139,11 @@ export function OrderWorkView({ user }) {
                     ? '已送出訂單異動，請在下方例外列表按「核可」套用（會留痕）'
                     : '已送出訂單異動申請，等待管理員核可'
             );
+
             setOrderChangeOpen(false);
             setOrderChangeReason('');
-            setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
+            setOrderChangeStep('edit');
+            setOrderChangeDraftItems([]);
             fetchOrderExceptions(orderId);
         } catch (err) {
             toast.error('送出失敗', { description: err.response?.data?.message || err.message });
@@ -1529,11 +1690,7 @@ export function OrderWorkView({ user }) {
                                             <Button
                                                 size="sm"
                                                 disabled={hasOpenOrderChange}
-                                                onClick={() => {
-                                                    setOrderChangeReason('');
-                                                    setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
-                                                    setOrderChangeOpen(true);
-                                                }}
+                                                onClick={openOrderChangeEditor}
                                             >
                                                 申請異動
                                             </Button>
@@ -1571,11 +1728,27 @@ export function OrderWorkView({ user }) {
                                                                 )}
                                                                 {Array.isArray(ex.snapshot.proposal?.items) && ex.snapshot.proposal.items.length > 0 && (
                                                                     <div className="mt-2 space-y-1">
-                                                                        {ex.snapshot.proposal.items.slice(0, 8).map((it, idx) => (
-                                                                            <div key={`${ex.id}-chg-${idx}`} className="text-[11px] text-gray-600 break-words">
-                                                                                {it.barcode} · {it.productName} · 異動 {it.quantityChange}{it.noSn ? ' · 無SN' : ' · 有SN'}
-                                                                            </div>
-                                                                        ))}
+                                                                        {ex.snapshot.proposal.items.slice(0, 8).map((it, idx) => {
+                                                                            const barcode = String(it?.barcode || '').trim();
+                                                                            const delta = Math.trunc(Number(it?.quantityChange) || 0);
+                                                                            const originalQty = (currentOrderData.items || [])
+                                                                                .filter((x) => String(x?.barcode || '').trim() === barcode)
+                                                                                .reduce((acc, x) => acc + (Number(x?.quantity ?? 0) || 0), 0);
+                                                                            const targetQty = Math.max(0, Math.trunc(originalQty) + delta);
+                                                                            const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
+                                                                            const isNoSn = !!it?.noSn;
+                                                                            const snAdded = !isNoSn && delta > 0 && Array.isArray(it?.snList) ? it.snList.length : 0;
+                                                                            const snRemoved = !isNoSn && delta < 0 && Array.isArray(it?.removedSnList) ? it.removedSnList.length : 0;
+
+                                                                            return (
+                                                                                <div key={`${ex.id}-chg-${idx}`} className="text-[11px] text-gray-600 break-words">
+                                                                                    {barcode} · {it.productName} · {originalQty}→{targetQty}（{deltaText}）
+                                                                                    {isNoSn ? ' · 無SN' : ' · SN'}
+                                                                                    {!isNoSn && snAdded > 0 ? ` · 新增SN ${snAdded}` : ''}
+                                                                                    {!isNoSn && snRemoved > 0 ? ` · 移除SN ${snRemoved}` : ''}
+                                                                                </div>
+                                                                            );
+                                                                        })}
                                                                         {ex.snapshot.proposal.items.length > 8 && (
                                                                             <div className="text-[11px] text-gray-500">僅顯示前 8 筆</div>
                                                                         )}
@@ -1947,140 +2120,302 @@ export function OrderWorkView({ user }) {
                     onClose={() => {
                         if (orderChangeSubmitting) return;
                         setOrderChangeOpen(false);
+                        setOrderChangeStep('edit');
                     }}
                     title="申請訂單異動（待主管核可）"
                     footer={
                         <>
-                            <Button
-                                variant="secondary"
-                                onClick={() => setOrderChangeOpen(false)}
-                                disabled={orderChangeSubmitting}
-                            >
-                                取消
-                            </Button>
-                            <Button
-                                onClick={submitOrderChange}
-                                disabled={orderChangeSubmitting}
-                            >
-                                {orderChangeSubmitting ? '送出中…' : '送出審核'}
-                            </Button>
+                            {orderChangeStep === 'edit' ? (
+                                <>
+                                    <Button
+                                        variant="secondary"
+                                        onClick={() => setOrderChangeOpen(false)}
+                                        disabled={orderChangeSubmitting}
+                                    >
+                                        取消
+                                    </Button>
+                                    <Button
+                                        onClick={goOrderChangeConfirm}
+                                        disabled={orderChangeSubmitting}
+                                    >
+                                        下一步核對
+                                    </Button>
+                                </>
+                            ) : (
+                                <>
+                                    <Button
+                                        variant="secondary"
+                                        onClick={() => setOrderChangeStep('edit')}
+                                        disabled={orderChangeSubmitting}
+                                    >
+                                        返回修改
+                                    </Button>
+                                    <Button
+                                        onClick={submitOrderChange}
+                                        disabled={orderChangeSubmitting}
+                                    >
+                                        {orderChangeSubmitting ? '送出中…' : '確認送出'}
+                                    </Button>
+                                </>
+                            )}
                         </>
                     }
                 >
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-2">異動原因（必填）</label>
-                            <textarea
-                                value={orderChangeReason}
-                                onChange={(e) => setOrderChangeReason(e.target.value)}
-                                placeholder="請描述異動原因（必填）"
-                                className="w-full min-h-[120px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 leading-6 text-gray-900 outline-none"
-                                disabled={orderChangeSubmitting}
-                            />
-                            <div className="text-xs text-gray-700 font-medium mt-2">異動數量：正數=新增，負數=減少。減少時系統會自動回沖已撿/已裝數量。</div>
-                        </div>
+                    {orderChangeStep === 'edit' ? (
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">異動原因（必填）</label>
+                                <textarea
+                                    value={orderChangeReason}
+                                    onChange={(e) => setOrderChangeReason(e.target.value)}
+                                    placeholder="請描述異動原因（必填）"
+                                    className="w-full min-h-[110px] rounded-xl bg-white/70 border border-gray-200 px-4 py-3 leading-6 text-gray-900 outline-none"
+                                    disabled={orderChangeSubmitting}
+                                />
+                                <div className="text-xs text-gray-700 font-medium mt-2">請直接修改「目標數量」，系統會自動計算差異並送審。</div>
+                            </div>
 
-                        <div className="flex items-center justify-between gap-2">
-                            <div className="text-sm font-semibold text-gray-700">異動品項</div>
-                            <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={addOrderChangeItemRow}
-                                disabled={orderChangeSubmitting}
-                            >
-                                <Plus size={14} className="mr-1" />
-                                新增一行
-                            </Button>
-                        </div>
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="text-sm font-semibold text-gray-700">品項列表</div>
+                                <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={addNewOrderChangeItem}
+                                    disabled={orderChangeSubmitting}
+                                >
+                                    <Plus size={14} className="mr-1" />
+                                    新增品項
+                                </Button>
+                            </div>
 
-                        <div className="space-y-3">
-                            {(orderChangeItems || []).map((row, idx) => {
-                                const qtyNum = Number(row.quantityChange);
-                                const qty = Number.isFinite(qtyNum) ? Math.trunc(qtyNum) : 0;
-                                const needSn = !row.noSn && qty > 0;
-                                const parsedSnCount = needSn ? parseSnText(row.snText).length : 0;
-                                return (
-                                    <div key={`order-change-row-${idx}`} className="rounded-xl border border-gray-200 bg-white/60 p-3">
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">條碼（必填）</label>
-                                                <input
-                                                    type="text"
-                                                    value={row.barcode}
-                                                    onChange={(e) => updateOrderChangeItem(idx, { barcode: e.target.value })}
-                                                    placeholder="例如：4712345678901"
-                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
-                                                    disabled={orderChangeSubmitting}
-                                                />
-                                            </div>
+                            <div className="space-y-3">
+                                {(orderChangeDraftItems || []).map((row) => {
+                                    const originalQty = Math.max(0, Math.trunc(Number(row?.originalQty) || 0));
+                                    const targetQty = Math.max(0, Math.trunc(Number(row?.targetQty) || 0));
+                                    const delta = targetQty - originalQty;
+                                    const pickedPacked = (Number(row?.pickedSnCount) || 0) + (Number(row?.packedSnCount) || 0);
+                                    const isSn = !!row?.isSn;
+                                    const minTarget = isSn && pickedPacked > 0 ? originalQty : 0;
+                                    const pendingSerials = Array.isArray(row?.pendingSerials) ? row.pendingSerials : [];
+                                    const removeSelected = Array.isArray(row?.removeSelected) ? row.removeSelected : [];
+                                    const removeCountNeeded = delta < 0 ? Math.abs(delta) : 0;
+                                    const addCountNeeded = delta > 0 ? delta : 0;
+                                    const addedList = parseSnText(row?.addSnText);
 
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">品名（必填）</label>
-                                                <input
-                                                    type="text"
-                                                    value={row.productName}
-                                                    onChange={(e) => updateOrderChangeItem(idx, { productName: e.target.value })}
-                                                    placeholder="例如：某某商品"
-                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
-                                                    disabled={orderChangeSubmitting}
-                                                />
-                                            </div>
+                                    const removeSet = new Set(removeSelected.map((x) => String(x).toUpperCase()));
+                                    const shownPending = pendingSerials.slice(0, 50);
 
-                                            <div>
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">異動數量（±，不可為 0）</label>
-                                                <input
-                                                    type="number"
-                                                    value={row.quantityChange}
-                                                    onChange={(e) => updateOrderChangeItem(idx, { quantityChange: e.target.value })}
-                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white"
-                                                    disabled={orderChangeSubmitting}
-                                                />
-                                            </div>
+                                    const deltaLabel = delta === 0 ? '未變更' : (delta > 0 ? `+${delta}` : `${delta}`);
 
-                                            <div className="flex items-center gap-3 pt-5">
-                                                <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={!!row.noSn}
-                                                        onChange={(e) => updateOrderChangeItem(idx, { noSn: e.target.checked })}
-                                                        disabled={orderChangeSubmitting}
-                                                        className="h-4 w-4 rounded border-gray-300"
-                                                    />
-                                                    無 SN
-                                                </label>
-                                                <div className="ml-auto">
-                                                    <Button
-                                                        size="xs"
-                                                        variant="secondary"
-                                                        onClick={() => removeOrderChangeItemRow(idx)}
-                                                        disabled={orderChangeSubmitting || (orderChangeItems || []).length <= 1}
-                                                    >
-                                                        <Minus size={14} className="mr-1" />
-                                                        刪除
+                                    return (
+                                        <div key={row.id} className="rounded-2xl border border-gray-200 bg-white/60 p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <div className="text-sm font-bold text-gray-900 truncate">{row.productName || (row.isNew ? '（新增品項）' : '')}</div>
+                                                        {isSn ? <Badge variant="info">SN</Badge> : <Badge variant="neutral">無SN</Badge>}
+                                                        <Badge variant={delta === 0 ? 'neutral' : (delta > 0 ? 'success' : 'warning')}>{deltaLabel}</Badge>
+                                                    </div>
+                                                    <div className="text-xs text-gray-600 mt-1 break-words">條碼：{row.barcode || '（未填）'} · 原始 {originalQty} → 目標 {targetQty}</div>
+                                                    {isSn && (
+                                                        <div className="text-xs text-gray-500 mt-1">SN 狀態：pending {pendingSerials.length} / picked {row.pickedSnCount} / packed {row.packedSnCount}</div>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-2 flex-shrink-0">
+                                                    {row.isNew && (
+                                                        <Button size="xs" variant="secondary" onClick={() => removeNewOrderChangeItem(row.id)} disabled={orderChangeSubmitting}>
+                                                            <Minus size={14} className="mr-1" />
+                                                            移除
+                                                        </Button>
+                                                    )}
+                                                    <Button size="sm" variant="secondary" onClick={() => toggleOrderChangeExpanded(row.id)} disabled={orderChangeSubmitting}>
+                                                        <Pencil size={14} className="mr-1" />
+                                                        {row.expanded ? '收合' : '編輯'}
                                                     </Button>
                                                 </div>
                                             </div>
-                                        </div>
 
-                                        {needSn && (
-                                            <div className="mt-3">
-                                                <label className="block text-xs font-semibold text-gray-700 mb-1">新增 SN 清單（需要 {qty} 筆）</label>
-                                                <textarea
-                                                    value={row.snText}
-                                                    onChange={(e) => updateOrderChangeItem(idx, { snText: e.target.value })}
-                                                    placeholder="可用換行/空白/逗號分隔；支援 SN: 前綴"
-                                                    rows={3}
-                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
-                                                    disabled={orderChangeSubmitting}
-                                                />
-                                                <div className="text-xs text-gray-500 mt-1">目前 {parsedSnCount} / 需要 {qty}</div>
-                                            </div>
-                                        )}
+                                            {row.expanded && (
+                                                <div className="mt-4 space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                        <div>
+                                                            <label className="block text-xs font-semibold text-gray-700 mb-1">條碼（必填）</label>
+                                                            <input
+                                                                type="text"
+                                                                value={row.barcode}
+                                                                onChange={(e) => updateOrderChangeDraft(row.id, { barcode: e.target.value })}
+                                                                placeholder="例如：4712345678901"
+                                                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                                disabled={orderChangeSubmitting || (!row.isNew && !!row.barcode)}
+                                                            />
+                                                            {!row.isNew && (
+                                                                <div className="text-[11px] text-gray-400 mt-1">既有品項條碼不可修改</div>
+                                                            )}
+                                                        </div>
+
+                                                        <div>
+                                                            <label className="block text-xs font-semibold text-gray-700 mb-1">品名（必填）</label>
+                                                            <input
+                                                                type="text"
+                                                                value={row.productName}
+                                                                onChange={(e) => updateOrderChangeDraft(row.id, { productName: e.target.value })}
+                                                                placeholder="例如：某某商品"
+                                                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                                disabled={orderChangeSubmitting}
+                                                            />
+                                                        </div>
+
+                                                        <div>
+                                                            <label className="block text-xs font-semibold text-gray-700 mb-1">目標數量（≥ 0）</label>
+                                                            <input
+                                                                type="number"
+                                                                min={minTarget}
+                                                                value={row.targetQty}
+                                                                onChange={(e) => {
+                                                                    const n = Number(e.target.value);
+                                                                    const next = Number.isFinite(n) ? Math.max(minTarget, Math.trunc(n)) : row.targetQty;
+                                                                    // 若 SN 且已有刷過，避免輸入小於原始
+                                                                    updateOrderChangeDraft(row.id, { targetQty: next, removeSelected: next < originalQty ? row.removeSelected : [] });
+                                                                }}
+                                                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white"
+                                                                disabled={orderChangeSubmitting}
+                                                            />
+                                                            {isSn && pickedPacked > 0 && (
+                                                                <div className="text-[11px] text-amber-600 mt-1">此品項已有刷過的 SN（picked/packed），不可減少數量</div>
+                                                            )}
+                                                        </div>
+
+                                                        {row.isNew && (
+                                                            <div className="flex items-center gap-3 pt-5">
+                                                                <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={!!row.isSn}
+                                                                        onChange={(e) => updateOrderChangeDraft(row.id, { isSn: e.target.checked, addSnText: '', removeSelected: [] })}
+                                                                        disabled={orderChangeSubmitting}
+                                                                        className="h-4 w-4 rounded border-gray-300"
+                                                                    />
+                                                                    有 SN
+                                                                </label>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {isSn && addCountNeeded > 0 && (
+                                                        <div>
+                                                            <label className="block text-xs font-semibold text-gray-700 mb-1">新增 SN 清單（需要 {addCountNeeded} 筆）</label>
+                                                            <textarea
+                                                                value={row.addSnText}
+                                                                onChange={(e) => updateOrderChangeDraft(row.id, { addSnText: e.target.value })}
+                                                                placeholder="可用換行/空白/逗號分隔；支援 SN: 前綴"
+                                                                rows={3}
+                                                                className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                                disabled={orderChangeSubmitting}
+                                                            />
+                                                            <div className="text-xs text-gray-500 mt-1">目前 {addedList.length} / 需要 {addCountNeeded}</div>
+                                                        </div>
+                                                    )}
+
+                                                    {isSn && removeCountNeeded > 0 && (
+                                                        <div>
+                                                            {pickedPacked > 0 ? (
+                                                                <div className="text-sm text-amber-700 bg-amber-50/60 border border-amber-200 rounded-xl p-3">
+                                                                    此品項已有刷過的 SN（picked/packed），依規則不可減少。
+                                                                </div>
+                                                            ) : (
+                                                                <>
+                                                                    <label className="block text-xs font-semibold text-gray-700 mb-1">要移除的 SN（需要 {removeCountNeeded} 筆，僅限 pending）</label>
+                                                                    <textarea
+                                                                        value={(removeSelected || []).join('\n')}
+                                                                        onChange={(e) => updateOrderChangeDraft(row.id, { removeSelected: parseSnText(e.target.value) })}
+                                                                        placeholder="貼上要移除的 SN（可用換行/空白/逗號分隔）"
+                                                                        rows={3}
+                                                                        className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                                        disabled={orderChangeSubmitting}
+                                                                    />
+                                                                    <div className="text-xs text-gray-500 mt-1">目前 {removeSelected.length} / 需要 {removeCountNeeded}</div>
+
+                                                                    {pendingSerials.length > 0 && (
+                                                                        <div className="mt-2">
+                                                                            <div className="text-xs text-gray-600 mb-2">可點選 pending SN 快速加入/移除（僅顯示前 50 筆）</div>
+                                                                            <div className="flex flex-wrap gap-2">
+                                                                                {shownPending.map((sn) => {
+                                                                                    const key = String(sn).toUpperCase();
+                                                                                    const selected = removeSet.has(key);
+                                                                                    return (
+                                                                                        <button
+                                                                                            key={key}
+                                                                                            type="button"
+                                                                                            onClick={() => {
+                                                                                                const next = selected
+                                                                                                    ? removeSelected.filter((x) => String(x).toUpperCase() !== key)
+                                                                                                    : [...removeSelected, sn];
+                                                                                                updateOrderChangeDraft(row.id, { removeSelected: parseSnText(next.join('\n')) });
+                                                                                            }}
+                                                                                            className={`text-xs px-2 py-1 rounded-full border transition-colors ${selected ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                                                                                        >
+                                                                                            {sn}
+                                                                                        </button>
+                                                                                    );
+                                                                                })}
+                                                                                {pendingSerials.length > 50 && (
+                                                                                    <div className="text-xs text-gray-500">…尚有 {pendingSerials.length - 50} 筆</div>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            <div className="rounded-xl border border-gray-200 bg-white/60 p-3">
+                                <div className="text-sm font-semibold text-gray-900">二次核對</div>
+                                <div className="text-xs text-gray-600 mt-1">請確認以下異動內容正確後再送出。</div>
+                                <div className="text-xs text-gray-700 mt-3 break-words">原因：{String(orderChangeReason || '').trim() || '（未填）'}</div>
+                            </div>
+
+                            {(() => {
+                                const built = buildOrderChangeProposalFromDraft();
+                                if (!built.ok) {
+                                    return <div className="text-sm text-red-600">{built.message}</div>;
+                                }
+                                return (
+                                    <div className="space-y-2">
+                                        {built.value.items.map((it, idx) => {
+                                            const qty = Number(it.quantityChange);
+                                            const deltaText = qty > 0 ? `+${qty}` : `${qty}`;
+                                            return (
+                                                <div key={`preview-${idx}`} className="rounded-xl border border-gray-200 bg-white/60 p-3">
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <div className="text-sm font-bold text-gray-900 break-words">{it.productName}</div>
+                                                            <div className="text-xs text-gray-600 mt-1 break-words">{it.barcode}</div>
+                                                            <div className="text-xs text-gray-700 mt-2">異動：{deltaText}{it.noSn ? '（無SN）' : '（SN）'}</div>
+                                                            {!it.noSn && qty > 0 && Array.isArray(it.snList) && (
+                                                                <div className="text-xs text-gray-600 mt-1">新增 SN：{it.snList.length} 筆</div>
+                                                            )}
+                                                            {!it.noSn && qty < 0 && Array.isArray(it.removedSnList) && (
+                                                                <div className="text-xs text-gray-600 mt-1">移除 SN：{it.removedSnList.length} 筆</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 );
-                            })}
+                            })()}
                         </div>
-                    </div>
+                    )}
                 </Modal>
 
                 <Modal

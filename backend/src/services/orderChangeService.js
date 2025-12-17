@@ -69,6 +69,7 @@ function validateOrderChangeProposal(proposal) {
         const quantityChange = normalizeQuantityChange(raw?.quantityChange);
         const noSn = !!raw?.noSn;
         const snList = parseSnList(raw?.snList);
+        const removedSnList = parseSnList(raw?.removedSnList);
 
         if (!barcode) return { ok: false, message: '品項 barcode 必填' };
         if (!productName) return { ok: false, message: `品項 ${barcode} productName 必填` };
@@ -81,7 +82,16 @@ function validateOrderChangeProposal(proposal) {
             }
         }
 
-        items.push({ barcode, productName, quantityChange, noSn, snList });
+        // If removing SN-tracked items, removedSnList is optional for backward compatibility.
+        // If provided, it must match the removal count.
+        if (!noSn && quantityChange < 0 && removedSnList.length > 0) {
+            const removeCount = Math.abs(quantityChange);
+            if (removedSnList.length !== removeCount) {
+                return { ok: false, message: `品項 ${barcode} 為有 SN，減少數量 ${removeCount} 必須提供同數量待移除 SN（目前 ${removedSnList.length}）` };
+            }
+        }
+
+        items.push({ barcode, productName, quantityChange, noSn, snList, removedSnList });
     }
 
     return { ok: true, value: { note, items } };
@@ -220,7 +230,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
     const changesApplied = [];
 
     for (const change of validated.value.items) {
-        const { barcode, productName, quantityChange, noSn, snList } = change;
+        const { barcode, productName, quantityChange, noSn, snList, removedSnList } = change;
 
         const itemRows = await fetchOrderItemsByBarcodeForUpdate(client, orderId, barcode);
         const existingItems = itemRows.rows || [];
@@ -320,38 +330,55 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
             }
 
             if (quantityChange < 0) {
-                const removeCount = Math.min(existingTotalQty, Math.abs(quantityChange));
+                const removeCount = Math.abs(quantityChange);
 
-                // Pick instances to remove
-                const chosen = pickInstancesToRemove(existingInstances, removeCount);
-                if (chosen.length !== removeCount) {
-                    const e = new Error(`品項 ${barcode} 需要回沖 ${removeCount} 筆，但可用序號不足`);
+                // Strict rule: if any SN has been scanned (picked/packed), forbid decrease.
+                const hasPickedOrPacked = existingInstances.some((i) => {
+                    const st = String(i?.status || '').toLowerCase();
+                    return st === 'picked' || st === 'packed';
+                });
+                if (hasPickedOrPacked) {
+                    const e = new Error(`品項 ${barcode} 已有刷過的 SN（picked/packed），不可減少數量`);
                     e.status = 409;
                     throw e;
                 }
 
-                // Rollback statuses before removal: packed -> picked -> pending
-                const rollback = [];
-                for (const inst of chosen) {
-                    const st = String(inst.status).toLowerCase();
-                    if (st === 'packed') {
-                        await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', ['picked', inst.id]);
-                        rollback.push({ id: inst.id, serialNumber: inst.serial_number, from: 'packed', to: 'picked' });
+                const pendingInstances = existingInstances.filter((i) => String(i?.status || '').toLowerCase() === 'pending');
+                let chosen = [];
+                let removalSource = 'auto';
+
+                if (Array.isArray(removedSnList) && removedSnList.length > 0) {
+                    if (removedSnList.length !== removeCount) {
+                        const e = new Error(`品項 ${barcode} 需移除 ${removeCount} 筆 SN，但提供 ${removedSnList.length} 筆`);
+                        e.status = 400;
+                        throw e;
                     }
-                }
-                for (const inst of chosen) {
-                    const st = String(inst.status).toLowerCase();
-                    if (st === 'picked' || st === 'packed') {
-                        // After first pass, packed are already set to picked
-                        const current = rollback.find((r) => r.id === inst.id) ? 'picked' : st;
-                        if (current === 'picked') {
-                            await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', ['pending', inst.id]);
-                            rollback.push({ id: inst.id, serialNumber: inst.serial_number, from: 'picked', to: 'pending' });
-                        }
+
+                    const pendingBySn = new Map(pendingInstances.map((inst) => [String(inst.serial_number || '').toUpperCase(), inst]));
+                    const missing = [];
+                    for (const sn of removedSnList) {
+                        const inst = pendingBySn.get(String(sn).toUpperCase());
+                        if (!inst) missing.push(sn);
+                        else chosen.push(inst);
                     }
+                    if (missing.length > 0) {
+                        const e = new Error(`品項 ${barcode} 有 SN 不存在或非 pending，無法移除：${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '…' : ''}`);
+                        e.status = 409;
+                        throw e;
+                    }
+                    removalSource = 'specified';
+                } else {
+                    chosen = pendingInstances.slice(0, removeCount);
+                    removalSource = 'auto';
                 }
 
-                // Remove the instances
+                if (chosen.length !== removeCount) {
+                    const e = new Error(`品項 ${barcode} 需移除 ${removeCount} 筆 SN，但 pending 僅剩 ${pendingInstances.length} 筆`);
+                    e.status = 409;
+                    throw e;
+                }
+
+                // Remove the instances (all pending)
                 const removedSerials = chosen.map((i) => i.serial_number);
                 await client.query('DELETE FROM order_item_instances WHERE id = ANY($1::int[])', [chosen.map((i) => i.id)]);
 
@@ -378,7 +405,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     previousTotalQuantity: existingTotalQty,
                     newTotalQuantity: existingTotalQty - removeCount,
                     removedSerialNumbers: removedSerials,
-                    rollback
+                    removalSource
                 });
                 continue;
             }
