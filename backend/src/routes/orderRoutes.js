@@ -568,26 +568,33 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                 
                 if (summaryRaw) {
                     const serialNumbers = [];
-                    // 1. 嘗試以常見分隔符分割 (/, space, newline, comma, etc)
-                    // 支援格式如: "Code/SN", "SN1, SN2", "SN1 SN2"
-                    const potentialSNs = summaryRaw.split(/[\/\s,，、\n\r]+/);
+                    // 1. 嘗試以常見分隔符分割 (/, space, newline, comma, bullet, etc)
+                    // 支援格式如: "SN:B19B...ㆍSN:B19B..."、"Code・Code"、"SN1, SN2", "SN1 SN2"
+                    const potentialSNs = summaryRaw.split(/[\/\s,，、\n\rㆍ·・•]+/);
                     
                     for (const part of potentialSNs) {
                         const cleanPart = part.trim();
-                        // 假設 SN 為 12 碼英數字 (根據用戶範例 T03K52027400)
-                        if (cleanPart.length === 12 && /^[A-Za-z0-9]+$/.test(cleanPart)) {
-                            serialNumbers.push(cleanPart);
+                        if (!cleanPart) continue;
+
+                        // 允許舊格式前綴：SN: / SN：
+                        const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim();
+
+                        // 假設 SN 為 12 碼英數字 (根據用戶範例 T03K52027400、B19B52004735)
+                        if (normalized.length === 12 && /^[A-Za-z0-9]+$/.test(normalized)) {
+                            serialNumbers.push(normalized);
                         }
                     }
 
                     // 2. Fallback: 如果找不到分隔符，且字串長度是 12 的倍數，嘗試切分 (舊格式相容: 連續SN無分隔符)
                     if (serialNumbers.length === 0) {
-                         const cleanSummary = summaryRaw.replace(/[ㆍ\s\/]/g, '');
-                         if (cleanSummary.length > 0 && cleanSummary.length % 12 === 0) {
-                             for (let j = 0; j < cleanSummary.length; j += 12) {
-                                 serialNumbers.push(cleanSummary.substring(j, j + 12));
-                             }
-                         }
+                        // 先移除可能存在的 SN: 前綴，避免把 "SN:" 也一起硬切造成 SN 亂掉
+                        const noPrefix = summaryRaw.replace(/SN\s*[:：]/gi, '');
+                        const cleanSummary = noPrefix.replace(/[\/\s,，、\n\rㆍ·・•]/g, '');
+                        if (cleanSummary.length > 0 && cleanSummary.length % 12 === 0 && /^[A-Za-z0-9]+$/.test(cleanSummary)) {
+                            for (let j = 0; j < cleanSummary.length; j += 12) {
+                                serialNumbers.push(cleanSummary.substring(j, j + 12));
+                            }
+                        }
                     }
                     
                     // 去除重複並寫入
