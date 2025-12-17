@@ -1,9 +1,12 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Button } from './Button';
 
 export function AppLayout({ user, onLogout, children }) {
+  const location = useLocation();
+  const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher';
+
   return (
     <div className="min-h-screen bg-mesh relative overflow-x-hidden">
       <div className="noise-overlay" aria-hidden="true"></div>
@@ -19,7 +22,36 @@ export function AppLayout({ user, onLogout, children }) {
               <span className="opacity-80 whitespace-nowrap">出貨／倉儲管理系統</span>
             </div>
             {user && (
-              <div className="flex justify-end">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 w-full sm:w-auto">
+                <Button
+                  as={Link}
+                  to="/tasks"
+                  variant="secondary"
+                  size="sm"
+                  className={`bg-white/70 hover:bg-white/90 border-0 shadow-sm rounded-full px-4 w-full sm:w-auto ${location.pathname.startsWith('/tasks') ? 'ring-2 ring-primary/20' : ''}`}
+                >
+                  任務
+                </Button>
+                <Button
+                  as={Link}
+                  to="/team"
+                  variant="secondary"
+                  size="sm"
+                  className={`bg-white/70 hover:bg-white/90 border-0 shadow-sm rounded-full px-4 w-full sm:w-auto ${location.pathname.startsWith('/team') ? 'ring-2 ring-primary/20' : ''}`}
+                >
+                  公告板
+                </Button>
+                {isAdminLike && (
+                  <Button
+                    as={Link}
+                    to="/admin"
+                    variant="secondary"
+                    size="sm"
+                    className={`bg-white/70 hover:bg-white/90 border-0 shadow-sm rounded-full px-4 w-full sm:w-auto ${location.pathname.startsWith('/admin') ? 'ring-2 ring-primary/20' : ''}`}
+                  >
+                    管理
+                  </Button>
+                )}
                 <Button
                   variant="secondary"
                   size="sm"

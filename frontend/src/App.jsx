@@ -1,6 +1,6 @@
 // frontend/src/App.jsx
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import apiClient from './api/api';
@@ -16,6 +16,8 @@ import { DefectStats } from './components/admin/DefectStats';
 import { Exceptions } from './components/admin/Exceptions';
 import { TaskDashboard } from './components/TaskDashboard';
 import { OrderWorkView } from './components/OrderWorkView';
+import { TeamBoard } from './components/TeamBoard';
+import { TeamPostView } from './components/TeamPostView';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { LogOut } from 'lucide-react';
 import { AppLayout } from '@/ui';
@@ -81,6 +83,8 @@ function App() {
                             <Route path="/admin/defects" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <DefectStats /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions /> : <Navigate to="/tasks" />} />
                             <Route path="/tasks" element={<TaskDashboard user={user} />} />
+                            <Route path="/team" element={<TeamBoard user={user} />} />
+                            <Route path="/team/:postId" element={<TeamPostView user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
                         </Route>
                     </Route>
