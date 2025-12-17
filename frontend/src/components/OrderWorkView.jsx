@@ -2415,7 +2415,7 @@ export function OrderWorkView({ user }) {
                         <div className="space-y-4">
                             <div className="rounded-xl border border-gray-200 bg-white/60 p-3">
                                 <div className="text-sm font-semibold text-gray-900">二次核對</div>
-                                <div className="text-xs text-gray-600 mt-1">請確認以下異動內容正確後再送出。</div>
+                                <div className="text-sm font-bold text-red-700 mt-2">以下品項將被異動，請務必再次確認數量與 SN。</div>
                                 <div className="text-xs text-gray-700 mt-3 break-words">原因：{String(orderChangeReason || '').trim() || '（未填）'}</div>
                             </div>
 
@@ -2433,14 +2433,14 @@ export function OrderWorkView({ user }) {
                                                 <div key={`preview-${idx}`} className="rounded-xl border border-gray-200 bg-white/60 p-3">
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="min-w-0">
-                                                            <div className="text-sm font-bold text-gray-900 break-words">{it.productName}</div>
-                                                            <div className="text-xs text-gray-600 mt-1 break-words">{it.barcode}</div>
-                                                            <div className="text-xs text-gray-700 mt-2">異動：{deltaText}{it.noSn ? '（無SN）' : '（SN）'}</div>
+                                                            <div className="text-base font-extrabold text-gray-900 break-words">{it.productName}</div>
+                                                            <div className="text-sm text-gray-700 mt-1 break-words">{it.barcode}</div>
+                                                            <div className="text-lg font-extrabold text-red-700 mt-2">異動：{deltaText}{it.noSn ? '（無SN）' : '（SN）'}</div>
                                                             {!it.noSn && qty > 0 && Array.isArray(it.snList) && (
-                                                                <div className="text-xs text-gray-600 mt-1">新增 SN：{it.snList.length} 筆</div>
+                                                                <div className="text-sm text-red-700 mt-1 font-semibold">新增 SN：{it.snList.length} 筆</div>
                                                             )}
                                                             {!it.noSn && qty < 0 && Array.isArray(it.removedSnList) && (
-                                                                <div className="text-xs text-gray-600 mt-1">移除 SN：{it.removedSnList.length} 筆</div>
+                                                                <div className="text-sm text-red-700 mt-1 font-semibold">移除 SN：{it.removedSnList.length} 筆</div>
                                                             )}
                                                         </div>
                                                     </div>
