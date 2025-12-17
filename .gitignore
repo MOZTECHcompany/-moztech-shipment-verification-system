@@ -4,3 +4,6 @@ dist/
 .env
 backend/.env
 frontend/.env
+
+# Jest coverage output
+backend/coverage/
