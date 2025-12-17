@@ -9,6 +9,7 @@ const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
+const { normalizeSerialScanInput } = require('../utils/serialNumber');
 
 const router = express.Router();
 
@@ -628,6 +629,11 @@ router.post('/orders/update_item', async (req, res, next) => {
         return res.status(403).json({ message: '權限不足' });
     }
 
+    const scanRaw = String(scanValue ?? '').trim();
+    if (!scanRaw) {
+        return res.status(400).json({ message: '掃描值不可為空' });
+    }
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -659,14 +665,80 @@ router.post('/orders/update_item', async (req, res, next) => {
         if ((type === 'pick' && order.picker_id !== userId && !isAdminLike) || (type === 'pack' && order.packer_id !== userId && !isAdminLike)) {
             throw new Error('您不是此任務的指定操作員');
         }
-        const instanceResult = await client.query(`SELECT i.id, i.status FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 AND i.serial_number = $2 FOR UPDATE`, [orderId, scanValue]);
+        const scanInfo = normalizeSerialScanInput(scanRaw);
+
+        let instanceRow = null;
+        let matchedBy = 'exact';
+
+        // 先走精準匹配（支援舊貨掃到 SN: 前綴）
+        const instanceResult = await client.query(
+            `SELECT i.id, i.status
+             FROM order_item_instances i
+             JOIN order_items oi ON i.order_item_id = oi.id
+             WHERE oi.order_id = $1 AND i.serial_number = $2
+             FOR UPDATE`,
+            [orderId, scanInfo.normalized]
+        );
+
         if (instanceResult.rows.length > 0) {
-            const instance = instanceResult.rows[0]; let newStatus = '';
+            instanceRow = instanceResult.rows[0];
+        } else {
+            // 純數字新條碼：允許用 digitsOnly 去比對資料庫內 SN（移除非數字後）
+            // 同時也支援：舊貨掃到 SN: 前綴但資料庫存的是去前綴後的值
+            const digitsMinLen = parseInt(process.env.SN_DIGITS_MIN_LEN || '8', 10);
+            let canTryDigitsMatch = (scanInfo.isDigitsOnly || scanInfo.hadSnPrefix) && scanInfo.digitsOnly.length >= digitsMinLen;
+
+            // 避免數字型商品條碼誤判成 SN：若此掃描值本身就是訂單品項的 barcode，優先走條碼邏輯
+            if (canTryDigitsMatch && scanInfo.isDigitsOnly && !scanInfo.hadSnPrefix) {
+                const barcodeExists = await client.query(
+                    'SELECT 1 FROM order_items WHERE order_id = $1 AND barcode = $2 LIMIT 1',
+                    [orderId, scanRaw]
+                );
+                if (barcodeExists.rowCount > 0) {
+                    canTryDigitsMatch = false;
+                }
+            }
+            if (canTryDigitsMatch) {
+                const digitsResult = await client.query(
+                    `SELECT i.id, i.status
+                     FROM order_item_instances i
+                     JOIN order_items oi ON i.order_item_id = oi.id
+                     WHERE oi.order_id = $1
+                       AND regexp_replace(i.serial_number, '[^0-9]', '', 'g') = $2
+                     FOR UPDATE`,
+                    [orderId, scanInfo.digitsOnly]
+                );
+
+                if (digitsResult.rows.length === 1) {
+                    instanceRow = digitsResult.rows[0];
+                    matchedBy = 'digits';
+                } else if (digitsResult.rows.length > 1) {
+                    const e = new Error('此掃描值對應多筆序號（可能撞碼），請改掃完整序號條碼');
+                    e.status = 409;
+                    throw e;
+                }
+            }
+        }
+
+        if (instanceRow) {
+            const instance = instanceRow;
+            let newStatus = '';
             if (type === 'pick' && instance.status === 'pending') newStatus = 'picked'; 
             else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed'; 
-            else throw new Error(`SN 碼 ${scanValue} 的狀態 (${instance.status}) 無法執行此操作`);
+            else throw new Error(`SN 碼 ${scanRaw} 的狀態 (${instance.status}) 無法執行此操作`);
             await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
-            await logOperation({ userId, orderId, operationType: type, details: { serialNumber: scanValue, statusChange: `${instance.status} -> ${newStatus}` }, io });
+            await logOperation({
+                userId,
+                orderId,
+                operationType: type,
+                details: {
+                    serialNumber: scanInfo.normalized,
+                    scanRaw,
+                    matchedBy,
+                    statusChange: `${instance.status} -> ${newStatus}`
+                },
+                io
+            });
         } else {
             // 非 SN 條碼：
             // - 若帶 orderItemId：精準更新指定那一行品項（避免同條碼多行時按鈕誤更新）
@@ -691,7 +763,7 @@ router.post('/orders/update_item', async (req, res, next) => {
                     LIMIT 1
                     FOR UPDATE
                     `,
-                    [orderId, orderItemId, scanValue]
+                    [orderId, orderItemId, scanRaw]
                 );
             } else {
                 // 同一張訂單內可能有多行相同條碼，必須挑選「仍可更新」的那一行
@@ -724,12 +796,12 @@ router.post('/orders/update_item', async (req, res, next) => {
                     LIMIT 1
                     FOR UPDATE
                     `,
-                    [orderId, scanValue, amountNum, type]
+                    [orderId, scanRaw, amountNum, type]
                 );
             }
             if (itemResult.rows.length === 0) {
-                await logOperation({ userId, orderId, operationType: 'scan_error', details: { scanValue, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' }, io });
-                throw new Error(`條碼 ${scanValue} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`);
+                await logOperation({ userId, orderId, operationType: 'scan_error', details: { scanValue: scanRaw, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' }, io });
+                throw new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`);
             }
             const item = itemResult.rows[0];
             if (type === 'pick') { 
@@ -741,7 +813,7 @@ router.post('/orders/update_item', async (req, res, next) => {
                 if (newPackedQty < 0 || newPackedQty > item.picked_quantity) throw new Error('裝箱數量不能超過已揀貨數量'); 
                 await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]); 
             }
-            await logOperation({ userId, orderId, operationType: type, details: { barcode: scanValue, amount: amountNum, orderItemId: item.id }, io });
+            await logOperation({ userId, orderId, operationType: type, details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id }, io });
         }
         // 在同一個 transaction 內判斷是否已 100% 完成，並原子性更新訂單狀態
         const allItems = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
