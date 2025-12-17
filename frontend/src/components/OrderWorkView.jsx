@@ -1041,8 +1041,8 @@ export function OrderWorkView({ user }) {
 
             if (isSn && delta < 0) {
                 const pickedPacked = (Number(row?.pickedSnCount) || 0) + (Number(row?.packedSnCount) || 0);
-                if (pickedPacked > 0) {
-                    return { ok: false, message: `品項 ${barcode} 已有刷過的 SN（picked/packed），不可減少數量` };
+                if (targetQty < pickedPacked) {
+                    return { ok: false, message: `品項 ${barcode} 目標數量不可小於已刷過的 SN（picked/packed=${pickedPacked}）` };
                 }
 
                 const removeCount = Math.abs(delta);
@@ -2123,6 +2123,7 @@ export function OrderWorkView({ user }) {
                         setOrderChangeStep('edit');
                     }}
                     title="申請訂單異動（待主管核可）"
+                    className="max-w-6xl"
                     footer={
                         <>
                             {orderChangeStep === 'edit' ? (
@@ -2161,6 +2162,7 @@ export function OrderWorkView({ user }) {
                         </>
                     }
                 >
+                    <div className="max-h-[70vh] overflow-y-auto pr-1">
                     {orderChangeStep === 'edit' ? (
                         <div className="space-y-4">
                             <div>
@@ -2195,7 +2197,7 @@ export function OrderWorkView({ user }) {
                                     const delta = targetQty - originalQty;
                                     const pickedPacked = (Number(row?.pickedSnCount) || 0) + (Number(row?.packedSnCount) || 0);
                                     const isSn = !!row?.isSn;
-                                    const minTarget = isSn && pickedPacked > 0 ? originalQty : 0;
+                                    const minTarget = isSn ? Math.max(0, Math.trunc(Number(pickedPacked) || 0)) : 0;
                                     const pendingSerials = Array.isArray(row?.pendingSerials) ? row.pendingSerials : [];
                                     const removeSelected = Array.isArray(row?.removeSelected) ? row.removeSelected : [];
                                     const removeCountNeeded = delta < 0 ? Math.abs(delta) : 0;
@@ -2274,14 +2276,43 @@ export function OrderWorkView({ user }) {
                                                                 onChange={(e) => {
                                                                     const n = Number(e.target.value);
                                                                     const next = Number.isFinite(n) ? Math.max(minTarget, Math.trunc(n)) : row.targetQty;
-                                                                    // 若 SN 且已有刷過，避免輸入小於原始
+                                                                    // SN 減少：自動幫忙挑選/補齊要移除的 pending SN（可再手動點選調整）
+                                                                    if (isSn) {
+                                                                        const nextDelta = next - originalQty;
+                                                                        const need = nextDelta < 0 ? Math.abs(nextDelta) : 0;
+
+                                                                        if (need === 0) {
+                                                                            updateOrderChangeDraft(row.id, { targetQty: next, removeSelected: [] });
+                                                                            return;
+                                                                        }
+
+                                                                        const pendingUpper = pendingSerials.map((x) => String(x).toUpperCase());
+                                                                        const pendingSet = new Set(pendingUpper);
+                                                                        const current = parseSnText((Array.isArray(row?.removeSelected) ? row.removeSelected : []).join('\n'))
+                                                                            .filter((sn) => pendingSet.has(String(sn).toUpperCase()));
+
+                                                                        const currentSet = new Set(current.map((x) => String(x).toUpperCase()));
+                                                                        const fill = [];
+                                                                        for (let i = 0; i < pendingSerials.length && (current.length + fill.length) < need; i++) {
+                                                                            const sn = pendingSerials[i];
+                                                                            const key = String(sn).toUpperCase();
+                                                                            if (currentSet.has(key)) continue;
+                                                                            fill.push(sn);
+                                                                            currentSet.add(key);
+                                                                        }
+
+                                                                        const nextSelected = [...current, ...fill].slice(0, need);
+                                                                        updateOrderChangeDraft(row.id, { targetQty: next, removeSelected: nextSelected });
+                                                                        return;
+                                                                    }
+
                                                                     updateOrderChangeDraft(row.id, { targetQty: next, removeSelected: next < originalQty ? row.removeSelected : [] });
                                                                 }}
                                                                 className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white"
                                                                 disabled={orderChangeSubmitting}
                                                             />
                                                             {isSn && pickedPacked > 0 && (
-                                                                <div className="text-[11px] text-amber-600 mt-1">此品項已有刷過的 SN（picked/packed），不可減少數量</div>
+                                                                <div className="text-[11px] text-amber-700 mt-1">此品項已有刷過的 SN（picked/packed={pickedPacked}），目標數量不可小於 {pickedPacked}</div>
                                                             )}
                                                         </div>
 
@@ -2318,54 +2349,48 @@ export function OrderWorkView({ user }) {
 
                                                     {isSn && removeCountNeeded > 0 && (
                                                         <div>
-                                                            {pickedPacked > 0 ? (
-                                                                <div className="text-sm text-amber-700 bg-amber-50/60 border border-amber-200 rounded-xl p-3">
-                                                                    此品項已有刷過的 SN（picked/packed），依規則不可減少。
-                                                                </div>
-                                                            ) : (
-                                                                <>
-                                                                    <label className="block text-xs font-semibold text-gray-700 mb-1">要移除的 SN（需要 {removeCountNeeded} 筆，僅限 pending）</label>
-                                                                    <textarea
-                                                                        value={(removeSelected || []).join('\n')}
-                                                                        onChange={(e) => updateOrderChangeDraft(row.id, { removeSelected: parseSnText(e.target.value) })}
-                                                                        placeholder="貼上要移除的 SN（可用換行/空白/逗號分隔）"
-                                                                        rows={3}
-                                                                        className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
-                                                                        disabled={orderChangeSubmitting}
-                                                                    />
-                                                                    <div className="text-xs text-gray-500 mt-1">目前 {removeSelected.length} / 需要 {removeCountNeeded}</div>
+                                                            <>
+                                                                <label className="block text-xs font-semibold text-gray-700 mb-1">要移除的 SN（需要 {removeCountNeeded} 筆，僅限 pending）</label>
+                                                                <textarea
+                                                                    value={(removeSelected || []).join('\n')}
+                                                                    onChange={(e) => updateOrderChangeDraft(row.id, { removeSelected: parseSnText(e.target.value) })}
+                                                                    placeholder="貼上要移除的 SN（可用換行/空白/逗號分隔）"
+                                                                    rows={3}
+                                                                    className="w-full rounded-xl border-gray-300 focus:border-blue-500 focus:ring-blue-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
+                                                                    disabled={orderChangeSubmitting}
+                                                                />
+                                                                <div className="text-xs text-gray-500 mt-1">目前 {removeSelected.length} / 需要 {removeCountNeeded}</div>
 
-                                                                    {pendingSerials.length > 0 && (
-                                                                        <div className="mt-2">
-                                                                            <div className="text-xs text-gray-600 mb-2">可點選 pending SN 快速加入/移除（僅顯示前 50 筆）</div>
-                                                                            <div className="flex flex-wrap gap-2">
-                                                                                {shownPending.map((sn) => {
-                                                                                    const key = String(sn).toUpperCase();
-                                                                                    const selected = removeSet.has(key);
-                                                                                    return (
-                                                                                        <button
-                                                                                            key={key}
-                                                                                            type="button"
-                                                                                            onClick={() => {
-                                                                                                const next = selected
-                                                                                                    ? removeSelected.filter((x) => String(x).toUpperCase() !== key)
-                                                                                                    : [...removeSelected, sn];
-                                                                                                updateOrderChangeDraft(row.id, { removeSelected: parseSnText(next.join('\n')) });
-                                                                                            }}
-                                                                                            className={`text-xs px-2 py-1 rounded-full border transition-colors ${selected ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                                                                                        >
-                                                                                            {sn}
-                                                                                        </button>
-                                                                                    );
-                                                                                })}
-                                                                                {pendingSerials.length > 50 && (
-                                                                                    <div className="text-xs text-gray-500">…尚有 {pendingSerials.length - 50} 筆</div>
-                                                                                )}
-                                                                            </div>
+                                                                {pendingSerials.length > 0 && (
+                                                                    <div className="mt-2">
+                                                                        <div className="text-xs text-gray-600 mb-2">可點選 pending SN 快速加入/移除（僅顯示前 50 筆）</div>
+                                                                        <div className="flex flex-wrap gap-2">
+                                                                            {shownPending.map((sn) => {
+                                                                                const key = String(sn).toUpperCase();
+                                                                                const selected = removeSet.has(key);
+                                                                                return (
+                                                                                    <button
+                                                                                        key={key}
+                                                                                        type="button"
+                                                                                        onClick={() => {
+                                                                                            const next = selected
+                                                                                                ? removeSelected.filter((x) => String(x).toUpperCase() !== key)
+                                                                                                : [...removeSelected, sn];
+                                                                                            updateOrderChangeDraft(row.id, { removeSelected: parseSnText(next.join('\n')) });
+                                                                                        }}
+                                                                                        className={`text-xs px-2 py-1 rounded-full border transition-colors ${selected ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                                                                                    >
+                                                                                        {sn}
+                                                                                    </button>
+                                                                                );
+                                                                            })}
+                                                                            {pendingSerials.length > 50 && (
+                                                                                <div className="text-xs text-gray-500">…尚有 {pendingSerials.length - 50} 筆</div>
+                                                                            )}
                                                                         </div>
-                                                                    )}
-                                                                </>
-                                                            )}
+                                                                    </div>
+                                                                )}
+                                                            </>
                                                         </div>
                                                     )}
                                                 </div>
@@ -2416,6 +2441,7 @@ export function OrderWorkView({ user }) {
                             })()}
                         </div>
                     )}
+                    </div>
                 </Modal>
 
                 <Modal

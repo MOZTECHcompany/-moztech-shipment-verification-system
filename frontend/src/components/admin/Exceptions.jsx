@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { AlertTriangle, Search, ArrowRight } from 'lucide-react';
 
 import apiClient from '@/api/api';
+import { socket } from '@/api/socket';
 import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Badge, Input, Table, THead, TH, TBody, TR, TD, Modal } from '@/ui';
 
 const typeLabel = (type) => {
@@ -114,6 +115,30 @@ export function Exceptions() {
   useEffect(() => {
     fetchList();
   }, [fetchList]);
+
+  // 即時提醒：有新例外建立/狀態變更時，自動刷新清單
+  useEffect(() => {
+    const handleChanged = (data) => {
+      // 避免把所有事件都 toast（只在 open 分頁提示新建）
+      if (tab === 'open' && String(data?.action) === 'created') {
+        const voucher = data?.voucherNumber ? String(data.voucherNumber) : null;
+        const orderText = voucher ? `訂單 ${voucher}` : (data?.orderId ? `訂單 #${data.orderId}` : '');
+        const isOrderChange = String(data?.type) === 'order_change';
+        toast.info(isOrderChange ? '有新的訂單異動待核可' : '有新的例外待核可', {
+          description: orderText || undefined,
+          duration: 4000,
+        });
+      }
+
+      // 無論在哪個分頁，都更新資料（避免同頁不同狀態切換後仍顯示舊資料）
+      fetchList();
+    };
+
+    socket.on('order_exception_changed', handleChanged);
+    return () => {
+      socket.off('order_exception_changed', handleChanged);
+    };
+  }, [fetchList, tab]);
 
   useEffect(() => {
     if (tab !== 'open') return;

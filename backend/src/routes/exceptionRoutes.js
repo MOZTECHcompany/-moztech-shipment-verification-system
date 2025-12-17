@@ -393,7 +393,10 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
         io?.emit('order_exception_changed', {
             orderId: parseInt(orderId, 10),
             exceptionId,
-            action: 'created'
+            action: 'created',
+            type: String(type),
+            status: orderChangeAutoApproved ? 'ack' : 'open',
+            voucherNumber: orderExist.rows[0]?.voucher_number || null
         });
 
         // 若為 order_change 且自動放行，訂單狀態已被強制退回撿貨

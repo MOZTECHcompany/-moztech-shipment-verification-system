@@ -332,13 +332,15 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
             if (quantityChange < 0) {
                 const removeCount = Math.abs(quantityChange);
 
-                // Strict rule: if any SN has been scanned (picked/packed), forbid decrease.
-                const hasPickedOrPacked = existingInstances.some((i) => {
+                // Allow decrease only from pending instances.
+                // Guard: target quantity cannot go below picked+packed count.
+                const pickedPackedCount = existingInstances.reduce((acc, i) => {
                     const st = String(i?.status || '').toLowerCase();
-                    return st === 'picked' || st === 'packed';
-                });
-                if (hasPickedOrPacked) {
-                    const e = new Error(`品項 ${barcode} 已有刷過的 SN（picked/packed），不可減少數量`);
+                    if (st === 'picked' || st === 'packed') return acc + 1;
+                    return acc;
+                }, 0);
+                if (targetTotalQty < pickedPackedCount) {
+                    const e = new Error(`品項 ${barcode} 目標數量不可小於已刷過的 SN（picked/packed=${pickedPackedCount}）`);
                     e.status = 409;
                     throw e;
                 }
