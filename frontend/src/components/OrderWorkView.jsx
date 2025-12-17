@@ -797,6 +797,8 @@ export function OrderWorkView({ user }) {
         return String(responsibleUserId) === String(user?.id);
     }, [exceptionsMeta?.responsibleRole, exceptionsMeta?.responsibleUserId, isDispatcher, user?.id]);
 
+    const canProposeOrderChange = isAdminLike || canDispatcherPropose;
+
     const resolutionActionLabel = (action) => {
         const map = { short_ship: '少出', restock: '補貨', exchange: '換貨', void: '作廢', other: '其他' };
         return map[action] || action || '-';
@@ -973,7 +975,11 @@ export function OrderWorkView({ user }) {
                     source: 'order_work_view'
                 }
             });
-            toast.success('已送出訂單異動申請，等待管理員核可');
+            toast.success(
+                isAdminLike
+                    ? '已送出訂單異動，請在下方例外列表按「核可」套用（會留痕）'
+                    : '已送出訂單異動申請，等待管理員核可'
+            );
             setOrderChangeOpen(false);
             setOrderChangeReason('');
             setOrderChangeItems([{ barcode: '', productName: '', quantityChange: 1, noSn: true, snText: '' }]);
@@ -1518,7 +1524,7 @@ export function OrderWorkView({ user }) {
                                         新增
                                     </Button>
 
-                                    {canDispatcherPropose && (
+                                    {canProposeOrderChange && (
                                         <Button
                                             size="sm"
                                             disabled={hasOpenOrderChange}
