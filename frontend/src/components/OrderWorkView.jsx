@@ -2468,6 +2468,8 @@ export function OrderWorkView({ user }) {
                                         {built.value.items.map((it, idx) => {
                                             const qty = Number(it.quantityChange);
                                             const deltaText = qty > 0 ? `+${qty}` : `${qty}`;
+                                            const snList = Array.isArray(it?.snList) ? it.snList : [];
+                                            const removedSnList = Array.isArray(it?.removedSnList) ? it.removedSnList : [];
                                             return (
                                                 <div key={`preview-${idx}`} className="rounded-xl border border-gray-200 bg-white/60 p-3">
                                                     <div className="flex items-start justify-between gap-3">
@@ -2475,11 +2477,21 @@ export function OrderWorkView({ user }) {
                                                             <div className="text-base font-extrabold text-gray-900 break-words">{it.productName}</div>
                                                             <div className="text-sm text-gray-700 mt-1 break-words">{it.barcode}</div>
                                                             <div className="text-lg font-extrabold text-red-700 mt-2">異動：{deltaText}{it.noSn ? '（無SN）' : '（SN）'}</div>
-                                                            {!it.noSn && qty > 0 && Array.isArray(it.snList) && (
-                                                                <div className="text-sm text-red-700 mt-1 font-semibold">新增 SN：{it.snList.length} 筆</div>
+                                                            {!it.noSn && qty > 0 && (
+                                                                <div className="mt-2">
+                                                                    <div className="text-sm text-red-700 font-semibold">新增 SN：{snList.length} 筆</div>
+                                                                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white/70 p-2 text-xs text-gray-900 whitespace-pre-wrap break-all">
+                                                                        {snList.join('\n') || '（無）'}
+                                                                    </div>
+                                                                </div>
                                                             )}
-                                                            {!it.noSn && qty < 0 && Array.isArray(it.removedSnList) && (
-                                                                <div className="text-sm text-red-700 mt-1 font-semibold">移除 SN：{it.removedSnList.length} 筆</div>
+                                                            {!it.noSn && qty < 0 && (
+                                                                <div className="mt-2">
+                                                                    <div className="text-sm text-red-700 font-semibold">移除 SN：{removedSnList.length} 筆</div>
+                                                                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white/70 p-2 text-xs text-gray-900 whitespace-pre-wrap break-all">
+                                                                        {removedSnList.join('\n') || '（無）'}
+                                                                    </div>
+                                                                </div>
                                                             )}
                                                         </div>
                                                     </div>
