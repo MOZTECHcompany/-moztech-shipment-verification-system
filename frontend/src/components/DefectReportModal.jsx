@@ -9,6 +9,8 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
     const [submitting, setSubmitting] = useState(false);
     const [items, setItems] = useState([]);
     const [instances, setInstances] = useState([]);
+    const [itemSearch, setItemSearch] = useState('');
+    const [oldSnSearch, setOldSnSearch] = useState('');
     
     const [selectedItemId, setSelectedItemId] = useState('');
     const [oldSn, setOldSn] = useState('');
@@ -23,6 +25,8 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
             setOldSn('');
             setNewSn('');
             setReason('');
+            setItemSearch('');
+            setOldSnSearch('');
         }
     }, [isOpen, orderId]);
 
@@ -71,6 +75,31 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
         !selectedItemId || inst.order_item_id === parseInt(selectedItemId)
     );
 
+    const itemSearchNormalized = itemSearch.trim().toLowerCase();
+    const filteredItems = items.filter((item) => {
+        if (!itemSearchNormalized) return true;
+        const productName = String(item.product_name || '').toLowerCase();
+        const productCode = String(item.product_code || '').toLowerCase();
+        return productName.includes(itemSearchNormalized) || productCode.includes(itemSearchNormalized);
+    });
+    const selectedItem = selectedItemId ? items.find((item) => String(item.id) === String(selectedItemId)) : null;
+    const itemsForSelect = selectedItem && !filteredItems.some((item) => String(item.id) === String(selectedItem.id))
+        ? [selectedItem, ...filteredItems]
+        : filteredItems;
+
+    const oldSnSearchNormalized = oldSnSearch.trim().toUpperCase();
+    const filteredAvailableInstances = availableInstances.filter((inst) => {
+        if (!oldSnSearchNormalized) return true;
+        const sn = String(inst.serial_number || '').toUpperCase();
+        return sn.includes(oldSnSearchNormalized);
+    });
+    const selectedOldSnInstance = oldSn
+        ? availableInstances.find((inst) => String(inst.serial_number) === String(oldSn))
+        : null;
+    const instancesForSelect = selectedOldSnInstance && !filteredAvailableInstances.some((inst) => inst.id === selectedOldSnInstance.id)
+        ? [selectedOldSnInstance, ...filteredAvailableInstances]
+        : filteredAvailableInstances;
+
     if (!isOpen) return null;
 
     return (
@@ -105,6 +134,13 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                 <label className="block text-sm font-bold text-gray-700 mb-1">
                                     選擇產品 (可選)
                                 </label>
+                                <input
+                                    type="text"
+                                    value={itemSearch}
+                                    onChange={(e) => setItemSearch(e.target.value)}
+                                    placeholder="搜尋產品名稱 / 料號..."
+                                    className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white placeholder:text-gray-400"
+                                />
                                 <select
                                     value={selectedItemId}
                                     onChange={(e) => {
@@ -114,7 +150,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white"
                                 >
                                     <option value="" className="text-gray-500">-- 所有產品 --</option>
-                                    {items.map(item => (
+                                    {itemsForSelect.map(item => (
                                         <option key={item.id} value={item.id} className="text-gray-900">
                                             {item.product_name} ({item.product_code})
                                         </option>
@@ -127,6 +163,13 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                 <label className="block text-sm font-bold text-gray-700 mb-1">
                                     原 SN (不良品) <span className="text-red-500">*</span>
                                 </label>
+                                <input
+                                    type="text"
+                                    value={oldSnSearch}
+                                    onChange={(e) => setOldSnSearch(e.target.value)}
+                                    placeholder="搜尋 SN..."
+                                    className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white placeholder:text-gray-400"
+                                />
                                 <select
                                     value={oldSn}
                                     onChange={(e) => setOldSn(e.target.value)}
@@ -134,7 +177,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     className="w-full rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 text-gray-900 bg-white"
                                 >
                                     <option value="" className="text-gray-500">-- 請選擇原 SN --</option>
-                                    {availableInstances.map(inst => (
+                                    {instancesForSelect.map(inst => (
                                         <option key={inst.id} value={inst.serial_number} className="text-gray-900">
                                             {inst.serial_number}
                                         </option>
