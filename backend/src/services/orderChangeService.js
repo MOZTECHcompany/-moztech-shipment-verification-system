@@ -398,7 +398,17 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                 }
 
                 // Delete empty rows
-                await client.query('DELETE FROM order_items WHERE order_id = $1 AND barcode = $2 AND COALESCE(quantity,0) <= 0', [orderId, barcode]);
+                await client.query(
+                    `DELETE FROM order_items oi
+                     WHERE oi.order_id = $1
+                       AND oi.barcode = $2
+                       AND COALESCE(oi.quantity, 0) <= 0
+                       AND NOT EXISTS (
+                           SELECT 1 FROM order_item_instances i
+                           WHERE i.order_item_id = oi.id
+                       )`,
+                    [orderId, barcode]
+                );
 
                 changesApplied.push({
                     barcode,
