@@ -1181,7 +1181,7 @@ export function OrderWorkView({ user }) {
     };
 
     const handleAckException = async (exceptionId) => {
-        const { value: note } = await MySwal.fire({
+        const result = await MySwal.fire({
             title: '主管核可',
             input: 'textarea',
             inputLabel: '核可備註（可選）',
@@ -1190,6 +1190,9 @@ export function OrderWorkView({ user }) {
             confirmButtonText: '核可',
             cancelButtonText: '取消'
         });
+
+        if (!result.isConfirmed) return;
+        const note = result.value;
 
         try {
             await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/ack`, { note: note || null });
@@ -1201,7 +1204,7 @@ export function OrderWorkView({ user }) {
     };
 
     const handleRejectException = async (exceptionId) => {
-        const { value: note } = await MySwal.fire({
+        const result = await MySwal.fire({
             title: '主管駁回',
             input: 'textarea',
             inputLabel: '駁回原因（可選）',
@@ -1211,6 +1214,9 @@ export function OrderWorkView({ user }) {
             cancelButtonText: '取消',
             confirmButtonColor: '#ef4444'
         });
+
+        if (!result.isConfirmed) return;
+        const note = result.value;
 
         try {
             await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/reject`, { note: note || null });
