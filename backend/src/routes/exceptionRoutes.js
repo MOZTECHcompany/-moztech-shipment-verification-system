@@ -555,7 +555,12 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             return res.status(400).json({ message: '建立失敗：資料關聯不正確（外鍵驗證失敗）', requestId: req.requestId });
         }
 
-        return res.status(500).json({ message: '建立例外失敗', requestId: req.requestId });
+        return res.status(500).json({
+            message: '建立例外失敗',
+            requestId: req.requestId,
+            errorCode: pgCode || null,
+            constraint: pgConstraint || null
+        });
     } finally {
         client.release();
     }
@@ -814,7 +819,12 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
         const message = safeStatus >= 500
             ? '核可失敗'
             : (error?.message || '核可失敗');
-        return res.status(safeStatus).json({ message, requestId: req.requestId });
+        return res.status(safeStatus).json({
+            message,
+            requestId: req.requestId,
+            errorCode: pgCode || null,
+            constraint: pgConstraint || null
+        });
     } finally {
         client.release();
     }
