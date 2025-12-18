@@ -805,6 +805,122 @@ export function OrderWorkView({ user }) {
         return map[action] || action || '-';
     };
 
+        const escapeHtml = (value) => {
+                return String(value ?? '')
+                        .replaceAll('&', '&amp;')
+                        .replaceAll('<', '&lt;')
+                        .replaceAll('>', '&gt;')
+                        .replaceAll('"', '&quot;')
+                        .replaceAll("'", '&#039;');
+        };
+
+        const toSnLines = (value) => {
+                if (!value) return [];
+                if (Array.isArray(value)) return value.filter(Boolean).map((x) => String(x));
+                return String(value)
+                        .split(/\r?\n/)
+                        .map((x) => x.trim())
+                        .filter((x) => x.length > 0);
+        };
+
+        const buildAckPreviewHtml = (ex) => {
+                if (!ex) return '';
+
+                const type = String(ex?.type || '');
+                const proposal = ex?.snapshot?.proposal || null;
+
+                const wrap = (inner) => `
+                    <div style="text-align:left">
+                        <div style="font-size:12px;color:#374151;margin-bottom:8px">
+                            <div style="font-weight:700;color:#111827">待核可內容</div>
+                            <div style="margin-top:4px">類型：${escapeHtml(typeLabel(type))}</div>
+                            <div style="margin-top:4px;white-space:pre-wrap;word-break:break-word">原因：${escapeHtml(ex?.reason_text || '')}</div>
+                        </div>
+                        ${inner}
+                    </div>
+                `;
+
+                if (!proposal) return wrap('<div style="font-size:12px;color:#6b7280">（無拋單員處理內容）</div>');
+
+                if (type === 'order_change' && Array.isArray(proposal?.items)) {
+                        const itemsHtml = (proposal.items || []).slice(0, 200).map((it) => {
+                                const barcode = String(it?.barcode || '').trim();
+                                const productName = String(it?.productName || '').trim();
+                                const qty = Number(it?.quantityChange);
+                                const isNoSn = !!it?.noSn;
+                                const snAdded = toSnLines(it?.snList);
+                                const snRemoved = toSnLines(it?.removedSnList);
+                                const title = `${escapeHtml(productName || '-')}${barcode ? `（${escapeHtml(barcode)}）` : ''}`;
+
+                                const snAddedHtml = (!isNoSn && qty > 0 && snAdded.length > 0)
+                                        ? `
+                                            <details style="margin-top:8px">
+                                                <summary style="cursor:pointer;font-size:12px;color:#1f2937">新增 SN（共 ${snAdded.length}）</summary>
+                                                <pre style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;font-size:12px;color:#111827">${escapeHtml(snAdded.join('\n'))}</pre>
+                                            </details>
+                                        `
+                                        : '';
+
+                                const snRemovedHtml = (!isNoSn && qty < 0 && snRemoved.length > 0)
+                                        ? `
+                                            <details style="margin-top:8px">
+                                                <summary style="cursor:pointer;font-size:12px;color:#1f2937">移除 SN（共 ${snRemoved.length}）</summary>
+                                                <pre style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;font-size:12px;color:#111827">${escapeHtml(snRemoved.join('\n'))}</pre>
+                                            </details>
+                                        `
+                                        : '';
+
+                                const qtyText = Number.isFinite(qty) ? (qty > 0 ? `+${qty}` : String(qty)) : '-';
+
+                                return `
+                                    <div style="border:1px solid #e5e7eb;background:#f9fafb;border-radius:12px;padding:10px;margin-top:10px">
+                                        <div style="font-weight:700;color:#111827;font-size:12px;word-break:break-word">${title}</div>
+                                        <div style="margin-top:4px;font-size:12px;color:#374151">
+                                            數量異動：<span style="font-weight:700">${escapeHtml(qtyText)}</span>
+                                            ${isNoSn ? ' · 無SN' : ' · SN'}
+                                        </div>
+                                        ${snAddedHtml}
+                                        ${snRemovedHtml}
+                                    </div>
+                                `;
+                        }).join('');
+
+                        const noteHtml = proposal?.note
+                                ? `<div style="font-size:12px;color:#374151;white-space:pre-wrap;word-break:break-word">異動原因：${escapeHtml(proposal.note)}</div>`
+                                : '';
+
+                        return wrap(`
+                            ${noteHtml}
+                            <div style="margin-top:10px">${itemsHtml}</div>
+                        `);
+                }
+
+                const newSnLines = toSnLines(proposal?.newSn);
+                const newSnHtml = newSnLines.length > 0
+                        ? `
+                            <details style="margin-top:8px">
+                                <summary style="cursor:pointer;font-size:12px;color:#1f2937">異動 SN（共 ${newSnLines.length}）</summary>
+                                <pre style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;font-size:12px;color:#111827">${escapeHtml(newSnLines.join('\n'))}</pre>
+                            </details>
+                        `
+                        : '';
+
+                const correctBarcodeHtml = proposal?.correctBarcode
+                        ? `<div style="margin-top:6px;font-size:12px;color:#374151">正確條碼：${escapeHtml(proposal.correctBarcode)}</div>`
+                        : '';
+
+                const noteHtml = proposal?.note
+                        ? `<div style="margin-top:6px;font-size:12px;color:#374151;white-space:pre-wrap;word-break:break-word">備註：${escapeHtml(proposal.note)}</div>`
+                        : '';
+
+                return wrap(`
+                    <div style="font-size:12px;color:#374151">處理方式：${escapeHtml(resolutionActionLabel(proposal?.resolutionAction))}</div>
+                    ${newSnHtml}
+                    ${correctBarcodeHtml}
+                    ${noteHtml}
+                `);
+        };
+
     const openProposalModal = (ex) => {
         const proposal = ex?.snapshot?.proposal || null;
         setProposalException(ex);
@@ -1181,8 +1297,10 @@ export function OrderWorkView({ user }) {
     };
 
     const handleAckException = async (exceptionId) => {
+        const ex = (orderExceptions || []).find((x) => String(x?.id) === String(exceptionId)) || null;
         const result = await MySwal.fire({
             title: '主管核可',
+            html: ex ? buildAckPreviewHtml(ex) : undefined,
             input: 'textarea',
             inputLabel: '核可備註（可選）',
             inputPlaceholder: '例如：已確認缺貨，允許少出；或已確認破損，需換貨…',
@@ -1794,7 +1912,7 @@ export function OrderWorkView({ user }) {
                                                                     處理方式：{resolutionActionLabel(ex.snapshot.proposal?.resolutionAction)}
                                                                 </div>
                                                                 {ex.snapshot.proposal?.newSn && (
-                                                                    <div className="text-[11px] text-gray-600">異動 SN：{ex.snapshot.proposal.newSn}</div>
+                                                                    <div className="text-[11px] text-gray-600 whitespace-pre-wrap break-words">異動 SN：{ex.snapshot.proposal.newSn}</div>
                                                                 )}
                                                                 {ex.snapshot.proposal?.correctBarcode && (
                                                                     <div className="text-[11px] text-gray-600">正確條碼：{ex.snapshot.proposal.correctBarcode}</div>

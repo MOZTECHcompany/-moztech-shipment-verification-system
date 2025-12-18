@@ -50,9 +50,26 @@ function toMultilineSnText(value) {
 function renderSnBlock(label, snText) {
   const text = toMultilineSnText(snText).trim();
   if (!text) return null;
+  const count = text.split(/\r?\n/).filter((x) => x.trim().length > 0).length;
   return (
     <div className="text-sm text-gray-700 mt-2">
-      <div className="font-semibold text-gray-800">{label}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-semibold text-gray-800">{label}（共 {count}）</div>
+        <Button
+          size="xs"
+          variant="secondary"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+              toast.success('已複製');
+            } catch (e) {
+              toast.error('複製失敗');
+            }
+          }}
+        >
+          複製
+        </Button>
+      </div>
       <div className="mt-1 rounded-lg border border-gray-200 bg-white/70 p-2 whitespace-pre-wrap break-words max-h-48 overflow-auto">
         {text}
       </div>
