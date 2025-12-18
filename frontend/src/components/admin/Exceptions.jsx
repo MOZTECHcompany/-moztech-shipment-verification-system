@@ -41,6 +41,25 @@ function formatTs(ts) {
   }
 }
 
+function toMultilineSnText(value) {
+  if (!value) return '';
+  if (Array.isArray(value)) return value.filter(Boolean).map(String).join('\n');
+  return String(value);
+}
+
+function renderSnBlock(label, snText) {
+  const text = toMultilineSnText(snText).trim();
+  if (!text) return null;
+  return (
+    <div className="text-sm text-gray-700 mt-2">
+      <div className="font-semibold text-gray-800">{label}</div>
+      <div className="mt-1 rounded-lg border border-gray-200 bg-white/70 p-2 whitespace-pre-wrap break-words max-h-48 overflow-auto">
+        {text}
+      </div>
+    </div>
+  );
+}
+
 export function Exceptions() {
   const [tab, setTab] = useState('open');
   const [q, setQ] = useState('');
@@ -567,15 +586,47 @@ export function Exceptions() {
             {detailRow?.snapshot?.proposal && (
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
                 <div className="text-sm font-bold text-gray-900">拋單員處理內容（待審核）</div>
-                <div className="text-sm text-gray-700 mt-2">處理方式：{detailRow.snapshot.proposal?.resolutionAction || '-'}</div>
-                {detailRow.snapshot.proposal?.newSn && (
-                  <div className="text-sm text-gray-700">異動 SN：{detailRow.snapshot.proposal.newSn}</div>
-                )}
-                {detailRow.snapshot.proposal?.correctBarcode && (
-                  <div className="text-sm text-gray-700">正確條碼：{detailRow.snapshot.proposal.correctBarcode}</div>
-                )}
-                {detailRow.snapshot.proposal?.note && (
-                  <div className="text-sm text-gray-700 whitespace-pre-wrap break-words">備註：{detailRow.snapshot.proposal.note}</div>
+                {String(detailRow?.type) === 'order_change' && Array.isArray(detailRow.snapshot.proposal?.items) ? (
+                  <>
+                    <div className="text-sm text-gray-700 mt-2 whitespace-pre-wrap break-words">異動原因：{detailRow.snapshot.proposal?.note || '-'}</div>
+
+                    <div className="mt-3 space-y-3">
+                      {(detailRow.snapshot.proposal.items || []).map((it, idx) => {
+                        const qty = Number(it?.quantityChange);
+                        const hasSn = !it?.noSn;
+                        const title = `${it?.productName || '-'}（${it?.barcode || '-'}）`;
+                        return (
+                          <div key={`${it?.barcode || 'item'}-${idx}`} className="rounded-xl border border-gray-200 bg-white/60 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-bold text-gray-900 break-words">{title}</div>
+                                <div className="text-xs text-gray-600 mt-1">
+                                  數量異動：<span className="font-semibold">{Number.isFinite(qty) ? (qty > 0 ? `+${qty}` : String(qty)) : '-'}</span>
+                                  {hasSn ? <span className="ml-2">（有 SN）</span> : <span className="ml-2">（無 SN）</span>}
+                                </div>
+                              </div>
+                            </div>
+
+                            {hasSn && qty > 0 && renderSnBlock('新增 SN 清單', it?.snList)}
+                            {hasSn && qty < 0 && renderSnBlock('移除 SN 清單', it?.removedSnList)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-sm text-gray-700 mt-2">處理方式：{detailRow.snapshot.proposal?.resolutionAction || '-'}</div>
+                    {detailRow.snapshot.proposal?.newSn && (
+                      <div className="text-sm text-gray-700 whitespace-pre-wrap break-words">異動 SN：{toMultilineSnText(detailRow.snapshot.proposal.newSn)}</div>
+                    )}
+                    {detailRow.snapshot.proposal?.correctBarcode && (
+                      <div className="text-sm text-gray-700">正確條碼：{detailRow.snapshot.proposal.correctBarcode}</div>
+                    )}
+                    {detailRow.snapshot.proposal?.note && (
+                      <div className="text-sm text-gray-700 whitespace-pre-wrap break-words">備註：{detailRow.snapshot.proposal.note}</div>
+                    )}
+                  </>
                 )}
               </div>
             )}
