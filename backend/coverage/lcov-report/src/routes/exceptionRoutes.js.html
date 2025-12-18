@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/373</span>
+                <span class='fraction'>0/382</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/311</span>
+                <span class='fraction'>0/325</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/364</span>
+                <span class='fraction'>0/373</span>
             </div>
         
             
@@ -1041,7 +1041,35 @@
 <a name='L976'></a><a href='#L976'>976</a>
 <a name='L977'></a><a href='#L977'>977</a>
 <a name='L978'></a><a href='#L978'>978</a>
-<a name='L979'></a><a href='#L979'>979</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L979'></a><a href='#L979'>979</a>
+<a name='L980'></a><a href='#L980'>980</a>
+<a name='L981'></a><a href='#L981'>981</a>
+<a name='L982'></a><a href='#L982'>982</a>
+<a name='L983'></a><a href='#L983'>983</a>
+<a name='L984'></a><a href='#L984'>984</a>
+<a name='L985'></a><a href='#L985'>985</a>
+<a name='L986'></a><a href='#L986'>986</a>
+<a name='L987'></a><a href='#L987'>987</a>
+<a name='L988'></a><a href='#L988'>988</a>
+<a name='L989'></a><a href='#L989'>989</a>
+<a name='L990'></a><a href='#L990'>990</a>
+<a name='L991'></a><a href='#L991'>991</a>
+<a name='L992'></a><a href='#L992'>992</a>
+<a name='L993'></a><a href='#L993'>993</a>
+<a name='L994'></a><a href='#L994'>994</a>
+<a name='L995'></a><a href='#L995'>995</a>
+<a name='L996'></a><a href='#L996'>996</a>
+<a name='L997'></a><a href='#L997'>997</a>
+<a name='L998'></a><a href='#L998'>998</a>
+<a name='L999'></a><a href='#L999'>999</a>
+<a name='L1000'></a><a href='#L1000'>1000</a>
+<a name='L1001'></a><a href='#L1001'>1001</a>
+<a name='L1002'></a><a href='#L1002'>1002</a>
+<a name='L1003'></a><a href='#L1003'>1003</a>
+<a name='L1004'></a><a href='#L1004'>1004</a>
+<a name='L1005'></a><a href='#L1005'>1005</a>
+<a name='L1006'></a><a href='#L1006'>1006</a>
+<a name='L1007'></a><a href='#L1007'>1007</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1570,6 +1598,34 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -2548,6 +2604,34 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
     } catch (error) {
 <span class="cstat-no" title="statement not covered" >        await client.query('ROLLBACK');</span>
 <span class="cstat-no" title="statement not covered" >        logger.error('[/api/orders/:orderId/exceptions] 建立失敗:', error);</span>
+&nbsp;
+        // Common Postgres errors (usually indicates DB migrations are not fully applied)
+        const pgCode = <span class="cstat-no" title="statement not covered" >error?.code ? String(error.code) : null;</span>
+        const pgConstraint = <span class="cstat-no" title="statement not covered" >error?.constraint ? String(error.constraint) : null;</span>
+&nbsp;
+        // undefined_table: table missing
+<span class="cstat-no" title="statement not covered" >        if (pgCode === '42P01') {</span>
+<span class="cstat-no" title="statement not covered" >            return res.status(503).json({</span>
+                message: '資料庫尚未完成遷移（缺少必要資料表），請稍後再試或通知系統管理員執行遷移',
+                requestId: req.requestId
+            });
+        }
+&nbsp;
+        // check_violation: type/status constraints not updated
+<span class="cstat-no" title="statement not covered" >        if (pgCode === '23514') {</span>
+            const hint = <span class="cstat-no" title="statement not covered" >pgConstraint === 'chk_order_exceptions_type'</span>
+                ? '資料庫尚未套用「訂單異動(order_change)」相關遷移（013），請執行 migrations/run.js'
+                : (pgConstraint === 'chk_order_exceptions_status'
+                    ? '資料庫尚未套用「rejected 狀態」相關遷移（014），請執行 migrations/run.js'
+                    : '資料庫狀態約束未更新，請執行 migrations/run.js');
+<span class="cstat-no" title="statement not covered" >            return res.status(400).json({ message: hint, requestId: req.requestId });</span>
+        }
+&nbsp;
+        // foreign_key_violation: referenced rows missing
+<span class="cstat-no" title="statement not covered" >        if (pgCode === '23503') {</span>
+<span class="cstat-no" title="statement not covered" >            return res.status(400).json({ message: '建立失敗：資料關聯不正確（外鍵驗證失敗）', requestId: req.requestId });</span>
+        }
+&nbsp;
 <span class="cstat-no" title="statement not covered" >        return res.status(500).json({ message: '建立例外失敗', requestId: req.requestId });</span>
     } finally {
 <span class="cstat-no" title="statement not covered" >        client.release();</span>
@@ -3004,7 +3088,7 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-17T23:07:49.069Z
+                at 2025-12-18T07:04:01.742Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -527,6 +527,34 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         logger.error('[/api/orders/:orderId/exceptions] 建立失敗:', error);
+
+        // Common Postgres errors (usually indicates DB migrations are not fully applied)
+        const pgCode = error?.code ? String(error.code) : null;
+        const pgConstraint = error?.constraint ? String(error.constraint) : null;
+
+        // undefined_table: table missing
+        if (pgCode === '42P01') {
+            return res.status(503).json({
+                message: '資料庫尚未完成遷移（缺少必要資料表），請稍後再試或通知系統管理員執行遷移',
+                requestId: req.requestId
+            });
+        }
+
+        // check_violation: type/status constraints not updated
+        if (pgCode === '23514') {
+            const hint = pgConstraint === 'chk_order_exceptions_type'
+                ? '資料庫尚未套用「訂單異動(order_change)」相關遷移（013），請執行 migrations/run.js'
+                : (pgConstraint === 'chk_order_exceptions_status'
+                    ? '資料庫尚未套用「rejected 狀態」相關遷移（014），請執行 migrations/run.js'
+                    : '資料庫狀態約束未更新，請執行 migrations/run.js');
+            return res.status(400).json({ message: hint, requestId: req.requestId });
+        }
+
+        // foreign_key_violation: referenced rows missing
+        if (pgCode === '23503') {
+            return res.status(400).json({ message: '建立失敗：資料關聯不正確（外鍵驗證失敗）', requestId: req.requestId });
+        }
+
         return res.status(500).json({ message: '建立例外失敗', requestId: req.requestId });
     } finally {
         client.release();
