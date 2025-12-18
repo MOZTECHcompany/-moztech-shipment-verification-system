@@ -540,6 +540,21 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             });
         }
 
+        // undefined_column: schema mismatch (missing column)
+        if (pgCode === '42703') {
+            const msg = String(error?.message || '');
+            const missingColumn = (msg.match(/column\s+"([^"]+)"/i) || [])[1] || null;
+            const relation = (msg.match(/relation\s+"([^"]+)"/i) || [])[1] || null;
+            return res.status(503).json({
+                message: '資料庫欄位缺失（schema 未更新），請執行 migrations/run.js 或套用最新遷移（建議新增 015 修復欄位）',
+                requestId: req.requestId,
+                errorCode: pgCode,
+                constraint: pgConstraint || null,
+                missingColumn,
+                relation
+            });
+        }
+
         // check_violation: type/status constraints not updated
         if (pgCode === '23514') {
             const hint = pgConstraint === 'chk_order_exceptions_type'
@@ -555,11 +570,17 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             return res.status(400).json({ message: '建立失敗：資料關聯不正確（外鍵驗證失敗）', requestId: req.requestId });
         }
 
+        const msg = String(error?.message || '');
+        const missingColumn = pgCode === '42703' ? ((msg.match(/column\s+"([^"]+)"/i) || [])[1] || null) : null;
+        const relation = pgCode === '42703' ? ((msg.match(/relation\s+"([^"]+)"/i) || [])[1] || null) : null;
+
         return res.status(500).json({
             message: '建立例外失敗',
             requestId: req.requestId,
             errorCode: pgCode || null,
-            constraint: pgConstraint || null
+            constraint: pgConstraint || null,
+            ...(missingColumn ? { missingColumn } : {}),
+            ...(relation ? { relation } : {})
         });
     } finally {
         client.release();
@@ -799,6 +820,21 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
             });
         }
 
+        // undefined_column: schema mismatch (missing column)
+        if (pgCode === '42703') {
+            const msg = String(error?.message || '');
+            const missingColumn = (msg.match(/column\s+"([^"]+)"/i) || [])[1] || null;
+            const relation = (msg.match(/relation\s+"([^"]+)"/i) || [])[1] || null;
+            return res.status(503).json({
+                message: '資料庫欄位缺失（schema 未更新），請執行 migrations/run.js 或套用最新遷移（建議新增 015 修復欄位）',
+                requestId: req.requestId,
+                errorCode: pgCode,
+                constraint: pgConstraint || null,
+                missingColumn,
+                relation
+            });
+        }
+
         // check_violation: type/status constraints not updated
         if (pgCode === '23514') {
             const hint = pgConstraint === 'chk_order_exceptions_type'
@@ -819,11 +855,17 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
         const message = safeStatus >= 500
             ? '核可失敗'
             : (error?.message || '核可失敗');
+        const msg = String(error?.message || '');
+        const missingColumn = pgCode === '42703' ? ((msg.match(/column\s+"([^"]+)"/i) || [])[1] || null) : null;
+        const relation = pgCode === '42703' ? ((msg.match(/relation\s+"([^"]+)"/i) || [])[1] || null) : null;
+
         return res.status(safeStatus).json({
             message,
             requestId: req.requestId,
             errorCode: pgCode || null,
-            constraint: pgConstraint || null
+            constraint: pgConstraint || null,
+            ...(missingColumn ? { missingColumn } : {}),
+            ...(relation ? { relation } : {})
         });
     } finally {
         client.release();
