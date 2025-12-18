@@ -2480,16 +2480,42 @@ export function OrderWorkView({ user }) {
                                                             {!it.noSn && qty > 0 && (
                                                                 <div className="mt-2">
                                                                     <div className="text-sm text-red-700 font-semibold">新增 SN：{snList.length} 筆</div>
-                                                                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white/70 p-2 text-xs text-gray-900 whitespace-pre-wrap break-all">
-                                                                        {snList.join('\n') || '（無）'}
+                                                                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white/70 p-2">
+                                                                        {snList.length === 0 ? (
+                                                                            <div className="text-xs text-gray-500">（無）</div>
+                                                                        ) : (
+                                                                            <div className="flex flex-wrap gap-2">
+                                                                                {snList.map((sn, i) => (
+                                                                                    <span
+                                                                                        key={`${String(sn)}-${i}`}
+                                                                                        className="text-xs px-2 py-1 rounded-full border bg-white text-gray-700 border-gray-300"
+                                                                                    >
+                                                                                        {sn}
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             )}
                                                             {!it.noSn && qty < 0 && (
                                                                 <div className="mt-2">
                                                                     <div className="text-sm text-red-700 font-semibold">移除 SN：{removedSnList.length} 筆</div>
-                                                                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white/70 p-2 text-xs text-gray-900 whitespace-pre-wrap break-all">
-                                                                        {removedSnList.join('\n') || '（無）'}
+                                                                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-xl border border-gray-200 bg-white/70 p-2">
+                                                                        {removedSnList.length === 0 ? (
+                                                                            <div className="text-xs text-gray-500">（無）</div>
+                                                                        ) : (
+                                                                            <div className="flex flex-wrap gap-2">
+                                                                                {removedSnList.map((sn, i) => (
+                                                                                    <span
+                                                                                        key={`${String(sn)}-${i}`}
+                                                                                        className="text-xs px-2 py-1 rounded-full border bg-white text-gray-700 border-gray-300"
+                                                                                    >
+                                                                                        {sn}
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             )}
