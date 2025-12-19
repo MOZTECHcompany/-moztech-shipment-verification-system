@@ -595,6 +595,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                 const orderItemId = itemInsertResult.rows[0].id;
                 
                 if (summaryRaw) {
+                    const normalizedBarcode = String(barcode || '').trim().toUpperCase();
                     const serialNumbers = [];
                     // 1. 嘗試以常見分隔符分割 (/, space, newline, comma, bullet, etc)
                     // 支援格式如: "SN:B19B...ㆍSN:B19B..."、"Code・Code"、"SN1, SN2", "SN1 SN2"
@@ -606,6 +607,9 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 
                         // 允許舊格式前綴：SN: / SN：
                         const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim().toUpperCase();
+
+                        // 避免把品項條碼（例如 EAN-13）誤當 SN
+                        if (normalizedBarcode && normalized === normalizedBarcode) continue;
 
                         // 支援 12 / 13 碼英數字（13 碼常見於純數字序號/條碼型序號）
                         if ((normalized.length === 12 || normalized.length === 13) && /^[A-Za-z0-9]+$/.test(normalized)) {
@@ -624,7 +628,9 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                             for (const size of chunkSizes) {
                                 if (upper.length % size !== 0) continue;
                                 for (let j = 0; j < upper.length; j += size) {
-                                    serialNumbers.push(upper.substring(j, j + size));
+                                    const chunk = upper.substring(j, j + size);
+                                    if (normalizedBarcode && chunk === normalizedBarcode) continue;
+                                    serialNumbers.push(chunk);
                                 }
                                 break;
                             }

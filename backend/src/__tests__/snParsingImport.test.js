@@ -2,8 +2,10 @@ const { describe, test, expect } = require('@jest/globals');
 
 // 這裡用同樣的規則模擬匯入端對 summaryRaw 的解析
 // 目的：避免再次退回到「每 12 碼硬切」造成 SN 被切碎。
-function parseSerialNumbersFromSummary(summaryRaw) {
+function parseSerialNumbersFromSummary(summaryRaw, barcode) {
     if (!summaryRaw) return [];
+
+    const normalizedBarcode = String(barcode || '').trim().toUpperCase();
 
     const serialNumbers = [];
 
@@ -12,6 +14,7 @@ function parseSerialNumbersFromSummary(summaryRaw) {
         const cleanPart = String(part || '').trim();
         if (!cleanPart) continue;
         const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim().toUpperCase();
+        if (normalizedBarcode && normalized === normalizedBarcode) continue;
         if ((normalized.length === 12 || normalized.length === 13) && /^[A-Za-z0-9]+$/.test(normalized)) {
             serialNumbers.push(normalized);
         }
@@ -26,7 +29,9 @@ function parseSerialNumbersFromSummary(summaryRaw) {
             for (const size of chunkSizes) {
                 if (upper.length % size !== 0) continue;
                 for (let j = 0; j < upper.length; j += size) {
-                    serialNumbers.push(upper.substring(j, j + size));
+                    const chunk = upper.substring(j, j + size);
+                    if (normalizedBarcode && chunk === normalizedBarcode) continue;
+                    serialNumbers.push(chunk);
                 }
                 break;
             }
@@ -67,6 +72,20 @@ describe('SN parsing during import', () => {
         const input = '471129927376647112992737674711299273768';
         const result = parseSerialNumbersFromSummary(input);
         expect(result).toEqual(['4711299273766', '4711299273767', '4711299273768']);
+    });
+
+    test('skips EAN-13 barcode when it appears in the same field', () => {
+        const barcode = '4711299273766';
+        const input = '4711299273766, 4711299273767';
+        const result = parseSerialNumbersFromSummary(input, barcode);
+        expect(result).toEqual(['4711299273767']);
+    });
+
+    test('skips EAN-13 barcode during chunking fallback', () => {
+        const barcode = '4711299273766';
+        const input = '47112992737664711299273767';
+        const result = parseSerialNumbersFromSummary(input, barcode);
+        expect(result).toEqual(['4711299273767']);
     });
 
     test('does not chunk when SN prefix exists but delimiters missing', () => {
