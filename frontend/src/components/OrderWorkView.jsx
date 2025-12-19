@@ -829,8 +829,29 @@ export function OrderWorkView({ user }) {
                 const type = String(ex?.type || '');
                 const proposal = ex?.snapshot?.proposal || null;
 
+                const renderSnButtons = (lines) => {
+                        const safeLines = (lines || []).slice(0, 800);
+                        const btns = safeLines
+                                .map((sn, idx) => {
+                                        const key = `${idx}-${String(sn).slice(0, 32)}`;
+                            return `<button type="button" class="ack-sn-item" aria-pressed="false" data-key="${escapeHtml(key)}" data-sn="${escapeHtml(sn)}">${escapeHtml(sn)}</button>`;
+                                })
+                                .join('');
+                        return `<div class="ack-sn-box">${btns}</div>`;
+                };
+
                 const wrap = (inner) => `
                     <div style="text-align:left">
+                        <style>
+                            .ack-details > summary { list-style:none; cursor:pointer; font-size:12px; color:#1f2937; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-weight:700; }
+                            .ack-details > summary::-webkit-details-marker { display:none; }
+                            .ack-chev { display:inline-block; font-size:14px; line-height:1; color:#111827; transform:rotate(0deg); transition:transform 150ms ease; }
+                            .ack-details[open] .ack-chev { transform:rotate(90deg); }
+                            .ack-sn-box { margin-top:6px; max-height:220px; overflow:auto; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:8px; }
+                            .ack-sn-item { display:block; width:100%; text-align:left; padding:8px 10px; border-radius:10px; border:1px solid #e5e7eb; background:#f9fafb; font-size:12px; color:#111827; margin:0 0 8px 0; cursor:pointer; }
+                            .ack-sn-item:last-child { margin-bottom:0; }
+                            .ack-sn-item.is-checked { text-decoration:line-through; opacity:0.6; background:#f3f4f6; }
+                        </style>
                         <div style="font-size:12px;color:#374151;margin-bottom:8px">
                             <div style="font-weight:700;color:#111827">待核可內容</div>
                             <div style="margin-top:4px">類型：${escapeHtml(typeLabel(type))}</div>
@@ -854,18 +875,18 @@ export function OrderWorkView({ user }) {
 
                                 const snAddedHtml = (!isNoSn && qty > 0 && snAdded.length > 0)
                                         ? `
-                                            <details style="margin-top:8px">
-                                                <summary style="cursor:pointer;font-size:12px;color:#1f2937">新增 SN（共 ${snAdded.length}）</summary>
-                                                <pre style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;font-size:12px;color:#111827">${escapeHtml(snAdded.join('\n'))}</pre>
+                                            <details class="ack-details" style="margin-top:8px">
+                                                <summary><span class="ack-chev" aria-hidden="true">▸</span>新增 SN（共 ${snAdded.length}）</summary>
+                                                ${renderSnButtons(snAdded)}
                                             </details>
                                         `
                                         : '';
 
                                 const snRemovedHtml = (!isNoSn && qty < 0 && snRemoved.length > 0)
                                         ? `
-                                            <details style="margin-top:8px">
-                                                <summary style="cursor:pointer;font-size:12px;color:#1f2937">移除 SN（共 ${snRemoved.length}）</summary>
-                                                <pre style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;font-size:12px;color:#111827">${escapeHtml(snRemoved.join('\n'))}</pre>
+                                            <details class="ack-details" style="margin-top:8px">
+                                                <summary><span class="ack-chev" aria-hidden="true">▸</span>移除 SN（共 ${snRemoved.length}）</summary>
+                                                ${renderSnButtons(snRemoved)}
                                             </details>
                                         `
                                         : '';
@@ -898,9 +919,9 @@ export function OrderWorkView({ user }) {
                 const newSnLines = toSnLines(proposal?.newSn);
                 const newSnHtml = newSnLines.length > 0
                         ? `
-                            <details style="margin-top:8px">
-                                <summary style="cursor:pointer;font-size:12px;color:#1f2937">異動 SN（共 ${newSnLines.length}）</summary>
-                                <pre style="margin-top:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;font-size:12px;color:#111827">${escapeHtml(newSnLines.join('\n'))}</pre>
+                            <details class="ack-details" style="margin-top:8px">
+                                <summary><span class="ack-chev" aria-hidden="true">▸</span>異動 SN（共 ${newSnLines.length}）</summary>
+                                ${renderSnButtons(newSnLines)}
                             </details>
                         `
                         : '';
@@ -1298,6 +1319,7 @@ export function OrderWorkView({ user }) {
 
     const handleAckException = async (exceptionId) => {
         const ex = (orderExceptions || []).find((x) => String(x?.id) === String(exceptionId)) || null;
+        const ackSnStorageKey = `ack_sn_checked:${String(orderId)}:${String(exceptionId)}`;
         const result = await MySwal.fire({
             title: '主管核可',
             html: ex ? buildAckPreviewHtml(ex) : undefined,
@@ -1306,7 +1328,64 @@ export function OrderWorkView({ user }) {
             inputPlaceholder: '例如：已確認缺貨，允許少出；或已確認破損，需換貨…',
             showCancelButton: true,
             confirmButtonText: '核可',
-            cancelButtonText: '取消'
+            cancelButtonText: '取消',
+            didOpen: () => {
+                const popup = (typeof MySwal.getPopup === 'function') ? MySwal.getPopup() : document.querySelector('.swal2-popup');
+                if (!popup) return;
+
+                const normalizeSn = (value) => String(value || '').trim().toUpperCase();
+                const safeReadSet = () => {
+                    try {
+                        const raw = window.localStorage.getItem(ackSnStorageKey);
+                        const arr = raw ? JSON.parse(raw) : [];
+                        if (!Array.isArray(arr)) return new Set();
+                        return new Set(arr.map(normalizeSn).filter(Boolean));
+                    } catch {
+                        return new Set();
+                    }
+                };
+                const safeWriteSet = (set) => {
+                    try {
+                        const arr = Array.from(set || []);
+                        window.localStorage.setItem(ackSnStorageKey, JSON.stringify(arr));
+                    } catch {
+                        // ignore
+                    }
+                };
+
+                // 進彈窗時先套用已勾選狀態（支援關掉再開/重整保留）
+                const checkedSet = safeReadSet();
+                const allSnButtons = popup.querySelectorAll('button.ack-sn-item');
+                allSnButtons.forEach((btn) => {
+                    const sn = normalizeSn(btn.getAttribute('data-sn'));
+                    const isChecked = sn && checkedSet.has(sn);
+                    if (isChecked) btn.classList.add('is-checked');
+                    btn.setAttribute('aria-pressed', isChecked ? 'true' : 'false');
+                });
+
+                // 點擊 SN 可切換「已核對」(刪除線)
+                popup.addEventListener('click', (ev) => {
+                    const target = ev.target;
+                    const btn = target && typeof target.closest === 'function'
+                        ? target.closest('button.ack-sn-item')
+                        : null;
+                    if (!btn) return;
+                    ev.preventDefault();
+                    ev.stopPropagation();
+
+                    btn.classList.toggle('is-checked');
+                    const pressed = btn.classList.contains('is-checked');
+                    btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+
+                    const sn = normalizeSn(btn.getAttribute('data-sn'));
+                    if (sn) {
+                        const nextSet = safeReadSet();
+                        if (pressed) nextSet.add(sn);
+                        else nextSet.delete(sn);
+                        safeWriteSet(nextSet);
+                    }
+                });
+            }
         });
 
         if (!result.isConfirmed) return;
@@ -1314,6 +1393,7 @@ export function OrderWorkView({ user }) {
 
         try {
             await apiClient.patch(`/api/orders/${orderId}/exceptions/${exceptionId}/ack`, { note: note || null });
+            try { window.localStorage.removeItem(ackSnStorageKey); } catch { /* ignore */ }
             toast.success('已核可');
             fetchOrderExceptions(orderId);
         } catch (err) {
