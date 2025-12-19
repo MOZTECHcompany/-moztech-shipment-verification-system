@@ -605,10 +605,10 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                         if (!cleanPart) continue;
 
                         // 允許舊格式前綴：SN: / SN：
-                        const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim();
+                        const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim().toUpperCase();
 
-                        // 假設 SN 為 12 碼英數字 (根據用戶範例 T03K52027400、B19B52004735)
-                        if (normalized.length === 12 && /^[A-Za-z0-9]+$/.test(normalized)) {
+                        // 支援 12 / 13 碼英數字（13 碼常見於純數字序號/條碼型序號）
+                        if ((normalized.length === 12 || normalized.length === 13) && /^[A-Za-z0-9]+$/.test(normalized)) {
                             serialNumbers.push(normalized);
                         }
                     }
@@ -618,9 +618,15 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                         // 先移除可能存在的 SN: 前綴，避免把 "SN:" 也一起硬切造成 SN 亂掉
                         const noPrefix = summaryRaw.replace(/SN\s*[:：]/gi, '');
                         const cleanSummary = noPrefix.replace(/[\/\s,，、\n\rㆍ·・•]/g, '');
-                        if (cleanSummary.length > 0 && cleanSummary.length % 12 === 0 && /^[A-Za-z0-9]+$/.test(cleanSummary)) {
-                            for (let j = 0; j < cleanSummary.length; j += 12) {
-                                serialNumbers.push(cleanSummary.substring(j, j + 12));
+                        const upper = cleanSummary.toUpperCase();
+                        if (upper.length > 0 && /^[A-Za-z0-9]+$/.test(upper)) {
+                            const chunkSizes = [12, 13];
+                            for (const size of chunkSizes) {
+                                if (upper.length % size !== 0) continue;
+                                for (let j = 0; j < upper.length; j += size) {
+                                    serialNumbers.push(upper.substring(j, j + size));
+                                }
+                                break;
                             }
                         }
                     }

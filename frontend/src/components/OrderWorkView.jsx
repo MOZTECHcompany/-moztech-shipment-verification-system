@@ -718,6 +718,7 @@ export function OrderWorkView({ user }) {
             if (data.orderId === parseInt(orderId)) {
                 // 如果狀態變為 completed，顯示完成動畫並跳轉
                 if (data.newStatus === 'completed') {
+                    soundNotification.play('taskCompleted');
                     MySwal.fire({
                         title: '🎉 訂單已完成！',
                         text: '所有品項已裝箱完畢，即將返回任務列表...',
@@ -1488,6 +1489,7 @@ export function OrderWorkView({ user }) {
             // 不只依賴 socket：若回應已更新狀態，直接提示並導回任務列表
             const newStatus = response.data?.order?.status;
             if (newStatus === 'completed') {
+                soundNotification.play('taskCompleted');
                 MySwal.fire({
                     title: '🎉 訂單已完成！',
                     text: '所有品項已裝箱完畢，即將返回任務列表...',

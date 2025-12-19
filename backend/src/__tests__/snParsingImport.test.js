@@ -11,8 +11,8 @@ function parseSerialNumbersFromSummary(summaryRaw) {
     for (const part of potentialSNs) {
         const cleanPart = String(part || '').trim();
         if (!cleanPart) continue;
-        const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim();
-        if (normalized.length === 12 && /^[A-Za-z0-9]+$/.test(normalized)) {
+        const normalized = cleanPart.replace(/^SN\s*[:：]/i, '').trim().toUpperCase();
+        if ((normalized.length === 12 || normalized.length === 13) && /^[A-Za-z0-9]+$/.test(normalized)) {
             serialNumbers.push(normalized);
         }
     }
@@ -20,9 +20,15 @@ function parseSerialNumbersFromSummary(summaryRaw) {
     if (serialNumbers.length === 0) {
         const noPrefix = String(summaryRaw).replace(/SN\s*[:：]/gi, '');
         const cleanSummary = noPrefix.replace(/[\/\s,，、\n\rㆍ·・•]/g, '');
-        if (cleanSummary.length > 0 && cleanSummary.length % 12 === 0 && /^[A-Za-z0-9]+$/.test(cleanSummary)) {
-            for (let j = 0; j < cleanSummary.length; j += 12) {
-                serialNumbers.push(cleanSummary.substring(j, j + 12));
+        const upper = String(cleanSummary || '').toUpperCase();
+        if (upper.length > 0 && /^[A-Za-z0-9]+$/.test(upper)) {
+            const chunkSizes = [12, 13];
+            for (const size of chunkSizes) {
+                if (upper.length % size !== 0) continue;
+                for (let j = 0; j < upper.length; j += size) {
+                    serialNumbers.push(upper.substring(j, j + size));
+                }
+                break;
             }
         }
     }
@@ -49,6 +55,18 @@ describe('SN parsing during import', () => {
         const input = 'T03K52027501・T03K52027502·T03K52027503';
         const result = parseSerialNumbersFromSummary(input);
         expect(result).toEqual(['T03K52027501', 'T03K52027502', 'T03K52027503']);
+    });
+
+    test('parses 13-digit numeric SNs separated by comma/space', () => {
+        const input = '4711299273766, 4711299273767 4711299273768';
+        const result = parseSerialNumbersFromSummary(input);
+        expect(result).toEqual(['4711299273766', '4711299273767', '4711299273768']);
+    });
+
+    test('chunks continuous 13-digit SNs when divisible by 13', () => {
+        const input = '471129927376647112992737674711299273768';
+        const result = parseSerialNumbersFromSummary(input);
+        expect(result).toEqual(['4711299273766', '4711299273767', '4711299273768']);
     });
 
     test('does not chunk when SN prefix exists but delimiters missing', () => {

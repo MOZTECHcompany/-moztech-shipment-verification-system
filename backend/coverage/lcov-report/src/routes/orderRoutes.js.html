@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/555</span>
+                <span class='fraction'>0/561</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/365</span>
+                <span class='fraction'>0/367</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/510</span>
+                <span class='fraction'>0/515</span>
             </div>
         
             
@@ -1171,7 +1171,13 @@
 <a name='L1106'></a><a href='#L1106'>1106</a>
 <a name='L1107'></a><a href='#L1107'>1107</a>
 <a name='L1108'></a><a href='#L1108'>1108</a>
-<a name='L1109'></a><a href='#L1109'>1109</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L1109'></a><a href='#L1109'>1109</a>
+<a name='L1110'></a><a href='#L1110'>1110</a>
+<a name='L1111'></a><a href='#L1111'>1111</a>
+<a name='L1112'></a><a href='#L1112'>1112</a>
+<a name='L1113'></a><a href='#L1113'>1113</a>
+<a name='L1114'></a><a href='#L1114'>1114</a>
+<a name='L1115'></a><a href='#L1115'>1115</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1793,6 +1799,12 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -2886,10 +2898,10 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >                        if (!cleanPart) <span class="cstat-no" title="statement not covered" >continue;</span></span>
 &nbsp;
                         // 允許舊格式前綴：SN: / SN：
-                        const normalized = <span class="cstat-no" title="statement not covered" >cleanPart.replace(/^SN\s*[:：]/i, '').trim();</span>
+                        const normalized = <span class="cstat-no" title="statement not covered" >cleanPart.replace(/^SN\s*[:：]/i, '').trim().toUpperCase();</span>
 &nbsp;
-                        // 假設 SN 為 12 碼英數字 (根據用戶範例 T03K52027400、B19B52004735)
-<span class="cstat-no" title="statement not covered" >                        if (normalized.length === 12 &amp;&amp; /^[A-Za-z0-9]+$/.test(normalized)) {</span>
+                        // 支援 12 / 13 碼英數字（13 碼常見於純數字序號/條碼型序號）
+<span class="cstat-no" title="statement not covered" >                        if ((normalized.length === 12 || normalized.length === 13) &amp;&amp; /^[A-Za-z0-9]+$/.test(normalized)) {</span>
 <span class="cstat-no" title="statement not covered" >                            serialNumbers.push(normalized);</span>
                         }
                     }
@@ -2899,9 +2911,15 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
                         // 先移除可能存在的 SN: 前綴，避免把 "SN:" 也一起硬切造成 SN 亂掉
                         const noPrefix = <span class="cstat-no" title="statement not covered" >summaryRaw.replace(/SN\s*[:：]/gi, '');</span>
                         const cleanSummary = <span class="cstat-no" title="statement not covered" >noPrefix.replace(/[\/\s,，、\n\rㆍ·・•]/g, '');</span>
-<span class="cstat-no" title="statement not covered" >                        if (cleanSummary.length &gt; 0 &amp;&amp; cleanSummary.length % 12 === 0 &amp;&amp; /^[A-Za-z0-9]+$/.test(cleanSummary)) {</span>
-<span class="cstat-no" title="statement not covered" >                            for (let j = <span class="cstat-no" title="statement not covered" >0;</span> j &lt; cleanSummary.length; j += 12) {</span>
-<span class="cstat-no" title="statement not covered" >                                serialNumbers.push(cleanSummary.substring(j, j + 12));</span>
+                        const upper = <span class="cstat-no" title="statement not covered" >cleanSummary.toUpperCase();</span>
+<span class="cstat-no" title="statement not covered" >                        if (upper.length &gt; 0 &amp;&amp; /^[A-Za-z0-9]+$/.test(upper)) {</span>
+                            const chunkSizes = <span class="cstat-no" title="statement not covered" >[12, 13];</span>
+<span class="cstat-no" title="statement not covered" >                            for (const size of chunkSizes) {</span>
+<span class="cstat-no" title="statement not covered" >                                if (upper.length % size !== 0) <span class="cstat-no" title="statement not covered" >continue;</span></span>
+<span class="cstat-no" title="statement not covered" >                                for (let j = <span class="cstat-no" title="statement not covered" >0;</span> j &lt; upper.length; j += size) {</span>
+<span class="cstat-no" title="statement not covered" >                                    serialNumbers.push(upper.substring(j, j + size));</span>
+                                }
+<span class="cstat-no" title="statement not covered" >                                break;</span>
                             }
                         }
                     }
@@ -3394,7 +3412,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-18T10:30:00.914Z
+                at 2025-12-19T09:23:21.452Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
