@@ -731,6 +731,7 @@ export function OrderWorkView({ user }) {
                 } 
                 // 如果狀態變為 picked (揀貨完成)，且當前用戶是 picker，提示完成
                 else if (data.newStatus === 'picked' && user.role === 'picker') {
+                    soundNotification.play('taskCompleted');
                     MySwal.fire({
                         title: '✅ 揀貨完成！',
                         text: '此訂單已完成揀貨，即將返回任務列表...',
@@ -1502,6 +1503,7 @@ export function OrderWorkView({ user }) {
                 return;
             }
             if (newStatus === 'picked' && user.role === 'picker') {
+                soundNotification.play('taskCompleted');
                 MySwal.fire({
                     title: '✅ 揀貨完成！',
                     text: '此訂單已完成揀貨，即將返回任務列表...',
