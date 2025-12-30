@@ -420,7 +420,16 @@ router.put('/tasks/pins/:orderId', authorizeRoles('admin', 'dispatcher'), async 
 
         if (req.user?.role === 'dispatcher') {
             const own = await client.query(
-                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                `SELECT 1
+                 FROM orders o
+                 WHERE o.id = $1
+                   AND (
+                     SELECT ol.user_id
+                     FROM operation_logs ol
+                     WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                     ORDER BY ol.created_at DESC
+                     LIMIT 1
+                   ) = $2`,
                 [orderId, userId]
             );
             if (own.rowCount === 0) {

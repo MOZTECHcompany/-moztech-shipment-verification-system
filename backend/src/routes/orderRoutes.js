@@ -397,7 +397,16 @@ router.patch('/orders/:orderId/urgent', authorizeRoles('admin', 'dispatcher'), a
     try {
         if (req.user?.role === 'dispatcher') {
             const own = await pool.query(
-                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                `SELECT 1
+                 FROM orders o
+                 WHERE o.id = $1
+                   AND (
+                     SELECT ol.user_id
+                     FROM operation_logs ol
+                     WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                     ORDER BY ol.created_at DESC
+                     LIMIT 1
+                   ) = $2`,
                 [orderId, req.user.id]
             );
             if (own.rowCount === 0) {
@@ -446,7 +455,19 @@ router.delete('/orders/:orderId', authorizeRoles('admin', 'dispatcher'), async (
     const { orderId } = req.params;
     const io = req.app.get('io');
     const result = req.user?.role === 'dispatcher'
-        ? await pool.query('DELETE FROM orders WHERE id = $1 AND imported_by_user_id = $2 RETURNING voucher_number', [orderId, req.user.id])
+                ? await pool.query(
+                        `DELETE FROM orders o
+                         WHERE o.id = $1
+                             AND (
+                                 SELECT ol.user_id
+                                 FROM operation_logs ol
+                                 WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                                 ORDER BY ol.created_at DESC
+                                 LIMIT 1
+                             ) = $2
+                         RETURNING voucher_number`,
+                        [orderId, req.user.id]
+                )
         : await pool.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
     if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的訂單' });
     io?.emit('task_deleted', { orderId: parseInt(orderId, 10) });
@@ -980,7 +1001,16 @@ router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), as
 
         if (req.user?.role === 'dispatcher') {
             const own = await client.query(
-                'SELECT 1 FROM orders WHERE id = $1 AND imported_by_user_id = $2',
+                `SELECT 1
+                 FROM orders o
+                 WHERE o.id = $1
+                   AND (
+                     SELECT ol.user_id
+                     FROM operation_logs ol
+                     WHERE ol.order_id = o.id AND ol.action_type = 'import'
+                     ORDER BY ol.created_at DESC
+                     LIMIT 1
+                   ) = $2`,
                 [orderId, userId]
             );
             if (own.rowCount === 0) {
