@@ -32,7 +32,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/377</span>
+                <span class='fraction'>0/381</span>
             </div>
         
             
@@ -1213,7 +1213,11 @@
 <a name='L1148'></a><a href='#L1148'>1148</a>
 <a name='L1149'></a><a href='#L1149'>1149</a>
 <a name='L1150'></a><a href='#L1150'>1150</a>
-<a name='L1151'></a><a href='#L1151'>1151</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L1151'></a><a href='#L1151'>1151</a>
+<a name='L1152'></a><a href='#L1152'>1152</a>
+<a name='L1153'></a><a href='#L1153'>1153</a>
+<a name='L1154'></a><a href='#L1154'>1154</a>
+<a name='L1155'></a><a href='#L1155'>1155</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1327,6 +1331,10 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -2476,13 +2484,17 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >            return res.status(400).json({ message: '請提供訂單ID列表' });</span>
         }
 &nbsp;
-        const result = <span class="cstat-no" title="statement not covered" >await pool.query(</span>
-            `UPDATE orders 
-             SET picker_id = $1, status = 'picking', updated_at = NOW()
-             WHERE id = ANY($2) AND status = 'pending'
-             RETURNING id, voucher_number`,
-            [userId, orderIds]
-        );
+                const result = <span class="cstat-no" title="statement not covered" >await pool.query(</span>
+                        `UPDATE orders 
+                         SET picker_id = $1, status = 'picking', updated_at = NOW()
+                         WHERE id = ANY($2)
+                             AND (
+                                 status = 'pending'
+                                 OR (status = 'picking' AND picker_id IS NULL)
+                             )
+                         RETURNING id, voucher_number`,
+                        [userId, orderIds]
+                );
 &nbsp;
 <span class="cstat-no" title="statement not covered" >        res.json({ </span>
             message: `成功認領 ${result.rows.length} 個訂單`,
@@ -2511,7 +2523,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 <span class="cstat-no" title="statement not covered" >        for (const orderId of orderIds) {</span>
 <span class="cstat-no" title="statement not covered" >            try {</span>
                 const result = <span class="cstat-no" title="statement not covered" >await pool.query(</span>
-                    'SELECT id, status FROM orders WHERE id = $1',
+                    'SELECT id, status, picker_id FROM orders WHERE id = $1',
                     [orderId]
                 );
 &nbsp;
@@ -2522,7 +2534,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
 &nbsp;
                 const order = <span class="cstat-no" title="statement not covered" >result.rows[0];</span>
 &nbsp;
-<span class="cstat-no" title="statement not covered" >                if (order.status === 'pending' &amp;&amp; (role === 'picker' || isAdminLike)) {</span>
+<span class="cstat-no" title="statement not covered" >                if ((role === 'picker' || isAdminLike) &amp;&amp; (order.status === 'pending' || (order.status === 'picking' &amp;&amp; !order.picker_id))) {</span>
 <span class="cstat-no" title="statement not covered" >                    await pool.query(</span>
                         "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -2605,7 +2617,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
         }
 <span class="cstat-no" title="statement not covered" >        logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);</span>
         let newStatus = <span class="cstat-no" title="statement not covered" >'',</span> task_type = <span class="cstat-no" title="statement not covered" >'';</span>
-<span class="cstat-no" title="statement not covered" >        if ((role === 'picker' || isAdminLike) &amp;&amp; order.status === 'pending') {</span>
+<span class="cstat-no" title="statement not covered" >        if ((role === 'picker' || isAdminLike) &amp;&amp; (order.status === 'pending' || (order.status === 'picking' &amp;&amp; !order.picker_id))) {</span>
 <span class="cstat-no" title="statement not covered" >            newStatus = 'picking'; <span class="cstat-no" title="statement not covered" ></span>task_type = 'pick';</span>
 <span class="cstat-no" title="statement not covered" >            await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);</span>
 <span class="cstat-no" title="statement not covered" >            logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);</span>
@@ -3520,7 +3532,7 @@ const importLimiter = <span class="cstat-no" title="statement not covered" >rate
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-30T11:50:17.328Z
+                at 2026-01-13T06:06:23.427Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

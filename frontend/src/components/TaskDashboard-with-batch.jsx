@@ -54,7 +54,7 @@ const TaskCard = ({ task, user, onClaim, onDelete, isMyTask, isSelected, onToggl
     const navigate = useNavigate();
     
     const canClaim = (
-        (task.status === 'pending' && (user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin')) ||
+        ((task.status === 'pending' || (task.status === 'picking' && !task.picker_name)) && (user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin')) ||
         (task.status === 'picking' && (user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin'))
     );
 

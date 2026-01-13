@@ -56,7 +56,7 @@ router.get('/tasks', async (req, res) => {
             WHERE 
                 ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'dispatcher' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
-                ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND o.picker_id = $1))) OR
+                ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL)))) OR
                 ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 

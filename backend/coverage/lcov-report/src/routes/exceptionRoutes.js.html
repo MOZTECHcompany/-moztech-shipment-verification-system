@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/407</span>
+                <span class='fraction'>0/409</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/411</span>
+                <span class='fraction'>0/415</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/398</span>
+                <span class='fraction'>0/400</span>
             </div>
         
             
@@ -1149,7 +1149,16 @@
 <a name='L1084'></a><a href='#L1084'>1084</a>
 <a name='L1085'></a><a href='#L1085'>1085</a>
 <a name='L1086'></a><a href='#L1086'>1086</a>
-<a name='L1087'></a><a href='#L1087'>1087</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L1087'></a><a href='#L1087'>1087</a>
+<a name='L1088'></a><a href='#L1088'>1088</a>
+<a name='L1089'></a><a href='#L1089'>1089</a>
+<a name='L1090'></a><a href='#L1090'>1090</a>
+<a name='L1091'></a><a href='#L1091'>1091</a>
+<a name='L1092'></a><a href='#L1092'>1092</a>
+<a name='L1093'></a><a href='#L1093'>1093</a>
+<a name='L1094'></a><a href='#L1094'>1094</a>
+<a name='L1095'></a><a href='#L1095'>1095</a>
+<a name='L1096'></a><a href='#L1096'>1096</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1572,6 +1581,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1580,11 +1590,13 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1627,9 +1639,12 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1952,6 +1967,9 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -2658,6 +2676,7 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
 &nbsp;
         const exceptionId = <span class="cstat-no" title="statement not covered" >inserted.rows[0].id;</span>
         let orderChangeAutoApproved = <span class="cstat-no" title="statement not covered" >false;</span>
+        let orderChangeApplyResult = <span class="cstat-no" title="statement not covered" >null;</span>
 &nbsp;
         // 管理員自拋單：可直接異動，不需審核，但仍留痕
 <span class="cstat-no" title="statement not covered" >        if (String(type) === 'order_change') {</span>
@@ -2671,6 +2690,8 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
                     proposal: snapshotObj.proposal,
                     actorUserId: userId
                 });
+&nbsp;
+<span class="cstat-no" title="statement not covered" >                orderChangeApplyResult = applyResult;</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >                await client.query(</span>
                     `UPDATE order_exceptions
@@ -2710,9 +2731,12 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
             voucherNumber: orderExist.rows[0]?.voucher_number || null
         });
 &nbsp;
-        // 若為 order_change 且自動放行，訂單狀態已被強制退回撿貨
+        // 若為 order_change 且自動放行，訂單狀態已被退回（pending / picking）
 <span class="cstat-no" title="statement not covered" >        if (String(type) === 'order_change' &amp;&amp; orderChangeAutoApproved) {</span>
-<span class="cstat-no" title="statement not covered" >            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'picking' });</span>
+<span class="cstat-no" title="statement not covered" >            io?.emit('task_status_changed', {</span>
+                orderId: parseInt(orderId, 10),
+                newStatus: orderChangeApplyResult?.newStatus || 'picking'
+            });
         }
 &nbsp;
         // 通知責任人（拋單員 / 管理員建立者）：以 task comment + mention 方式推送到通知中心
@@ -3037,7 +3061,10 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
         });
 &nbsp;
 <span class="cstat-no" title="statement not covered" >        if (String(row.type) === 'order_change') {</span>
-<span class="cstat-no" title="statement not covered" >            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'picking' });</span>
+<span class="cstat-no" title="statement not covered" >            io?.emit('task_status_changed', {</span>
+                orderId: parseInt(orderId, 10),
+                newStatus: applyResult?.newStatus || 'picking'
+            });
         }
 &nbsp;
 <span class="cstat-no" title="statement not covered" >        return res.json({ message: '例外已核可', item: updated.rows[0] });</span>
@@ -3328,7 +3355,7 @@ function <span class="fstat-no" title="function not covered" >normalizeReasonTex
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-12-30T11:50:17.328Z
+                at 2026-01-13T06:06:23.427Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

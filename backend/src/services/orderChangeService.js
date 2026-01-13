@@ -491,19 +491,16 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
         });
     }
 
-    // Force status back to picking as per spec (to pick only changed items; unchanged remain satisfied).
-    // Keep assignment ids, but ensure status reflects the rollback.
-    if (originalStatus && originalStatus !== 'pending') {
-        await client.query("UPDATE orders SET status = 'picking', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
-    } else {
-        await client.query("UPDATE orders SET status = 'picking', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
-    }
+    // After an approved order change, return the order to the picking phase.
+    // Note: picker_id may be NULL (unassigned); claim flow must support claiming such orders.
+    const nextStatus = 'picking';
+    await client.query('UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [nextStatus, orderId]);
 
     return {
         orderId: parseInt(orderId, 10),
         actorUserId,
         previousStatus: originalStatus,
-        newStatus: 'picking',
+        newStatus: nextStatus,
         changesApplied
     };
 }

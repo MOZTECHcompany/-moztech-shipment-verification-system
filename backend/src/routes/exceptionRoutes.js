@@ -421,6 +421,7 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
 
         const exceptionId = inserted.rows[0].id;
         let orderChangeAutoApproved = false;
+        let orderChangeApplyResult = null;
 
         // 管理員自拋單：可直接異動，不需審核，但仍留痕
         if (String(type) === 'order_change') {
@@ -434,6 +435,8 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
                     proposal: snapshotObj.proposal,
                     actorUserId: userId
                 });
+
+                orderChangeApplyResult = applyResult;
 
                 await client.query(
                     `UPDATE order_exceptions
@@ -473,9 +476,12 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             voucherNumber: orderExist.rows[0]?.voucher_number || null
         });
 
-        // 若為 order_change 且自動放行，訂單狀態已被強制退回撿貨
+        // 若為 order_change 且自動放行，訂單狀態已被退回（pending / picking）
         if (String(type) === 'order_change' && orderChangeAutoApproved) {
-            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'picking' });
+            io?.emit('task_status_changed', {
+                orderId: parseInt(orderId, 10),
+                newStatus: orderChangeApplyResult?.newStatus || 'picking'
+            });
         }
 
         // 通知責任人（拋單員 / 管理員建立者）：以 task comment + mention 方式推送到通知中心
@@ -800,7 +806,10 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
         });
 
         if (String(row.type) === 'order_change') {
-            io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'picking' });
+            io?.emit('task_status_changed', {
+                orderId: parseInt(orderId, 10),
+                newStatus: applyResult?.newStatus || 'picking'
+            });
         }
 
         return res.json({ message: '例外已核可', item: updated.rows[0] });

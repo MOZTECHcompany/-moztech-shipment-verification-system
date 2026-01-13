@@ -111,13 +111,17 @@ router.post('/orders/batch-claim', async (req, res) => {
             return res.status(400).json({ message: '請提供訂單ID列表' });
         }
 
-        const result = await pool.query(
-            `UPDATE orders 
-             SET picker_id = $1, status = 'picking', updated_at = NOW()
-             WHERE id = ANY($2) AND status = 'pending'
-             RETURNING id, voucher_number`,
-            [userId, orderIds]
-        );
+                const result = await pool.query(
+                        `UPDATE orders 
+                         SET picker_id = $1, status = 'picking', updated_at = NOW()
+                         WHERE id = ANY($2)
+                             AND (
+                                 status = 'pending'
+                                 OR (status = 'picking' AND picker_id IS NULL)
+                             )
+                         RETURNING id, voucher_number`,
+                        [userId, orderIds]
+                );
 
         res.json({ 
             message: `成功認領 ${result.rows.length} 個訂單`,
@@ -146,7 +150,7 @@ router.post('/orders/batch/claim', async (req, res) => {
         for (const orderId of orderIds) {
             try {
                 const result = await pool.query(
-                    'SELECT id, status FROM orders WHERE id = $1',
+                    'SELECT id, status, picker_id FROM orders WHERE id = $1',
                     [orderId]
                 );
 
@@ -157,7 +161,7 @@ router.post('/orders/batch/claim', async (req, res) => {
 
                 const order = result.rows[0];
 
-                if (order.status === 'pending' && (role === 'picker' || isAdminLike)) {
+                if ((role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
                     await pool.query(
                         "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
                         [userId, orderId]
@@ -240,7 +244,7 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
         }
         logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
         let newStatus = '', task_type = '';
-        if ((role === 'picker' || isAdminLike) && order.status === 'pending') {
+        if ((role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
             logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
