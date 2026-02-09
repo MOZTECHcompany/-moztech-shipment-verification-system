@@ -83,11 +83,12 @@ function validateOrderChangeProposal(proposal) {
         }
 
         // If removing SN-tracked items, removedSnList is optional for backward compatibility.
-        // If provided, it must match the removal count.
+        // If provided, it must not exceed the removal count.
+        // (Back-end may auto-pick remaining pending SNs, and may reduce untracked quantity first.)
         if (!noSn && quantityChange < 0 && removedSnList.length > 0) {
             const removeCount = Math.abs(quantityChange);
-            if (removedSnList.length !== removeCount) {
-                return { ok: false, message: `品項 ${barcode} 為有 SN，減少數量 ${removeCount} 必須提供同數量待移除 SN（目前 ${removedSnList.length}）` };
+            if (removedSnList.length > removeCount) {
+                return { ok: false, message: `品項 ${barcode} 為有 SN，減少數量 ${removeCount} 待移除 SN 不可超過 ${removeCount}（目前 ${removedSnList.length}）` };
             }
         }
 
@@ -330,7 +331,15 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
             }
 
             if (quantityChange < 0) {
-                const removeCount = Math.abs(quantityChange);
+                const removeCountTotal = Math.abs(quantityChange);
+
+                // Some legacy/edge cases may have quantity > instance count ("untracked" qty).
+                // In that case, allow decreasing quantity by consuming that untracked portion first,
+                // without deleting instances (to avoid instance_count > quantity).
+                const totalInstanceCount = existingInstances.length;
+                const untrackedQty = Math.max(0, existingTotalQty - totalInstanceCount);
+                const reduceFromUntracked = Math.min(removeCountTotal, untrackedQty);
+                const removeCount = Math.max(0, removeCountTotal - reduceFromUntracked);
 
                 // Allow decrease only from pending instances.
                 // Guard: target quantity cannot go below picked+packed count.
@@ -345,12 +354,50 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     throw e;
                 }
 
+                // If we only need to reduce untracked quantity, just reduce order_items quantities.
+                if (removeCount === 0) {
+                    let remainingToReduce = removeCountTotal;
+                    const rowsDesc = [...existingItems].sort((a, b) => b.id - a.id);
+                    for (const row of rowsDesc) {
+                        if (remainingToReduce <= 0) break;
+                        const q = Number(row.quantity ?? 0);
+                        const reduceHere = Math.min(q, remainingToReduce);
+                        const newQ = q - reduceHere;
+                        await client.query('UPDATE order_items SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newQ, row.id]);
+                        remainingToReduce -= reduceHere;
+                    }
+
+                    // Delete empty rows (keep instances intact; they must still have a parent row)
+                    await client.query(
+                        `DELETE FROM order_items oi
+                         WHERE oi.order_id = $1
+                           AND oi.barcode = $2
+                           AND COALESCE(oi.quantity, 0) <= 0
+                           AND NOT EXISTS (
+                               SELECT 1 FROM order_item_instances i
+                               WHERE i.order_item_id = oi.id
+                           )`,
+                        [orderId, barcode]
+                    );
+
+                    changesApplied.push({
+                        barcode,
+                        mode: 'sn',
+                        action: 'decrease',
+                        previousTotalQuantity: existingTotalQty,
+                        newTotalQuantity: existingTotalQty - removeCountTotal,
+                        removedSerialNumbers: [],
+                        removalSource: 'untracked'
+                    });
+                    continue;
+                }
+
                 const pendingInstances = existingInstances.filter((i) => String(i?.status || '').toLowerCase() === 'pending');
                 let chosen = [];
                 let removalSource = 'auto';
 
                 if (Array.isArray(removedSnList) && removedSnList.length > 0) {
-                    if (removedSnList.length !== removeCount) {
+                    if (removedSnList.length > removeCount) {
                         const e = new Error(`品項 ${barcode} 需移除 ${removeCount} 筆 SN，但提供 ${removedSnList.length} 筆`);
                         e.status = 400;
                         throw e;
@@ -369,9 +416,19 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                         throw e;
                     }
                     removalSource = 'specified';
-                } else {
-                    chosen = pendingInstances.slice(0, removeCount);
-                    removalSource = 'auto';
+                }
+
+                if (chosen.length < removeCount) {
+                    const chosenIds = new Set(chosen.map((i) => i.id));
+                    const fill = [];
+                    for (const inst of pendingInstances) {
+                        if (chosen.length + fill.length >= removeCount) break;
+                        if (chosenIds.has(inst.id)) continue;
+                        fill.push(inst);
+                        chosenIds.add(inst.id);
+                    }
+                    chosen = [...chosen, ...fill];
+                    if (removalSource !== 'specified') removalSource = 'auto';
                 }
 
                 if (chosen.length !== removeCount) {
@@ -384,9 +441,9 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                 const removedSerials = chosen.map((i) => i.serial_number);
                 await client.query('DELETE FROM order_item_instances WHERE id = ANY($1::int[])', [chosen.map((i) => i.id)]);
 
-                // Reduce quantities across rows to match new total.
+                // Reduce quantities across rows to match new total (includes untracked reduction).
                 // We reduce from the last rows first to avoid disturbing primary row if possible.
-                let remainingToReduce = removeCount;
+                let remainingToReduce = removeCountTotal;
                 const rowsDesc = [...existingItems].sort((a, b) => b.id - a.id);
                 for (const row of rowsDesc) {
                     if (remainingToReduce <= 0) break;
@@ -415,7 +472,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     mode: 'sn',
                     action: 'decrease',
                     previousTotalQuantity: existingTotalQty,
-                    newTotalQuantity: existingTotalQty - removeCount,
+                    newTotalQuantity: existingTotalQty - removeCountTotal,
                     removedSerialNumbers: removedSerials,
                     removalSource
                 });

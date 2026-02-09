@@ -1186,6 +1186,9 @@ export function OrderWorkView({ user }) {
                 }
 
                 const removeCount = Math.abs(delta);
+                const snTrackedQty = pickedPacked + (Array.isArray(row?.pendingSerials) ? row.pendingSerials.length : 0);
+                const untrackedQty = Math.max(0, originalQty - snTrackedQty);
+                const removeSnNeeded = Math.max(0, removeCount - untrackedQty);
                 const pendingSet = new Set((row?.pendingSerials || []).map((x) => String(x).toUpperCase()));
                 const removedList = Array.isArray(row?.removeSelected) ? row.removeSelected : [];
                 const removed = parseSnText(removedList.join('\n'));
@@ -1193,8 +1196,8 @@ export function OrderWorkView({ user }) {
                 if (missing.length > 0) {
                     return { ok: false, message: `品項 ${barcode} 有 SN 不存在或非 pending，無法移除：${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '…' : ''}` };
                 }
-                if (removed.length !== removeCount) {
-                    return { ok: false, message: `品項 ${barcode} 減少 ${removeCount}，需選取/貼上 ${removeCount} 支待移除 SN（目前 ${removed.length}）` };
+                if (removed.length !== removeSnNeeded) {
+                    return { ok: false, message: `品項 ${barcode} 減少 ${removeCount}，需選取/貼上 ${removeSnNeeded} 支待移除 SN（目前 ${removed.length}）` };
                 }
 
                 proposalItems.push({
@@ -2438,10 +2441,12 @@ export function OrderWorkView({ user }) {
                                     const delta = targetQty - originalQty;
                                     const pickedPacked = (Number(row?.pickedSnCount) || 0) + (Number(row?.packedSnCount) || 0);
                                     const isSn = !!row?.isSn;
+                                    const snTrackedQty = isSn ? (pickedPacked + (Array.isArray(row?.pendingSerials) ? row.pendingSerials.length : 0)) : 0;
+                                    const untrackedQty = isSn ? Math.max(0, originalQty - snTrackedQty) : 0;
                                     const minTarget = isSn ? Math.max(0, Math.trunc(Number(pickedPacked) || 0)) : 0;
                                     const pendingSerials = Array.isArray(row?.pendingSerials) ? row.pendingSerials : [];
                                     const removeSelected = Array.isArray(row?.removeSelected) ? row.removeSelected : [];
-                                    const removeCountNeeded = delta < 0 ? Math.abs(delta) : 0;
+                                    const removeCountNeeded = (isSn && delta < 0) ? Math.max(0, Math.abs(delta) - untrackedQty) : (delta < 0 ? Math.abs(delta) : 0);
                                     const addCountNeeded = delta > 0 ? delta : 0;
                                     const addedList = parseSnText(row?.addSnText);
 
@@ -2526,7 +2531,8 @@ export function OrderWorkView({ user }) {
                                                                     // SN 減少：自動幫忙挑選/補齊要移除的 pending SN（可再手動點選調整）
                                                                     if (isSn) {
                                                                         const nextDelta = next - originalQty;
-                                                                        const need = nextDelta < 0 ? Math.abs(nextDelta) : 0;
+                                                                        const nextRemove = nextDelta < 0 ? Math.abs(nextDelta) : 0;
+                                                                        const need = nextDelta < 0 ? Math.max(0, nextRemove - untrackedQty) : 0;
 
                                                                         if (need === 0) {
                                                                             updateOrderChangeDraft(row.id, { targetQty: next, removeSelected: [] });
