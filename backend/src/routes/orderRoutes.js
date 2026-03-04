@@ -969,55 +969,59 @@ router.post('/orders/update_item', async (req, res, next) => {
         }
         markStage('matchAndMutationMs');
 
-        // 在同一個 transaction 內判斷是否已 100% 完成，並原子性更新訂單狀態
-        const [allItems, allInstances] = await Promise.all([
-            client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]),
-            client.query(
-                'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
-                [orderId]
+        // 在同一個 transaction 內判斷是否已 100% 完成，使用聚合查詢避免每次掃描都回傳大量 rows
+        const completionCheckResult = await client.query(
+            `WITH instance_stats AS (
+                SELECT
+                    i.order_item_id,
+                    COUNT(*) AS instance_count,
+                    BOOL_OR(i.status NOT IN ('picked', 'packed')) AS has_not_picked_instance,
+                    BOOL_OR(i.status <> 'packed') AS has_not_packed_instance
+                FROM order_item_instances i
+                JOIN order_items oi ON oi.id = i.order_item_id
+                WHERE oi.order_id = $1
+                GROUP BY i.order_item_id
             )
-        ]);
+            SELECT
+                EXISTS(
+                    SELECT 1
+                    FROM order_items oi
+                    LEFT JOIN instance_stats s ON s.order_item_id = oi.id
+                    WHERE oi.order_id = $1
+                      AND (
+                          (
+                              COALESCE(s.instance_count, 0) > 0
+                              AND COALESCE(s.has_not_picked_instance, false)
+                          )
+                          OR (
+                              COALESCE(s.instance_count, 0) = 0
+                              AND COALESCE(oi.picked_quantity, 0) < COALESCE(oi.quantity, 0)
+                          )
+                      )
+                ) AS has_unpicked,
+                EXISTS(
+                    SELECT 1
+                    FROM order_items oi
+                    LEFT JOIN instance_stats s ON s.order_item_id = oi.id
+                    WHERE oi.order_id = $1
+                      AND (
+                          (
+                              COALESCE(s.instance_count, 0) > 0
+                              AND COALESCE(s.has_not_packed_instance, false)
+                          )
+                          OR (
+                              COALESCE(s.instance_count, 0) = 0
+                              AND COALESCE(oi.packed_quantity, 0) < COALESCE(oi.quantity, 0)
+                          )
+                      )
+                ) AS has_unpacked`,
+            [orderId]
+        );
 
-        let allPicked = true;
-        let allPacked = true;
-
-        const instanceStatsByItemId = new Map();
-        for (const inst of allInstances.rows) {
-            const current = instanceStatsByItemId.get(inst.order_item_id) || {
-                total: 0,
-                pickedOrPacked: 0,
-                packed: 0
-            };
-            current.total += 1;
-            if (inst.status === 'picked' || inst.status === 'packed') {
-                current.pickedOrPacked += 1;
-            }
-            if (inst.status === 'packed') {
-                current.packed += 1;
-            }
-            instanceStatsByItemId.set(inst.order_item_id, current);
-        }
-
-        for (const item of allItems.rows) {
-            const stats = instanceStatsByItemId.get(item.id);
-            if (stats && stats.total > 0) {
-                if (stats.pickedOrPacked < stats.total) allPicked = false;
-                if (stats.packed < stats.total) allPacked = false;
-                continue;
-            }
-
-            const qty = Number(item.quantity ?? 0);
-            const pickedQty = Number(item.picked_quantity ?? 0);
-            const packedQty = Number(item.packed_quantity ?? 0);
-
-            // 若揀貨未達需求，不能被視為「裝箱完成」
-            if (pickedQty < qty) {
-                allPicked = false;
-                allPacked = false;
-            } else {
-                if (packedQty < qty) allPacked = false;
-            }
-        }
+        const hasUnpicked = !!completionCheckResult.rows?.[0]?.has_unpicked;
+        const hasUnpacked = !!completionCheckResult.rows?.[0]?.has_unpacked;
+        const allPicked = !hasUnpicked;
+        const allPacked = !hasUnpacked;
 
         let statusChanged = false;
         let finalStatus = order.status;
