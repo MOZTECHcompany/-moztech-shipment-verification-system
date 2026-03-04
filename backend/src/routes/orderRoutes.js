@@ -730,11 +730,21 @@ router.post('/orders/update_item', async (req, res, next) => {
     const scanRequestStartedAt = Date.now();
     let scanOutcome = 'unknown';
     const stageTimings = {};
+    const queryTimings = [];
     let stageStartedAt = scanRequestStartedAt;
     const markStage = (stageName) => {
         const now = Date.now();
         stageTimings[stageName] = now - stageStartedAt;
         stageStartedAt = now;
+    };
+    const trackedQuery = async (db, label, sql, params = []) => {
+        const startedAt = Date.now();
+        const result = await db.query(sql, params);
+        const elapsedMs = Date.now() - startedAt;
+        if (elapsedMs >= 120) {
+            queryTimings.push({ label, elapsedMs });
+        }
+        return result;
     };
 
     if (!(isAdminLike || role === 'picker' || role === 'packer')) {
@@ -751,11 +761,13 @@ router.post('/orders/update_item', async (req, res, next) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query("SET LOCAL lock_timeout = '1500ms'");
+        await client.query("SET LOCAL statement_timeout = '8000ms'");
         const amountNum = Number(amount ?? 1);
         if (!Number.isFinite(amountNum) || amountNum === 0) {
             throw new Error('數量 amount 無效');
         }
-        const orderResult = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+        const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
 
@@ -796,7 +808,9 @@ router.post('/orders/update_item', async (req, res, next) => {
         let matchedBy = 'exact';
 
         // 先走精準匹配（支援舊貨掃到 SN: 前綴）
-        const instanceResult = await client.query(
+        const instanceResult = await trackedQuery(
+            client,
+            'match_instance_exact_for_update',
             `SELECT i.id, i.status
              FROM order_item_instances i
              JOIN order_items oi ON i.order_item_id = oi.id
@@ -815,7 +829,9 @@ router.post('/orders/update_item', async (req, res, next) => {
 
             // 避免數字型商品條碼誤判成 SN：若此掃描值本身就是訂單品項的 barcode，優先走條碼邏輯
             if (canTryDigitsMatch && scanInfo.isDigitsOnly && !scanInfo.hadSnPrefix) {
-                const barcodeExists = await client.query(
+                const barcodeExists = await trackedQuery(
+                    client,
+                    'check_barcode_exists',
                     'SELECT 1 FROM order_items WHERE order_id = $1 AND barcode = $2 LIMIT 1',
                     [orderId, scanRaw]
                 );
@@ -824,7 +840,9 @@ router.post('/orders/update_item', async (req, res, next) => {
                 }
             }
             if (canTryDigitsMatch) {
-                const digitsResult = await client.query(
+                                const digitsResult = await trackedQuery(
+                                        client,
+                                        'match_instance_digits_for_update',
                     `SELECT i.id, i.status
                      FROM order_item_instances i
                      JOIN order_items oi ON i.order_item_id = oi.id
@@ -851,7 +869,7 @@ router.post('/orders/update_item', async (req, res, next) => {
             if (type === 'pick' && instance.status === 'pending') newStatus = 'picked'; 
             else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed'; 
             else throw new Error(`SN 碼 ${scanRaw} 的狀態 (${instance.status}) 無法執行此操作`);
-            await client.query('UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
+            await trackedQuery(client, 'update_instance_status', 'UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
             await logOperation({
                 userId,
                 orderId,
@@ -876,7 +894,9 @@ router.post('/orders/update_item', async (req, res, next) => {
 
             let itemResult;
             if (orderItemId) {
-                itemResult = await client.query(
+                itemResult = await trackedQuery(
+                    client,
+                    'pick_item_by_id_for_update',
                     `
                     SELECT
                         oi.id,
@@ -899,7 +919,9 @@ router.post('/orders/update_item', async (req, res, next) => {
                 // 同一張訂單內可能有多行相同條碼，必須挑選「仍可更新」的那一行
                 // pick: picked_quantity + amount 需落在 [0, quantity]
                 // pack: packed_quantity + amount 需落在 [0, picked_quantity]
-                itemResult = await client.query(
+                itemResult = await trackedQuery(
+                    client,
+                    'pick_item_by_barcode_for_update',
                     `
                     SELECT
                         oi.id,
@@ -948,11 +970,11 @@ router.post('/orders/update_item', async (req, res, next) => {
             if (type === 'pick') { 
                 const newPickedQty = item.picked_quantity + amountNum; 
                 if (newPickedQty < 0 || newPickedQty > item.quantity) throw new Error('揀貨數量無效'); 
-                await client.query('UPDATE order_items SET picked_quantity = $1 WHERE id = $2', [newPickedQty, item.id]); 
+                await trackedQuery(client, 'update_item_picked_qty', 'UPDATE order_items SET picked_quantity = $1 WHERE id = $2', [newPickedQty, item.id]); 
             } else if (type === 'pack') { 
                 const newPackedQty = item.packed_quantity + amountNum; 
                 if (newPackedQty < 0 || newPackedQty > item.picked_quantity) throw new Error('裝箱數量不能超過已揀貨數量'); 
-                await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]); 
+                await trackedQuery(client, 'update_item_packed_qty', 'UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]); 
             }
             await logOperation({
                 userId,
@@ -970,7 +992,9 @@ router.post('/orders/update_item', async (req, res, next) => {
         markStage('matchAndMutationMs');
 
         // 在同一個 transaction 內判斷是否已 100% 完成，使用聚合查詢避免每次掃描都回傳大量 rows
-        const completionCheckResult = await client.query(
+        const completionCheckResult = await trackedQuery(
+            client,
+            'completion_check_aggregate',
             `WITH instance_stats AS (
                 SELECT
                     i.order_item_id,
@@ -1032,7 +1056,9 @@ router.post('/orders/update_item', async (req, res, next) => {
             if (!hasOpen) {
                 finalStatus = 'completed';
                 statusChanged = true;
-                await client.query(
+                await trackedQuery(
+                    client,
+                    'update_order_completed',
                     "UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
                     [userId, orderId]
                 );
@@ -1040,10 +1066,10 @@ router.post('/orders/update_item', async (req, res, next) => {
         } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
             finalStatus = 'picked';
             statusChanged = true;
-            await client.query("UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
+            await trackedQuery(client, 'update_order_picked', "UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
         }
 
-        await client.query('COMMIT');
+        await trackedQuery(client, 'commit_tx', 'COMMIT');
 
         if (statusChanged) {
             io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: finalStatus });
@@ -1063,8 +1089,14 @@ router.post('/orders/update_item', async (req, res, next) => {
         res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows });
     } catch (err) {
         await client.query('ROLLBACK');
-        scanOutcome = 'error';
-        err.message = `更新品项状态失败: ${err.message}`;
+        if (err?.code === '55P03' || /lock timeout|statement timeout|canceling statement/i.test(err?.message || '')) {
+            scanOutcome = 'lock_or_timeout';
+            err.status = 409;
+            err.message = '掃描作業暫時忙碌（鎖等待逾時），請重試';
+        } else {
+            scanOutcome = 'error';
+            err.message = `更新品项状态失败: ${err.message}`;
+        }
         next(err);
     } finally {
         const durationMs = Date.now() - scanRequestStartedAt;
@@ -1073,7 +1105,8 @@ router.post('/orders/update_item', async (req, res, next) => {
             userId,
             type,
             outcome: scanOutcome,
-            stageTimings
+            stageTimings,
+            slowQueries: queryTimings
         });
         client.release();
     }
