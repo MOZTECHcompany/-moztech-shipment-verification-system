@@ -13,6 +13,45 @@ const { normalizeSerialScanInput } = require('../utils/serialNumber');
 
 const router = express.Router();
 
+const scanPerfWindow = [];
+const SCAN_PERF_WINDOW_SIZE = 300;
+const SCAN_PERF_LOG_EVERY = 30;
+
+function percentile(values, p) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const index = Math.ceil((p / 100) * sorted.length) - 1;
+    const safeIndex = Math.max(0, Math.min(index, sorted.length - 1));
+    return sorted[safeIndex];
+}
+
+function recordScanPerf(durationMs, meta = {}) {
+    scanPerfWindow.push(durationMs);
+    if (scanPerfWindow.length > SCAN_PERF_WINDOW_SIZE) {
+        scanPerfWindow.shift();
+    }
+
+    const p50 = percentile(scanPerfWindow, 50);
+    const p95 = percentile(scanPerfWindow, 95);
+    const sampleCount = scanPerfWindow.length;
+    const baseMeta = {
+        sampleCount,
+        durationMs,
+        p50,
+        p95,
+        ...meta
+    };
+
+    if (durationMs >= 1500) {
+        logger.warn('[scan_perf] slow_scan_detected', baseMeta);
+        return;
+    }
+
+    if (sampleCount % SCAN_PERF_LOG_EVERY === 0) {
+        logger.info('[scan_perf] rolling_latency', baseMeta);
+    }
+}
+
 async function hasOpenExceptions(db, orderId) {
     try {
         const result = await db.query(
@@ -688,13 +727,24 @@ router.post('/orders/update_item', async (req, res, next) => {
     const { id: userId, role } = req.user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
     const io = req.app.get('io');
+    const scanRequestStartedAt = Date.now();
+    let scanOutcome = 'unknown';
+    const stageTimings = {};
+    let stageStartedAt = scanRequestStartedAt;
+    const markStage = (stageName) => {
+        const now = Date.now();
+        stageTimings[stageName] = now - stageStartedAt;
+        stageStartedAt = now;
+    };
 
     if (!(isAdminLike || role === 'picker' || role === 'packer')) {
+        scanOutcome = 'forbidden';
         return res.status(403).json({ message: '權限不足' });
     }
 
     const scanRaw = String(scanValue ?? '').trim();
     if (!scanRaw) {
+        scanOutcome = 'invalid_input';
         return res.status(400).json({ message: '掃描值不可為空' });
     }
 
@@ -713,6 +763,7 @@ router.post('/orders/update_item', async (req, res, next) => {
         const hasPendingChange = await hasOpenOrderChange(client, orderId);
         if (hasPendingChange) {
             await client.query('ROLLBACK');
+            scanOutcome = 'blocked_order_change';
             return res.status(409).json({ message: '此訂單異動審核中，請先主管核可後再作業。' });
         }
 
@@ -721,6 +772,7 @@ router.post('/orders/update_item', async (req, res, next) => {
             const hasOpen = await hasOpenExceptions(client, orderId);
             if (hasOpen) {
                 await client.query('ROLLBACK');
+                scanOutcome = 'blocked_open_exception';
                 return res.status(409).json({ message: '此訂單存在未核可例外，請先主管核可（ack）後再進行裝箱作業。' });
             }
         }
@@ -736,6 +788,8 @@ router.post('/orders/update_item', async (req, res, next) => {
         if ((type === 'pick' && order.picker_id !== userId && !isAdminLike) || (type === 'pack' && order.packer_id !== userId && !isAdminLike)) {
             throw new Error('您不是此任務的指定操作員');
         }
+        markStage('precheckMs');
+
         const scanInfo = normalizeSerialScanInput(scanRaw);
 
         let instanceRow = null;
@@ -808,7 +862,12 @@ router.post('/orders/update_item', async (req, res, next) => {
                     matchedBy,
                     statusChange: `${instance.status} -> ${newStatus}`
                 },
-                io
+                io,
+                db: client,
+                userRole: req.user?.role,
+                userName: req.user?.name,
+                voucherNumber: order.voucher_number,
+                customerName: order.customer_name
             });
         } else {
             // 非 SN 條碼：
@@ -871,7 +930,18 @@ router.post('/orders/update_item', async (req, res, next) => {
                 );
             }
             if (itemResult.rows.length === 0) {
-                await logOperation({ userId, orderId, operationType: 'scan_error', details: { scanValue: scanRaw, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' }, io });
+                await logOperation({
+                    userId,
+                    orderId,
+                    operationType: 'scan_error',
+                    details: { scanValue: scanRaw, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' },
+                    io,
+                    db: client,
+                    userRole: req.user?.role,
+                    userName: req.user?.name,
+                    voucherNumber: order.voucher_number,
+                    customerName: order.customer_name
+                });
                 throw new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`);
             }
             const item = itemResult.rows[0];
@@ -884,34 +954,68 @@ router.post('/orders/update_item', async (req, res, next) => {
                 if (newPackedQty < 0 || newPackedQty > item.picked_quantity) throw new Error('裝箱數量不能超過已揀貨數量'); 
                 await client.query('UPDATE order_items SET packed_quantity = $1 WHERE id = $2', [newPackedQty, item.id]); 
             }
-            await logOperation({ userId, orderId, operationType: type, details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id }, io });
+            await logOperation({
+                userId,
+                orderId,
+                operationType: type,
+                details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id },
+                io,
+                db: client,
+                userRole: req.user?.role,
+                userName: req.user?.name,
+                voucherNumber: order.voucher_number,
+                customerName: order.customer_name
+            });
         }
+        markStage('matchAndMutationMs');
+
         // 在同一個 transaction 內判斷是否已 100% 完成，並原子性更新訂單狀態
-        const allItems = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-        const allInstances = await client.query(
-            'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
-            [orderId]
-        );
+        const [allItems, allInstances] = await Promise.all([
+            client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]),
+            client.query(
+                'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
+                [orderId]
+            )
+        ]);
 
         let allPicked = true;
         let allPacked = true;
-        for (const item of allItems.rows) {
-            const itemInstances = allInstances.rows.filter(inst => inst.order_item_id === item.id);
-            if (itemInstances.length > 0) {
-                if (!itemInstances.every(i => ['picked', 'packed'].includes(i.status))) allPicked = false;
-                if (!itemInstances.every(i => i.status === 'packed')) allPacked = false;
-            } else {
-                    const qty = Number(item.quantity ?? 0);
-                    const pickedQty = Number(item.picked_quantity ?? 0);
-                    const packedQty = Number(item.packed_quantity ?? 0);
 
-                    // 若揀貨未達需求，不能被視為「裝箱完成」
-                    if (pickedQty < qty) {
-                        allPicked = false;
-                        allPacked = false;
-                    } else {
-                        if (packedQty < qty) allPacked = false;
-                    }
+        const instanceStatsByItemId = new Map();
+        for (const inst of allInstances.rows) {
+            const current = instanceStatsByItemId.get(inst.order_item_id) || {
+                total: 0,
+                pickedOrPacked: 0,
+                packed: 0
+            };
+            current.total += 1;
+            if (inst.status === 'picked' || inst.status === 'packed') {
+                current.pickedOrPacked += 1;
+            }
+            if (inst.status === 'packed') {
+                current.packed += 1;
+            }
+            instanceStatsByItemId.set(inst.order_item_id, current);
+        }
+
+        for (const item of allItems.rows) {
+            const stats = instanceStatsByItemId.get(item.id);
+            if (stats && stats.total > 0) {
+                if (stats.pickedOrPacked < stats.total) allPicked = false;
+                if (stats.packed < stats.total) allPacked = false;
+                continue;
+            }
+
+            const qty = Number(item.quantity ?? 0);
+            const pickedQty = Number(item.picked_quantity ?? 0);
+            const packedQty = Number(item.packed_quantity ?? 0);
+
+            // 若揀貨未達需求，不能被視為「裝箱完成」
+            if (pickedQty < qty) {
+                allPicked = false;
+                allPacked = false;
+            } else {
+                if (packedQty < qty) allPacked = false;
             }
         }
 
@@ -940,19 +1044,33 @@ router.post('/orders/update_item', async (req, res, next) => {
         if (statusChanged) {
             io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: finalStatus });
         }
+        markStage('completionCheckMs');
 
-        const updatedOrderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
-        const updatedItemsResult = await pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
-        const updatedInstancesResult = await pool.query(
-            'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
-            [orderId]
-        );
+        const [updatedOrderResult, updatedItemsResult, updatedInstancesResult] = await Promise.all([
+            pool.query('SELECT * FROM orders WHERE id = $1', [orderId]),
+            pool.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]),
+            pool.query(
+                'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1',
+                [orderId]
+            )
+        ]);
+        markStage('refreshReadMs');
+        scanOutcome = 'success';
         res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows });
     } catch (err) {
         await client.query('ROLLBACK');
+        scanOutcome = 'error';
         err.message = `更新品项状态失败: ${err.message}`;
         next(err);
     } finally {
+        const durationMs = Date.now() - scanRequestStartedAt;
+        recordScanPerf(durationMs, {
+            orderId,
+            userId,
+            type,
+            outcome: scanOutcome,
+            stageTimings
+        });
         client.release();
     }
 });
