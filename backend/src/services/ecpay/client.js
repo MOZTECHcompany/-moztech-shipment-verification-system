@@ -6,7 +6,7 @@ function queryFields(account, input, now = Date.now()) {
   if (!HOSTS[account?.environment]) throw new LogisticsError('INVALID_ENVIRONMENT','物流環境不正確');
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k=>!['logisticsId','merchantTradeNo'].includes(k))) throw new LogisticsError('INVALID_QUERY','請選擇一種物流單號查詢');
   const id = input.logisticsId, trade = input.merchantTradeNo;
-  if (!!id === !!trade || (id && (typeof id !== 'string' || !/^\d{1,20}$/.test(id))) || (trade && (typeof trade !== 'string' || !/^[A-Za-z0-9]{1,20}$/.test(trade)))) throw new LogisticsError('INVALID_QUERY','請輸入綠界物流訂單編號或廠商訂單編號，兩者擇一');
+  if (!!id === !!trade || (id && (typeof id !== 'string' || !/^\d{1,20}$/.test(id))) || (trade && (typeof trade !== 'string' || (trade.length>20 || !/^#?[A-Za-z0-9]+$/.test(trade))))) throw new LogisticsError('INVALID_QUERY','請輸入綠界物流訂單編號或廠商訂單編號，兩者擇一');
   return {MerchantID:account.merchantId, ...(id?{AllPayLogisticsID:id}:{MerchantTradeNo:trade}), TimeStamp:Math.floor(now/1000)};
 }
 function assertQueryResponse(data, account, input) {
@@ -19,13 +19,16 @@ function assertQueryResponse(data, account, input) {
 }
 // Only exact documented events are classified. Unknown codes stay visible for review.
 function normalizedStatus(code, type) {
+  // 2026-09-10 merchant backend + signed V5 responses verified for both carriers.
+  if (String(code)==='310' && ['UNIMART','FAMI'].includes(type)) return 'uploading';
+  if (String(code)==='2076' && type==='UNIMART') return 'returned_to_center';
   const common = type==='UNIMART' ? {'2031':'awaiting_dispatch','2030':'at_logistics_center','2063':'awaiting_pickup','2067':'collected','2074':'uncollected'} : {'3024':'at_logistics_center','3018':'awaiting_pickup','3022':'collected','3020':'uncollected'};
   return common[String(code)] || 'unmapped';
 }
-const LABELS = {awaiting_dispatch:'等待賣家出貨',at_logistics_center:'已到物流中心',awaiting_pickup:'到店待取',collected:'已取件',uncollected:'逾期未取',unmapped:'貨態待確認'};
+const LABELS = {uploading:'訂單上傳物流中',returned_to_center:'未取件，已退回物流中心',awaiting_dispatch:'等待賣家出貨',at_logistics_center:'已到物流中心',awaiting_pickup:'到店待取',collected:'已取件',uncollected:'逾期未取',unmapped:'貨態待確認'};
 function normalizeQuery(data, account, input, checkedAt = new Date().toISOString()) {
   const service = assertQueryResponse(data,account,input), state=normalizedStatus(data.LogisticsStatus,service);
-  return {accountId:account.id,merchantId:account.merchantId,environment:account.environment,logisticsId:data.AllPayLogisticsID,merchantTradeNo:data.MerchantTradeNo||'',shipmentNo:data.ShipmentNo||'',service,statusCode:data.LogisticsStatus,status:state,statusLabel:LABELS[state],checkedAt,source:'ecpay-query-v5',needsReturnTracking:state==='uncollected'};
+  return {accountId:account.id,merchantId:account.merchantId,environment:account.environment,logisticsId:data.AllPayLogisticsID,merchantTradeNo:data.MerchantTradeNo||'',shipmentNo:data.ShipmentNo||'',service,statusCode:data.LogisticsStatus,status:state,statusLabel:LABELS[state],checkedAt,source:'ecpay-query-v5',needsReturnTracking:['uncollected','returned_to_center'].includes(state)};
 }
 async function queryLogistics(account,input,{fetchImpl=globalThis.fetch,now=Date.now,timeoutMs=12000}={}) {
   if (!account.enabled || !account.verified) throw new LogisticsError('ACCOUNT_NOT_READY','此物流帳號尚未完成設定',409);

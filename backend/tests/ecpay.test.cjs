@@ -7,6 +7,16 @@ const a={...credentials,id:'test-a',merchantId:'2000933',label:'測試 A',enviro
 const b={...a,id:'test-b',merchantId:'2000132',hashKey:'5294y06JbISpM5x9',hashIv:'v77hoKGq4kWxNNIS'};
 const signed=(data,acct=a)=>({...data,CheckMacValue:mac(data,acct)});
 const record=(overrides={})=>signed({MerchantID:a.merchantId,AllPayLogisticsID:'123',MerchantTradeNo:'ORDER01',LogisticsType:'CVS_UNIMART',LogisticsStatus:'2074',ShipmentNo:'456',...overrides});
+test('existing Shopify hash-prefixed order references are preserved and signed literally',()=>{
+ const payload=queryFields(a,{merchantTradeNo:'#152746'});assert.equal(payload.MerchantTradeNo,'#152746');
+ const body=new URLSearchParams({...payload,CheckMacValue:mac(payload,a)}).toString();assert.equal(parseForm(body).MerchantTradeNo,'#152746');assert(verify(parseForm(body),a));
+ for(const merchantTradeNo of ['#','##123','A#12','#'+ '1'.repeat(20),'1&MerchantID=2','1\n2'])assert.throws(()=>queryFields(a,{merchantTradeNo}));
+});
+test('verified carrier upload and return-center states do not imply warehouse receipt',()=>{
+ for(const type of ['UNIMART','FAMI'])assert.equal(normalizeQuery(record({LogisticsType:'CVS_'+type,LogisticsStatus:'310'}),a,{logisticsId:'123'}).status,'uploading');
+ const returned=normalizeQuery(record({LogisticsStatus:'2076'}),a,{logisticsId:'123'});assert.equal(returned.status,'returned_to_center');assert.equal(returned.needsReturnTracking,true);assert.equal(returned.receivedAt,undefined);
+ assert.equal(normalizeQuery(record({LogisticsType:'CVS_FAMI',LogisticsStatus:'2076'}),a,{logisticsId:'123'}).status,'unmapped');
+});
 test('matches published ECPay MAC vector (not self-generated expected value)',()=>{
  const sample={MerchantID:'2000933',MerchantTradeNo:'A20130312153023',MerchantTradeDate:'2013/03/12 15:30:23',LogisticsType:'CVS',LogisticsSubType:'FAMIC2C',GoodsAmount:1000,IsCollection:'N',ServerReplyURL:'https://www.ecpay.com.tw/ServerReplyURL',SenderName:'寄件者姓名',ReceiverName:'收件者姓名',ReceiverStoreID:'001779'};
  assert.equal(mac(sample,credentials),'692FD6E2CDB539CCDB7206C76DC239AD');

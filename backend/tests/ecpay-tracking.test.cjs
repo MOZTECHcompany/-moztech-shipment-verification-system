@@ -6,6 +6,13 @@ const b={...a,id:'b',merchantId:'2000933',hashKey:'XBERn1YOvpM9nfZc',hashIv:'h1O
 const snapshot=(account=a,extra={})=>({accountId:account.id,environment:account.environment,merchantId:account.merchantId,logisticsId:'123',merchantTradeNo:'O1',shipmentNo:'456',service:'UNIMART',statusCode:'2074',status:'uncollected',needsReturnTracking:true,checkedAt:'2026-09-10T08:00:00.000Z',...extra});
 const callback=(extra={})=>{const d={MerchantID:a.merchantId,AllPayLogisticsID:'123',MerchantTradeNo:'O1',RtnCode:'2067',LogisticsSubType:'UNIMART',UpdateStatusDate:'2026/09/09 12:00:00',...extra};return {...d,CheckMacValue:mac(d,a)};};
 async function setup(){const db=new PGlite();await db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY, role TEXT); CREATE TABLE orders(id INTEGER PRIMARY KEY); INSERT INTO users VALUES(1,\'admin\'),(2,\'picker\'); INSERT INTO orders VALUES(1),(2);');await db.exec(readFileSync(require.resolve('../migrations/020_ecpay_tracking.sql'),'utf8'));return {db,pool:{query:(...args)=>db.query(...args),connect:async()=>({query:(...args)=>db.query(...args),release(){}})}};}
+test('return-center receipt creates one expected return, never warehouse receipt or an order',async()=>{const {db,pool}=await setup();try{
+ const result=snapshot(a,{merchantTradeNo:'#152940',statusCode:'2076',status:'returned_to_center'});
+ await saveQuery(pool,a,result,1);await saveQuery(pool,a,result,1);
+ const rows=(await db.query('SELECT r.status,s.order_id,s.merchant_trade_no FROM wms_logistics_expected_returns r JOIN wms_logistics_shipments s ON s.id=r.shipment_id')).rows;
+ assert.equal(rows.length,1);assert.equal(rows[0].status,'expected');assert.equal(rows[0].order_id,null);assert.equal(rows[0].merchant_trade_no,'#152940');
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM orders')).rows[0].n,2);
+ }finally{await db.close();}});
 test('PostgreSQL migration, duplicate import, account isolation, stale query and conflicting order',async()=>{const {db,pool}=await setup();try{
  const first=await saveQuery(pool,a,snapshot(),1,1);assert.equal(first.created,true);
  const twice=await saveQuery(pool,a,snapshot(),1,1);assert.equal(twice.created,false);assert.equal(first.id,twice.id);

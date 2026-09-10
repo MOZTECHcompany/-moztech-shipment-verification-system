@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import api from '../api/api';
-const labels={awaiting_dispatch:'等待賣家出貨',at_logistics_center:'已到物流中心',awaiting_pickup:'到店待取',collected:'已取件',uncollected:'逾期未取',unmapped:'貨態待確認'};
+const labels={uploading:'訂單上傳物流中',returned_to_center:'未取件，已退回物流中心',awaiting_dispatch:'等待賣家出貨',at_logistics_center:'已到物流中心',awaiting_pickup:'到店待取',collected:'已取件',uncollected:'逾期未取',unmapped:'貨態待確認'};
 export function LogisticsTrackingList({version,accounts}){
  const [page,setPage]=useState(0),[reload,setReload]=useState(0),[data,setData]=useState({items:[],nextOffset:null}),[loading,setLoading]=useState(true),[error,setError]=useState(''),[busy,setBusy]=useState(null);const pending=useRef(false);
  useEffect(()=>{const c=new AbortController();setLoading(true);setError('');api.get('/api/logistics/shipments',{params:{offset:page},signal:c.signal}).then(r=>setData(r.data)).catch(e=>{if(!c.signal.aborted)setError(e.message||'無法載入追蹤紀錄');}).finally(()=>{if(!c.signal.aborted)setLoading(false);});return()=>c.abort();},[page,reload,version]);
