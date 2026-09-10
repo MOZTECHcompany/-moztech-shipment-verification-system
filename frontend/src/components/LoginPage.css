@@ -1,0 +1,103 @@
+.corely-login {
+  --login-ink: #12233f;
+  --login-muted: #61718a;
+  --login-line: #e2e9f1;
+  color-scheme: light;
+  min-height: 100vh;
+  min-height: 100svh;
+  color: var(--login-ink);
+  background: radial-gradient(ellipse at 16% 48%, #ecf5ff 0%, transparent 52%), #f8fafc;
+  font-family: Inter, 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0;
+}
+
+.corely-login * { box-sizing: border-box; }
+.corely-login__shell { max-width: 1328px; min-height: 100vh; min-height: 100svh; margin: 0 auto; padding: 28px 64px 24px; display: flex; flex-direction: column; }
+.corely-login__header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.corely-login__wordmark { display: block; width: 202px; height: auto; }
+.corely-login__company { font-size: 10px; font-weight: 600; letter-spacing: 1.7px; color: var(--login-muted); }
+.corely-login__company span { padding: 0 10px; color: #a5b2c6; }
+.corely-login__content { flex: 1; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); align-items: center; gap: 84px; padding: 42px 0 48px; }
+.corely-login__intro { position: relative; }
+.corely-login__eyebrow { margin: 0 0 16px; color: #466181; font-size: 12px; font-weight: 600; letter-spacing: 1.4px; }
+.corely-login h1 { margin: 0; color: var(--login-ink); font-size: clamp(36px, 3.5vw, 48px); font-weight: 650; line-height: 1.35; letter-spacing: -1.1px; }
+.corely-login h1 span { display: block; font-weight: 600; letter-spacing: 0; }
+.corely-login h1 .corely-login__product-brand { font-weight: 650; letter-spacing: -1.1px; }
+.corely-login__description { margin: 20px 0 0; color: var(--login-muted); font-size: 14px; line-height: 1.9; }
+.corely-login__visual { position: relative; height: 285px; margin: 8px 0 4px; display: flex; align-items: center; justify-content: center; }
+.corely-login__symbol { position: relative; z-index: 1; width: 256px; height: 256px; object-fit: contain; filter: drop-shadow(0 17px 23px #366fab17); }
+.corely-login__orbit { position: absolute; border: 1px solid #dce7f3; border-radius: 50%; transform: rotate(-16deg); }
+.corely-login__orbit--outer { width: 92%; height: 180px; }
+.corely-login__orbit--inner { width: 75%; height: 138px; border-style: dashed; opacity: .8; }
+.corely-login__visual-label { position: absolute; z-index: 2; right: 0; bottom: 24px; display: flex; align-items: center; gap: 8px; padding: 11px 15px; color: #3d5473; background: #ffffffef; border: 1px solid #e6ecf4; border-radius: 10px; box-shadow: 0 6px 20px #31496a08; font-size: 11px; }
+.corely-login__visual-label svg { color: #1672c9; }
+.corely-login__workflow { margin: 18px 0 0; padding: 20px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--login-line); list-style: none; }
+.corely-login__workflow li { display: flex; align-items: center; gap: 10px; color: #42668c; }
+.corely-login__workflow li + li { border-left: 1px solid var(--login-line); padding-left: 18px; }
+.corely-login__workflow span { display: grid; gap: 3px; font-size: 12px; color: #3e516c; font-weight: 500; }
+.corely-login__workflow small { color: #8492a8; font-size: 9px; font-weight: 600; letter-spacing: 1px; }
+.corely-login__access { width: 100%; }
+.corely-login__card { padding: 40px 38px 0; border: 1px solid #e4eaf2; border-radius: 22px; background: #fff; box-shadow: 0 22px 70px -30px #31568030, 0 2px 7px #1b365409; }
+.corely-login__card-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; margin-bottom: 28px; border: 1px solid #e4ecf8; border-radius: 14px; background: #f3f7fd; color: #265d9e; }
+.corely-login__card .corely-login__eyebrow { margin-bottom: 10px; font-size: 11px; }
+.corely-login h2 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -.5px; line-height: 1.45; }
+.corely-login__form-description { margin: 10px 0 30px; color: var(--login-muted); font-size: 12px; line-height: 1.8; }
+.corely-login__field { margin-top: 20px; }
+.corely-login__field label { display: block; margin-bottom: 9px; font-size: 12px; font-weight: 600; color: #334763; }
+.corely-login__input-wrap { display: flex; align-items: center; gap: 11px; min-height: 52px; padding-left: 15px; border: 1px solid #dce4ee; border-radius: 10px; background: #fcfdff; color: #71849f; transition: border-color .15s, box-shadow .15s; }
+.corely-login__input-wrap:focus-within { border-color: #3776c6; box-shadow: 0 0 0 3px #3776c61a; }
+.corely-login__input-wrap > svg { flex-shrink: 0; }
+.corely-login__input-wrap input { width: 100%; min-width: 0; height: 50px; padding: 0 13px 0 0; border: 0; border-radius: 10px; outline: none; background: transparent; color: var(--login-ink); font: inherit; font-size: 14px; }
+.corely-login__input-wrap input::placeholder { color: #8290a5; font-size: 12px; }
+.corely-login__input-wrap input:disabled { cursor: wait; opacity: .65; }
+.corely-login__visibility { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-right: 3px; padding: 0; border: none; border-radius: 8px; background: transparent; color: #647791; cursor: pointer; }
+.corely-login__visibility:hover { background: #edf3fa; color: #234b7c; }
+.corely-login__visibility:focus-visible, .corely-login__submit:focus-visible { outline: 3px solid #79a8e5; outline-offset: 3px; }
+.corely-login__visibility:disabled { cursor: wait; opacity: .55; }
+.corely-login__error { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; padding: 11px 12px; border: 1px solid #f2c9ca; border-radius: 9px; background: #fff5f5; color: #a12e35; font-size: 12px; line-height: 1.7; }
+.corely-login__error svg { flex-shrink: 0; margin-top: 1px; }
+.corely-login__submit { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; min-height: 52px; margin-top: 26px; padding: 13px 18px; border: 1px solid transparent; border-radius: 10px; background: #155da7; color: #fff; font: inherit; font-size: 14px; font-weight: 600; box-shadow: 0 4px 10px #155da71a; cursor: pointer; transition: background .15s, box-shadow .15s; }
+.corely-login__submit:hover { background: #104e8e; box-shadow: 0 6px 18px #155da72a; }
+.corely-login__submit:disabled { background: #6f8faf; box-shadow: none; cursor: wait; }
+.corely-login__help { margin: 18px 0 30px; text-align: center; color: #69788f; font-size: 11px; line-height: 1.8; }
+.corely-login__card-footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 18px 4px; border-top: 1px solid #edf0f5; color: #718199; font-size: 10px; letter-spacing: .4px; }
+.corely-login__footer-mark { width: 8px; height: 8px; border: 2px solid #8a9bb2; border-radius: 2px; }
+.corely-login__footer { display: flex; justify-content: space-between; gap: 16px; padding-top: 20px; border-top: 1px solid var(--login-line); color: #73819a; font-size: 10px; letter-spacing: .4px; }
+.corely-login__spinner { animation: corely-login-spin 1s linear infinite; }
+@keyframes corely-login-spin { to { transform: rotate(360deg); } }
+
+@media (min-width: 1440px) { .corely-login__content { gap: 112px; } }
+@media (max-width: 1100px) {
+  .corely-login__shell { padding: 24px 36px; }
+  .corely-login__content { gap: 40px; }
+  .corely-login__card { padding: 32px 28px 0; }
+  .corely-login__workflow li { gap: 7px; }
+  .corely-login__workflow li + li { padding-left: 10px; }
+}
+@media (max-width: 800px) {
+  .corely-login__shell { max-width: 540px; padding: max(20px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom)); }
+  .corely-login__header { justify-content: center; }
+  .corely-login__wordmark { width: 190px; }
+  .corely-login__company { display: none; }
+  .corely-login__content { display: flex; flex-direction: column; gap: 26px; padding: 24px 0 32px; }
+  .corely-login__intro { text-align: center; }
+  .corely-login__intro > .corely-login__eyebrow, .corely-login__visual, .corely-login__workflow { display: none; }
+  .corely-login h1 { font-size: 26px; line-height: 1.4; letter-spacing: 0; }
+  .corely-login h1 .corely-login__product-brand { display: none; }
+  .corely-login h1 span { font-size: 26px; }
+  .corely-login__description { margin-top: 12px; font-size: 12px; line-height: 1.85; }
+  .corely-login__card { padding: 28px 28px 0; border-radius: 18px; }
+  .corely-login__card-icon { width: 42px; height: 42px; margin-bottom: 22px; border-radius: 12px; }
+  .corely-login h2 { font-size: 25px; }
+  .corely-login__form-description { margin-bottom: 24px; }
+  .corely-login__input-wrap input { font-size: 16px; }
+  .corely-login__footer { font-size: 9px; padding-top: 18px; }
+}
+@media (max-width: 360px) {
+  .corely-login__shell { padding-left: 16px; padding-right: 16px; }
+  .corely-login__card { padding-left: 22px; padding-right: 22px; }
+  .corely-login__footer { gap: 8px; font-size: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .corely-login *, .corely-login *::before, .corely-login *::after { transition: none; animation: none; }
+}

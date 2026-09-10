@@ -1,0 +1,9 @@
+node_modules
+coverage
+dist
+uploads
+.env
+.env.*
+*.log
+.git
+src/users.js

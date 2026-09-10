@@ -1,0 +1,9 @@
+#root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 0;
+  text-align: left;
+}
+
+/* The legacy Vite demo styles above caused the app to be centered at a fixed 1280px width. */

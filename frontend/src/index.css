@@ -1,0 +1,405 @@
+/* frontend/src/index.css - Apple 風格設計系統 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .break-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 0px);
+  }
+  
+  /* 毛玻璃擬態 (Glassmorphism) - Spatial Computing Style */
+  .glass {
+    @apply bg-white/30 backdrop-blur-[40px] shadow-lg text-slate-800;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(255, 255, 255, 0.5);
+    border-left-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 10px 40px -10px rgba(0,0,0,0.1);
+  }
+  
+  .glass-dark {
+    @apply bg-black/30 backdrop-blur-[40px] border border-white/10 shadow-lg text-white;
+  }
+
+  .glass-panel {
+    @apply bg-white/30 backdrop-blur-[40px] shadow-xl rounded-3xl text-slate-800;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(255, 255, 255, 0.5);
+    border-left-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 20px 40px -10px rgba(0,0,0,0.15);
+  }
+
+  .glass-pill {
+    @apply bg-white/40 backdrop-blur-xl shadow-lg rounded-full text-slate-800;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-top-color: rgba(255, 255, 255, 0.5);
+    border-left-color: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 8px 32px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Mesh Gradient Background */
+  .bg-mesh {
+    background-color: #E0C3FC;
+    background-image: 
+        radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+        radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
+        radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+    background-image: 
+      radial-gradient(at 40% 20%, hsla(266,100%,93%,1) 0px, transparent 50%),
+      radial-gradient(at 80% 0%, hsla(189,100%,56%,1) 0px, transparent 50%),
+      radial-gradient(at 0% 50%, hsla(340,100%,76%,1) 0px, transparent 50%),
+      radial-gradient(at 80% 50%, hsla(340,100%,76%,1) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, hsla(22,100%,77%,1) 0px, transparent 50%),
+      radial-gradient(at 80% 100%, hsla(242,100%,70%,1) 0px, transparent 50%),
+      radial-gradient(at 0% 0%, hsla(343,100%,76%,1) 0px, transparent 50%);
+    background-size: 200% 200%;
+    animation: mesh-flow 20s ease infinite;
+  }
+
+  .noise-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+
+  /* Animations */
+  @keyframes mesh-flow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  .animate-scale-up {
+    animation: scale-up 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  }
+
+  @keyframes scale-up {
+    from { transform: scale(0.9); opacity: 0; filter: blur(10px); }
+    to { transform: scale(1); opacity: 1; filter: blur(0); }
+  }
+}
+
+@layer base {
+  :root {
+    /* Apple 風格色彩系統 */
+    --background: 0 0% 98%;         /* #FAFAFA - 極淺灰背景 */
+    --foreground: 0 0% 13%;         /* #1D1D1F - Apple 深灰文字 */
+    
+    --card: 0 0% 100%;              /* #FFFFFF - 純白卡片 */
+    --card-foreground: 0 0% 13%;
+    
+    --primary: 211 100% 50%;        /* #007AFF - Apple Blue */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 240 5% 96%;        /* #F5F5F7 - Apple 淺灰 */
+    --secondary-foreground: 0 0% 45%; /* #86868B */
+
+    --accent: 240 5% 91%;           /* #E8E8ED - Hover 效果 */
+    --accent-foreground: 0 0% 13%;
+
+    --destructive: 4 90% 58%;       /* #FF3B30 - Apple Red */
+    --destructive-foreground: 0 0% 100%;
+    
+    --success: 142 76% 45%;         /* #34C759 - Apple Green */
+    --warning: 35 100% 50%;         /* #FF9500 - Apple Orange */
+    
+    --ring: 211 100% 50%;
+    
+    /* 圓角 */
+    --radius: 1rem;
+  }
+
+  body {
+    @apply bg-[#F5F5F7] text-foreground antialiased;
+    /* 柔和的漸層背景，模擬 Apple 桌布質感 */
+    background: radial-gradient(circle at 50% 0%, #eef2f3 0%, #e6e9f0 100%);
+    min-height: 100vh;
+  }
+
+  /* 深色模式（可選） */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: 0 0% 7%;        /* #121212 */
+      --foreground: 0 0% 98%;       /* #F5F5F7 */
+      --card: 0 0% 11%;             /* #1C1C1E */
+      --card-foreground: 0 0% 98%;
+      --secondary: 0 0% 15%;        /* #2C2C2E */
+      --secondary-foreground: 0 0% 70%;
+      --accent: 0 0% 20%;
+      --accent-foreground: 0 0% 98%;
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
+    letter-spacing: -0.022em;
+    line-height: 1.5;
+  }
+  
+  /* Apple 風格滾動條 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
+
+  /* 平滑過渡 */
+  * {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer components {
+  /* 毛玻璃效果 - 更柔和細緻 */
+  .glass {
+    @apply bg-white/80 backdrop-blur-2xl border border-gray-200/50 shadow-glass;
+  }
+
+  .glass-dark {
+    @apply bg-gray-900/80 backdrop-blur-2xl border border-gray-700/30 shadow-glass;
+  }
+
+  .glass-card {
+    @apply bg-white/90 backdrop-blur-xl border border-gray-100/80 shadow-apple rounded-2xl;
+  }
+
+  /* Apple 風格按鈕 */
+  .btn-apple {
+    @apply px-6 py-3 rounded-xl font-medium transition-all duration-200 
+           shadow-apple-sm hover:shadow-apple active:scale-[0.98];
+  }
+
+  .btn-apple-primary {
+    @apply btn-apple bg-apple-blue text-white hover:bg-blue-600;
+  }
+
+  .btn-apple-secondary {
+    @apply btn-apple bg-apple-gray-100 text-gray-900 hover:bg-apple-gray-200;
+  }
+
+  /* Apple 風格卡片 */
+  .card-apple {
+    @apply bg-white rounded-2xl shadow-apple-sm hover:shadow-apple 
+           transition-all duration-300 border border-gray-100;
+  }
+
+  /* 輸入框 */
+  .input-apple {
+    @apply w-full px-4 py-3 rounded-xl bg-apple-gray-50 border border-gray-200
+           focus:border-apple-blue focus:ring-2 focus:ring-apple-blue/20 
+           outline-none transition-all duration-200;
+  }
+
+  /* 震動動畫 (錯誤提示) */
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-8px); }
+    20%, 40%, 60%, 80% { transform: translateX(8px); }
+  }
+
+  .animate-shake {
+    animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+  }
+
+  /* 緩慢彈跳動畫 */
+  @keyframes bounce-slow {
+    0%, 100% {
+      transform: translateY(0);
+      animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+    }
+    50% {
+      transform: translateY(-15%);
+      animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+    }
+  }
+
+  .animate-bounce-slow {
+    animation: bounce-slow 1.5s infinite;
+  }
+
+  /* 紅色光暈掃描：沿卡片邊緣緩慢掃描的高級效果 */
+  @keyframes scan-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .scan-glow {
+    position: relative;
+  }
+  .scan-glow::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 1.25rem; /* 接近 rounded-2xl 視覺 */
+    background: conic-gradient(
+      from 0deg,
+      rgba(255,59,48,0.0) 0deg,
+      rgba(255,59,48,0.45) 90deg,
+      rgba(255,59,48,0.0) 180deg,
+      rgba(255,59,48,0.30) 270deg,
+      rgba(255,59,48,0.0) 360deg
+    );
+    filter: blur(8px);
+    opacity: 0.55;
+    animation: scan-rotate 14s linear infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* 抖動動畫：提示新訊息/被提及 */
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    15% { transform: rotate(-6deg); }
+    30% { transform: rotate(5deg); }
+    45% { transform: rotate(-4deg); }
+    60% { transform: rotate(3deg); }
+    75% { transform: rotate(-2deg); }
+  }
+  .animate-wiggle-once {
+    animation: wiggle 0.8s ease-in-out 1;
+  }
+
+  /* 按鈕光澤掃過（Shine） */
+  @keyframes shine-sweep {
+    from { transform: translateX(-120%) skewX(-20deg); }
+    to { transform: translateX(180%) skewX(-20deg); }
+  }
+  .btn-shine {
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-shine::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    left: -50%; width: 40%;
+    background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.45) 50%, rgba(255,255,255,0) 100%);
+    transform: translateX(-120%) skewX(-20deg);
+  }
+  .btn-shine:hover::after {
+    animation: shine-sweep 950ms ease-in-out;
+  }
+}
+/* Corely work surfaces: readable, stable contrast during long scan sessions. */
+.wms-workspace .glass-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 4%);
+  backdrop-filter: none;
+}
+/* Operational controls do not need background sampling/compositor layers. */
+.wms-workspace *, .wms-workspace *::before, .wms-workspace *::after {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.wms-workspace details > summary::-webkit-details-marker { display: none; }
+.wms-workspace :focus-visible { outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .wms-workspace *, .wms-workspace *::before, .wms-workspace *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Corely workspace shell: compact navigation and a fluid working surface. */
+.corely-shell { --primary: 221 83% 53%; --ring: 221 83% 53%; --rail-width: var(--sidebar-width, 208px); min-height: 100vh; background: #f7f8fb; color: #111e35; }
+.corely-shell--collapsed { --rail-width: 72px; }
+.corely-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 40; display: flex; flex-direction: column; width: var(--rail-width); border-right: 1px solid #e2e8f0; background: #fff; }
+.corely-brand { display: flex; align-items: center; gap: 10px; min-height: 76px; padding: 16px; }
+.corely-brand img { flex: 0 0 36px; width: 36px; height: 36px; border-radius: 10px; }
+.corely-brand strong { display: block; font-size: 14px; letter-spacing: .01em; }
+.corely-brand span span { display: block; margin-top: 2px; font-size: 11px; color: #64748b; }
+.corely-nav { display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.corely-nav-link { display: flex; align-items: center; gap: 12px; min-height: 46px; border-radius: 9px; padding: 12px; color: #64748b; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.corely-nav-link svg { flex-shrink: 0; }
+.corely-nav-link:hover { background: #f1f5f9; }
+.corely-nav-link--active, .corely-nav-link--active:hover { background: #eff6ff; color: #2563eb; }
+.corely-sidebar-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; border-top: 1px solid #f1f5f9; padding: 12px; }
+.corely-sidebar-toggle { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; border-radius: 8px; color: #64748b; }
+.corely-sidebar-toggle:hover { background: #f1f5f9; }
+.corely-shell--collapsed .corely-sidebar-label { display: none; }
+.corely-main-shell { margin-left: var(--rail-width); min-width: 0; }
+.corely-topbar { position: sticky; top: 0; z-index: 35; display: flex; align-items: center; min-height: 64px; padding: 8px 28px; border-bottom: 1px solid #e2e8f0; background: #fff; }
+.corely-main { width: 100%; max-width: 1920px; margin: 0 auto; padding: 28px 28px 48px; }
+.corely-page-header { min-width: 0; }
+.wms-workspace .glass { background: #fff; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgb(15 23 42 / 3%); }
+@media (max-width: 1023px) {
+  .corely-shell { --rail-width: 72px; }
+  .corely-sidebar-label, .corely-sidebar-toggle { display: none; }
+  .corely-main { padding: 24px 20px 40px; }
+  .corely-topbar { padding: 8px 20px; }
+}
+@media (max-width: 639px) {
+  .corely-sidebar { position: relative; width: 100%; border-right: 0; border-bottom: 1px solid #e2e8f0; }
+  .corely-brand { min-height: 60px; padding: 12px 16px; }
+  .corely-brand .corely-sidebar-label { display: block; }
+  .corely-nav { flex-direction: row; padding: 0 12px 10px; gap: 6px; }
+  .corely-nav-link { flex: 1; justify-content: center; gap: 6px; padding: 10px 6px; font-size: 13px; }
+  .corely-nav .corely-sidebar-label { display: inline; }
+  .corely-main-shell { margin-left: 0; }
+  .corely-topbar { position: relative; min-height: 52px; padding: 4px 16px; }
+  .corely-main { padding: 20px 16px 32px; }
+}
+@media print {
+  .corely-sidebar, .corely-topbar { display: none; }
+  .corely-main-shell { margin-left: 0; }
+  .corely-main { padding: 0; max-width: none; }
+}
+
+.corely-settings-link { display: flex; flex: 1; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 9px; color: #64748b; font-size: 14px; }
+.corely-settings-link:hover { background: #eff6ff; color: #2563eb; }
+.corely-settings-link.corely-nav-link--active { color: #2563eb; }
+.corely-settings-link svg { flex-shrink: 0; }
+.corely-shell--collapsed .corely-sidebar-footer { flex-direction: column; gap: 6px; }
+.corely-resize-handle { position: absolute; top: 0; right: -4px; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; touch-action: none; }
+.corely-resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; }
+.corely-resize-handle:hover::after, .corely-resize-handle:focus-visible::after, .corely-shell--resizing .corely-resize-handle::after { background: #60a5fa; }
+.corely-shell--resizing { cursor: col-resize; user-select: none; }
+.corely-task-stat { --stat-rgb: 59 130 246; background: linear-gradient(115deg, #fff 45%, rgb(var(--stat-rgb) / 7%)); }
+.corely-task-stat--pick { --stat-rgb: 249 115 22; }
+.corely-task-stat--pack, .corely-task-stat--picked, .corely-task-stat--done { --stat-rgb: 16 185 129; }
+.corely-task-stat--inProgress, .corely-task-stat--mine { --stat-rgb: 168 85 247; }
+.wms-workspace .corely-task-stat:hover { border-color: rgb(var(--stat-rgb) / 65%); }
+.wms-workspace .corely-task-stat[aria-pressed="true"] { border-color: rgb(var(--stat-rgb)); box-shadow: 0 0 0 2px rgb(var(--stat-rgb) / 15%); }
+@media (max-width: 1023px) {
+  .corely-resize-handle { display: none; }
+}
+@media (max-width: 639px) {
+  .corely-sidebar-footer { position: absolute; top: 8px; right: 12px; margin: 0; padding: 0; border: 0; }
+  .corely-settings-link { flex: none; }
+}
