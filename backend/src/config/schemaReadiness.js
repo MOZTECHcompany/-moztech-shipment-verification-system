@@ -1,6 +1,9 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    wms_logistics_shipments: ['id', 'account_id', 'environment', 'merchant_id', 'logistics_id', 'status', 'checked_at'],
+    wms_logistics_events: ['id', 'dedupe_key', 'shipment_id', 'evidence'],
+    wms_logistics_expected_returns: ['id', 'shipment_id', 'status'],
     users: ['id', 'username', 'password', 'name', 'role', 'created_at'],
     orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at'],
     order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at'],

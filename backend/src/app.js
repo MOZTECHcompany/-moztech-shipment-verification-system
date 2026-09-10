@@ -163,10 +163,13 @@ app.get('/ready', async (req, res) => {
     }
 });
 
+app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').createLogisticsCallbackRouter({pool}));
+
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
 
 // 以下路由需要認證
+app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);

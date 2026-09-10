@@ -1,0 +1,29 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');
+const {mac,verify,parseForm}=require('../src/services/ecpay/protocol');
+const {loadAccounts,publicAccount,selectAccount}=require('../src/services/ecpay/accounts');
+const {queryFields,normalizeQuery,queryLogistics}=require('../src/services/ecpay/client');
+const credentials={hashKey:'XBERn1YOvpM9nfZc',hashIv:'h1ONHk4P4yqbl5LK'}; // Official public test keys.
+const a={...credentials,id:'test-a',merchantId:'2000933',label:'測試 A',environment:'stage',services:['UNIMART','FAMI'],enabled:true,verified:true};
+const b={...a,id:'test-b',merchantId:'2000132',hashKey:'5294y06JbISpM5x9',hashIv:'v77hoKGq4kWxNNIS'};
+const signed=(data,acct=a)=>({...data,CheckMacValue:mac(data,acct)});
+const record=(overrides={})=>signed({MerchantID:a.merchantId,AllPayLogisticsID:'123',MerchantTradeNo:'ORDER01',LogisticsType:'CVS_UNIMART',LogisticsStatus:'2074',ShipmentNo:'456',...overrides});
+test('matches published ECPay MAC vector (not self-generated expected value)',()=>{
+ const sample={MerchantID:'2000933',MerchantTradeNo:'A20130312153023',MerchantTradeDate:'2013/03/12 15:30:23',LogisticsType:'CVS',LogisticsSubType:'FAMIC2C',GoodsAmount:1000,IsCollection:'N',ServerReplyURL:'https://www.ecpay.com.tw/ServerReplyURL',SenderName:'寄件者姓名',ReceiverName:'收件者姓名',ReceiverStoreID:'001779'};
+ assert.equal(mac(sample,credentials),'692FD6E2CDB539CCDB7206C76DC239AD');
+});
+test('rejects tampering, missing signature and wrong merchant key',()=>{const r=record();assert.ok(verify(r,a));assert.equal(verify({...r,LogisticsStatus:'2067'},a),false);assert.equal(verify(r,b),false);assert.equal(verify({...r,CheckMacValue:''},a),false);});
+test('rejects duplicate/case-colliding fields and prototype names',()=>{for(const text of ['MerchantID=1&MerchantID=2','MerchantID=1&merchantid=2','constructor=x'])assert.throws(()=>parseForm(text));assert.throws(()=>mac({a:[],b:'x'},a));});
+test('no account fallback, duplicate configuration or enabled-unverified secrets',()=>{const accounts=loadAccounts({WMS_ECPAY_ACCOUNTS_JSON:JSON.stringify([a,b])});assert.equal(selectAccount(accounts,'test-b').merchantId,b.merchantId);assert.throws(()=>selectAccount(accounts));for(const rows of [[a,a],[{...a,verified:false}],[{...a,environment:'prod'}],[{...a,services:['FAMIC2C']}]])assert.throws(()=>loadAccounts({WMS_ECPAY_ACCOUNTS_JSON:JSON.stringify(rows)}));assert.equal(JSON.stringify(publicAccount(a)).includes(a.hashKey),false);});
+test('query identifier is exactly one value, never arbitrary provider URL/merchant',()=>{for(const input of [{},{logisticsId:'1',merchantTradeNo:'x'},{logisticsId:['1']},{logisticsId:'1',url:'http://localhost'},{logisticsId:'1&MerchantID=2'},{logisticsId:'1',MerchantID:'2'}])assert.throws(()=>queryFields(a,input));assert.deepEqual(queryFields(a,{logisticsId:'123'},100000),{MerchantID:a.merchantId,AllPayLogisticsID:'123',TimeStamp:100});});
+test('cross-account result and mismatched identifiers fail closed',()=>{assert.throws(()=>normalizeQuery(record({MerchantID:b.merchantId}),a,{logisticsId:'123'}));assert.throws(()=>normalizeQuery(record(),a,{logisticsId:'456'}));assert.throws(()=>normalizeQuery(record(),a,{merchantTradeNo:'OTHER'}));});
+test('uncollected is expected return only; unknown cannot imply receipt/delivery',()=>{const r=normalizeQuery(record(),a,{logisticsId:'123'});assert.equal(r.status,'uncollected');assert.equal(r.needsReturnTracking,true);assert.equal(r.receivedAt,undefined);assert.equal(r.refunded,undefined);assert.equal(normalizeQuery(record({LogisticsStatus:'9999'}),a,{logisticsId:'123'}).status,'unmapped');});
+test('rejects unapproved carrier even with valid MAC',()=>assert.throws(()=>normalizeQuery(record({LogisticsType:'CVS_HILIFE'}),a,{logisticsId:'123'})));
+test('signed read-only query, verified minimal response, no PII',async()=>{let called=0;const result=await queryLogistics(a,{logisticsId:'123'},{now:()=>100000,fetchImpl:async(url,opts)=>{called++;assert.ok(url.endsWith('/Helper/QueryLogisticsTradeInfo/V5'));assert.ok(url.startsWith('https://logistics-stage.ecpay.com.tw/'));assert.equal(opts.redirect,'error');assert.ok(verify(parseForm(opts.body),a));return new Response(new URLSearchParams(record({ReceiverName:'PRIVATE',SenderCellPhone:'PRIVATE'})).toString());}});assert.equal(called,1);assert.equal(result.logisticsId,'123');assert.equal(JSON.stringify(result).includes('PRIVATE'),false);});
+test('provider failures never leak raw HTML or sensitive errors',async()=>{for(const response of [new Response('<html>private error</html>'),new Response('secret',{status:503}),new Response('x='+ 'a'.repeat(66000))])await assert.rejects(queryLogistics(a,{logisticsId:'123'},{fetchImpl:async()=>response}),e=>!e.message.includes('private')&&!e.message.includes('secret'));});
+test('timeout aborts without retry',async()=>{let calls=0;await assert.rejects(queryLogistics(a,{logisticsId:'123'},{timeoutMs:5,fetchImpl:async(_,o)=>{calls++;return new Promise((resolve,reject)=>o.signal.addEventListener('abort',()=>reject(Error('aborted'))));}}),e=>e.code==='PROVIDER_TIMEOUT');assert.equal(calls,1);});
+test('print forms group by merchant/environment/carrier and never expose credentials',()=>{
+ const {buildPrintForm}=require('../src/services/ecpay/printing');
+ const row={account_id:a.id,environment:a.environment,merchant_id:a.merchantId,service:'UNIMART',logistics_id:'123'};
+ const form=buildPrintForm(a,[row,{...row,logistics_id:'456'}]);assert.ok(verify(form.fields,a));assert.equal(form.fields.AllPayLogisticsID,'123,456');assert.equal(JSON.stringify(form).includes(a.hashKey),false);
+ for(const altered of [{account_id:b.id},{environment:'production'},{merchant_id:b.merchantId},{service:'FAMI'},{logistics_id:'x'}])assert.throws(()=>buildPrintForm(a,[row,{...row,...altered}]));
+});

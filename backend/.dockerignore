@@ -1,9 +1,6 @@
 node_modules
 coverage
-dist
-uploads
+tests
 .env
 .env.*
 *.log
-.git
-src/users.js
