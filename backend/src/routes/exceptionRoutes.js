@@ -248,6 +248,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/reject', authorizeAdmin, 
             userId,
             orderId,
             operationType: String(row.type) === 'order_change' ? 'order_change_reject' : 'exception_reject',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 status: 'rejected',
@@ -441,6 +443,8 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             userId,
             orderId,
             operationType: 'exception_create',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId,
                 type: String(type),
@@ -486,7 +490,9 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
                     : await fetchAdminUserIds(client, 10));
 
             if (mentionIds.length > 0) {
-                const notifyClient = await pool.connect();
+                const notifyClient = client;
+                const notificationEvents = [];
+                const pendingIo = { emit: (event, body) => notificationEvents.push([event, body]) };
                 try {
                     await notifyClient.query('BEGIN');
                     await createTaskCommentAndMentions({
@@ -496,14 +502,13 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
                         content,
                         priority: 'urgent',
                         mentionUserIds: mentionIds,
-                        io
+                        io: pendingIo
                     });
                     await notifyClient.query('COMMIT');
+                    for (const [event, body] of notificationEvents) io?.emit(event, body);
                 } catch (e) {
                     await notifyClient.query('ROLLBACK');
                     logger.warn('exception_create: 建立通知 comment/mention 失敗（可忽略）:', e.message);
-                } finally {
-                    notifyClient.release();
                 }
             }
         } catch (e) {
@@ -679,6 +684,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
             userId,
             orderId,
             operationType: 'exception_propose',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 proposal: { resolutionAction: action, note: proposalNote, newSn: proposedNewSn, correctBarcode: proposedBarcode },
@@ -774,6 +781,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
             userId,
             orderId,
             operationType: String(row.type) === 'order_change' ? 'order_change_ack' : 'exception_ack',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 status: 'ack',

@@ -23,7 +23,7 @@ async function startServer() {
         getAttachmentStorage();
 
         // 啟動 HTTP 伺服器
-        server.listen(PORT, '0.0.0.0', () => {
+        server.listen(PORT, process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1', () => {
             logger.info(`🚀 伺服器已啟動於 port ${PORT}`);
             logger.info(`📦 環境: ${process.env.NODE_ENV || 'development'}`);
             logger.info(`🔗 資料庫: ${process.env.DATABASE_URL ? '已連接' : '未配置'}`);

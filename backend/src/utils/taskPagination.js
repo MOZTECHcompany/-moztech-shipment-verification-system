@@ -101,7 +101,7 @@ async function getTaskPage(pool, user, query, view) {
                 CASE WHEN COALESCE(o.is_urgent, FALSE) THEN 1 ELSE 0 END AS _urgent,
                 ${view === 'completed' ? '-' : ''}EXTRACT(EPOCH FROM COALESCE(o.${timeColumn}, o.created_at)) AS _at
             FROM orders o
-            LEFT JOIN LATERAL (SELECT user_id FROM operation_logs WHERE order_id = o.id AND action_type = 'import' ORDER BY created_at DESC, id DESC LIMIT 1) import_log ON TRUE
+            LEFT JOIN LATERAL (SELECT user_id FROM operation_logs WHERE $2 = 'dispatcher' AND order_id = o.id AND action_type = 'import' ORDER BY created_at DESC, id DESC LIMIT 1) import_log ON TRUE
             WHERE ${conditions.join(' AND ')}
         ), selected AS (
             SELECT * FROM eligible WHERE ${groups[page.group]}
@@ -109,7 +109,7 @@ async function getTaskPage(pool, user, query, view) {
             SELECT * FROM selected ${after}
             ORDER BY _mine DESC, _pin DESC, _urgent DESC, _at ASC, id ASC LIMIT ${limit}
         ), enriched AS (
-        SELECT page.*, picker.name AS picker_name, packer.name AS packer_name,
+        SELECT page.*, COALESCE(page.imported_by_user_id, page_import.user_id) AS _imported_by_user_id, picker.name AS picker_name, packer.name AS packer_name,
             CASE WHEN page.status = 'picking' THEN picker.name WHEN page.status = 'packing' THEN packer.name ELSE NULL END AS current_user,
             CASE WHEN page.status IN ('pending','picking') THEN 'pick' WHEN page.status IN ('picked','packing') THEN 'pack' ELSE 'done' END AS task_type,
             COALESCE(comments.total_comments, 0) AS total_comments, COALESCE(comments.urgent_comments, 0) AS urgent_comments,
@@ -117,6 +117,7 @@ async function getTaskPage(pool, user, query, view) {
             (SELECT json_build_object('content', c.content, 'user_name', u.name, 'priority', c.priority, 'created_at', c.created_at)
                 FROM task_comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.order_id = page.id ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS latest_comment
         FROM page
+        LEFT JOIN LATERAL (SELECT user_id FROM operation_logs WHERE $2 != 'dispatcher' AND order_id = page.id AND action_type = 'import' ORDER BY created_at DESC, id DESC LIMIT 1) page_import ON TRUE
         LEFT JOIN users picker ON picker.id = page.picker_id LEFT JOIN users packer ON packer.id = page.packer_id
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS total_comments, COUNT(*) FILTER (WHERE c.priority = 'urgent')::int AS urgent_comments,
@@ -140,7 +141,7 @@ async function getTaskPage(pool, user, query, view) {
     const rows = allRows.slice(0, page.limit);
     const last = rows[rows.length - 1];
     const nextCursor = hasMore && last ? Buffer.from(JSON.stringify({ v: 1, scope: page.scope, mine: last._mine, pin: last._pin, urgent: last._urgent, at: String(last._at), id: last.id })).toString('base64url') : null;
-    const items = rows.map(({ _mine, _pin, _urgent, _at, ...item }) => item);
+    const items = rows.map(({ _mine, _pin, _urgent, _at, _imported_by_user_id, ...item }) => ({ ...item, imported_by_user_id: _imported_by_user_id }));
     return { items, hasMore, nextCursor, limit: page.limit, countScope: 'filtered', summary: result.rows[0].summary };
 }
 

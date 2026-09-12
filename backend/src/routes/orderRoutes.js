@@ -11,6 +11,7 @@ const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 const { normalizeSerialScanInput } = require('../utils/serialNumber');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
+const { deferredEvents } = require('../utils/transactionEvents');
 
 const router = express.Router();
 
@@ -93,20 +94,6 @@ async function hasOpenOrderChange(db, orderId) {
     }
 }
 
-// Transactional events must never advertise data that can still roll back.
-function deferredEvents(io) {
-    const events = [];
-    return {
-        emit: (name, payload) => events.push([name, payload]),
-        publish: () => {
-            for (const [name, payload] of events) {
-                try { io?.emit(name, payload); }
-                catch (error) { logger.warn('已提交作業的即時通知發送失敗:', { event: name, message: error.message }); }
-            }
-        }
-    };
-}
-
 const importUpload = multer({
     storage: multer.memoryStorage(),
     limits: { files: 1, fileSize: IMPORT_LIMITS.fileBytes, fields: 0 },
@@ -145,176 +132,35 @@ const importLimiter = rateLimit({
 });
 
 // POST /api/orders/batch-claim
-router.post('/orders/batch-claim', async (req, res) => {
-    try {
-        const { orderIds } = req.body;
-        const userId = req.user.id;
-        const role = req.user.role;
-        const isAdminLike = role === 'admin' || role === 'superadmin';
-
-        if (!(role === 'picker' || isAdminLike)) {
-            return res.status(403).json({ message: '權限不足' });
-        }
-
-        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-            return res.status(400).json({ message: '請提供訂單ID列表' });
-        }
-
-                const result = await pool.query(
-                        `UPDATE orders 
-                         SET picker_id = $1, status = 'picking', updated_at = NOW()
-                         WHERE id = ANY($2)
-                             AND (
-                                 status = 'pending'
-                                 OR (status = 'picking' AND picker_id IS NULL)
-                             )
-                         RETURNING id, voucher_number`,
-                        [userId, orderIds]
-                );
-
-        res.json({ 
-            message: `成功認領 ${result.rows.length} 個訂單`,
-            orders: result.rows
-        });
-    } catch (error) {
-        logger.error('[/api/orders/batch-claim] 批次認領失敗:', error);
-        res.status(500).json({ message: '批次認領失敗' });
-    }
-});
-
-// POST /api/orders/batch/claim
-router.post('/orders/batch/claim', async (req, res) => {
-    const { orderIds } = req.body;
-    const { id: userId, role } = req.user;
+// All claim entry points share the same locked state transition and audit path.
+async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false }) {
+    const { id: userId, role } = user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
-    const io = req.app.get('io');
-
-    if (!Array.isArray(orderIds) || orderIds.length === 0) {
-        return res.status(400).json({ message: '請提供訂單 ID 列表' });
+    const fail = (status, message) => Object.assign(new Error(message), { status });
+    if (!['picker', 'packer', 'admin', 'superadmin'].includes(role) || (pickingOnly && role === 'packer')) {
+        throw fail(403, '此角色不可認領該作業');
     }
-
-    try {
-        const results = { success: [], failed: [] };
-
-        for (const orderId of orderIds) {
-            try {
-                const result = await pool.query(
-                    'SELECT id, status, picker_id FROM orders WHERE id = $1',
-                    [orderId]
-                );
-
-                if (result.rows.length === 0) {
-                    results.failed.push({ orderId, reason: '訂單不存在' });
-                    continue;
-                }
-
-                const order = result.rows[0];
-
-                if ((role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
-                    await pool.query(
-                        "UPDATE orders SET status = 'picking', picker_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-                        [userId, orderId]
-                    );
-                    await logOperation({
-                        userId,
-                        orderId,
-                        operationType: 'claim',
-                        details: { previous_status: 'pending', new_status: 'picking' },
-                        io
-                    });
-                    io?.emit('task_status_changed', { orderId, newStatus: 'picking' });
-                    results.success.push(orderId);
-                } else if (order.status === 'picking' && (role === 'packer' || isAdminLike)) {
-                    // 若存在未核可例外，禁止進入裝箱流程
-                    const hasOpen = await hasOpenExceptions(pool, orderId);
-                    if (hasOpen) {
-                        results.failed.push({ orderId, reason: '此訂單存在未核可例外，請先主管核可後再裝箱' });
-                        continue;
-                    }
-                    await pool.query(
-                        "UPDATE orders SET status = 'packing', packer_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-                        [userId, orderId]
-                    );
-                    await logOperation({
-                        userId,
-                        orderId,
-                        operationType: 'claim',
-                        details: { previous_status: 'picking', new_status: 'packing' },
-                        io
-                    });
-                    io?.emit('task_status_changed', { orderId, newStatus: 'packing' });
-                    results.success.push(orderId);
-                } else {
-                    results.failed.push({ orderId, reason: '訂單狀態不符或權限不足' });
-                }
-            } catch (error) {
-                results.failed.push({ orderId, reason: error.message });
-            }
-        }
-
-        res.json({
-            message: `批次認領完成: 成功 ${results.success.length} 筆, 失敗 ${results.failed.length} 筆`,
-            results
-        });
-    } catch (error) {
-        logger.error('[/api/orders/batch/claim] 失敗:', error);
-        res.status(500).json({ message: '批次認領失敗' });
-    }
-});
-
-// POST /api/orders/:orderId/claim
-router.post('/orders/:orderId/claim', async (req, res, next) => {
-    const { orderId } = req.params;
-    const { id: userId, role } = req.user;
-    const isAdminLike = role === 'admin' || role === 'superadmin';
-    const io = req.app.get('io');
-    logger.debug(`[/orders/${orderId}/claim] 使用者嘗試認領任務 - userId: ${userId}, role: ${role}`);
-
-    if (role === 'dispatcher') {
-        return res.status(403).json({ message: '拋單員不可認領任務' });
-    }
-
-    let client;
-    let transactionOpen = false;
-    let commitAttempted = false;
+    if (!Number.isSafeInteger(Number(orderId)) || Number(orderId) <= 0) throw fail(400, '訂單 ID 無效');
+    let client, transactionOpen = false, commitAttempted = false, releaseError;
     const events = deferredEvents(io);
     try {
         client = await pool.connect();
         await client.query('BEGIN');
         transactionOpen = true;
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
-        if (orderResult.rows.length === 0) {
-            logger.warn(`[/orders/${orderId}/claim] 錯誤: 找不到訂單`);
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: '找不到該訂單' });
-        }
+        if (!orderResult.rows.length) throw fail(404, '找不到該訂單');
         const order = orderResult.rows[0];
-
-        // 訂單異動審核中：禁止認領/作業
-        const hasPendingChange = await hasOpenOrderChange(client, orderId);
-        if (hasPendingChange) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ message: '此訂單異動審核中，請先主管核可後再作業。' });
-        }
-        logger.debug(`[/orders/${orderId}/claim] 訂單狀態: ${order.status}, picker_id: ${order.picker_id}, packer_id: ${order.packer_id}`);
-        let newStatus = '', task_type = '';
+        if (await hasOpenOrderChange(client, orderId)) throw fail(409, '此訂單異動審核中，請先主管核可後再作業。');
+        let newStatus, task_type;
         if ((role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-            logger.info(`[/orders/${orderId}/claim] 成功認領揀貨任務`);
-        } else if ((role === 'packer' || isAdminLike) && order.status === 'picked') {
-            const hasOpen = await hasOpenExceptions(client, orderId);
-            if (hasOpen) {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ message: '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。' });
-            }
+        } else if (!pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
+            if (await hasOpenExceptions(client, orderId)) throw fail(409, '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。');
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-            logger.info(`[/orders/${orderId}/claim] 成功認領裝箱任務`);
         } else {
-            logger.warn(`[/orders/${orderId}/claim] 認領失敗 - 角色: ${role}, 訂單狀態: ${order.status}`);
-            await client.query('ROLLBACK');
-            return res.status(400).json({ message: `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。` });
+            throw fail(400, `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。`);
         }
         await logOperation({ userId, orderId, operationType: 'claim', details: { new_status: newStatus }, io: events, db: client });
         const updatedOrder = (await client.query('SELECT o.*, u.name as current_user FROM orders o LEFT JOIN users u ON (CASE WHEN $1 = \'pick\' THEN o.picker_id WHEN $1 = \'pack\' THEN o.packer_id END) = u.id WHERE o.id = $2', [task_type, orderId])).rows[0];
@@ -323,19 +169,64 @@ router.post('/orders/:orderId/claim', async (req, res, next) => {
         await client.query('COMMIT');
         transactionOpen = false;
         events.publish();
-        res.status(200).json({ message: '任務認領成功' });
+        return updatedOrder;
     } catch (error) {
         if (transactionOpen) {
             try { await client.query('ROLLBACK'); }
-            catch (rollbackError) { logger.warn('認領交易回復失敗:', rollbackError.message); }
+            catch (rollbackError) { releaseError = rollbackError; }
         }
-        logger.error(`[/orders/${orderId}/claim] 發生錯誤:`, error);
-        if (commitAttempted) {
-            return res.status(503).json({ code: 'CLAIM_RESULT_UNKNOWN', message: '認領結果尚未確認，請重新載入任務列表核對，請勿直接重試。' });
+        if (commitAttempted || releaseError) {
+            releaseError ||= error;
+            throw Object.assign(new Error('認領結果尚未確認，請重新載入任務列表核對，請勿直接重試。'), { status: 503, code: 'CLAIM_RESULT_UNKNOWN' });
         }
+        throw error;
+    } finally { client?.release(releaseError); }
+}
+
+function parseClaimIds(value) {
+    if (!Array.isArray(value) || !value.length || value.length > 100 || value.some(id => !['number', 'string'].includes(typeof id) || !/^\d+$/.test(String(id)) || !Number.isSafeInteger(Number(id)) || Number(id) <= 0)) {
+        throw Object.assign(new Error('請提供 1 至 100 個有效訂單 ID'), { status: 400 });
+    }
+    return [...new Set(value.map(Number))];
+}
+
+async function claimBatch(req, res, next, pickingOnly) {
+    try {
+        if (!['picker', 'packer', 'admin', 'superadmin'].includes(req.user.role) || (pickingOnly && req.user.role === 'packer')) return res.status(403).json({ message: '權限不足' });
+        const ids = parseClaimIds(req.body.orderIds);
+        const orders = [], failed = [];
+        for (let i = 0; i < ids.length; i++) {
+            const orderId = ids[i];
+            try { orders.push(await claimWarehouseOrder({ orderId, user: req.user, io: req.app.get('io'), pickingOnly })); }
+            catch (error) {
+                if (!error.status || error.status >= 500) {
+                    // A partial batch may already have committed; never advertise an automatic retry.
+                    failed.push({ orderId, reason: '認領結果待確認，請重新整理核對', code: error.code || 'CLAIM_BATCH_INTERRUPTED' });
+                    for (const pendingId of ids.slice(i + 1)) failed.push({ orderId: pendingId, reason: '本次尚未執行認領' });
+                    break;
+                }
+                failed.push({ orderId, reason: error.message });
+            }
+        }
+        const statusEvents = deferredEvents(req.app.get('io'));
+        for (const order of orders) statusEvents.emit('task_status_changed', { orderId: order.id, newStatus: order.status });
+        statusEvents.publish();
+        if (pickingOnly) return res.json({ message: `成功認領 ${orders.length} 個訂單`, orders: orders.map(({ id, voucher_number }) => ({ id, voucher_number })), failed });
+        return res.json({ message: `批次認領完成: 成功 ${orders.length} 筆, 失敗 ${failed.length} 筆`, results: { success: orders.map(order => order.id), failed } });
+    } catch (error) { next(error); }
+}
+
+router.post('/orders/batch-claim', (req, res, next) => claimBatch(req, res, next, true));
+router.post('/orders/batch/claim', (req, res, next) => claimBatch(req, res, next, false));
+
+// POST /api/orders/:orderId/claim
+router.post('/orders/:orderId/claim', async (req, res, next) => {
+    try {
+        await claimWarehouseOrder({ orderId: req.params.orderId, user: req.user, io: req.app.get('io') });
+        res.status(200).json({ message: '任務認領成功' });
+    } catch (error) {
+        if (error.code === 'CLAIM_RESULT_UNKNOWN') return res.status(503).json({ code: error.code, message: error.message });
         next(error);
-    } finally {
-        client?.release();
     }
 });
 
@@ -430,13 +321,24 @@ router.get('/orders/:orderId', async (req, res, next) => {
 // PATCH /api/orders/:orderId/void
 router.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
-    const { reason } = req.body;
-    const io = req.app.get('io');
-    const result = await pool.query("UPDATE orders SET status = 'voided', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId]);
-    if (result.rowCount === 0) return res.status(404).json({ message: '找不到要作廢的訂單' });
-    await logOperation({ userId: req.user.id, orderId, operationType: 'void', details: { reason }, io });
-    io?.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'voided' });
-    res.json({ message: `訂單 ${result.rows[0].voucher_number} 已成功作廢` });
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim().slice(0, 2000) : null;
+    const events = deferredEvents(req.app.get('io'));
+    let client, transactionOpen = false, commitAttempted = false, releaseError;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN'); transactionOpen = true;
+        const result = await client.query("UPDATE orders SET status = 'voided', void_reason = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId, reason]);
+        if (!result.rowCount) { await client.query('ROLLBACK'); transactionOpen = false; return res.status(404).json({ message: '找不到要作廢的訂單' }); }
+        await logOperation({ userId: req.user.id, orderId, operationType: 'void', details: { reason }, db: client, io: events });
+        events.emit('task_status_changed', { orderId: Number(orderId), newStatus: 'voided' });
+        commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
+        events.publish();
+        res.json({ message: `訂單 ${result.rows[0].voucher_number} 已成功作廢` });
+    } catch (error) {
+        if (transactionOpen) { try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError = rollbackError; } }
+        if (commitAttempted || releaseError) { releaseError ||= error; return res.status(503).json({ code: 'VOID_RESULT_UNKNOWN', message: '作廢結果尚未確認，請重新整理核對。' }); }
+        res.status(500).json({ message: '作廢失敗，資料未變更' });
+    } finally { client?.release(releaseError); }
 });
 
 // PATCH /api/orders/:orderId/urgent
@@ -651,6 +553,10 @@ router.post('/orders/update_item', async (req, res, next) => {
         return res.status(403).json({ message: '權限不足' });
     }
 
+    if (!['pick', 'pack'].includes(type) || !Number.isSafeInteger(Number(amount)) || Number(amount) === 0) {
+        return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '掃碼類型或數量無效' });
+    }
+
     const scanRaw = String(scanValue ?? '').trim();
     if (!scanRaw) {
         scanOutcome = 'invalid_input';
@@ -661,6 +567,7 @@ router.post('/orders/update_item', async (req, res, next) => {
     let transactionOpen = false;
     let releaseError;
     let commitAttempted = false;
+    let rejectedScanAudit;
     const events = deferredEvents(io);
     try {
         client = await pool.connect();
@@ -778,7 +685,10 @@ router.post('/orders/update_item', async (req, res, next) => {
             let newStatus = '';
             if (type === 'pick' && instance.status === 'pending') newStatus = 'picked'; 
             else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed'; 
-            else throw new Error(`SN 碼 ${scanRaw} 的狀態 (${instance.status}) 無法執行此操作`);
+            else {
+                rejectedScanAudit = { scanValue: scanRaw, type, reason: `SN 狀態 ${instance.status} 無法執行此操作` };
+                throw Object.assign(new Error(`SN 碼 ${scanRaw} 的狀態 (${instance.status}) 無法執行此操作`), { status: 409 });
+            }
             await trackedQuery(client, 'update_instance_status', 'UPDATE order_item_instances SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newStatus, instance.id]);
             await logOperation({
                 userId,
@@ -862,19 +772,8 @@ router.post('/orders/update_item', async (req, res, next) => {
                 );
             }
             if (itemResult.rows.length === 0) {
-                await logOperation({
-                    userId,
-                    orderId,
-                    operationType: 'scan_error',
-                    details: { scanValue: scanRaw, type, reason: '條碼不屬於此訂單或該品項需要掃描 SN 碼' },
-                    io: events,
-                    db: client,
-                    userRole: req.user?.role,
-                    userName: req.user?.name,
-                    voucherNumber: order.voucher_number,
-                    customerName: order.customer_name
-                });
-                throw new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`);
+                rejectedScanAudit = { scanValue: scanRaw, type, reason: '條碼不屬於此訂單、需要掃描 SN 或已無剩餘數量' };
+                throw Object.assign(new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`), { status: 400 });
             }
             const item = itemResult.rows[0];
             if (type === 'pick') { 
@@ -961,6 +860,24 @@ router.post('/orders/update_item', async (req, res, next) => {
             scanOutcome = 'unknown_commit';
             return res.status(503).json({ code: 'SCAN_RESULT_UNKNOWN', message: '掃描結果尚未確認，請重新載入訂單核對，請勿直接重刷。' });
         }
+        // Rejected scans must survive the business rollback so scan-error
+        // analysis has evidence. Reuse this client; never borrow a second one
+        // while the transaction's pool slot is held. No quantity/status changes
+        // or deferred success events are committed in this separate audit.
+        if (rejectedScanAudit && !releaseError) {
+            const rejectionEvents = deferredEvents(io);
+            try {
+                await client.query('BEGIN');
+                await client.query("SET LOCAL lock_timeout = '1500ms'");
+                await client.query("SET LOCAL statement_timeout = '3000ms'");
+                await logOperation({ userId, orderId, operationType: 'scan_error', details: rejectedScanAudit, db: client, io: rejectionEvents });
+                await client.query('COMMIT');
+                rejectionEvents.publish();
+            } catch (auditError) {
+                try { await client.query('ROLLBACK'); } catch (cleanupError) { releaseError = cleanupError; }
+                logger.warn('未成功保存刷錯記錄:', { code: auditError.code });
+            }
+        }
         if (err?.code === '55P03' || /lock timeout|statement timeout|canceling statement/i.test(err?.message || '')) {
             scanOutcome = 'lock_or_timeout';
             err.status = 409;
@@ -1019,136 +936,43 @@ router.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
 // dispatcher：僅可操作自己拋單的訂單
 router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
     const { orderId } = req.params;
-    const { oldSn, newSn, reason } = req.body;
+    const { oldSn: oldInput, newSn: newInput, reason } = req.body;
     const userId = req.user.id;
-    const io = req.app.get('io');
-
-    if (!oldSn || !newSn || !reason) {
-        return res.status(400).json({ message: '請提供舊SN、新SN及更換原因' });
-    }
-
-    const client = await pool.connect();
+    if ([oldInput, newInput, reason].some(value => typeof value !== 'string' || !value.trim()) || oldInput.length > 255 || newInput.length > 255 || reason.length > 2000) return res.status(400).json({ message: '請提供有效的舊SN、新SN及更換原因' });
+    const oldSn = oldInput.trim(), newSn = normalizeSerialScanInput(newInput).normalized;
+    if (oldSn === newSn) return res.status(400).json({ message: '新SN不可與舊SN相同' });
+    const events = deferredEvents(req.app.get('io'));
+    const fail = (status, message) => Object.assign(new Error(message), { status });
+    let client, transactionOpen = false, commitAttempted = false, releaseError;
     try {
-        await client.query('BEGIN');
-
-        if (req.user?.role === 'dispatcher') {
-            const own = await client.query(
-                `SELECT 1
-                 FROM orders o
-                 WHERE o.id = $1
-                   AND (
-                     SELECT ol.user_id
-                     FROM operation_logs ol
-                     WHERE ol.order_id = o.id AND ol.action_type = 'import'
-                     ORDER BY ol.created_at DESC
-                     LIMIT 1
-                   ) = $2`,
-                [orderId, userId]
-            );
-            if (own.rowCount === 0) {
-                await client.query('ROLLBACK');
-                return res.status(403).json({ message: '僅允許操作自己拋單的訂單' });
-            }
+        client = await pool.connect();
+        await client.query('BEGIN'); transactionOpen = true;
+        const order = (await client.query('SELECT id, status FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
+        if (!order) throw fail(404, '找不到指定訂單');
+        if (order.status === 'voided') throw fail(409, '已作廢訂單不可更換SN');
+        if (req.user.role === 'dispatcher') {
+            const own = await client.query("SELECT 1 FROM operation_logs WHERE order_id=$1 AND action_type='import' AND user_id=$2 AND id=(SELECT id FROM operation_logs WHERE order_id=$1 AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1)", [orderId, userId]);
+            if (!own.rowCount) throw fail(403, '僅允許操作自己拋單的訂單');
         }
-
-        // 1. Find the instance and verify it belongs to the order
-        const instanceQuery = `
-            SELECT i.id, i.order_item_id, oi.product_code, oi.product_name, oi.barcode
-            FROM order_item_instances i
-            JOIN order_items oi ON i.order_item_id = oi.id
-            WHERE i.serial_number = $1 AND oi.order_id = $2
-        `;
-        const instanceResult = await client.query(instanceQuery, [oldSn, orderId]);
-
-        if (instanceResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: '找不到該訂單中對應的舊SN' });
-        }
-
-        const instance = instanceResult.rows[0];
-
-        // 2. Update the SN
-        await client.query(
-            'UPDATE order_item_instances SET serial_number = $1 WHERE id = $2',
-            [newSn, instance.id]
-        );
-
-        // 3. Record the defect
-        await client.query(
-            `INSERT INTO product_defects 
-            (order_id, user_id, original_sn, new_sn, product_barcode, product_name, reason)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [orderId, userId, oldSn, newSn, instance.barcode, instance.product_name, reason]
-        );
-
-        // 3.1 同步建立例外事件（SN更換）— 管理員操作視同已核可並結案，但仍保留審計紀錄
-        try {
-            const tableCheck = await client.query(
-                `SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_schema = 'public' AND table_name = 'order_exceptions'
-                ) as exists`
-            );
-
-            if (tableCheck.rows[0]?.exists) {
-                await client.query(
-                    `INSERT INTO order_exceptions (
-                        order_id, type, status,
-                        reason_code, reason_text,
-                        created_by,
-                        ack_by, ack_at,
-                        resolved_by, resolved_at,
-                        snapshot
-                    ) VALUES (
-                        $1, 'sn_replace', 'resolved',
-                        $2, $3,
-                        $4,
-                        $4, NOW(),
-                        $4, NOW(),
-                        $5::jsonb
-                    )`,
-                    [
-                        orderId,
-                        'DEFECT_EXCHANGE',
-                        reason,
-                        userId,
-                        JSON.stringify({
-                            oldSn,
-                            newSn,
-                            product: {
-                                barcode: instance.barcode,
-                                name: instance.product_name,
-                                orderItemId: instance.order_item_id
-                            }
-                        })
-                    ]
-                );
-            }
-        } catch (e) {
-            // 不影響既有 SN 更換主流程
-            logger.warn('[/api/orders/:orderId/defect] 建立例外事件失敗（可忽略）:', e.message);
-        }
-
-        await client.query('COMMIT');
-
-        // 4. Log operation
-        await logOperation({
-            userId,
-            orderId,
-            operationType: 'defect_exchange',
-            details: { oldSn, newSn, reason, product: instance.product_name },
-            io
-        });
-
-        res.json({ message: 'SN更換成功並已記錄新品不良' });
-
+        const instance = (await client.query('SELECT i.id,i.order_item_id,oi.product_name,oi.barcode FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE i.serial_number=$1 AND oi.order_id=$2 FOR UPDATE OF i', [oldSn, orderId])).rows[0];
+        if (!instance) throw fail(404, '找不到該訂單中對應的舊SN');
+        const duplicate = await client.query('SELECT 1 FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE oi.order_id=$1 AND i.serial_number=$2', [orderId, newSn]);
+        if (duplicate.rowCount) throw fail(409, '新SN已存在於此訂單');
+        await client.query('UPDATE order_item_instances SET serial_number=$1, updated_at=NOW() WHERE id=$2', [newSn, instance.id]);
+        await client.query('INSERT INTO product_defects (order_id,user_id,original_sn,new_sn,product_barcode,product_name,reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [orderId,userId,oldSn,newSn,instance.barcode,instance.product_name,reason]);
+        await client.query(`INSERT INTO order_exceptions (order_id,type,status,reason_code,reason_text,created_by,ack_by,ack_at,resolved_by,resolved_at,snapshot)
+            VALUES ($1,'sn_replace','resolved','DEFECT_EXCHANGE',$2,$3,$3,NOW(),$3,NOW(),$4::jsonb)`, [orderId,reason,userId,JSON.stringify({oldSn,newSn,product:{barcode:instance.barcode,name:instance.product_name,orderItemId:instance.order_item_id}})]);
+        await logOperation({ userId,orderId,operationType:'defect_exchange',details:{oldSn,newSn,reason,product:instance.product_name},io:events,db:client });
+        events.emit('order_exception_changed', { orderId:Number(orderId), action:'resolved', type:'sn_replace' });
+        commitAttempted=true; await client.query('COMMIT'); transactionOpen=false;
+        events.publish();
+        res.json({ message:'SN更換成功並已記錄新品不良' });
     } catch (error) {
-        await client.query('ROLLBACK');
-        logger.error('[/api/orders/:orderId/defect] 失敗:', error);
-        res.status(500).json({ message: '處理失敗: ' + error.message });
-    } finally {
-        client.release();
-    }
+        if (transactionOpen) { try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError=rollbackError; } }
+        if (commitAttempted || releaseError) { releaseError ||= error; return res.status(503).json({code:'DEFECT_RESULT_UNKNOWN',message:'SN更換結果尚未確認，請重新整理核對，避免重複更換。'}); }
+        logger.error('SN更換失敗', {code:error.code,requestId:req.requestId});
+        res.status(error.status || 500).json({message:error.status ? error.message : 'SN更換失敗，資料未變更'});
+    } finally { client?.release(releaseError); }
 });
 
 // GET /api/admin/defects/stats

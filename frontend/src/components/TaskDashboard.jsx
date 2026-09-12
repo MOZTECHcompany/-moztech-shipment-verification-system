@@ -591,12 +591,13 @@ export function TaskDashboard({ user }) {
         setIsBatchClaiming(true);
         try {
             const response = await apiClient.post('/api/orders/batch-claim', { orderIds: claimableIds }, { timeout: 15000 });
-            toast.success(response.data.message);
+            if (response.data.failed?.length) toast.error(response.data.message, { description: '部分任務未認領，清單已重新整理，請確認狀態。' });
+            else toast.success(response.data.message);
             setSelectedTasks([]);
             setBatchMode(false);
             await fetchTasks();
         } catch (error) {
-            toast.error('批次認領失敗', { description: error.response?.data?.message });
+            toast.error(error.response ? '批次認領失敗' : '認領結果尚未確認', { description: error.response?.data?.message || '請重新整理任務清單核對，避免重複認領。' });
         } finally {
             batchClaimPending.current = false;
             setIsBatchClaiming(false);
@@ -937,10 +938,11 @@ export function TaskDashboard({ user }) {
                     <div className="text-center py-12 px-6 bg-white/75 border border-white rounded-2xl">
                         <Package size={26} className="mx-auto mb-4 text-slate-400" />
                         <h2 className="text-xl font-semibold text-slate-800">{hasFilters ? '沒有符合條件的任務' : currentView === 'completed' ? '這個日期沒有完成階段的任務' : '目前沒有可處理的任務'}</h2>
-                        <p className="text-sm text-slate-600 mt-2">{hasFilters ? '可修改單號、客戶或作業狀態，也可以清除篩選。' : currentView === 'completed' ? '請選擇其他更新日期，或回到進行中的任務。' : '清單依您的角色顯示，可重新整理確認最新任務。'}</p>
+                        <p className="text-sm text-slate-600 mt-2">{hasFilters ? '可修改單號、客戶或作業狀態，也可以清除篩選。' : currentView === 'completed' ? '請選擇其他更新日期，或回到進行中的任務。' : '收到出貨任務後，選擇「開始揀貨」或「開始裝箱」即可刷條碼核對。'}</p>
                         <div className="flex justify-center gap-3 mt-5">
                             {hasFilters ? <Button variant="secondary" onClick={resetFilters}>清除篩選</Button> : <Button variant="secondary" onClick={fetchTasks}>重新整理任務</Button>}
                             {currentView === 'completed' && <Button variant="secondary" onClick={() => changeView('active')}>查看進行中</Button>}
+                            {!hasFilters && currentView === 'active' && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <Button onClick={() => navigate('/admin')}>匯入出貨單</Button>}
                         </div>
                     </div>
                 ) : currentView === 'active' ? (

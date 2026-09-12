@@ -23,8 +23,8 @@ class AuthService {
                 [username]
             );
 
-            if (result.rows.length === 0) {
-                logger.warn(`登入失敗: 用戶不存在 - ${username}`);
+            if (result.rows.length !== 1) {
+                logger.warn(`登入失敗: 無法確認唯一帳號 - ${username}`);
                 throw new Error('用戶名或密碼錯誤');
             }
 

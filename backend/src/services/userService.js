@@ -13,7 +13,7 @@ class UserService {
         try {
             // 檢查用戶名是否已存在
             const existing = await pool.query(
-                'SELECT id FROM users WHERE username = $1',
+                'SELECT id FROM users WHERE LOWER(username) = LOWER($1)',
                 [username]
             );
 
@@ -33,6 +33,7 @@ class UserService {
             logger.info(`新用戶已創建: ${username} (${role})`);
             return result.rows[0];
         } catch (error) {
+            if (error.code === '23505' && ['idx_wms_users_login_identity', 'users_username_key'].includes(error.constraint)) throw new Error('用戶名已存在');
             logger.error('創建用戶失敗:', error);
             throw error;
         }

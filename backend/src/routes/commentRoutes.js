@@ -10,6 +10,7 @@ const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 
 const router = express.Router();
+const { deferredEvents } = require('../utils/transactionEvents');
 
 const rateMap = new Map();
 function rateLimit(key, limit, windowMs = 60_000) {
@@ -615,59 +616,35 @@ router.get('/tasks/:orderId/sessions', async (req, res) => {
 router.post('/tasks/:orderId/transfer', async (req, res) => {
     const { orderId } = req.params;
     const { to_user_id, task_type, reason } = req.body;
-    const { id: fromUserId } = req.user;
-    const io = req.app.get('io');
-
-    if (!to_user_id || !task_type) {
-        return res.status(400).json({ message: '缺少必要參數' });
-    }
-
-    const client = await pool.connect();
+    const { id: fromUserId, role } = req.user;
+    const isAdmin = ['admin', 'superadmin'].includes(role);
+    const events = deferredEvents(req.app.get('io'));
+    const fail = (status, message) => Object.assign(new Error(message), { status });
+    if (!['pick', 'pack'].includes(task_type) || !Number.isSafeInteger(Number(to_user_id)) || Number(to_user_id) <= 0) return res.status(400).json({ message: '請提供正確的作業類型與接手人員' });
+    let client, transactionOpen = false, commitAttempted = false, releaseError;
     try {
-        await client.query('BEGIN');
-
-        await client.query(`
-            INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason)
-            VALUES ($1, $2, $3, $4, $5)
-        `, [orderId, fromUserId, to_user_id, task_type, reason]);
-
-        if (task_type === 'pick') {
-            await client.query(
-                'UPDATE orders SET picker_id = $1 WHERE id = $2',
-                [to_user_id, orderId]
-            );
-        } else if (task_type === 'pack') {
-            await client.query(
-                'UPDATE orders SET packer_id = $1 WHERE id = $2',
-                [to_user_id, orderId]
-            );
-        }
-
-        await client.query('COMMIT');
-
-        await logOperation({
-            userId: fromUserId,
-            orderId,
-            operationType: 'transfer',
-            details: { to_user_id, task_type, reason },
-            io
-        });
-
-        io?.emit('task_transferred', {
-            orderId,
-            from_user_id: fromUserId,
-            to_user_id,
-            task_type
-        });
-
+        client = await pool.connect();
+        await client.query('BEGIN'); transactionOpen = true;
+        const order = (await client.query('SELECT id, status, picker_id, packer_id FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
+        if (!order) throw fail(404, '找不到指定訂單');
+        const expectedRole = task_type === 'pick' ? 'picker' : 'packer';
+        const owner = task_type === 'pick' ? order.picker_id : order.packer_id;
+        if (!isAdmin && (role !== expectedRole || owner !== fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
+        if (order.status !== (task_type === 'pick' ? 'picking' : 'packing')) throw fail(409, '僅能轉交進行中的同階段作業');
+        const target = (await client.query('SELECT id, role FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
+        if (!target || ![expectedRole, 'admin', 'superadmin'].includes(target.role)) throw fail(400, '接手人員沒有此作業的權限');
+        await client.query('INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason) VALUES ($1,$2,$3,$4,$5)', [orderId, fromUserId, to_user_id, task_type, reason]);
+        await client.query(task_type === 'pick' ? 'UPDATE orders SET picker_id=$1, updated_at=NOW() WHERE id=$2' : 'UPDATE orders SET packer_id=$1, updated_at=NOW() WHERE id=$2', [to_user_id, orderId]);
+        await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', details: { to_user_id, task_type, reason }, db: client, io: events });
+        events.emit('task_transferred', { orderId, from_user_id: fromUserId, to_user_id, task_type });
+        commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
+        events.publish();
         res.json({ message: '任務已成功轉移' });
     } catch (error) {
-        await client.query('ROLLBACK');
-        logger.error('[/api/tasks/:orderId/transfer] 任務轉移失敗:', error);
-        res.status(500).json({ message: '任務轉移失敗' });
-    } finally {
-        client.release();
-    }
+        if (transactionOpen) { try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError = rollbackError; } }
+        if (commitAttempted || releaseError) { releaseError ||= error; return res.status(503).json({ code: 'TRANSFER_RESULT_UNKNOWN', message: '轉交結果尚未確認，請重新整理核對，避免重複轉交。' }); }
+        res.status(error.status || 500).json({ message: error.status ? error.message : '任務轉移失敗' });
+    } finally { client?.release(releaseError); }
 });
 
 module.exports = router;
