@@ -3,7 +3,7 @@
 
 const express = require('express');
 const { createReportExporter } = require('../services/reportExport');
-const { boundedLimit, dateRange } = require('../utils/queryLimits');
+const { boundedLimit, dateRange, logDateRange } = require('../utils/queryLimits');
 const { pool, reportPool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin } = require('../middleware/auth');
@@ -12,7 +12,7 @@ const router = express.Router();
 router.use((req, res, next) => {
     if (req.method !== 'GET') return next();
     try {
-        dateRange(req.query.startDate, req.query.endDate);
+        (req.path === '/scan-errors' ? logDateRange : dateRange)(req.query.startDate, req.query.endDate);
         if (req.query.limit !== undefined) boundedLimit(req.query.limit);
         next();
     } catch (error) { res.status(400).json({ message: error.message }); }

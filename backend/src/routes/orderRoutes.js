@@ -1011,19 +1011,23 @@ router.get('/admin/defects/stats', authorizeAdmin, async (req, res) => {
     try {
         const query = `
             SELECT 
-                product_barcode,
-                product_name,
+                d.product_barcode,
+                d.product_name,
                 COUNT(*) as defect_count,
                 json_agg(json_build_object(
-                    'order_id', order_id,
-                    'original_sn', original_sn,
-                    'new_sn', new_sn,
-                    'reason', reason,
-                    'created_at', created_at,
-                    'reporter', (SELECT name FROM users WHERE id = product_defects.user_id)
-                )) as details
-            FROM product_defects
-            GROUP BY product_barcode, product_name
+                    'id', d.id,
+                    'order_id', d.order_id,
+                    'voucher_number', o.voucher_number,
+                    'original_sn', d.original_sn,
+                    'new_sn', d.new_sn,
+                    'reason', d.reason,
+                    'created_at', d.created_at,
+                    'reporter', u.name
+                ) ORDER BY d.created_at DESC, d.id DESC) as details
+            FROM product_defects d
+            LEFT JOIN orders o ON o.id=d.order_id
+            LEFT JOIN users u ON u.id=d.user_id
+            GROUP BY d.product_barcode, d.product_name
             ORDER BY defect_count DESC
         `;
         const result = await pool.query(query);

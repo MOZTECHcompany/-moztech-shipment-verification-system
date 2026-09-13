@@ -1967,14 +1967,14 @@ function AuthenticatedOrderWorkView({ user }) {
                         </Card>
 
                         {/* 討論區塊 */}
-                        <details className={`rounded-xl border border-slate-200 bg-white ${isFocusMode ? 'hidden' : ''}`}>
-                            <summary className="cursor-pointer p-4 text-sm font-semibold text-slate-700">團隊討論</summary>
-                            <div className="h-[480px] overflow-hidden relative">
+                        <section aria-label="訂單備註與討論" className={`rounded-xl border border-slate-200 bg-white ${isFocusMode ? 'hidden' : ''}`}>
+                            <h2 className="p-4 text-sm font-semibold text-slate-700">訂單備註與討論</h2>
+                            <div className="h-[600px] overflow-hidden relative">
                                 <ErrorBoundary>
                                     <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} mode="embedded" />
                                 </ErrorBoundary>
                             </div>
-                        </details>
+                        </section>
                     </div>
 
                     {/* 右側：作業清單 */}

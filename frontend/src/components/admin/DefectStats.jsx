@@ -4,35 +4,29 @@ import apiClient from '@/api/api';
 import { PageHeader, Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Table, THead, TH, TBody, TR, TD, EmptyState, Skeleton } from '@/ui';
 import { ArrowLeft, AlertTriangle, Download } from 'lucide-react';
 import { toast } from 'sonner';
+import { defectRows, defectCsv } from '../../utils/defectReport';
 
 export function DefectStats() {
     const [stats, setStats] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    const rows = useMemo(() => {
-        const flattened = [];
-        for (const item of stats || []) {
-            for (const detail of item.details || []) {
-                flattened.push({
-                    product_name: item.product_name,
-                    product_barcode: item.product_barcode,
-                    defect_count: item.defect_count,
-                    ...detail,
-                });
-            }
-        }
-        return flattened;
-    }, [stats]);
+    const [error, setError] = useState(false);
+    const [page, setPage] = useState(1);
+    const rows = useMemo(() => defectRows(stats), [stats]);
+    const pageSize = 50;
+    const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
 
     useEffect(() => {
         fetchStats();
     }, []);
 
     const fetchStats = async () => {
+        setLoading(true); setError(false);
         try {
             const res = await apiClient.get('/api/admin/defects/stats');
-            setStats(res.data);
+            setStats(res.data); setPage(1);
         } catch (error) {
+            setError(true);
             toast.error('無法載入新品不良統計');
         } finally {
             setLoading(false);
@@ -40,30 +34,7 @@ export function DefectStats() {
     };
 
     const handleExport = () => {
-        // Simple CSV export
-        const headers = ['產品名稱', '條碼', '不良次數', '訂單號', '原SN', '新SN', '原因', '更換人', '時間'];
-        const rows = [];
-        
-        stats.forEach(item => {
-            item.details.forEach(d => {
-                rows.push([
-                    item.product_name,
-                    item.product_barcode,
-                    1, // Count per row
-                    d.order_id, // Should fetch voucher number ideally, but ID is here
-                    d.original_sn,
-                    d.new_sn,
-                    d.reason,
-                    d.reporter,
-                    new Date(d.created_at).toLocaleString()
-                ]);
-            });
-        });
-
-        const csvContent = [
-            headers.join(','),
-            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-        ].join('\n');
+        const csvContent = defectCsv(rows);
 
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -73,12 +44,13 @@ export function DefectStats() {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     return (
         <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
             <PageHeader
-                title="新品不良統計"
+                title="新品不良異動"
                 description="追蹤產品瑕疵與更換記錄"
                 actions={
                     <div className="flex gap-3">
@@ -87,7 +59,7 @@ export function DefectStats() {
                                 <ArrowLeft className="h-4 w-4" /> 返回
                             </Button>
                         </Link>
-                        <Button onClick={handleExport} variant="primary" size="sm" className="gap-1">
+                        <Button disabled={loading || error || !rows.length} onClick={handleExport} variant="primary" size="sm" className="gap-1">
                             <Download className="h-4 w-4" /> 匯出報告
                         </Button>
                     </div>
@@ -106,6 +78,8 @@ export function DefectStats() {
                         ))}
                     </CardContent>
                 </Card>
+            ) : error ? (
+                <div role="alert" className="mt-8 rounded-xl border border-red-200 bg-red-50 p-5"><p>新品不良紀錄載入失敗</p><Button onClick={fetchStats} className="mt-3">重試</Button></div>
             ) : (
                 <Card className="mt-8">
                     <CardHeader>
@@ -124,6 +98,7 @@ export function DefectStats() {
                             <Table>
                                 <THead>
                                     <TH>時間</TH>
+                                    <TH>訂單</TH>
                                     <TH>產品</TH>
                                     <TH>條碼</TH>
                                     <TH>原 SN</TH>
@@ -132,9 +107,10 @@ export function DefectStats() {
                                     <TH>處理人員</TH>
                                 </THead>
                                 <TBody>
-                                    {rows.map((r, idx) => (
+                                    {visibleRows.map((r, idx) => (
                                         <TR key={`${r.product_barcode}-${r.original_sn}-${r.new_sn}-${r.created_at}-${idx}`}>
                                             <TD className="text-xs text-gray-600">{new Date(r.created_at).toLocaleString('zh-TW')}</TD>
+                                            <TD>{r.order_id ? <Link className="text-blue-600 underline" to={`/order/${r.order_id}`}>{r.voucher_number || r.order_id}</Link> : '—'}</TD>
                                             <TD className="font-semibold text-gray-900">{r.product_name}</TD>
                                             <TD className="font-mono text-xs text-gray-600">{r.product_barcode}</TD>
                                             <TD className="font-mono text-xs text-red-600">{r.original_sn}</TD>
@@ -146,6 +122,7 @@ export function DefectStats() {
                                 </TBody>
                             </Table>
                         )}
+                        {rows.length > pageSize && <nav aria-label="新品不良分頁" className="mt-4 flex items-center justify-end gap-4"><Button disabled={page === 1} onClick={() => setPage(p => p - 1)}>上一頁</Button><span>{page} / {Math.ceil(rows.length / pageSize)}</span><Button disabled={page * pageSize >= rows.length} onClick={() => setPage(p => p + 1)}>下一頁</Button></nav>}
                     </CardContent>
                 </Card>
             )}

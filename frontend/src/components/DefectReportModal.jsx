@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, AlertTriangle, Save, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
@@ -17,40 +17,40 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
     const [newSn, setNewSn] = useState('');
     const [reason, setReason] = useState('');
 
-    useEffect(() => {
-        if (isOpen && orderId) {
-            fetchOrderDetails();
-            // Reset form
-            setSelectedItemId('');
-            setOldSn('');
-            setNewSn('');
-            setReason('');
-            setItemSearch('');
-            setOldSnSearch('');
-        }
-    }, [isOpen, orderId]);
+    const submittingRef = useRef(false);
+    const [loadError, setLoadError] = useState(false);
+    const [reloadKey, setReloadKey] = useState(0);
+    const [resultUnknown, setResultUnknown] = useState(false);
 
-    const fetchOrderDetails = async () => {
-        try {
-            setLoading(true);
-            const res = await apiClient.get(`/api/orders/${orderId}`);
-            setItems(res.data.items || []);
-            setInstances(res.data.instances || []);
-        } catch (error) {
-            toast.error('無法載入訂單詳情');
-            onClose();
-        } finally {
-            setLoading(false);
-        }
-    };
+    useEffect(() => {
+        if (!isOpen || !orderId) return;
+        const controller = new AbortController();
+        setLoading(true);
+        setLoadError(false);
+        setItems([]);
+        setInstances([]);
+        setSelectedItemId(''); setOldSn(''); setNewSn(''); setReason('');
+        setItemSearch(''); setOldSnSearch('');
+        apiClient.get(`/api/orders/${orderId}/work-snapshot`, { signal: controller.signal })
+            .then(({ data }) => {
+                if (controller.signal.aborted) return;
+                setItems(data.items || []); setInstances(data.instances || []);
+                setResultUnknown(false);
+            })
+            .catch(() => { if (!controller.signal.aborted) setLoadError(true); })
+            .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+        return () => controller.abort();
+    }, [isOpen, orderId, reloadKey]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!oldSn || !newSn || !reason) {
+        if (submittingRef.current || loading || loadError || resultUnknown) return;
+        if (!oldSn || !newSn.trim() || !reason.trim()) {
             toast.error('請填寫所有欄位');
             return;
         }
 
+        submittingRef.current = true;
         try {
             setSubmitting(true);
             await apiClient.post(`/api/orders/${orderId}/defect`, {
@@ -62,10 +62,12 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
             if (onSuccess) onSuccess();
             onClose();
         } catch (error) {
+            if (!error.response || error.response?.data?.code === 'DEFECT_RESULT_UNKNOWN') setResultUnknown(true);
             toast.error('提交失敗', {
                 description: error.response?.data?.message || error.message
             });
         } finally {
+            submittingRef.current = false;
             setSubmitting(false);
         }
     };
@@ -79,7 +81,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
     const filteredItems = items.filter((item) => {
         if (!itemSearchNormalized) return true;
         const productName = String(item.product_name || '').toLowerCase();
-        const productCode = String(item.product_code || '').toLowerCase();
+        const productCode = String(item.product_code || item.barcode || '').toLowerCase();
         return productName.includes(itemSearchNormalized) || productCode.includes(itemSearchNormalized);
     });
     const selectedItem = selectedItemId ? items.find((item) => String(item.id) === String(selectedItemId)) : null;
@@ -104,14 +106,14 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in">
+            <div role="dialog" aria-modal="true" aria-labelledby="defect-title" className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90dvh] overflow-y-auto animate-scale-in">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-red-50">
                     <div className="flex items-center gap-2 text-red-600">
                         <AlertTriangle size={24} />
-                        <h2 className="text-lg font-bold">新品不良 SN 更換</h2>
+                        <h2 id="defect-title" className="text-lg font-bold">新品不良異動</h2>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-red-100 rounded-full text-gray-500 transition-colors">
+                    <button type="button" aria-label="關閉新品不良異動" disabled={submitting} onClick={onClose} className="p-2 hover:bg-red-100 rounded-full text-gray-500 transition-colors">
                         <X size={20} />
                     </button>
                 </div>
@@ -123,6 +125,10 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                             <Loader2 size={32} className="animate-spin mb-2" />
                             <p>載入訂單資訊中...</p>
                         </div>
+                    ) : loadError ? (
+                        <div role="alert" className="space-y-3"><p>無法載入訂單，請重新載入後再操作。</p><Button onClick={() => setReloadKey(key => key + 1)}>重新載入</Button></div>
+                    ) : resultUnknown ? (
+                        <div role="alert" className="space-y-3"><p>更換結果尚未確認，請先重新載入並核對 SN 與異動紀錄。</p><Button onClick={() => setReloadKey(key => key + 1)}>重新載入核對</Button></div>
                     ) : (
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <div className="bg-gray-50 p-3 rounded-lg text-sm text-gray-600 mb-4">
@@ -142,6 +148,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
                                 />
                                 <select
+                                    aria-label="選擇產品"
                                     value={selectedItemId}
                                     onChange={(e) => {
                                         setSelectedItemId(e.target.value);
@@ -152,7 +159,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     <option value="" className="text-gray-500">-- 所有產品 --</option>
                                     {itemsForSelect.map(item => (
                                         <option key={item.id} value={item.id} className="text-gray-900">
-                                            {item.product_name} ({item.product_code})
+                                            {item.product_name} ({item.product_code || item.barcode})
                                         </option>
                                     ))}
                                 </select>
@@ -171,6 +178,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     className="w-full mb-2 rounded-xl border-gray-300 focus:border-red-500 focus:ring-red-500 px-4 py-2 leading-6 text-gray-900 bg-white placeholder:text-gray-400"
                                 />
                                 <select
+                                    aria-label="原 SN"
                                     value={oldSn}
                                     onChange={(e) => setOldSn(e.target.value)}
                                     required
@@ -193,6 +201,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                 <div className="relative">
                                     <input
                                         type="text"
+                                        aria-label="新 SN" maxLength={255}
                                         value={newSn}
                                         onChange={(e) => setNewSn(e.target.value)}
                                         placeholder="掃描或輸入新 SN"
@@ -209,6 +218,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     不良原因 <span className="text-red-500">*</span>
                                 </label>
                                 <textarea
+                                    aria-label="不良原因" maxLength={2000}
                                     value={reason}
                                     onChange={(e) => setReason(e.target.value)}
                                     placeholder="請詳細描述不良原因..."
@@ -224,6 +234,7 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
                                     variant="secondary"
                                     className="flex-1"
                                     onClick={onClose}
+                                    disabled={submitting}
                                 >
                                     取消
                                 </Button>

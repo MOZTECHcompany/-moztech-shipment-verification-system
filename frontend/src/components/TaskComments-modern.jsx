@@ -449,9 +449,8 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                         {/* Actions Menu (Hover/Click) */}
                         {!isRetracted && (
                             <div className={`
-                                absolute top-0 ${isMine ? '-left-12' : '-right-12'} 
-                                ${isActive ? 'opacity-100 z-30' : 'opacity-100 sm:opacity-0 sm:group-hover/bubble:opacity-100'}
-                                transition-opacity flex flex-col gap-1 action-menu-container
+                                relative mt-1 flex items-center ${isMine ? 'justify-end' : 'justify-start'}
+                                gap-1 action-menu-container
                             `}>
                                 <button 
                                     onClick={() => handleReply(comment)}
@@ -464,6 +463,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                                 {(isMine || currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
                                     <div className="relative">
                                         <button 
+                                            aria-label="留言操作"
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 setActiveMessageId(activeMessageId === comment.id ? null : comment.id);
@@ -589,7 +589,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             </div>
             {/* Pinned Section */}
             {pinnedComments.length > 0 && (
-                <div className="mx-4 mt-2 bg-blue-50/60 backdrop-blur-md border border-blue-100/50 rounded-2xl px-4 py-3 shadow-sm">
+                <div className="mx-4 mt-2 max-h-40 shrink-0 overflow-y-auto bg-blue-50/60 backdrop-blur-md border border-blue-100/50 rounded-2xl px-4 py-3 shadow-sm">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
                         <Pin size={12} className="fill-blue-700" /> 置頂公告
                     </div>
@@ -652,7 +652,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
 
             {sendError && <div role="alert" className="mx-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sendError}。內容已保留，請先重新整理確認是否送達。</div>}
             {/* Input Area */}
-            <div className="p-3 sm:p-4 z-20 pb-[max(12px,env(safe-area-inset-bottom))]">
+            <div className="shrink-0 p-3 sm:p-4 z-20 pb-[max(12px,env(safe-area-inset-bottom))]">
                 <div className="bg-white/30 backdrop-blur-md border border-white/20 shadow-sm p-2 rounded-[2rem]">
                     {/* Reply Preview */}
                     {replyTo && (
@@ -676,7 +676,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                     )}
 
                     <div className="flex items-end gap-2">
-                        <div className={`flex-1 bg-gray-50/50 rounded-[1.5rem] border border-transparent transition-all duration-300 flex flex-col focus-within:bg-white/80 focus-within:shadow-inner`}>
+                        <div className={`min-w-0 flex-1 bg-gray-50/50 rounded-[1.5rem] border border-transparent transition-all duration-300 flex flex-col focus-within:bg-white/80 focus-within:shadow-inner`}>
                             <textarea
                                 ref={textareaRef}
                                 value={newComment}
@@ -695,7 +695,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                             
                             {/* Toolbar */}
                             <div className="flex items-center justify-between px-3 pb-2">
-                                <div className="flex items-center gap-1">
+                                <div className="flex flex-wrap items-center gap-1">
                                     <button
                                         onClick={() => setShowQuickReplies(!showQuickReplies)}
                                         className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${showQuickReplies ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100/50 hover:text-gray-600'}`}

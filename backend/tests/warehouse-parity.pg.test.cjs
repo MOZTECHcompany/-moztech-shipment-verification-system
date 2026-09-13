@@ -16,7 +16,7 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
     await control.query(`CREATE DATABASE "${database}"`);
     Object.assign(process.env, { NODE_ENV: 'test', DATABASE_URL: '', PGHOST: config.host, PGPORT: String(config.port), PGUSER: config.user,
         PGPASSWORD: config.password, PGDATABASE: database, PGOPTIONS: '', JWT_SECRET: 'isolated-warehouse-parity-only', DB_POOL_MAX: '1',
-        DB_SSL_MODE: 'disable', STORAGE_BACKEND: 'local', CORS_ORIGINS: 'http://127.0.0.1', WMS_ECPAY_ACCOUNTS_JSON: '[]', WMS_ECPAY_CALLBACKS_ENABLED: 'false' });
+        DB_SSL_MODE: 'disable', STORAGE_BACKEND: 'local', CORS_ORIGINS: 'http://127.0.0.1,http://127.0.0.1:5173', WMS_ECPAY_ACCOUNTS_JSON: '[]', WMS_ECPAY_CALLBACKS_ENABLED: 'false' });
     const { pool } = require('../src/config/database');
     const { runMigrations } = require('../src/maintenance/migrationRunner');
     const { assertSchemaReady } = require('../src/config/schemaReadiness');
@@ -38,12 +38,14 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    const requests = [];
     async function api(role, method, path, body) {
         const headers = tokens[role] ? { Authorization: `Bearer ${tokens[role]}` } : {};
         if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
         const response = await fetch(base + path, { method, headers, body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15000) });
         const text = await response.text();
         let data; try { data = JSON.parse(text); } catch { data = text; }
+        requests.push({ method, path: path.split('?')[0], status: response.status, role: role || 'anonymous' });
         return { status: response.status, data };
     }
     function ok(result, status = 200) { assert.equal(result.status, status, JSON.stringify(result.data)); return result.data; }
@@ -234,10 +236,30 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         ok(await api('dispatcher', 'DELETE', `/api/orders/${orderId}`));
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE id=$1', [orderId])).rows[0].n, 0);
     });
+    await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
+    if (process.env.WMS_PARITY_BROWSER === '1') await require('./legacy-browser.cjs')({ t, api, ok, pool, users, tokens, base, output: process.env.WMS_PARITY_BROWSER_OUTPUT });
     await t.test('current DB role applies immediately even with old admin token', async () => {
         await pool.query("UPDATE users SET role='picker' WHERE id=$1", [users.admin]);
         assert.equal((await api('admin', 'GET', '/api/admin/users')).status, 403);
-        await pool.query('DELETE FROM users WHERE id=$1', [users.superadmin]);
-        assert.equal((await api('superadmin', 'GET', '/api/tasks')).status, 403);
+        const unused = (await pool.query("INSERT INTO users(username,password,name,role) VALUES('token_revoke_fixture',$1,'Revocation fixture','picker') RETURNING id", [await bcrypt.hash(password, 4)])).rows[0].id;
+        tokens.revoked = ok(await api(null, 'POST', '/api/auth/login', { username: 'token_revoke_fixture', password })).accessToken;
+        await pool.query('DELETE FROM users WHERE id=$1', [unused]);
+        assert.equal((await api('revoked', 'GET', '/api/tasks')).status, 403);
     });
+    await t.test('every legacy business route has an exercised successful mounted HTTP path', () => {
+        const routes = require('../../docs/legacy-parity/legacy-routes.json');
+        const excluded = routes.filter(r => r.file.endsWith('maintenanceRoutes.js') || ['/bootstrap/superadmin', '/maintenance/retention/run'].includes(r.path));
+        const records = routes.filter(r => !excluded.includes(r)).map(route => {
+            const file = route.file.split('/').pop();
+            const prefix = file === 'authRoutes.js' ? '/api/auth' : file === 'userRoutes.js' ? '/api/admin/users'
+                : ['adminRoutes.js', 'adminExceptionRoutes.js'].includes(file) ? '/api/admin' : '/api';
+            const fullPath = prefix + (route.path === '/' ? '' : route.path);
+            const regex = new RegExp('^' + fullPath.replace(/:[^/]+/g, '[^/]+') + '/?$');
+            const matches = requests.filter(r => r.method === route.method && regex.test(r.path));
+            return { method: route.method, path: fullPath, statuses: [...new Set(matches.map(r => r.status))].sort(), passed: matches.some(r => r.status >= 200 && r.status < 300) };
+        });
+        if (process.env.WMS_PARITY_REPORT) require('node:fs').writeFileSync(process.env.WMS_PARITY_REPORT, JSON.stringify({ kind: 'disposable_real_PostgreSQL_HTTP_coverage_not_all_UI_acceptance', records, excludedMaintenance: excluded, passed: records.every(r => r.passed) }, null, 2));
+        assert.deepEqual(records.filter(r => !r.passed).map(r => r.method + ' ' + r.path), []);
+    });
+
 });

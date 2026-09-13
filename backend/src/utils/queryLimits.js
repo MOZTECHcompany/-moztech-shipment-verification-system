@@ -17,4 +17,18 @@ function dateRange(startDate, endDate, required = false) {
     if (start && end && start > end) throw invalid('開始日期不可晚於結束日期');
     return { start, end };
 }
-module.exports = { boundedLimit, isoDate, dateRange };
+// The legacy scan-error screen sends explicit ISO instants, unlike date-only reports.
+function logDateRange(startDate, endDate) {
+    const check = value => {
+        if (value === undefined) return null;
+        if (typeof value !== 'string') throw invalid('日期格式不正確');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return isoDate(value);
+        if (!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) || !Number.isFinite(Date.parse(value))) throw invalid('日期格式不正確');
+        isoDate(value.slice(0, 10));
+        return value;
+    };
+    const start = check(startDate), end = check(endDate);
+    if (start && end && Date.parse(start) > Date.parse(end)) throw invalid('開始日期不可晚於結束日期');
+    return { start, end };
+}
+module.exports = { boundedLimit, isoDate, dateRange, logDateRange };

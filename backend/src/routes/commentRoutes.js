@@ -252,7 +252,7 @@ router.patch('/tasks/:orderId/comments/:commentId/retract', async (req, res) => 
         if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
         const ownerId = info.rows[0].user_id;
         const isOwner = Number(ownerId) === Number(requester.id);
-        const isAdmin = String(requester.role || '').toLowerCase() === 'admin';
+        const isAdmin = ['admin', 'superadmin'].includes(String(requester.role || '').toLowerCase());
         if (!isOwner && !isAdmin) return res.status(403).json({ code: 'FORBIDDEN', message: '無權撤回此評論', requestId: req.requestId });
 
         await pool.query('UPDATE task_comments SET content = $1, updated_at = NOW() WHERE id = $2', ['[已撤回]', commentId]);
@@ -538,7 +538,7 @@ router.delete('/tasks/:orderId/comments/:commentId', async (req, res) => {
         if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
         const ownerId = info.rows[0].user_id;
         const isOwner = Number(ownerId) === Number(requester.id);
-        const isAdmin = String(requester.role || '').toLowerCase() === 'admin';
+        const isAdmin = ['admin', 'superadmin'].includes(String(requester.role || '').toLowerCase());
         if (!isOwner && !isAdmin) return res.status(403).json({ code: 'FORBIDDEN', message: '無權刪除此評論', requestId: req.requestId });
 
         await pool.query('DELETE FROM task_comments WHERE id = $1', [commentId]);

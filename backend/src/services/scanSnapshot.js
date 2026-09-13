@@ -30,7 +30,9 @@ function createWorkSnapshot(pool) {
             db=await pool.connect();
             await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');open=true;
             await db.query("SET LOCAL statement_timeout='5000ms'");
-            const order=(await db.query('SELECT o.*,p.name AS picker_name,pk.name AS packer_name FROM orders o LEFT JOIN users p ON p.id=o.picker_id LEFT JOIN users pk ON pk.id=o.packer_id WHERE o.id=$1',[req.params.orderId])).rows[0];
+            const order=(await db.query(`SELECT o.*,p.name AS picker_name,pk.name AS packer_name,
+                (SELECT ol.user_id FROM operation_logs ol WHERE ol.order_id=o.id AND ol.action_type='import' ORDER BY ol.created_at DESC,ol.id DESC LIMIT 1) AS imported_by_user_id
+                FROM orders o LEFT JOIN users p ON p.id=o.picker_id LEFT JOIN users pk ON pk.id=o.packer_id WHERE o.id=$1`,[req.params.orderId])).rows[0];
             if(!order){await db.query('ROLLBACK');open=false;return res.status(404).json({message:'找不到訂單'});}
             const {items,instances}=await readLines(db,order.id);
             await db.query('COMMIT');open=false;

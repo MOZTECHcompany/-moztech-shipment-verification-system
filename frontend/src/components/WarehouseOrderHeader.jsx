@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Camera, Check, CheckCheck, ChevronDown, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
+import { Box, Camera, Check, CheckCheck, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
 import { ShippingLabel, PickingList } from './LabelPrinter';
 
 const stages = [
@@ -14,7 +14,10 @@ const actionClass = 'inline-flex min-h-[44px] items-center justify-center gap-2 
 
 export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions = [], order, items, isFocusMode, toggleFocusMode }) {
   const stage = statusIndex[order.status];
+  const canManageDefect = ['admin', 'superadmin'].includes(user?.role)
+    || (user?.role === 'dispatcher' && Number(order.imported_by_user_id) === Number(user.id));
   const metrics = [
+    { label: '品項完成度', value: stats.packedSkus, total: stats.totalSkus },
     { label: '應核對件數', value: stats.totalQuantity, total: null },
     { label: '已揀貨', value: stats.totalPickedQty, total: stats.totalQuantity },
     { label: '已裝箱', value: stats.totalPackedQty, total: stats.totalQuantity },
@@ -46,19 +49,14 @@ export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCame
           {isFocusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{isFocusMode ? '退出專注' : '專注模式'}
         </button>
         <button type="button" onClick={onOpenCamera} className={actionClass}><Camera size={16} />相機掃描</button>
-        <details className="relative">
-          <summary className={`${actionClass} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}>列印與其他操作<ChevronDown size={15} /></summary>
-          <div className="absolute left-0 top-full z-30 mt-2 flex w-56 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
-            <ShippingLabel order={order} items={items} className={`${actionClass} !justify-start !border-0 !text-slate-700`} />
-            <PickingList order={order} items={items} className={`${actionClass} !justify-start !border-0 !text-slate-700`} />
-            <button type="button" onClick={onExport} className={`${actionClass} !justify-start !border-0`}><FileDown size={16} />匯出出貨明細</button>
-            <button type="button" onClick={onOpenDefectModal} className={`${actionClass} !justify-start !border-0`}><TriangleAlert size={16} />新品不良更換</button>
-            {['admin', 'superadmin'].includes(user.role) && <button type="button" onClick={onVoid} className={`${actionClass} !justify-start !border-0 !text-red-700`}><XCircle size={16} />作廢訂單</button>}
-          </div>
-        </details>
+        {canManageDefect && order.status !== 'voided' && <button type="button" onClick={onOpenDefectModal} className={`${actionClass} !text-orange-700`}><TriangleAlert size={16} />新品不良異動</button>}
+        <ShippingLabel order={order} items={items} className={actionClass} />
+        <PickingList order={order} items={items} className={actionClass} />
+        <button type="button" onClick={onExport} className={actionClass}><FileDown size={16} />匯出出貨明細</button>
+        {['admin', 'superadmin'].includes(user.role) && <button type="button" onClick={onVoid} className={`${actionClass} !text-red-700`}><XCircle size={16} />作廢訂單</button>}
         {activeSessions.length > 0 && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-slate-500"><Users size={14} />{activeSessions.length} 人正在查看</span>}
       </div>
-      {!isFocusMode && <dl className="mt-4 grid grid-cols-3 divide-x divide-slate-200 rounded-xl bg-slate-50 py-3">
+      {!isFocusMode && <dl className="mt-4 grid grid-cols-2 gap-y-3 divide-x divide-slate-200 rounded-xl bg-slate-50 py-3 sm:grid-cols-4">
         {metrics.map(({ label, value, total }) => <div key={label} className="px-3 sm:px-4"><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{value}<span className="ml-1 text-xs font-normal text-slate-500">{total !== null ? `/ ${total}` : '件'}</span></dd></div>)}
       </dl>}
     </section>
