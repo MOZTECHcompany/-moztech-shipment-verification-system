@@ -108,4 +108,36 @@
 
 以獨立 PostgreSQL（loopback 55441，專用測試帳號）執行：`WMS_PARITY_PG_TEST=1 node --test backend/tests/warehouse-parity.pg.test.cjs`。加 `WMS_PARITY_BROWSER=1` 與 `WMS_PARITY_BROWSER_OUTPUT=<絕對路徑>` 可一起執行瀏覽器情境。測試會建立隨機資料庫並在結束後刪除，不能把測試環境變數指向正式資料庫。
 
-正式發布／私有候選驗證結果待實際執行後補入本文件；在此之前不能視為已上線。
+## 最終驗證與正式發布
+
+2026-09-14（台灣時間）已發布，正式入口：https://wms.corely.cc 。
+
+| 層級 | 實際結果 |
+|---|---|
+| 程式 | `70bb86922f868b57afa9d96baed0049e0ed45701`；隔離分支 `codex/wms-feature-parity-20260914` |
+| 本機 | 後端 Jest 152 通過／19 suites；前端 96 通過；PG 效能 8 通過；完整 PG＋瀏覽器 32 通過；前端正式建置成功 |
+| 路由覆蓋 | 63／63 舊版日常業務端點具成功的實際 HTTP 證據；6 個維護端點另驗證受控邊界 |
+| 私有候選 | `corely-wms-migration-validation-parity-0914`；22 個驗證記錄通過（其中 11 個為還原功能的瀏覽器情境）；IAM 仍私有；合成訂單、使用者與新測試附件已清理 |
+| 掃碼 | 真實 Cloud Run 一般訂單各 100 次揀／裝；78 品項、2,269 SN 訂單各 100 次；另有瀏覽器鍵盤各 60 次；大型訂單 p95 約 172／168 ms，回應最大 735／733 bytes |
+| 正式發布 | `corely-wms-parity-20260914` 100%；先以同一組映像部署 0% 候選並讀取既有資料確認，再切換流量 |
+| 正式查核 | 自訂網域與 run.app 均通過登入入口、資料庫就緒、未登入拒絕、工作台、成員、留言、釘選、報表入口、71 筆新品不良與原憑證、原 ISO 刷錯查詢合約及新前端 bundle 檢查 |
+| 資料保留 | 所有 public 資料表發布前後筆數與逐表內容 SHA-256 相同；Cloud Run 執行設定與 IAM 相同；沒有重新灌入、覆寫或刪除正式資料 |
+
+Cloud Build：`d1fa1489-1315-4e50-b9ac-9d3486196bc8`。
+
+- API：`asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-backend@sha256:92c2c32a2361e070062d9fc979b454b3064f80666709ec438cbec9a3ace5f0d1`
+- 前端：`asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-frontend@sha256:efb12ad251c8580181f1e92ddfd7c4e553e05fb7267695409658a5a19b2694d4`
+- 雙網址：https://wms.corely.cc 、https://corely-wms-249593319772.asia-east1.run.app 。
+- GitHub：本隔離 repo 沒有設定 remote，本次未推送 GitHub；正式映像對應上述本機 commit，不能把舊 GitHub main 宣稱為這次已部署的原始碼。
+
+發布證據在外部 artifacts 的 `source-manifest.json`、`build-result.json`、`candidate-acceptance-receipt.json`、`cloud-acceptance.json`、`cloud-browser/browser-acceptance.json`、`production-published-readback.json`、兩份 `smoke-*.json` 與 `production-reconciliation.json`。流量切換命令成功後，命令回傳的是 traffic 結構而非完整 service；原收據格式化程式曾因此報錯，已直接重新查 Cloud Run 確認 100% 新版並修正收據程式，沒有重複發布。
+
+## 回復方式
+
+舊正式 revision `corely-wms-perf-20260913b` 保留。本次沒有 schema migration，回復程式版本不需要還原資料庫。若需回復，先重新查核目前流量及其他開發工作，再執行：
+
+```sh
+gcloud run services update-traffic corely-wms --project=moztech-main-db --region=asia-east1 --to-revisions=corely-wms-perf-20260913b=100
+```
+
+以上是已執行的程式、隔離資料庫、候選與正式唯讀驗證；不是宣稱每一個實體掃碼器、相機、印表機及外部 ERP／物流操作均已現場驗收。舊 Render 缺失的兩個附件原檔仍依前節記錄，不能用通過的新增附件測試代替歷史檔案完整性。
