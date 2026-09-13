@@ -174,6 +174,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
         `, [orderId, userId, content, parent_id, priority]);
 
         const commentId = result.rows[0].id;
+        const mentionEvents = [];
 
         const mentionRegex = /@([A-Za-z0-9._-]+)/g;
         const mentions = content.match(mentionRegex);
@@ -195,7 +196,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
                         VALUES ($1, $2)
                     `, [commentId, userResult.rows[0].id]);
 
-                    io?.emit('new_mention', {
+                    mentionEvents.push({
                         userId: userResult.rows[0].id,
                         orderId,
                         commentId,
@@ -207,6 +208,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
         }
 
         await client.query('COMMIT');
+        for (const event of mentionEvents) io?.emit('new_mention', event);
 
         io?.emit('new_comment', {
             orderId,

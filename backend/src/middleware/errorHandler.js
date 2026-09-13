@@ -28,7 +28,10 @@ function globalErrorHandler(err, req, res, next) {
     });
 
     // Only the scan route sets this after a confirmed rollback or before any transaction.
-    const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED' } : {};
+    const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED', ...(err.scanReason === 'STATE_CHANGED' ? { reason: err.scanReason } : {}) } : {};
+    if (err.code === '57014' || /timeout exceeded when trying to connect|connection terminated due to connection timeout/i.test(err.message || '')) {
+        return res.set('Retry-After', '1').status(503).json({ code: 'QUERY_BUSY', ...scanResult, message: '系統忙碌中，請稍後再試。' });
+    }
 
     // 處理特定類型的錯誤
     if (err.name === 'ValidationError') {
@@ -64,7 +67,7 @@ function globalErrorHandler(err, req, res, next) {
 
     // 預設錯誤回應
     const statusCode = err.statusCode || err.status || 500;
-    const message = process.env.NODE_ENV === 'production' 
+    const message = process.env.NODE_ENV === 'production' && statusCode >= 500
         ? '伺服器發生錯誤'
         : err.message;
 

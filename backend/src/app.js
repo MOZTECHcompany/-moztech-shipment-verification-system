@@ -134,6 +134,8 @@ app.use((req, res, next) => {
 
 app.use(cors(corsOptions));
 app.use(express.json());
+app.use(require('./middleware/requestPerformance').requestPerformance(pool));
+app.use(require('./middleware/queryAdmission').createQueryAdmission());
 
 // =================================================================
 // 路由註冊

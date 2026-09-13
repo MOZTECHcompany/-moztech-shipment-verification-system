@@ -6,7 +6,13 @@ const logger = require('../utils/logger');
 
 // 資料庫連接池配置
 const { getDatabaseOptions } = require('./runtime');
-const pool = new Pool(getDatabaseOptions(process.env));
+// DB_POOL_MAX is the TOTAL per-instance budget, including reporting. Reserve
+// one slot for bounded exports without increasing the database role's budget.
+const options = getDatabaseOptions(process.env);
+const reportSlots = options.max > 1 ? 1 : 0;
+const pool = new Pool({ ...options, max: options.max - reportSlots, statement_timeout: 8000 });
+const reportPool = reportSlots ? new Pool({ ...options, max: 1, statement_timeout: 8000 }) : pool;
+if (reportPool !== pool) reportPool.on('error', error => logger.error('Report database connection failed', { code: error.code }));
 
 // 連接池事件監聽
 pool.on('connect', (client) => {
@@ -38,7 +44,7 @@ const testConnection = async () => {
 // 優雅關閉
 const closePool = async () => {
     try {
-        await pool.end();
+        await Promise.all([pool.end(), ...(reportPool !== pool ? [reportPool.end()] : [])]);
         logger.info('資料庫連接池已關閉');
     } catch (error) {
         logger.error('關閉資料庫連接池時發生錯誤:', error);
@@ -47,6 +53,7 @@ const closePool = async () => {
 
 module.exports = {
     pool,
+    reportPool,
     testConnection,
     closePool
 };

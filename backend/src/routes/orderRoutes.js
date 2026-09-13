@@ -14,6 +14,8 @@ const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletio
 const { deferredEvents } = require('../utils/transactionEvents');
 
 const router = express.Router();
+const { stateToken, readLines, parseCommand, createWorkSnapshot } = require('../services/scanSnapshot');
+router.get('/orders/:orderId/work-snapshot', createWorkSnapshot(pool));
 
 const scanPerfWindow = [];
 const SCAN_PERF_WINDOW_SIZE = 300;
@@ -568,6 +570,9 @@ router.post('/orders/update_item', async (req, res, next) => {
     let releaseError;
     let commitAttempted = false;
     let rejectedScanAudit;
+    let command;
+    try { command = parseCommand(req.body, userId); } catch (error) { return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
+    let changedItemId, changedInstanceId;
     const events = deferredEvents(io);
     try {
         client = await pool.connect();
@@ -579,9 +584,25 @@ router.post('/orders/update_item', async (req, res, next) => {
         if (!Number.isFinite(amountNum) || amountNum === 0) {
             throw new Error('數量 amount 無效');
         }
+        if (command) {
+            await client.query("SELECT pg_advisory_xact_lock(hashtext('wms-scan-command'),hashtext($1))", [`${userId}:${command.id}`]);
+            const receipt = (await client.query('SELECT request_hash,response FROM wms_scan_commands WHERE user_id=$1 AND command_id=$2',[userId,command.id])).rows[0];
+            if (receipt) {
+                if (receipt.request_hash !== command.hash) throw Object.assign(new Error('同一掃碼識別不可用於不同作業'), {status:409});
+                await client.query('ROLLBACK'); transactionOpen=false;
+                scanOutcome='replayed';
+                return res.json(receipt.response);
+            }
+        }
         const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
+        if (command) {
+            const before = await readLines(client,orderId);
+            if (stateToken(order,before.items,before.instances) !== req.body.expectedState) {
+                throw Object.assign(new Error('訂單已更新，請重新載入核對後再掃描'), {status:409,scanReason:'STATE_CHANGED'});
+            }
+        }
         if (order.status === 'voided') {
             const error = new Error('此訂單已作廢，無法進行掃碼作業');
             error.status = 409;
@@ -682,6 +703,7 @@ router.post('/orders/update_item', async (req, res, next) => {
 
         if (instanceRow) {
             const instance = instanceRow;
+            changedInstanceId = instance.id;
             let newStatus = '';
             if (type === 'pick' && instance.status === 'pending') newStatus = 'picked'; 
             else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed'; 
@@ -776,6 +798,7 @@ router.post('/orders/update_item', async (req, res, next) => {
                 throw Object.assign(new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`), { status: 400 });
             }
             const item = itemResult.rows[0];
+            changedItemId = item.id;
             if (type === 'pick') { 
                 const newPickedQty = item.picked_quantity + amountNum; 
                 if (newPickedQty < 0 || newPickedQty > item.quantity) throw new Error('揀貨數量無效'); 
@@ -838,13 +861,21 @@ router.post('/orders/update_item', async (req, res, next) => {
         // Prepare the response before COMMIT so a failed read cannot report a committed scan as failed.
         const updatedOrderResult = await trackedQuery(client, 'refresh_order', 'SELECT * FROM orders WHERE id = $1', [orderId]);
         markStage('refreshReadMs');
+        const response = command ? {
+            format:'delta-v1',commandId:command.id,baseState:req.body.expectedState,
+            stateToken:stateToken(updatedOrderResult.rows[0],updatedItemsResult.rows,updatedInstancesResult.rows),
+            order:updatedOrderResult.rows[0],
+            item:changedItemId ? updatedItemsResult.rows.find(i=>i.id===changedItemId) : null,
+            instance:changedInstanceId ? updatedInstancesResult.rows.find(i=>i.id===changedInstanceId) : null
+        } : { order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows };
+        if (command) await client.query('INSERT INTO wms_scan_commands(user_id,command_id,order_id,request_hash,response) VALUES($1,$2,$3,$4,$5)',[userId,command.id,orderId,command.hash,JSON.stringify(response)]);
         commitAttempted = true;
         await trackedQuery(client, 'commit_tx', 'COMMIT');
         transactionOpen = false;
         markStage('commitMs');
         events.publish();
         scanOutcome = 'success';
-        res.json({ order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows });
+        res.json(response);
     } catch (err) {
         let notApplied = !transactionOpen && !commitAttempted;
         if (transactionOpen) {

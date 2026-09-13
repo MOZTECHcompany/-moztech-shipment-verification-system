@@ -17,6 +17,8 @@ import apiClient from '@/api/api';
 import { socket } from '@/api/socket';
 import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
+import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
+import SerialList from './SerialList';
 import { buildWorkItems, filterWorkItems, workStage } from '@/utils/orderWorkProgress';
 import voiceNotification from '@/utils/voiceNotification';
 import desktopNotification from '@/utils/desktopNotification';
@@ -147,22 +149,7 @@ const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
             
             {expanded && instances.length > 0 && (
                 <div className="border-t border-gray-100 bg-gray-50/50 p-3 animate-slide-up">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
-                        {instances.map((inst, idx) => (
-                            <div key={idx} 
-                                className={`px-2 py-1.5 rounded text-xs font-mono border flex items-center justify-between ${
-                                    inst.status === 'packed' 
-                                        ? 'bg-green-50 border-green-200 text-green-700' 
-                                        : inst.status === 'picked' 
-                                            ? 'bg-blue-50 border-blue-200 text-blue-700' 
-                                            : 'bg-white border-gray-200 text-gray-500'
-                                }`}>
-                                <span className="truncate">{inst.serial_number}</span>
-                                {inst.status === 'packed' && <Check size={12} />}
-                                {inst.status === 'picked' && <ShoppingCart size={12} />}
-                            </div>
-                        ))}
-                    </div>
+                    <SerialList instances={instances} />
                 </div>
             )}
         </div>
@@ -372,7 +359,7 @@ function AuthenticatedOrderWorkView({ user }) {
         try {
             setLoading(true);
             setLoadError('');
-            const response = await apiClient.get(`/api/orders/${id}`, { timeout: 15000 });
+            const response = await apiClient.get(`/api/orders/${id}/work-snapshot`, { timeout: 15000 });
             if (isCurrent() && !scanSubmissionRef.current.isBusy()) setCurrentOrderData(response.data);
         } catch (err) {
             if (!isCurrent()) return;
@@ -1315,16 +1302,15 @@ function AuthenticatedOrderWorkView({ user }) {
         if (!currentOrderData.order) return false;
         const submission = scanSubmissionRef.current.submit(scanValue, async () => {
             try {
-                const response = await apiClient.post(`/api/orders/update_item`, {
-                    orderId: currentOrderData.order.id,
-                    scanValue,
-                    type,
-                    amount,
+                const command = makeScanCommand(currentOrderData, {
+                    orderId: currentOrderData.order.id, scanValue, type, amount,
                     ...(orderItemId ? { orderItemId } : {})
-                }, { timeout: 15000 });
+                });
+                const response = await sendScanCommand(apiClient, command);
+                const updatedSnapshot = applyScanResponse(currentOrderData, response.data);
                 if (!mountedRef.current) return;
                 orderDataVersionRef.current++;
-                setCurrentOrderData(response.data);
+                setCurrentOrderData(updatedSnapshot);
                 setLastAcceptedScan({ value: scanValue, type, amount });
                 soundNotification.play(type === 'pick' ? 'pickSuccess' : 'packSuccess');
 
@@ -1355,7 +1341,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     return;
                 }
 
-                const scanRows = buildWorkItems(response.data.items, response.data.instances, type);
+                const scanRows = buildWorkItems(updatedSnapshot.items, updatedSnapshot.instances, type);
                 const totalScanned = scanRows.reduce((sum, row) => sum + row.count, 0);
                 const remaining = scanRows.reduce((sum, row) => sum + row.remaining, 0);
 
@@ -1373,7 +1359,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     || err.response?.data?.code === 'SCAN_RESULT_UNKNOWN'
                     || (statusCode >= 500 && err.response?.data?.code !== 'SCAN_NOT_APPLIED');
                 const isConflict = statusCode === 409;
-                if (isUnknownResult) {
+                if (isUnknownResult || err.response?.data?.reason === 'STATE_CHANGED') {
                     scanSubmissionRef.current.requireReview();
                     setScanNeedsReview(true);
                 }

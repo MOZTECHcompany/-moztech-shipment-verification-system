@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import { createScanSubmission } from '../src/utils/scanSubmission.js';
 import * as orderWorkProgress from '../src/utils/orderWorkProgress.js';
+import * as scanDelta from '../src/utils/scanDelta.js';
 
 const source = await readFile(new URL('../src/components/OrderWorkView.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
@@ -47,7 +48,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
             return promise;
         },
         get: url => {
-            if (!deferRead || url !== '/api/orders/1') return Promise.resolve({ data: fixture });
+            if (!deferRead || url !== '/api/orders/1/work-snapshot') return Promise.resolve({ data: fixture });
             let resolve;
             const pending = new Promise(done => { resolve = done; });
             reads.push({ resolve });
@@ -66,6 +67,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         '@/api/socket': { socket },
         '@/utils/scanSubmission': { createScanSubmission },
         '@/utils/orderWorkProgress': orderWorkProgress,
+        '@/utils/scanDelta': scanDelta,
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
         '@/utils/voiceNotification': { speakScanSuccess: noop, speakScanError: noop, speakOperationError: noop },
         '@/utils/desktopNotification': { notifyScanError: noop },

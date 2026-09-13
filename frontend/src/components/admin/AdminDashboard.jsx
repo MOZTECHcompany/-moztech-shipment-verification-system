@@ -138,7 +138,7 @@ export function AdminDashboard({ user }) {
         const from = format(startDate, 'yyyy-MM-dd');
         const to = format(endDate, 'yyyy-MM-dd');
         try {
-            const response = await apiClient.get('/api/reports/export', { params: { startDate: from, endDate: to }, responseType: 'blob' });
+            const response = await apiClient.get('/api/reports/export', { params: { startDate: from, endDate: to }, responseType: 'blob', timeout: 130000 });
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             try {
@@ -148,8 +148,10 @@ export function AdminDashboard({ user }) {
                 link.click();
             } finally { link.remove(); window.URL.revokeObjectURL(url); }
             if (mounted.current) toast.success('營運報告已下載');
-        } catch {
-            if (mounted.current) toast.error('報告產生失敗，請確認連線與權限後重試。');
+        } catch (error) {
+            let message = '報告產生失敗，請確認連線與權限後重試。';
+            try { message = JSON.parse(await error.response.data.text()).message || message; } catch { /* Interrupted CSV is never offered as a completed download. */ }
+            if (mounted.current) toast.error(message);
         } finally {
             exportInFlight.current = false;
             if (mounted.current) setExporting(false);

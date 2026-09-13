@@ -2,16 +2,25 @@
 // 操作日誌、報表與分析相關端點（需先通過 authenticateToken）
 
 const express = require('express');
-const Papa = require('papaparse');
-const { pool } = require('../config/database');
+const { createReportExporter } = require('../services/reportExport');
+const { boundedLimit, dateRange } = require('../utils/queryLimits');
+const { pool, reportPool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin } = require('../middleware/auth');
 
 const router = express.Router();
+router.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    try {
+        dateRange(req.query.startDate, req.query.endDate);
+        if (req.query.limit !== undefined) boundedLimit(req.query.limit);
+        next();
+    } catch (error) { res.status(400).json({ message: error.message }); }
+});
 
 // GET /api/operation-logs
 router.get('/operation-logs', authorizeAdmin, async (req, res) => {
-    const { orderId, userId, startDate, endDate, actionType, limit = 100 } = req.query;
+    const { orderId, userId, startDate, endDate, actionType, limit = '100' } = req.query;
 
     logger.info(`[/api/operation-logs] 查詢操作日誌 - orderId: ${orderId}, userId: ${userId}, startDate: ${startDate}, endDate: ${endDate}, actionType: ${actionType}`);
 
@@ -75,7 +84,7 @@ router.get('/operation-logs', authorizeAdmin, async (req, res) => {
         }
 
         query += ` ORDER BY ol.created_at DESC LIMIT $${paramCount}`;
-        params.push(parseInt(limit, 10));
+        params.push(boundedLimit(limit, 100, 1000));
 
         logger.debug(`[/api/operation-logs] 執行查詢:`, { query: query.substring(0, 200), params });
 
@@ -150,32 +159,7 @@ router.get('/operation-logs/stats', authorizeAdmin, async (req, res) => {
 });
 
 // GET /api/reports/export
-router.get('/reports/export', authorizeAdmin, async (req, res) => {
-    const { startDate, endDate } = req.query;
-    if (!startDate || !endDate) return res.status(400).json({ message: '必須提供開始與結束日期' });
-    const inclusiveEndDate = `${endDate} 23:59:59`;
-    const orderResult = await pool.query(`SELECT id, voucher_number, status, completed_at, updated_at FROM orders WHERE (status = 'completed' AND completed_at BETWEEN $1 AND $2) OR (status = 'voided' AND updated_at BETWEEN $1 AND $2) ORDER BY updated_at DESC, completed_at DESC`, [startDate, inclusiveEndDate]);
-    if (orderResult.rows.length === 0) return res.status(404).json({ message: '在指定日期範圍內找不到任何已完成或作廢的訂單' });
-    const orders = orderResult.rows;
-    const orderIds = orders.map(o => o.id);
-    const itemsResult = await pool.query(`SELECT order_id, SUM(quantity) as total_quantity FROM order_items WHERE order_id = ANY($1::int[]) GROUP BY order_id`, [orderIds]);
-    const itemCounts = itemsResult.rows.reduce((acc, row) => { acc[row.order_id] = row.total_quantity; return acc; }, {});
-    const logsResult = await pool.query(`SELECT ol.order_id, ol.action_type, ol.created_at, u.name as user_name FROM operation_logs ol JOIN users u ON ol.user_id = u.id WHERE ol.order_id = ANY($1::int[]) AND ol.action_type IN ('pick', 'pack', 'void')`, [orderIds]);
-    const logsByOrderId = logsResult.rows.reduce((acc, log) => { if (!acc[log.order_id]) acc[log.order_id] = []; acc[log.order_id].push(log); return acc; }, {});
-    const reportData = orders.map(order => {
-        const orderLogs = logsByOrderId[order.id] || [];
-        const pickers = [...new Set(orderLogs.filter(l => l.action_type === 'pick').map(l => l.user_name))].join(', ');
-        const packers = [...new Set(orderLogs.filter(l => l.action_type === 'pack').map(l => l.user_name))].join(', ');
-        const voidLog = orderLogs.find(l => l.action_type === 'void');
-        const formatTime = (date) => date ? new Date(date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '';
-        return { "訂單編號": order.voucher_number, "訂單狀態": order.status === 'completed' ? '已完成' : '已作廢', "出貨總件數": itemCounts[order.id] || 0, "揀貨人員": pickers || '無紀錄', "裝箱人員": packers || '無紀錄', "出貨完成時間": order.status === 'completed' ? formatTime(order.completed_at) : '', "作廢人員": voidLog ? voidLog.user_name : '', "作廢時間": voidLog ? formatTime(voidLog.created_at) : '' };
-    });
-    const csv = Papa.unparse(reportData);
-    const fileName = `營運報告_${startDate}_至_${endDate}.csv`;
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-    res.status(200).send('\uFEFF' + csv);
-});
+router.get('/reports/export', authorizeAdmin, createReportExporter(reportPool));
 
 // GET /api/analytics
 router.get('/analytics', authorizeAdmin, async (req, res) => {
@@ -266,7 +250,7 @@ router.get('/analytics', authorizeAdmin, async (req, res) => {
 
 // GET /api/scan-errors
 router.get('/scan-errors', authorizeAdmin, async (req, res) => {
-    const { startDate, endDate, limit = 50 } = req.query;
+    const { startDate, endDate, limit = '50' } = req.query;
 
     try {
         let query = `
@@ -301,7 +285,7 @@ router.get('/scan-errors', authorizeAdmin, async (req, res) => {
         }
 
         query += ` ORDER BY ol.created_at DESC LIMIT $${paramCount}`;
-        params.push(parseInt(limit, 10));
+        params.push(boundedLimit(limit, 100, 1000));
 
         const result = await pool.query(query, params);
 
