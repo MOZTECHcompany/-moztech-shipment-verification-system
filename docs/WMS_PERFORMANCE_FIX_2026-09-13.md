@@ -28,7 +28,9 @@
 
 先在私有驗證 Cloud Run 與獨立驗證資料庫執行，再更新正式 `corely-wms`。正式資料库先備份；026 只新增掃碼收據表。027 的四個索引先於交易外以 `CREATE INDEX CONCURRENTLY` 建立並確認有效，再執行正式 migration runner 記錄 checksum；啟動服務不執行 migration。pg_trgm 僅安裝於指定 WMS 資料庫。
 
-保留舊 revision `corely-wms-cutover-20260913`，回復只切回舊映像，不刪收據、索引或回灌資料。舊版 schema readiness 接受額外 migration；不可執行舊版 migration runner。候選測試只在私有驗證 DB 建立合成單，正式只做唯讀驗證。
+保留舊 revision `corely-wms-cutover-20260913`，不刪收據、索引或回灌資料。舊版 schema readiness 接受額外 migration；不可執行舊版 migration runner。候選測試只在私有驗證 DB 建立合成單，正式只做唯讀驗證。
+
+回復舊後端須先讓作業人員停止送出新掃碼、等所有待確認請求完成或核對，切回後所有工作站重新載入，才恢復掃碼。舊後端不認識新版 UUID 收據，因此不能在新版頁面仍持續掃碼時直接混合新舊後端流量；不可自動無條件降版。若僅前端故障，可先保留新版後端，使用先前前端映像（舊掃碼回應介面仍相容）。
 
 索引和流量操作依 [PostgreSQL 17](https://www.postgresql.org/docs/17/sql-createindex.html) 與 [Cloud Run revision rollback](https://docs.cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration) 官方說明。
 
