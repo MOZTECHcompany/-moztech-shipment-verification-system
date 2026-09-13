@@ -74,7 +74,7 @@
 ## 尚待條件
 
 1. 確認舊系統實際主用網址及已停止作業的時段，並驗證 Render API/Socket、背景任務與新站均真正停止寫入。
-2. Render 原 moztecheason@gmail.com 控制台目前需要重新驗證身分，用於核對 live env、備份與停寫控制；已留登入頁。
+2. 使用者已完成 Render 登入；Chrome 原生介面確認 `moztech-wms-api` 控制台可見，Live commit 為 `d4e2bff`。後續瀏覽器控制連線失敗（native pipe startup failed；重設後 CUA_REPL_ENABLED_SURFACES is required），尚無法核對 live env、Disk／Shell 與停寫控制。此處是工具連線障礙，不應再次要求使用者重新登入。
 3. 確认 `lemon`／`Lemon` 帳號衝突處理。
 4. 找回兩筆舊附件，或取得使用者對保留缺失紀錄、之後補回的明確決定。
 5. 最終同步必須重新備份來源／目標、比對差異。新舊 source ID 衝突代表切換時必須換 JWT 並全員重登，不能沿用新站舊 token。
@@ -84,3 +84,12 @@
 ## 回復演練
 
 `rollback-rehearsal.json`：本機兩個獨立副本，以最新來源 20 表結構測試反向回填，包含模擬切換後新增訂單、品項、SN、掃碼和新增管理員；逐表摘要一致。新站物流 5/7/3 筆保留在 Cloud SQL 副本。尚未演練 Render 實際停寫／恢復或附件實體回傳，不能直接把 DNS 指回舊快照。
+
+## 登入後重新盤點 — 2026-09-13 08:21（台灣）
+
+- `source-resume-audit-2026-09-13T00-21-47.309Z.json`：使用獨立唯讀交易查核來源 20 表，筆數及完整資料列摘要均與 02:52 備份相同。訂單 4,571、員工 24，五種角色皆保留。
+- 此次連線的 read-only 設定由盤點腳本自行指定，只代表本次查詢唯讀，不代表 Render 服務已停寫。當下沒有其他資料庫連線，也不能推論之後不會有新作業。
+- 附件 ID 3、4 的既有授權下載端點均為 HTTP 404，內容明確為「附件檔案不存在」。不是登入拒絕或找不到附件 metadata；仍須查服務磁碟／備份。
+- GitHub `DB Retention Nightly` 實查為 `disabled_inactivity`；Render dashboard 內其他排程或外部 writer 尚未核對，不把單一 workflow 停用當成全面停寫。
+- 公司 `corely-wms` 實查仍 100% `corely-wms-00010-hug`。正式 DB、Render DB、DNS、服務流量均未變更。
+- 再次請使用者提供實際舊站網址、舊／新站一起暫停操作的起訖時間，以及新站 `Lemon` 是否保留並改名為 `Lemon-cloud`。尚未取得答覆。

@@ -50,6 +50,16 @@
 
 ## 作業設定
 
+### Render 附件復原前置
+
+先檢查現行 `moztech-wms-api` 的 Disk mount path 與既有 Shell，不重啟或重新部署。舊程式把異常附件寫到 `backend/uploads/exception_attachments`；實際絕對路徑須配合 Render Root Directory 確認。若 Disk 存在，先唯讀核對原 storage key、檔案大小與 SHA-256，保留內容副本後再討論停寫。
+
+Render 預設檔案系統不持久，只有 persistent disk 掛載路徑內的檔案會跨重新部署／重啟保留。磁碟快照的 restore 會覆蓋整個磁碟，不能把它當成只救兩個 PDF 的唯讀操作；未備份現況前不執行 restore，也不為了救檔先新增 disk（新增會觸發部署）。參見 [Render Persistent Disks](https://render.com/docs/disks) 與 [Restore snapshot API](https://api-docs.render.com/reference/restore-snapshot)。
+
+目前已證實的是兩個原下載端點回覆「附件檔案不存在」，尚未證實根因為 ephemeral filesystem，也尚未確認有可用的磁碟快照。
+
+### 工作站偏好
+
 DB 內的角色、任務分配、已讀、置頂、討論與異常紀錄包含在合併。音量／音效、語音、桌面通知、側欄寬度等儲存在各瀏覽器的 localStorage，換網域不會自動共享；個別工作站需在新站設定核對。相機／桌面通知是瀏覽器對網站的許可，不能透過資料庫搬遷冒充已授權。
 
 庫存維持記錄模式。倉庫「核對完成」不是物流已送達；未取件只建立待追蹤退回，不自動認定已收回、銷退、退款或恢復庫存。
