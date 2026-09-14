@@ -22,6 +22,17 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
     const { assertSchemaReady } = require('../src/config/schemaReadiness');
     await runMigrations({ pool, targetDatabase: database });
     await assertSchemaReady(pool);
+    await t.test('maintenance preview is read-only against real PostgreSQL', async () => {
+        const client = await pool.connect();
+        try {
+            const { runRetention } = require('../src/maintenance/retention');
+            const preview = await runRetention({ client, env: { WMS_TARGET_DATABASE: database } });
+            assert.equal(preview.mode, 'preview');
+            assert.deepEqual(preview.result, { operation_logs: 0, task_mentions: 0, comment_reads: 0, inactive_sessions: 0 });
+            await assert.rejects(runRetention({ client, env: { WMS_TARGET_DATABASE: 'another_database', WMS_RETENTION_APPLY: 'true' } }), /TARGET_DATABASE_MISMATCH/);
+        } finally { client.release(); }
+    });
+
     const roles = ['superadmin', 'admin', 'dispatcher', 'picker', 'packer'];
     const users = {}, tokens = {};
     const password = 'fixture-warehouse-password';

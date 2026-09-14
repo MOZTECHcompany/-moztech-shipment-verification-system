@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const xlsx = require('xlsx');
 const root = path.resolve(__dirname, '../..');
-const { chromium } = require('/Users/moztecheason/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const { chromium } = require(process.env.WMS_PLAYWRIGHT_MODULE || 'playwright');
 
 module.exports = async function browserFeatures({ t, api, ok, pool, users, tokens, base, output, iam, cleanupOrders = [] }) {
     if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(base) && !/^https:\/\/corely-wms-migration-validation-[a-z0-9.-]+\.run\.app$/.test(base)) throw Error('Disposable local or private validation target required');
@@ -12,7 +12,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     const voucher = prefix + '-PARITY', serials = [1,2,3].map(n => prefix + String(n).padStart(2,'0'));
     const report = { prefix, target: base, startedAt: new Date().toISOString(), checks: [], pageErrors: [], failedResponses: [], failedRequests: [] };
     fs.mkdirSync(output, { recursive: true });
-    const browser = await chromium.launch({ headless: true, executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
+    const browser = await chromium.launch({ headless: true, executablePath: process.env.WMS_CHROME_EXECUTABLE || undefined });
     let vite, webBase = base, orderId;
     const contexts = [];
     const originalCwd = process.cwd();
@@ -150,8 +150,17 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
         });
         await step('browser: importer edits quantity, previews change and supervisor applies it only after approval', async () => {
             assert.ok(exceptionOrder);
+            let releaseSnapshot;
+            const snapshotGate = new Promise(resolve => { releaseSnapshot = resolve; });
+            const snapshotRoute = `**/api/orders/${exceptionOrder}/work-snapshot`;
+            await dispatcher.route(snapshotRoute, async route => { await snapshotGate; await route.continue(); });
             await dispatcher.goto(webBase + '/order/' + exceptionOrder);
-            await dispatcher.getByRole('button', {name:'申請異動',exact:true}).click();
+            const changeButton = dispatcher.getByRole('button', {name:'申請異動',exact:true});
+            await changeButton.waitFor({ state: 'visible' });
+            assert.equal(await changeButton.isDisabled(), true, 'Order changes must wait for the complete order snapshot');
+            releaseSnapshot();
+            await changeButton.click();
+            await dispatcher.unroute(snapshotRoute);
             const change = modal(dispatcher, '申請訂單異動（待主管核可）');
             await change.getByPlaceholder('請描述異動原因（必填）').fill('顧客增加一件');
             await change.getByRole('button', {name:'編輯',exact:true}).click();

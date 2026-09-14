@@ -623,6 +623,8 @@ function AuthenticatedOrderWorkView({ user }) {
     }, [exceptionsMeta?.responsibleRole, exceptionsMeta?.responsibleUserId, isDispatcher, user?.id]);
 
     const canProposeOrderChange = isAdminLike || canDispatcherPropose;
+    const orderChangeReady = !loading && !loadError
+        && String(currentOrderData.order?.id) === String(orderId);
 
     const resolutionActionLabel = (action) => {
         const map = { short_ship: '少出', restock: '補貨', exchange: '換貨', void: '作廢', other: '其他' };
@@ -934,11 +936,12 @@ function AuthenticatedOrderWorkView({ user }) {
     }, [currentOrderData.items, currentOrderData.instances]);
 
     const openOrderChangeEditor = useCallback(() => {
+        if (!orderChangeReady) return;
         setOrderChangeReason('');
         setOrderChangeStep('edit');
         setOrderChangeDraftItems(buildOrderChangeDraftFromOrder());
         setOrderChangeOpen(true);
-    }, [buildOrderChangeDraftFromOrder]);
+    }, [buildOrderChangeDraftFromOrder, orderChangeReady]);
 
     const updateOrderChangeDraft = (id, patch) => {
         setOrderChangeDraftItems((prev) => (prev || []).map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -1783,7 +1786,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                         {canProposeOrderChange && (
                                             <Button
                                                 size="sm"
-                                                disabled={hasOpenOrderChange}
+                                                disabled={hasOpenOrderChange || !orderChangeReady}
                                                 onClick={openOrderChangeEditor}
                                             >
                                                 申請異動

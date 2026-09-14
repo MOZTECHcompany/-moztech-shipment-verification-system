@@ -35,7 +35,7 @@ npm run build --prefix frontend
 WMS_PARITY_PG_TEST=1 WMS_PARITY_BROWSER=1 node --test backend/tests/warehouse-parity.pg.test.cjs
 ```
 
-瀏覽器 harness 需要 Playwright 與 Chrome，路徑可依 `backend/tests/legacy-browser.cjs` 的環境變數配置；測試用瀏覽器獨立於使用者登入的瀏覽器。
+瀏覽器 harness 需要 Playwright（預設從 node_modules 解析，也可用 `WMS_PLAYWRIGHT_MODULE` 指向安裝路徑）；可用 `WMS_CHROME_EXECUTABLE` 指定 Chrome，省略則使用 Playwright Chromium。測試用瀏覽器獨立於使用者登入的瀏覽器。
 
 ## 維護與發版
 

@@ -406,7 +406,7 @@
 
 .wms-workstation-bar { position: sticky; top: 64px; z-index: 30; }
 #order-discussion { scroll-margin-top: 210px; }
-@media (max-width: 767px) {
+@media (max-width: 639px) {
   .wms-workstation-bar { top: 0; }
 }
 @media print { .wms-workstation-bar { display: none; } }
