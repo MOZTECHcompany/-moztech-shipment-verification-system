@@ -72,19 +72,25 @@ class VoiceNotification {
      * @param {number} scannedCount - 已掃描數量
      * @param {number} remainingCount - 剩餘數量
      */
-    speakScanSuccess(scannedCount, remainingCount) {
+    speakScanSuccess(scannedCount, remainingCount, operator = {}) {
+        const prefix = this.scanPrefix(operator);
         if (remainingCount === 0) {
-            this.speak('全部完成', { rate: 1.1 });
+            this.speak(prefix + '全部完成', { rate: 1.1 });
         } else {
-            this.speak(`已掃描 ${scannedCount} 個，還剩 ${remainingCount} 個`, { rate: 1.2 });
+            this.speak(prefix + `已掃描 ${scannedCount} 個，還剩 ${remainingCount} 個`, { rate: 1.2 });
         }
     }
 
     /**
      * 掃描錯誤
      */
-    speakScanError() {
-        this.speak('條碼錯誤！請確認', { rate: 1.3, pitch: 1.2 });
+    speakScanError(operator = {}) {
+        this.speak(this.scanPrefix(operator) + '掃描未完成，請確認', { rate: 1.3, pitch: 1.2 });
+    }
+
+    scanPrefix({ name, type } = {}) {
+        const parts = [name, type === 'pick' ? '揀貨' : type === 'pack' ? '裝箱' : null].filter(Boolean);
+        return parts.length ? parts.join('，') + '，' : '';
     }
 
     /**

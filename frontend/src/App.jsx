@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom
 import { Toaster, toast } from 'sonner';
 import apiClient from './api/api';
 import { socket, setSocketSession } from './api/socket';
+import soundNotification from './utils/soundNotification';
 
 import { LoginPage } from './components/LoginPage';
 const LogisticsSettings = lazy(() => import('./components/LogisticsSettings').then(module => ({ default: module.LogisticsSettings })));
@@ -36,6 +37,8 @@ function App() {
     const [user, setUser] = useLocalStorage('wms_user', null);
     const [token, setToken] = useLocalStorage('wms_token', null);
 
+    useEffect(() => { soundNotification.setUser(user?.id); }, [user?.id]);
+
     // Update the transport credentials on login, refresh, account switch and logout.
     useEffect(() => {
         if (token) {
@@ -66,11 +69,13 @@ function App() {
     }, [setToken, setUser]);
 
     const handleLogin = (data) => {
+        soundNotification.setUser(data.user?.id);
         setToken(data.accessToken);
         setUser(data.user);
     };
 
     const handleLogout = () => {
+        soundNotification.setUser(null);
         setSocketSession(null);
         setUser(null);
         setToken(null);

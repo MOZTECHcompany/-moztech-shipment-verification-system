@@ -102,21 +102,22 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
-test('busy keyboard scan remains visible after the first API response, then requires explicit submit', async () => {
+test('busy scanner Enter clears its buffer and keeps an explicit retry outside the input', async () => {
     const view = workView();
     view.type('FIRST'); view.enter();
     view.type('SECOND'); view.enter();
     await settle();
     assert.equal(view.posts.length, 1);
     assert.equal(view.posts[0].body.scanValue, 'FIRST');
-    assert.equal(view.input().props.value, 'SECOND');
+    assert.equal(view.input().props.value, '');
     assert.equal(view.warnings.length, 1);
-    assert.deepEqual(view.sounds, []);
+    assert.deepEqual(view.sounds, ['error']);
     view.posts[0].resolve({ data: view.fixture });
     await settle();
-    assert.equal(view.input().props.value, 'SECOND');
-    assert.deepEqual(view.sounds, ['pickSuccess']);
-    view.enter();
+    assert.equal(view.input().props.value, '');
+    assert.deepEqual(view.sounds, ['error', 'pickSuccess']);
+    const retry = view.find(view.render(), node => node.type === 'button' && node.props.children.includes('重新送出這筆條碼'));
+    retry.props.onClick();
     await settle();
     assert.equal(view.posts.length, 2);
     assert.equal(view.posts[1].body.scanValue, 'SECOND');
@@ -145,14 +146,17 @@ test('camera sends its decoded value directly and packing sound waits for server
     assert.deepEqual(view.sounds, ['packSuccess']);
 });
 
-test('unknown network result preserves the barcode, plays no success and blocks automatic or manual replay', async () => {
+test('unknown network result retains evidence outside the input and prevents further typing or replay', async () => {
     const view = workView();
     view.type('UNCERTAIN'); view.enter();
     await settle();
     assert.equal(view.posts[0].options.timeout, 15000);
     view.posts[0].reject(new Error('timeout'));
     await settle();
-    assert.equal(view.input().props.value, 'UNCERTAIN');
+    assert.equal(view.input().props.value, '');
+    assert.equal(view.input().props.readOnly, true);
+    view.type('NEXT');
+    assert.equal(view.input().props.value, '');
     assert.deepEqual(view.sounds, ['error']);
     view.enter();
     await settle();
@@ -188,21 +192,55 @@ test('an older order GET cannot overwrite the accepted scan snapshot', async () 
 });
 
 
-test('confirmed rollback preserves the rejected barcode and allows an explicit corrected scan', async () => {
+test('confirmed rollback clears the rejected input so scanner keystrokes can immediately retry', async () => {
     const view = workView();
     view.type('WRONG'); view.enter();
     await settle();
     view.posts[0].reject({ response: { status: 500, data: { code: 'SCAN_NOT_APPLIED', message: '條碼不屬於此訂單' } } });
     await settle();
-    assert.equal(view.input().props.value, 'WRONG');
+    assert.equal(view.input().props.value, '');
     assert.deepEqual(view.sounds, ['error']);
-    view.type('CORRECT'); view.enter();
+    for (const char of 'CORRECT') view.type(view.input().props.value + char);
+    view.enter();
     await settle();
     assert.equal(view.posts.length, 2);
     assert.equal(view.posts[1].body.scanValue, 'CORRECT');
     view.posts[1].resolve({ data: view.fixture });
     await settle();
     assert.deepEqual(view.sounds, ['error', 'pickSuccess']);
+});
+
+test('a failed response never restores its barcode into the next partially typed scan', async () => {
+    const view = workView();
+    view.type('WRONG'); view.enter();
+    await settle();
+    view.type('COR');
+    view.posts[0].reject({ response: { status: 400, data: { message: '找不到條碼' } } });
+    await settle();
+    assert.equal(view.input().props.value, 'COR');
+    for (const char of 'RECT') view.type(view.input().props.value + char);
+    view.enter();
+    await settle();
+    assert.equal(view.posts[1].body.scanValue, 'CORRECT');
+    view.posts[1].resolve({ data: view.fixture });
+    await settle();
+});
+
+test('repeated wrong scans remain separate instead of appending to the previous rejected barcode', async () => {
+    for (const role of ['picker', 'packer']) {
+        const view = workView({ role });
+        for (const value of ['WRONG-A', 'WRONG-B', 'WRONG-C']) {
+            for (const char of value) view.type(view.input().props.value + char);
+            view.enter();
+            await settle();
+            const request = view.posts.at(-1);
+            assert.equal(request.body.scanValue, value);
+            request.reject({ response: { status: 400, data: { message: '條碼錯誤' } } });
+            await settle();
+            assert.equal(view.input().props.value, '');
+            assert.equal(view.input().props.readOnly, false);
+        }
+    }
 });
 
 

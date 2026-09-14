@@ -27,6 +27,7 @@ import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
 import { WarehouseOrderHeader } from './WarehouseOrderHeader';
 import { WorkstationBar } from './WorkstationBar';
+import { PersonalSoundControls } from './PersonalSoundControls';
 import ErrorBoundary from './ErrorBoundary';
 import DefectReportModal from './DefectReportModal';
 
@@ -273,6 +274,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const [loading, setLoading] = useState(true);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
+    const [rejectedScan, setRejectedScan] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const scanSubmissionRef = useRef(null);
     if (!scanSubmissionRef.current) scanSubmissionRef.current = createScanSubmission();
@@ -1350,7 +1352,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 const remaining = scanRows.reduce((sum, row) => sum + row.remaining, 0);
 
                 // 語音播報
-                voiceNotification.speakScanSuccess(totalScanned, remaining);
+                voiceNotification.speakScanSuccess(totalScanned, remaining, { name: user.name, type });
 
                 toast.success(`掃描成功: ${scanValue}`, { id: `scan-success-${orderId}`, duration: 1300 });
             } catch (err) {
@@ -1367,8 +1369,9 @@ function AuthenticatedOrderWorkView({ user }) {
                     scanSubmissionRef.current.requireReview();
                     setScanNeedsReview(true);
                 }
-                // Preserve a later barcode already entered while this request was running.
-                setBarcodeInput(current => current || scanValue);
+                // A submitted code belongs in the result area, never back in the input.
+                // In particular, leave any NEXT barcode being typed during this request intact.
+                setRejectedScan({ value: scanValue, retryable: false });
                 const errorMsg = isUnknownResult
                     ? '掃描結果尚未確認，請重新載入訂單核對後再作業，請勿直接重刷。'
                     : isConflict
@@ -1386,7 +1389,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 soundNotification.play('error');
 
                 // 語音播報
-                voiceNotification.speakScanError();
+                voiceNotification.speakScanError({ name: user.name, type });
 
                 // 桌面通知
                 desktopNotification.notifyScanError(errorMsg);
@@ -1402,17 +1405,17 @@ function AuthenticatedOrderWorkView({ user }) {
                     duration: 3500
                 });
 
-                if (!isUnknownResult) setTimeout(() => setScanError(null), 3000);
             } finally {
                 setIsUpdating(false);
             }
         });
         if (!submission.accepted) {
-            setBarcodeInput(current => current || submission.scanValue);
+            setRejectedScan({ value: submission.scanValue, retryable: submission.reason === 'busy' });
             const message = submission.reason === 'review'
                 ? '上一筆掃描結果尚未確認，請先重新載入訂單核對。'
                 : `條碼 ${scanValue} 尚未處理，請等候上一筆完成後再送出。`;
             setScanError(message);
+            soundNotification.play('error');
             toast.warning('條碼尚未處理', { description: message });
             return false;
         }
@@ -1427,10 +1430,16 @@ function AuthenticatedOrderWorkView({ user }) {
     const handleScan = (rawValue = barcodeInput) => {
         const scanValue = String(rawValue ?? '').trim();
         if (!scanValue) return false;
+        if (scanNeedsReview) return false;
+        // Consume each scanner Enter exactly once, including rejected/busy submissions.
+        // A camera result must not erase unrelated keyboard input.
+        setBarcodeInput(current => current.trim() === scanValue ? '' : current);
         setScanError(null);
+        setRejectedScan(null);
 
         const status = currentOrderData.order?.status;
         if (!status) {
+            setRejectedScan({ value: scanValue, retryable: false });
             setScanError('訂單尚未載入，請稍候再試');
             return;
         }
@@ -1452,8 +1461,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     description: errorMsg,
                     duration: 3500
                 });
-                setTimeout(() => setScanError(null), 3000);
-                setBarcodeInput(current => current || scanValue);
+                setRejectedScan({ value: scanValue, retryable: false });
                 return false;
             }
             if (operationType === 'pack' && hasOpenExceptions) {
@@ -1469,12 +1477,10 @@ function AuthenticatedOrderWorkView({ user }) {
                     description: errorMsg,
                     duration: 3500
                 });
-                setTimeout(() => setScanError(null), 3000);
-                setBarcodeInput(current => current || scanValue);
+                setRejectedScan({ value: scanValue, retryable: false });
                 return false;
             }
             const accepted = updateItemState(scanValue, operationType, 1);
-            if (accepted) setBarcodeInput(current => current.trim() === scanValue ? '' : current);
             return accepted;
         } else {
             const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
@@ -1500,9 +1506,8 @@ function AuthenticatedOrderWorkView({ user }) {
                 duration: 3000 
             });
             
-            setTimeout(() => setScanError(null), 3000);
         }
-        setBarcodeInput(current => current || scanValue);
+        setRejectedScan({ value: scanValue, retryable: false });
         return false;
     };
 
@@ -1511,7 +1516,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const canScanNow = ((user.role === 'picker' || isAdminLike) && orderStatus === 'picking')
         || ((user.role === 'packer' || isAdminLike) && ['picked', 'packing'].includes(orderStatus));
 
-    const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(); } };
+    const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(e.currentTarget?.value ?? barcodeInput); } };
     const handleClick = () => { barcodeInputRef.current?.focus(); handleScan(); };
     const handleQuantityUpdate = (...args) => {
         const accepted = updateItemState(...args);
@@ -1690,6 +1695,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                     掃描作業
                                 </h3>
                                 <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品條碼或 SN，按 Enter 送出</p>
+                                <PersonalSoundControls user={user} compact />
                                 <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
                                     <span>{stageLabel}尚餘 <strong className="text-lg">{remainingQty}</strong> 件</span>
                                     <button type="button" className="underline underline-offset-4 text-blue-700" onClick={() => barcodeInputRef.current?.focus()}>回到掃碼</button>
@@ -1720,8 +1726,10 @@ function AuthenticatedOrderWorkView({ user }) {
                                         type="text"
                                         placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (!canScanNow ? '目前訂單狀態不可掃描' : (operationBlockedByOrderChange ? '訂單異動審核中（需先主管核可）' : (packBlockedByExceptions ? '需先主管核可（待核可例外）' : '掃描或輸入條碼')))}
                                         value={barcodeInput}
-                                        onChange={(e) => setBarcodeInput(e.target.value)}
+                                        onChange={(e) => { if (!scanNeedsReview) setBarcodeInput(e.target.value); }}
                                         onKeyDown={handleKeyDown}
+                                        readOnly={scanNeedsReview}
+                                        aria-invalid={!!scanError}
                                         disabled={!canScanNow || packBlockedByExceptions || operationBlockedByOrderChange}
                                         className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-white border-2 text-slate-900 placeholder-slate-400 focus:outline-none transition-all ${
                                             scanError 
@@ -1754,7 +1762,12 @@ function AuthenticatedOrderWorkView({ user }) {
                                 {scanError && (
                                     <div role="alert" className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-700 text-sm flex items-start gap-2 animate-fade-in">
                                         <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-                                        <span>{scanError}</span>
+                                        <div className="min-w-0 break-words">
+                                            <span>{scanError}</span>
+                                            {rejectedScan && <p className="mt-1 break-all">{scanNeedsReview ? '待核對條碼' : '未完成條碼'}：{rejectedScan.value}</p>}
+                                            {!scanNeedsReview && rejectedScan && <p className="mt-1">{isUpdating ? '上一筆仍在確認，請等候完成後再掃描。' : '輸入框已就緒，可直接重新掃描。'}</p>}
+                                            {rejectedScan?.retryable && !scanNeedsReview && <button type="button" disabled={isUpdating} className="mt-2 underline disabled:opacity-40" onClick={() => { handleScan(rejectedScan.value); barcodeInputRef.current?.focus(); }}>重新送出這筆條碼</button>}
+                                        </div>
                                     </div>
                                 )}
                                 

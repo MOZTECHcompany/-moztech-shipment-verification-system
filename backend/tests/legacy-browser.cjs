@@ -15,6 +15,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     const browser = await chromium.launch({ headless: true, executablePath: process.env.WMS_CHROME_EXECUTABLE || undefined });
     let vite, webBase = base, orderId;
     const contexts = [];
+    const expectedScanFailures = new Map();
     const originalCwd = process.cwd();
     async function pageFor(role, mobile = false) {
         const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
@@ -22,10 +23,26 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
         const user = (await pool.query('SELECT id,username,name,role FROM users WHERE id=$1', [users[role]])).rows[0];
         await context.addInitScript(({user,token}) => { localStorage.setItem('wms_user', JSON.stringify(user)); localStorage.setItem('wms_token', JSON.stringify(token)); }, { user, token: tokens[role] });
         const page = await context.newPage(); page.setDefaultTimeout(15000);
+        await page.addInitScript(() => {
+            window.__wmsTones = [];
+            const prototype = (window.AudioContext || window.webkitAudioContext)?.prototype;
+            if (!prototype) return;
+            const create = prototype.createOscillator;
+            prototype.createOscillator = function(...args) {
+                const oscillator = create.apply(this, args), start = oscillator.start;
+                oscillator.start = function(at) { window.__wmsTones.push({ frequency: this.frequency.value, type: this.type, at }); return start.call(this, at); };
+                return oscillator;
+            };
+        });
         await page.addInitScript(() => { window.__wmsPrints = []; setInterval(() => { const frame = document.getElementById('printWindow'); if (frame?.contentWindow) frame.contentWindow.print = () => window.__wmsPrints.push({ text: frame.contentDocument.body.innerText, barcode: !!frame.contentDocument.querySelector('svg') }); }, 20); });
         page.on('requestfailed', r => report.failedRequests.push({ url: r.url().split('?')[0], error: r.failure()?.errorText }));
         page.on('pageerror', e => report.pageErrors.push(e.message));
-        page.on('response', r => { if (r.url().includes('/api/') && r.status() >= 400) report.failedResponses.push({ path: new URL(r.url()).pathname, status: r.status() }); });
+        page.on('response', r => {
+            if (!r.url().includes('/api/') || r.status() < 400) return;
+            const route = new URL(r.url()).pathname;
+            const expected = route === '/api/orders/update_item' && r.status() === expectedScanFailures.get(r.request().postDataJSON()?.scanValue);
+            report.failedResponses.push({ path: route, status: r.status(), expected });
+        });
         return page;
     }
     async function step(name, run) {
@@ -107,10 +124,30 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
                 await page.getByRole('button', { name: '回到掃碼輸入', exact: true }).click();
                 assert.equal(await input.evaluate(el => document.activeElement === el), true);
                 assert.equal(await page.getByRole('region', { name: '作業快捷列' }).getByText('我的釘選 1', { exact: true }).count(), 0);
-                for (const sn of serials) {
+                for (const suffix of ['BAD-A', 'BAD-B']) {
+                    const wrong = prefix + '-' + suffix;
+                    expectedScanFailures.set(wrong, 400);
+                    await page.keyboard.type(wrong);
+                    const [rejected] = await Promise.all([page.waitForResponse(r => new URL(r.url()).pathname === '/api/orders/update_item' && r.request().postDataJSON()?.scanValue === wrong), page.keyboard.press('Enter')]);
+                    assert.equal(rejected.status(), 400);
+                    await page.getByRole('alert').filter({hasText: '未完成條碼：' + wrong}).waitFor();
+                    assert.equal(await input.inputValue(), '');
+                    assert.equal(await input.evaluate(el => document.activeElement === el && !el.readOnly), true);
+                }
+                for (const [index, sn] of serials.entries()) {
                     await page.waitForFunction(() => !document.querySelector('button[aria-label="送出掃描"]')?.disabled);
-                    await input.fill(sn);
-                    await response(page, '/api/orders/update_item', 'POST', () => input.press('Enter'));
+                    await page.keyboard.type(sn);
+                    const accepted = await response(page, '/api/orders/update_item', 'POST', () => page.keyboard.press('Enter'));
+                    assert.equal(accepted.request().postDataJSON().scanValue, sn);
+                    if (index === 0) {
+                        expectedScanFailures.set(sn, 409);
+                        await page.waitForFunction(() => !document.querySelector('button[aria-label="送出掃描"]')?.disabled);
+                        await page.keyboard.type(sn);
+                        const [duplicate] = await Promise.all([page.waitForResponse(r => new URL(r.url()).pathname === '/api/orders/update_item' && r.request().postDataJSON()?.scanValue === sn), page.keyboard.press('Enter')]);
+                        assert.equal(duplicate.status(), 409);
+                        await page.getByRole('alert').filter({hasText: '未完成條碼：' + sn}).waitFor();
+                        assert.equal(await input.inputValue(), '');
+                    }
                 }
                 const row = (await pool.query('SELECT status FROM orders WHERE id=$1', [orderId])).rows[0];
                 assert.equal(row.status, role === 'picker' ? 'picked' : 'completed');
@@ -118,6 +155,29 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             }
         });
         const admin = await pageFor('superadmin');
+        await step('browser: personal sound selection, mute, role previews and reload persistence', async () => {
+            for (const [role, profile, frequency] of [['picker','wood',780], ['packer','digital',1020]]) {
+                const page = await pageFor(role);
+                await page.goto(webBase + '/settings');
+                const panel = page.getByRole('region', {name:'個人掃碼音效'});
+                await panel.getByLabel('我的音色', {exact:true}).selectOption(profile);
+                await page.reload();
+                assert.equal(await panel.getByLabel('我的音色', {exact:true}).inputValue(), profile);
+                for (const [label,count] of [['揀貨',1],['裝箱',2],['錯誤',3]]) {
+                    await page.evaluate(() => { window.__wmsTones = []; });
+                    await panel.getByRole('button', {name:'試聽'+label,exact:true}).click();
+                    await page.waitForFunction(count => window.__wmsTones.length === count, count);
+                    if (label === '揀貨') assert.equal(await page.evaluate(() => window.__wmsTones[0].frequency), frequency);
+                }
+                await panel.getByRole('switch', {name:'掃碼音效',exact:true}).click();
+                await page.reload();
+                assert.equal(await panel.getByRole('switch', {name:'掃碼音效',exact:true}).getAttribute('aria-checked'), 'false');
+                await page.setViewportSize({width:390,height:844});
+                assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+                await page.screenshot({path:output+'/personal-sound-'+role+'.png',fullPage:true});
+                await page.close();
+            }
+        });
         let exceptionOrder;
         const modal = (page, title) => page.getByRole('heading', { name: title, exact: true }).locator('..').locator('..');
         await step('browser: warehouse reports exception, importer proposes handling and supervisor approves and closes', async () => {
@@ -210,7 +270,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 11 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.length;
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 12 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

@@ -71,7 +71,7 @@ test('planned server drain reconnects with current credentials but logout cannot
 function app() {
     const state = transport();
     const auth = { user: { id: 7, role: 'admin' }, token: 'token-A' };
-    const hooks = [], effects = [], notices = [];
+    const hooks = [], effects = [], notices = [], soundUsers = [];
     let cursor = 0, tree;
     const api = { defaults: { headers: { common: {} } } };
     const setters = { user: value => { auth.user = value; }, token: value => { auth.token = value; } };
@@ -91,6 +91,7 @@ function app() {
         react,
         './api/api': api,
         './api/socket': state,
+        './utils/soundNotification': { setUser: id => soundUsers.push(id ?? null) },
         './hooks/useLocalStorage': { useLocalStorage: key => key === 'wms_token' ? [auth.token, setters.token] : [auth.user, setters.user] },
         sonner: { Toaster: 'Toaster', toast: { error: value => notices.push(value) } },
     };
@@ -104,13 +105,15 @@ function app() {
         for (const child of [...(node.props?.children || []).flat(Infinity), node.props?.element]) { const result = find(child, key); if (result) return result; }
     }
     render();
-    return { state, auth, api, notices, render, callback: key => find(tree, key), unmount: () => hooks.forEach(hook => hook.cleanup?.()) };
+    return { state, auth, api, notices, soundUsers, render, callback: key => find(tree, key), unmount: () => hooks.forEach(hook => hook.cleanup?.()) };
 }
 
 test('real App callbacks update HTTP and Socket credentials on login/logout and clean up on unmount', () => {
     const view = app();
+    assert.equal(view.soundUsers.at(-1), 7);
     assert.equal(view.api.defaults.headers.common.Authorization, 'Bearer token-A');
     view.callback('onLogout')();
+    assert.equal(view.soundUsers.at(-1), null);
     assert.equal(view.state.socket.connected, false);
     view.render();
     assert.equal(view.api.defaults.headers.common.Authorization, undefined);
