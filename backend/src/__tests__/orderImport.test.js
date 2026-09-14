@@ -56,6 +56,73 @@ const sourceRows = () => [sourceHeader,
     ['PICK-DEMO-1', '1', 'SHOP-100', 'Shopify', 'Demo store', 'line-1', 'SKU-A', 'Product A', '4710000000013', 1, 'DEMO00000001'],
     ['PICK-DEMO-1', '2', 'ONE-200', '1Shop', 'Demo store', 'line-1', 'SKU-A', 'Product A', '4710000000013', 2, '']];
 
+const ecountExportRows = () => [
+    ['公司名稱 : 合成測試公司 / 2026/09/14  ~ 2026/09/14 '],
+    ['理貨單號', '品項編碼', '品項名稱', '序號/批號', '商城訂單編號', '平台', '店鋪', '來源明細號', '國際條碼', '品項名稱(規格)', '數量', '倉庫/工廠名稱', '客戶/供應商名稱', '聯繫方式', '摘要'],
+    ['TEST-ERP-1', 'SKU-1', 'Synthetic item A', 'TESTSN000001', 'TEST-ORDER-A', 'Shopify', 'Test store A', 'LINE-1', '0012345678905', 'Synthetic item A', 1, 'Test warehouse', 'Test customer A', '', ''],
+    ['TEST-ERP-1', 'SKU-1', 'Synthetic item A', '', 'TEST-ORDER-B', '1Shop', 'Test store B', 'LINE-1', '0012345678905', 'Synthetic item A', 2, 'Test warehouse', 'Test customer B', '', ''],
+    ['TEST-ERP-1', 'SKU-2', 'Synthetic item B', '', 'TEST-ORDER-C', 'Shopify', 'Test store C', 'LINE-1', '4710000000013', 'Synthetic item B', 1, 'Test warehouse', 'Test customer C', '', ''],
+    ['2026/09/14 (一) 23:56:04']
+];
+
+test.each(['xlsx', 'biff8', 'csv'])('recognizes the confirmed ECOUNT envelope in %s without changing source row numbers', bookType => {
+    const parsed = parseOrderImport(workbook(ecountExportRows(), bookType));
+    expect(parsed).toMatchObject({ importFormat: 'source-details', voucherNumber: 'TEST-ERP-1', totalQuantity: 4, serialCount: 1 });
+    expect(parsed.workOrders).toHaveLength(3);
+    expect(parsed.items.map(item => item.sourceRow)).toEqual([3, 4, 5]);
+    expect(parsed.items[0].barcode).toBe('0012345678905');
+    expect(parsed.items[0].serials).toEqual(['TESTSN000001']);
+    expect(pool.connect).not.toHaveBeenCalled();
+});
+
+test.each(['xlsx', 'biff8', 'csv'])('preserves date-like source identifiers and leading zeros in %s', bookType => {
+    const parsed = parseOrderImport(workbook([
+        ['理貨單號', '商城訂單編號', '品項編碼', '品項名稱', '國際條碼', '數量'],
+        ['0001/02', '001-002', '01-02', 'Synthetic item', '0012345678905', '1,000']
+    ], bookType));
+    expect(parsed).toMatchObject({ voucherNumber: '0001/02', totalQuantity: 1000 });
+    expect(parsed.items[0]).toMatchObject({ sourceOrderNumber: '001-002', productCode: '01-02', barcode: '0012345678905', quantity: 1000 });
+});
+
+test('legacy CSV preserves adjacent voucher/model identifiers and still validates quantities explicitly', () => {
+    const rows = [
+        ['Voucher', '001-002'], ['Customer', 'Synthetic customer'],
+        ['國際條碼', '品項名稱', '數量', '品項型號', '摘要'],
+        ['0012345678905', 'Synthetic item', '1,000', '0001/02', '請輕放']
+    ];
+    const parsed = parseOrderImport(workbook(rows, 'csv'));
+    expect(parsed).toMatchObject({ voucherNumber: '001-002', totalQuantity: 1000 });
+    expect(parsed.items[0]).toMatchObject({ barcode: '0012345678905', productCode: '0001/02', quantity: 1000, serials: [] });
+    rows[3][2] = '2026/09/14';
+    expect(() => parseOrderImport(workbook(rows, 'csv'))).toThrow(/第 4 列.*數量必須為正整數/);
+});
+
+test('accepts only the last nonempty timestamp, leaving blank trailing rows harmless', () => {
+    expect(parseOrderRows([...ecountExportRows(), [], ['', ' ']]).workOrders).toHaveLength(3);
+});
+
+test.each([
+    ['missing company envelope', rows => { rows[0][0] = 'Synthetic export'; }, /第 6 列/],
+    ['preamble has a second value', rows => { rows[0][1] = 'Extra'; }, /第 6 列/],
+    ['invalid date range', rows => { rows[0][0] = '公司名稱 : 合成測試公司 / 2026/02/30 ~ 2026/09/14'; }, /第 6 列/],
+    ['reversed date range', rows => { rows[0][0] = '公司名稱 : 合成測試公司 / 2026/09/15 ~ 2026/09/14'; }, /第 6 列/],
+    ['timestamp in the middle', rows => { rows.splice(3, 0, ['2026/09/14 (一) 23:56:04']); }, /第 4 列/],
+    ['timestamp has product data', rows => { rows[5][1] = 'SKU-EXTRA'; }, /第 6 列/],
+    ['unknown trailing text', rows => { rows[5][0] = 'End of synthetic report'; }, /第 6 列/],
+    ['subtotal row', rows => { rows[5] = ['小計', '', '', '', '', '', '', '', '', '', 4]; }, /第 6 列/],
+    ['invalid timestamp day', rows => { rows[5][0] = '2026/02/30 (一) 23:56:04'; }, /第 6 列/],
+    ['incorrect weekday', rows => { rows[5][0] = '2026/09/14 (二) 23:56:04'; }, /第 6 列/],
+    ['invalid timestamp time', rows => { rows[5][0] = '2026/09/14 (一) 24:00:00'; }, /第 6 列/],
+    ['another batch', rows => { rows[3][0] = 'TEST-ERP-2'; }, /第 4 列.*只能包含一張理貨單/],
+    ['missing marketplace source', rows => { rows[3][4] = ''; }, /第 4 列.*商城訂單編號必填/],
+    ['missing barcode', rows => { rows[3][8] = ''; }, /第 4 列.*國際條碼必填/],
+    ['invalid quantity retains original row', rows => { rows[4][10] = -1; }, /第 5 列.*數量必須為正整數/]
+])('ECOUNT envelope never hides %s', (_, change, message) => {
+    const rows = ecountExportRows(); change(rows);
+    expect(() => parseOrderImport(workbook(rows))).toThrow(message);
+    expect(pool.connect).not.toHaveBeenCalled();
+});
+
 test.each(['xlsx', 'biff8', 'csv'])('source detail %s retains one ERP batch and groups separate marketplace work orders', bookType => {
     const parsed = parseOrderImport(workbook(sourceRows(), bookType));
     expect(parsed).toMatchObject({ voucherNumber: 'PICK-DEMO-1', totalQuantity: 3, serialCount: 1 });

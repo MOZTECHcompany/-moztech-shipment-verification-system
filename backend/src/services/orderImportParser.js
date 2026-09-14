@@ -99,6 +99,33 @@ function sourceHeaderIndex(data) {
         row.some(value => matchesSourceHeader(value, 'productCode') || matchesSourceHeader(value, 'barcode') || matchesSourceHeader(value, 'quantity')));
 }
 
+function exportDate(value) {
+    const match = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(value);
+    if (!match) return null;
+    const [year, month, day] = match.slice(1).map(Number);
+    if (year < 1000) return null;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+}
+
+function ecountTerminalFooterIndex(data, headerIndex) {
+    const onlyFirstCell = row => row.slice(1).every(value => String(value ?? '').trim() === '');
+    // Recognize only the observed ECOUNT envelope: company/date range in A1,
+    // source columns in row 2, and a terminal single-cell export timestamp.
+    if (headerIndex !== 1 || !onlyFirstCell(data[0])) return -1;
+    const preamble = /^公司名稱 *[:：] *\S[^\r\n]*? *\/ *(\d{4}\/\d{2}\/\d{2}) *~ *(\d{4}\/\d{2}\/\d{2})$/.exec(String(data[0][0] ?? '').trim());
+    if (!preamble) return -1;
+    const start = exportDate(preamble[1]), end = exportDate(preamble[2]);
+    if (!start || !end || start > end) return -1;
+    let index = data.length - 1;
+    while (index > headerIndex && data[index].every(value => String(value ?? '').trim() === '')) index--;
+    if (index <= headerIndex || !onlyFirstCell(data[index])) return -1;
+    const footer = /^(\d{4}\/\d{2}\/\d{2}) \(([日一二三四五六])\) ([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.exec(String(data[index][0] ?? '').trim());
+    if (!footer) return -1;
+    const date = exportDate(footer[1]);
+    return date && '日一二三四五六'[date.getUTCDay()] === footer[2] ? index : -1;
+}
+
 function parseSourceOrderRows(data, headerIndex) {
     const header = data[headerIndex];
     const columns = {};
@@ -115,7 +142,9 @@ function parseSourceOrderRows(data, headerIndex) {
     // Reuse the established quantity/SN validation through an explicit internal
     // mapping. Never let the legacy fuzzy headers interpret import grouping 序號.
     const normalizedRows = [['憑證號碼：SOURCE-DOCUMENT'], ['國際條碼', '品項型號', '品項名稱', '數量', 'SN列表']];
+    const terminalFooterIndex = ecountTerminalFooterIndex(data, headerIndex);
     for (let index = headerIndex + 1; index < data.length; index++) {
+        if (index === terminalFooterIndex) continue;
         const row = data[index];
         if (row.every(value => String(value ?? '').trim() === '')) continue;
         if (header.every((value, column) => normalizedHeader(value) === normalizedHeader(row[column]))) continue;
@@ -238,7 +267,9 @@ function parseOrderImport(buffer) {
     if (buffer.length > IMPORT_LIMITS.fileBytes) throw invalid('檔案不可超過 10 MiB', 413);
     let worksheet, sheetCount;
     try {
-        const workbook = xlsx.read(buffer, { type: 'buffer', sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
+        // Keep CSV identifiers and export timestamps as text; quantities are
+        // validated explicitly below. This does not change XLS/XLSX cell types.
+        const workbook = xlsx.read(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
         worksheet = workbook.Sheets[workbook.SheetNames[0]];
         sheetCount = workbook.SheetNames.length;
     } catch { throw invalid('無法讀取檔案，請確認是未加密的 .xlsx、.xls 或 .csv'); }
