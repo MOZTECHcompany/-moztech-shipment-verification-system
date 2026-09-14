@@ -1,7 +1,7 @@
 // Corely AI task dashboard: bounded server search and role-aware work queues.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
@@ -144,7 +144,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 </h3>
                             </div>
                             
-                            {task.batch_number && <p className="break-all text-xs text-slate-500">ERP 批次：{task.batch_number}</p>}
+                            {task.batch_number && <p className="break-all text-xs text-slate-500">{task.import_batch_id ? <Link data-testid={`task-batch-${task.id}`} to={`/batches/${task.import_batch_id}`} onClick={event => event.stopPropagation()} className="inline-flex min-h-10 items-center font-medium text-blue-700 underline underline-offset-4">ERP 批次：{task.batch_number}</Link> : <>ERP 批次：{task.batch_number}</>}</p>}
                             {task.source_order_number && <p className="mt-1 break-all text-sm font-medium text-slate-700">{sourceOrderLabel(task)}</p>}
                             {(task.picker_name || task.packer_name) && <p className="mt-1 text-xs text-slate-500">揀貨：{task.picker_name || '待認領'} · 裝箱：{task.packer_name || '待認領'}</p>}
                             <div className="flex flex-wrap items-center gap-3 mt-2">

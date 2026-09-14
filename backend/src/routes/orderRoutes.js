@@ -19,6 +19,7 @@ const { deferredEvents } = require('../utils/transactionEvents');
 const router = express.Router();
 const { stateToken, readLines, parseCommand, createWorkSnapshot } = require('../services/scanSnapshot');
 router.get('/orders/:orderId/work-snapshot', createWorkSnapshot(pool));
+router.get('/order-import-batches/:batchId', require('../services/importBatchSnapshot').createImportBatchSnapshot(pool));
 const barcodeClaims = createBarcodeClaimHandlers(pool);
 router.post('/orders/claim-by-barcode', barcodeClaims.claim);
 router.get('/orders/claim-commands/:commandId', barcodeClaims.receipt);

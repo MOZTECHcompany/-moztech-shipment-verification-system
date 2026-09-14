@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Box, Camera, Check, CheckCheck, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
 import { ShippingLabel, PickingList } from './LabelPrinter';
 import { sourceOrderLabel } from '../utils/sourceOrders';
@@ -31,6 +32,7 @@ export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCame
           <h1 className="break-all text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">{order.voucher_number}</h1>
           <p className="mt-1 break-words text-sm text-slate-600">{order.customer_name || '未指定客戶'}</p>
           {order.batch_number && <p className="mt-2 break-all text-sm text-slate-600">ERP 匯入批次：{order.batch_number}</p>}
+          {order.import_batch_id && <Link data-testid="order-batch-link" to={`/batches/${order.import_batch_id}`} className="mt-1 inline-flex min-h-10 items-center text-sm font-semibold text-blue-700 underline underline-offset-4">返回理貨批次</Link>}
           {order.source_order_number && <p className="mt-1 break-all text-sm font-medium text-slate-800">商城訂單：{sourceOrderLabel(order)}</p>}
           <p className="mt-2 text-xs text-slate-500">揀貨負責人：{order.picker_name || '尚未認領'} · 裝箱負責人：{order.packer_name || '尚未認領'}</p>
         </div>

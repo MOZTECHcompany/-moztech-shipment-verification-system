@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import { OrderBarcode } from './OrderBarcode';
 import { groupSourceOrders, sourceOrderLabel } from '../utils/sourceOrders';
 import apiClient from '@/api/api.js';
-import { loadWorkOrdersForPrint, workOrderBarcode } from '../utils/workOrders';
+import { loadWorkOrdersForPrint, printPreparedWorkOrders, workOrderBarcode } from '../utils/workOrders';
 
 // 出貨標籤組件
 export function ShippingLabel({ order, items, className, variant = 'default' }) {
@@ -472,17 +472,23 @@ export function PickingListDocument({ order, items, instances = [] }) {
     );
 }
 
-export function BatchPrintLabels({ orders, label = '批量列印工作單' }) {
+export function BatchPrintLabels({ orders, label = '批量列印工作單', isCurrentSession, expectedBatchId }) {
     const componentRef = useRef(null);
     const readyToPrint = useRef(false);
     const mounted = useRef(true);
     const inFlight = useRef(false);
+    const requestController = useRef(null);
     const [documents, setDocuments] = useState([]);
     const [loading, setLoading] = useState(false);
-    useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestController.current?.abort(); }; }, []);
     const handlePrint = useReactToPrint({
         contentRef: componentRef,
         documentTitle: '商城工作單批量列印',
+        print: frame => printPreparedWorkOrders(frame, {
+            canPrint: () => mounted.current && (!isCurrentSession || isCurrentSession()),
+            title: '商城工作單批量列印',
+            mobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|Windows Phone/i.test(navigator.userAgent),
+        }),
         onAfterPrint: () => { inFlight.current = false; if (mounted.current) setLoading(false); toast.info('列印視窗已關閉，請確認各張工作單輸出。'); },
         onPrintError: () => { inFlight.current = false; if (mounted.current) setLoading(false); toast.error('工作單資料未完整載入或列印失敗，請重試整個批次。'); },
         pageStyle: '@page { margin: 8mm; } @media print { body { color: #000; background: #fff; } .work-order-paper { break-after: page; } .work-order-paper:last-child { break-after: auto; } thead { display: table-header-group; } tr { break-inside: avoid; } }',
@@ -490,13 +496,15 @@ export function BatchPrintLabels({ orders, label = '批量列印工作單' }) {
     useEffect(() => {
         if (!documents.length || !readyToPrint.current) return;
         readyToPrint.current = false;
+        if (isCurrentSession && !isCurrentSession()) { inFlight.current = false; setLoading(false); toast.error('登入帳號已變更，尚未開啟列印。'); return; }
         handlePrint();
-    }, [documents, handlePrint]);
+    }, [documents, handlePrint, isCurrentSession]);
     const preparePrint = async () => {
         if (inFlight.current) return;
         inFlight.current = true; setLoading(true);
+        requestController.current = new AbortController();
         try {
-            const data = await loadWorkOrdersForPrint(apiClient, orders);
+            const data = await loadWorkOrdersForPrint(apiClient, orders, { signal: requestController.current.signal, isCurrentSession, expectedBatchId });
             if (!mounted.current) return;
             readyToPrint.current = true; setDocuments(data);
         } catch (error) {

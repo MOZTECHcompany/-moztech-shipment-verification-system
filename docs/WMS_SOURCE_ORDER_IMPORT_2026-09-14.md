@@ -155,3 +155,20 @@ npm run build --prefix frontend
 仍需核對真實 ECOUNT 匯出是否包含每列商城來源、獨立 SKU／國際條碼與明確 S/N；私有雲端登入、實體掃碼槍、印表機和使用者試操作亦由相應證據另行確認。
 
 相關程式：`backend/src/services/orderImportParser.js`、`warehouseBatch.js`、`orderClaimService.js`、`orderChangeService.js`、`scanSnapshot.js`、`backend/src/routes/orderRoutes.js`；`frontend/src/utils/claimScan.js`、`workOrders.js`、`sourceOrders.js`、`orderWorkProgress.js`；`frontend/src/components/ScanToClaim.jsx`、`TaskDashboard.jsx`、`OrderWorkView.jsx`、`LabelPrinter.jsx`、`admin/AdminDashboard.jsx`。
+
+## 重新開啟理貨批次（2026-09-15）
+
+最新確認的作業流程仍是商城子訂單認領揀貨、裝箱二次核對。現場可先集中商品，但此功能不增加批次認領、總揀責任人或第三階段，也不會因為查看商品合計而改變子單狀態。
+
+- 新增 `/batches/:batchId` 唯讀頁，從匯入結果、任務的 ERP 批次及子單表頭進入。重新整理後仍可讀取既有批次。
+- `GET /api/order-import-batches/:batchId` 沿用已登入的訂單讀取權限，預設子單每頁 30 筆，最大 100，使用批次範圍游標。
+- 回傳全批商品及進度合計、各狀態子單數、當頁子單與負責人；商品按 SKU 與國際條碼共同彙總。沒有倉位資料時不宣稱規劃倉內路線。
+- 有 SN 的品項依實際序號狀態計算進度，先彙總序號再接商品，避免需求數量被序號筆數倍增。作廢子單仍可追查，但與有效商品需求分開呈現。
+- 查詢使用單一 repeatable-read、read-only transaction，不修復資料、不認領、不寫入日誌或變更進度。可列印子單 ID 與整批 ID 分開回傳；列印仍走既有完整工作單快照流程。
+- 批次只是來源及進度的管理單位；每筆商城子訂單仍各自使用唯一工作條碼認領及核對，`completed` 只表示倉內裝箱核對完成。
+
+封箱後立即列印的標籤種類及硬體尚待確認。現有 `ShippingLabel` 是 WMS 內部摘要，不能當成承運商面單；既有綠界官方表單需已有且正確關聯的物流單。此批次頁變更不新增封箱、已列印、已交物流狀態，也不修改現有列印或核對完成行為。
+
+此版驗證：backend unit 23 suites／237 tests、frontend unit 156/156、Vite build、來源訂單 PostgreSQL 15/15、批次瀏覽器 10/10 均通過。批次瀏覽器涵蓋 31 張子單翻頁、作廢獨立統計、從第 2 頁列印全批有效工作單、更新失敗保留舊資料並禁印、單張完成後其他子單狀態不變。列印在開啟實際對話框之前再次檢查帳號與頁面生命週期，防止離頁或換帳號後的延遲列印。另以最終列印實作驗證合成 Excel 與三張紙本工作碼 2/2，無瀏覽器例外。
+
+保留的本機展示資料仍為原 3 張待揀貨工作單、5 商品列、7 件、3 個合成 SN；新版 API／前端啟動與查看批次沒有 migration、seed、認領或資料異動。私有更新、正式流量及真實 ECOUNT 鏈路需分別查核，不能以本機驗證代替。

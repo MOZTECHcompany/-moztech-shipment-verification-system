@@ -279,4 +279,48 @@ test('ERP batch split, explicit barcode claims and isolated warehouse workflows'
         const logs = ok(await api('admin', 'GET', `/api/operation-logs?orderId=${first.orderId}`));
         assert.ok(Array.isArray(logs.logs)); assert.equal(logs.logs[0].batch_number, 'SOURCE-PICK-1');
     });
+    await t.test('read-only batch details paginate every child and aggregate exact SKU/barcode and SN progress', async () => {
+        const template=rows()[1];
+        const pageRows=[header,...Array.from({length:35},(_,i)=>{
+            const row=[...template];row[0]='SOURCE-BATCH-PAGE';row[2]=`PAGE-ORDER-${i}`;row[7]='Synthetic item';row[9]=1;return row;
+        })];
+        const extra=(sku,barcode,quantity,serials='')=>{
+            const row=[...pageRows[1]];row[5]=`${sku}-${barcode}`;row[6]=sku;row[8]=barcode;row[9]=quantity;row[10]=serials;return row;
+        };
+        pageRows.push(extra('SKU-B','SOURCE-DUP',2),extra('SKU-A','SOURCE-OTHER-BAR',3),extra('SKU-SN','SOURCE-SN',2,'PAGE00000001 PAGE00000002'));
+        const batch=ok(await upload(pageRows),201),firstId=batch.orders[0].orderId,lastId=batch.orders.at(-1).orderId;
+        await pool.query("UPDATE orders SET status='voided' WHERE id=$1",[lastId]);
+        await pool.query(`UPDATE order_items oi SET picked_quantity=quantity,packed_quantity=quantity WHERE order_id=$1
+            AND NOT EXISTS(SELECT 1 FROM order_item_instances i WHERE i.order_item_id=oi.id)`,[firstId]);
+        await pool.query(`UPDATE order_item_instances SET status=CASE WHEN serial_number='PAGE00000001' THEN 'picked' ELSE 'packed' END
+            WHERE order_item_id IN(SELECT id FROM order_items WHERE order_id=$1)`,[firstId]);
+        const before=(await pool.query('SELECT id,status,picker_id,packer_id,updated_at FROM orders WHERE import_batch_id=$1 ORDER BY id',[batch.batchId])).rows;
+        const auditBefore=(await pool.query('SELECT count(*)::int n FROM operation_logs')).rows[0].n;
+        const path=`/api/order-import-batches/${batch.batchId}`;
+        assert.equal((await api(null,'GET',path)).status,401);
+        assert.equal((await api('picker','GET','/api/order-import-batches/0')).status,400);
+        assert.equal((await api('admin','GET','/api/order-import-batches/2147483647')).status,404);
+        assert.equal((await api('dispatcher','GET',path+'?limit=101')).status,400);
+        const firstPage=ok(await api('picker','GET',path+'?limit=10'));
+        assert.equal(firstPage.batch.batch_number,'SOURCE-BATCH-PAGE');assert.equal(firstPage.children.length,10);
+        assert.deepEqual(firstPage.workOrderIds,batch.orders.map(o=>o.orderId));assert.equal(firstPage.printableWorkOrderIds.length,34);
+        assert.equal(firstPage.printableWorkOrderIds.includes(lastId),false);
+        assert.deepEqual(firstPage.summary,{workOrderCount:35,activeWorkOrderCount:34,itemCount:37,totalQuantity:41,pickedQuantity:8,packedQuantity:7,serialCount:2,serialMismatchCount:0,
+            statusCounts:{pending:34,picking:0,picked:0,packing:0,completed:0,voided:1},
+            voidedTotals:{workOrderCount:1,itemCount:1,totalQuantity:1,pickedQuantity:0,packedQuantity:0,serialCount:0,serialMismatchCount:0}});
+        assert.equal(firstPage.productTotals.length,4);
+        assert.equal(firstPage.productTotals.find(p=>p.product_code==='SKU-B'&&p.barcode==='SOURCE-DUP').total_quantity,2);
+        assert.equal(firstPage.productTotals.find(p=>p.product_code==='SKU-A'&&p.barcode==='SOURCE-OTHER-BAR').total_quantity,3);
+        const sn=firstPage.productTotals.find(p=>p.product_code==='SKU-SN');
+        assert.equal(sn.total_quantity,2);assert.equal(sn.serial_count,2);assert.equal(sn.picked_quantity,2);assert.equal(sn.packed_quantity,1);
+        assert.equal(firstPage.children[0].status,'pending');assert.equal(firstPage.children[0].picked_quantity,8);
+        let cursor=firstPage.pagination.nextCursor,ids=firstPage.children.map(o=>o.id),pages=1;
+        while(cursor){const page=ok(await api('packer','GET',path+'?limit=10&cursor='+cursor));ids.push(...page.children.map(o=>o.id));cursor=page.pagination.nextCursor;pages++;}
+        assert.equal(pages,4);assert.deepEqual(ids,batch.orders.map(o=>o.orderId));
+        assert.equal((await api('dispatcher','GET',`/api/order-import-batches/${imported.batchId}?cursor=${firstPage.pagination.nextCursor}`)).status,400);
+        const sibling=ok(await api('dispatcher','GET',`/api/order-import-batches/${imported.batchId}`));
+        assert.deepEqual(sibling.workOrderIds,imported.orders.map(o=>o.orderId));assert.equal(sibling.summary.workOrderCount,3);
+        assert.deepEqual((await pool.query('SELECT id,status,picker_id,packer_id,updated_at FROM orders WHERE import_batch_id=$1 ORDER BY id',[batch.batchId])).rows,before);
+        assert.equal((await pool.query('SELECT count(*)::int n FROM operation_logs')).rows[0].n,auditBefore);
+    });
 });
