@@ -1,5 +1,7 @@
 # Corely AI WMS 接手入口（2026-09-14）
 
+**2026-09-15 使用者指定的後續開發規則：** 一律先在 [DEV](https://corely-wms-dev-249593319772.asia-east1.run.app/login) 開發、測試與驗收，確認完成後再發布到 [正式站](https://wms.corely.cc)。接手先讀 [DEV 優先開發與發布規則](docs/WMS_DEV_FIRST_WORKFLOW_2026-09-15.md)。DEV 與正式資料分開；發布程式不等於複製 DEV 測試資料。本次記錄不切換正式流量。
+
 本目錄是現行 WMS 的 Cloud Run 維護線。舊 repo 的 d4e2bff 是功能比對基準，不是目前正式程式；原先搬遷前的部署說明僅可作歷史參考。
 
 **GitHub 最新入口：** https://github.com/MOZTECHcompany/-moztech-shipment-verification-system
@@ -12,7 +14,7 @@
 - 公司專案：moztech-main-db；Cloud Run：asia-east1 / corely-wms。
 - Cloud SQL 共用 instance：moztech-main-db；WMS 專用 database：corely_wms。不要修改同 instance 的 ERP 等其他資料庫。
 - 附件：私有 Cloud Storage `moztech-main-db-corely-wms-attachments`；秘密使用 Secret Manager，不存 Git。
-- 新功能驗收：私有 Cloud Run `corely-wms-migration-validation`，獨立 `corely_wms_migration_20260913` database 與附件 bucket；不能將正式 database 指給測試。
+- 日常新功能開發與驗收：`corely-wms-dev`，獨立 `corely_wms_dev_20260915` database、JWT 與附件 bucket；不能將正式 database 指給測試。原私有 `corely-wms-migration-validation` 另行保留，與新 DEV 不同。
 - Render 舊 DB 在切換時已關閉新連線；不能解除鎖定、重跑切換腳本或把舊 dump 蓋回正式資料庫。
 - 庫存維持記錄用途，尚未啟用自動扣庫存。物流實際建單、退款、ERP 入帳不得當作驗收資料操作。
 
@@ -49,7 +51,7 @@ WMS_PARITY_PG_TEST=1 WMS_PARITY_BROWSER=1 node --test backend/tests/warehouse-pa
 - `npm run retention --prefix backend` 預設只讀預覽，仍須注入資料庫連線與 `WMS_TARGET_DATABASE`。只有明確設定 `WMS_RETENTION_APPLY=true` 才會刪除；先確認保留政策與備份，不設定自動清理排程。
 - `.github/workflows/verify.yml` 只跑測試及編譯，不自動部署，也不注入正式秘密。
 - 在乾淨提交上執行 `node tools/release/prepare-build.cjs /absolute/new-output-dir`，產生逐檔 SHA256、commit 與 Cloud Build 設定；不包含未追蹤資料、秘密、附件或依賴目錄。
-- 先部署私有驗收服務，再以相同 digest 建立正式 0% 候選 revision；測試通過、重新核對正式 traffic 與其他工作區後才切換。
+- 先發布 DEV 並完成測試及業務驗收，再依已確認的發布範圍準備正式建置與 0% 候選 revision；正式前端省略 DEV 標示並另行驗證，依其驗證後 digest 發布。切換前重新核對正式 traffic、其他工作區與回復點，詳見 DEV 優先規則。
 - 發版前後以唯讀 transaction 比對正式資料，保留上一 revision。回退程式不代表可還原舊資料庫，避免遺失新站已新增的資料。
 - GitHub 原儲存庫為後續共同維護入口。`gh` 的不同已登入帳號可能有不同權限；接手先核對目前身分的 repository permissions，不能以某個唯讀帳號的結果判斷整台電腦都無法推送。不要在 remote URL、命令輸出或文件內放 token。
 - 舊 Render 前端與 API 自動部署已關閉；根目錄及 frontend 的 `vercel.json` 禁用 Vercel Git 自動部署。請維持這些防護，避免推送 Cloud Run 版程式時更新舊站。
