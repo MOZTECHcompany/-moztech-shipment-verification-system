@@ -6,9 +6,7 @@ const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeRoles } = require('../middleware/auth');
 const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const { getAttachmentStorage, createAttachmentKey, cleanOriginalName, cleanupAttachments, sendAttachment, isMissing } = require('../services/attachmentStorage');
 
 const router = express.Router();
 
@@ -37,19 +35,6 @@ const attachmentUpload = multer({
         return cb(null, true);
     }
 });
-
-function ensureAttachmentDir() {
-    const dir = path.join(__dirname, '..', '..', 'uploads', 'team_post_attachments');
-    fs.mkdirSync(dir, { recursive: true });
-    return dir;
-}
-
-function safeExt(originalName, fallbackExt = '') {
-    const name = String(originalName || '').trim();
-    const ext = name.includes('.') ? ('.' + name.split('.').pop()).toLowerCase() : fallbackExt;
-    const normalizedExt = ext && ext.length <= 10 ? ext : fallbackExt;
-    return normalizedExt;
-}
 
 async function getGeneralChannelId(client) {
     const res = await client.query(`SELECT id FROM team_channels WHERE slug = 'general' LIMIT 1`);
@@ -412,23 +397,13 @@ router.get('/team/posts/:postId/attachments/:attachmentId/download', async (req,
         );
         if (result.rowCount === 0) return res.status(404).json({ message: '找不到附件', requestId: req.requestId });
 
-        const row = result.rows[0];
-        const filePath = path.join(__dirname, '..', '..', row.storage_key);
-        if (!fs.existsSync(filePath)) return res.status(404).json({ message: '附件檔案不存在', requestId: req.requestId });
-
-        res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
-        const filename = row.original_name ? String(row.original_name).replace(/\r|\n/g, '') : `attachment-${aid}`;
-        const inline = String(req.query.inline || '').trim() === '1' || String(req.query.inline || '').toLowerCase() === 'true';
-        res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(filename)}"`);
-
-        const stream = fs.createReadStream(filePath);
-        stream.on('error', (e) => {
-            logger.error('team attachment stream error:', e);
-            if (!res.headersSent) res.status(500).json({ message: '讀取附件失敗', requestId: req.requestId });
+        return await sendAttachment({
+            storage: getAttachmentStorage(), row: result.rows[0], res, attachmentId: aid, requestId: req.requestId,
+            inline: ['1', 'true'].includes(String(req.query.inline || '').trim().toLowerCase()), logger
         });
-        return stream.pipe(res);
     } catch (err) {
         logger.error('[/api/team/posts/:postId/attachments/:attachmentId/download] failed:', err);
+        if (isMissing(err) || err.code === 'INVALID_STORAGE_KEY') return res.status(404).json({ message: '附件檔案不存在', requestId: req.requestId });
         return res.status(500).json({ message: '下載附件失敗', requestId: req.requestId });
     }
 });
@@ -446,33 +421,29 @@ router.post('/team/posts/:postId/attachments', attachmentUpload.array('files', 5
 
     const io = req.app.get('io');
 
-    const client = await pool.connect();
+    let client, storage, releaseError;
+    let transactionOpen = false, commitAttempted = false;
+    const receipts = [];
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
+        transactionOpen = true;
 
         const exists = await client.query('SELECT 1 FROM team_posts WHERE id = $1', [id]);
         if (exists.rowCount === 0) {
             await client.query('ROLLBACK');
+            transactionOpen = false;
             return res.status(404).json({ message: '找不到資料', requestId: req.requestId });
         }
 
-        const baseDir = ensureAttachmentDir();
+        storage = getAttachmentStorage();
         const saved = [];
 
         for (const f of files) {
             const mimetype = String(f.mimetype || '').toLowerCase();
-            const fallbackExt = mimetype === 'image/jpeg' ? '.jpg'
-                : mimetype === 'image/png' ? '.png'
-                : mimetype === 'image/webp' ? '.webp'
-                : mimetype === 'application/pdf' ? '.pdf'
-                : '';
-
-            const ext = safeExt(f.originalname, fallbackExt);
-            const key = `${id}-${Date.now()}-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}${ext}`;
-            const abs = path.join(baseDir, key);
-            fs.writeFileSync(abs, f.buffer);
-
-            const storageKey = path.join('uploads', 'team_post_attachments', key);
+            // Keep the legacy relative key as the private GCS object name; no public URL in metadata.
+            const storageKey = createAttachmentKey('team_post_attachments', id, mimetype);
+            receipts.push(await storage.put(storageKey, f.buffer, mimetype));
 
             const inserted = await client.query(
                 `INSERT INTO team_post_attachments (
@@ -482,9 +453,9 @@ router.post('/team/posts/:postId/attachments', attachmentUpload.array('files', 5
                 [
                     id,
                     storageKey,
-                    f.originalname ? String(f.originalname).slice(0, 255) : null,
+                    cleanOriginalName(f.originalname),
                     mimetype || null,
-                    Number.isFinite(f.size) ? f.size : null,
+                    f.buffer.length,
                     userId || null
                 ]
             );
@@ -492,17 +463,33 @@ router.post('/team/posts/:postId/attachments', attachmentUpload.array('files', 5
             saved.push(inserted.rows[0]);
         }
 
+        commitAttempted = true;
         await client.query('COMMIT');
+        transactionOpen = false;
 
-        io?.emit('team_post_changed', { action: 'attachment', postId: id });
+        try { io?.emit('team_post_changed', { action: 'attachment', postId: id }); }
+        catch (error) { logger.warn('附件已提交，通知發送失敗', { code: error.code }); }
 
         return res.status(201).json({ message: '附件已上傳', items: saved });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        logger.error('[/api/team/posts/:postId/attachments] upload failed:', err);
+    } catch (error) {
+        if (error.attachmentReceipt) receipts.push(error.attachmentReceipt);
+        let rolledBack = !transactionOpen;
+        if (transactionOpen) {
+            try { await client.query('ROLLBACK'); rolledBack = true; }
+            catch (rollbackError) { releaseError = rollbackError; }
+        }
+        if (!commitAttempted && rolledBack) {
+            if (storage && receipts.length) await cleanupAttachments(storage, receipts, logger);
+        } else {
+            // Never remove objects whose metadata might already have committed.
+            releaseError ||= error;
+            logger.warn('附件交易結果待對帳，保留上傳物件', { requestId: req.requestId, keys: receipts.map(item => item.key) });
+            return res.status(503).json({ code: 'ATTACHMENT_RESULT_UNKNOWN', message: '附件上傳結果尚未確認，請重新整理附件清單核對，請勿立即重複上傳。', requestId: req.requestId });
+        }
+        logger.error('附件上傳失敗', { code: error.code, requestId: req.requestId });
         return res.status(500).json({ message: '上傳附件失敗', requestId: req.requestId });
     } finally {
-        client.release();
+        client?.release(releaseError);
     }
 });
 

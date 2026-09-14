@@ -7,6 +7,7 @@ import { Printer, Package, FileText, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
 import { toast } from 'sonner';
+import { OrderBarcode } from './OrderBarcode';
 
 // 出貨標籤組件
 export function ShippingLabel({ order, items, className, variant = 'default' }) {
@@ -15,7 +16,9 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
     const handlePrint = useReactToPrint({
         contentRef: componentRef,
         documentTitle: `出貨標籤-${order.voucher_number}`,
-        onAfterPrint: () => toast.success('列印完成'),
+        onAfterPrint: () => toast.info('列印視窗已關閉，請確認印表機輸出。'),
+        onPrintError: () => toast.error('無法開啟列印，請重試。'),
+        pageStyle: '@page { margin: 8mm; } @media print { body { color: #000; background: #fff; } thead { display: table-header-group; } tr { break-inside: avoid; } }',
     });
 
     return (
@@ -31,10 +34,10 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
 
             {/* 隱藏的列印內容 */}
             <div style={{ display: 'none' }}>
-                <div ref={componentRef} className="p-8" style={{ width: '100mm', fontSize: '12pt' }}>
+                <div ref={componentRef} className="p-8" style={{ width: '100mm', maxWidth: '100%', padding: '5mm', boxSizing: 'border-box', fontSize: '12pt' }}>
                     {/* 公司標題 */}
                     <div className="text-center mb-6" style={{ borderBottom: '3px solid #000', paddingBottom: '10px' }}>
-                        <h1 style={{ fontSize: '24pt', fontWeight: 'bold', marginBottom: '5px' }}>MOZTECH</h1>
+                        <h1 style={{ fontSize: '24pt', fontWeight: 'bold', marginBottom: '5px' }}>Corely AI</h1>
                         <p style={{ fontSize: '10pt' }}>出貨標籤 SHIPPING LABEL</p>
                     </div>
 
@@ -51,25 +54,19 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                                     <td>{order.customer_name || '未指定'}</td>
                                 </tr>
                                 <tr>
-                                    <td style={{ fontWeight: 'bold' }}>出貨日期:</td>
+                                    <td style={{ fontWeight: 'bold' }}>列印時間:</td>
                                     <td>{format(new Date(), 'yyyy-MM-dd HH:mm', { locale: zhTW })}</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
 
-                    {/* 條碼區 */}
-                    <div className="text-center mb-6" style={{ border: '2px dashed #ccc', padding: '15px' }}>
-                        <div style={{ fontSize: '32pt', fontFamily: 'monospace', letterSpacing: '3px', fontWeight: 'bold' }}>
-                            {order.voucher_number}
-                        </div>
-                        <p style={{ fontSize: '8pt', color: '#666', marginTop: '5px' }}>請掃描此條碼</p>
-                    </div>
+                    <div style={{ margin: '12px 0 20px' }}><OrderBarcode value={order.voucher_number} /></div>
 
                     {/* 商品摘要 */}
                     <div>
                         <h3 style={{ fontWeight: 'bold', marginBottom: '10px', borderBottom: '2px solid #000', paddingBottom: '5px' }}>
-                            商品清單
+                            商品摘要（最多列出 10 項）
                         </h3>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
@@ -93,7 +90,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                                 {items.length > 10 && (
                                     <tr>
                                         <td colSpan={2} style={{ padding: '8px 5px', textAlign: 'center', color: '#666', fontSize: '9pt' }}>
-                                            ... 及其他 {items.length - 10} 項商品
+                                            另有 {items.length - 10} 項商品，請以完整揀貨單核對
                                         </td>
                                     </tr>
                                 )}
@@ -108,7 +105,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                                 <tr>
                                     <td style={{ fontWeight: 'bold', fontSize: '12pt' }}>總件數:</td>
                                     <td style={{ textAlign: 'right', fontSize: '16pt', fontWeight: 'bold' }}>
-                                        {items.reduce((sum, item) => sum + item.quantity, 0)} 件
+                                        {items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)} 件
                                     </td>
                                 </tr>
                                 <tr>
@@ -141,7 +138,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
 
                     {/* 頁腳 */}
                     <div style={{ marginTop: '20px', textAlign: 'center', fontSize: '8pt', color: '#999' }}>
-                        <p>此標籤由 MOZTECH WMS 系統自動生成</p>
+                        <p>此標籤由 Corely AI 儲運管理系統自動生成</p>
                         <p>{format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</p>
                     </div>
                 </div>
@@ -157,7 +154,9 @@ export function PickingList({ order, items, className, variant = 'default' }) {
     const handlePrint = useReactToPrint({
         contentRef: componentRef,
         documentTitle: `揀貨單-${order.voucher_number}`,
-        onAfterPrint: () => toast.success('列印完成'),
+        onAfterPrint: () => toast.info('列印視窗已關閉，請確認印表機輸出。'),
+        onPrintError: () => toast.error('無法開啟列印，請重試。'),
+        pageStyle: '@page { margin: 8mm; } @media print { body { color: #000; background: #fff; } thead { display: table-header-group; } tr { break-inside: avoid; } }',
     });
 
     // 按貨架位置分組（如果有）
@@ -183,7 +182,7 @@ export function PickingList({ order, items, className, variant = 'default' }) {
 
             {/* 隱藏的列印內容 */}
             <div style={{ display: 'none' }}>
-                <div ref={componentRef} className="p-8" style={{ width: '210mm', fontSize: '12pt' }}>
+                <div ref={componentRef} className="p-8" style={{ width: '100%', padding: '4mm', boxSizing: 'border-box', fontSize: '12pt' }}>
                     {/* 標題 */}
                     <div className="text-center mb-6" style={{ borderBottom: '4px solid #000', paddingBottom: '15px' }}>
                         <h1 style={{ fontSize: '28pt', fontWeight: 'bold', marginBottom: '5px' }}>揀貨作業單</h1>
@@ -317,7 +316,7 @@ export function PickingList({ order, items, className, variant = 'default' }) {
                                         ✓ 總件數:
                                     </td>
                                     <td style={{ fontSize: '18pt', fontWeight: 'bold', textAlign: 'right' }}>
-                                        {items.reduce((sum, item) => sum + item.quantity, 0)} 件
+                                        {items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)} 件
                                     </td>
                                 </tr>
                                 <tr>
@@ -370,7 +369,7 @@ export function PickingList({ order, items, className, variant = 'default' }) {
                         fontSize: '9pt', 
                         color: '#999' 
                     }}>
-                        <p>此揀貨單由 MOZTECH WMS 系統自動生成 | 列印時間: {format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</p>
+                        <p>此揀貨單由 Corely AI 儲運管理系統自動生成 | 列印時間: {format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</p>
                     </div>
                 </div>
             </div>

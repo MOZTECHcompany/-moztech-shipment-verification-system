@@ -6,7 +6,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_name = 'orders'
+        WHERE table_schema = current_schema() AND table_name = 'orders'
           AND column_name = 'completed_at'
     ) THEN
         ALTER TABLE orders

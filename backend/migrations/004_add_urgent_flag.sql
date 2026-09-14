@@ -6,7 +6,7 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'orders' AND column_name = 'is_urgent'
+        WHERE table_schema = current_schema() AND table_name = 'orders' AND column_name = 'is_urgent'
     ) THEN
         ALTER TABLE orders 
         ADD COLUMN is_urgent BOOLEAN DEFAULT FALSE;

@@ -1,31 +1,17 @@
 // backend/src/server.js
 // 伺服器啟動文件
 
-const { app, server } = require('./app');
-const { testConnection, closePool } = require('./config/database');
+const { app, server, io } = require('./app');
+const { pool, testConnection, closePool } = require('./config/database');
+const { assertSchemaReady } = require('./config/schemaReadiness');
+const { getAttachmentStorage } = require('./services/attachmentStorage');
 const logger = require('./utils/logger');
-const { exec } = require('child_process');
-const util = require('util');
-const path = require('path');
-const execPromise = util.promisify(exec);
-
 const PORT = process.env.PORT || 3001;
 
 // 啟動伺服器
 async function startServer() {
     try {
-        // 自動執行資料庫遷移 (解決 500 錯誤: 確保 priority 欄位存在)
-        try {
-            logger.info('🔄 正在檢查並執行資料庫遷移...');
-            const { stdout, stderr } = await execPromise('node migrations/run.js', { 
-                cwd: path.join(__dirname, '..') 
-            });
-            logger.info('✅ 資料庫遷移完成');
-            if (stdout) logger.debug(stdout);
-        } catch (migrationError) {
-            logger.warn('⚠️ 資料庫遷移執行遇到問題 (若為欄位已存在可忽略):', migrationError.message);
-        }
-
+        // Schema changes are run explicitly with npm run migrate before release.
         // 測試資料庫連接
         const dbConnected = await testConnection();
         if (!dbConnected) {
@@ -33,8 +19,11 @@ async function startServer() {
             process.exit(1);
         }
 
+        await assertSchemaReady(pool);
+        getAttachmentStorage();
+
         // 啟動 HTTP 伺服器
-        server.listen(PORT, () => {
+        server.listen(PORT, process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1', () => {
             logger.info(`🚀 伺服器已啟動於 port ${PORT}`);
             logger.info(`📦 環境: ${process.env.NODE_ENV || 'development'}`);
             logger.info(`🔗 資料庫: ${process.env.DATABASE_URL ? '已連接' : '未配置'}`);
@@ -46,23 +35,27 @@ async function startServer() {
     }
 }
 
-// 優雅關閉
+// Stop accepting requests, drain HTTP and Socket.IO before closing the pool.
+let shuttingDown = false;
 async function gracefulShutdown(signal) {
-    logger.info(`收到 ${signal} 信號，開始優雅關閉...`);
-    
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.locals.draining = true;
+    logger.info(`Received ${signal}; draining connections`);
+    const deadline = setTimeout(() => process.exit(1), 8000);
+    deadline.unref();
     try {
-        // 關閉 HTTP 伺服器
-        server.close(() => {
-            logger.info('HTTP 伺服器已關閉');
+        await new Promise((resolve, reject) => {
+            server.close(error => error ? reject(error) : resolve());
+            io.disconnectSockets(true);
+            server.closeIdleConnections?.();
         });
-
-        // 關閉資料庫連接池
+        await new Promise(resolve => io.close(resolve));
         await closePool();
-
-        logger.info('優雅關閉完成');
+        clearTimeout(deadline);
         process.exit(0);
     } catch (error) {
-        logger.error('優雅關閉時發生錯誤:', error);
+        logger.error('Shutdown failed', error);
         process.exit(1);
     }
 }

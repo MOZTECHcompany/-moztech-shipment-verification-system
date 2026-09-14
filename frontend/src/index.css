@@ -312,3 +312,101 @@
     animation: shine-sweep 950ms ease-in-out;
   }
 }
+/* Corely work surfaces: readable, stable contrast during long scan sessions. */
+.wms-workspace .glass-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 4%);
+  backdrop-filter: none;
+}
+/* Operational controls do not need background sampling/compositor layers. */
+.wms-workspace *, .wms-workspace *::before, .wms-workspace *::after {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.wms-workspace details > summary::-webkit-details-marker { display: none; }
+.wms-workspace :focus-visible { outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .wms-workspace *, .wms-workspace *::before, .wms-workspace *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Corely workspace shell: compact navigation and a fluid working surface. */
+.corely-shell { --primary: 221 83% 53%; --ring: 221 83% 53%; --rail-width: var(--sidebar-width, 208px); min-height: 100vh; background: #f7f8fb; color: #111e35; }
+.corely-shell--collapsed { --rail-width: 72px; }
+.corely-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 40; display: flex; flex-direction: column; width: var(--rail-width); border-right: 1px solid #e2e8f0; background: #fff; }
+.corely-brand { display: flex; align-items: center; gap: 10px; min-height: 76px; padding: 16px; }
+.corely-brand img { flex: 0 0 36px; width: 36px; height: 36px; border-radius: 10px; }
+.corely-brand strong { display: block; font-size: 14px; letter-spacing: .01em; }
+.corely-brand span span { display: block; margin-top: 2px; font-size: 11px; color: #64748b; }
+.corely-nav { display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.corely-nav-link { display: flex; align-items: center; gap: 12px; min-height: 46px; border-radius: 9px; padding: 12px; color: #64748b; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.corely-nav-link svg { flex-shrink: 0; }
+.corely-nav-link:hover { background: #f1f5f9; }
+.corely-nav-link--active, .corely-nav-link--active:hover { background: #eff6ff; color: #2563eb; }
+.corely-sidebar-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; border-top: 1px solid #f1f5f9; padding: 12px; }
+.corely-sidebar-toggle { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; border-radius: 8px; color: #64748b; }
+.corely-sidebar-toggle:hover { background: #f1f5f9; }
+.corely-shell--collapsed .corely-sidebar-label { display: none; }
+.corely-main-shell { margin-left: var(--rail-width); min-width: 0; }
+.corely-topbar { position: sticky; top: 0; z-index: 35; display: flex; align-items: center; min-height: 64px; padding: 8px 28px; border-bottom: 1px solid #e2e8f0; background: #fff; }
+.corely-main { width: 100%; max-width: 1920px; margin: 0 auto; padding: 28px 28px 48px; }
+.corely-page-header { min-width: 0; }
+.wms-workspace .glass { background: #fff; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgb(15 23 42 / 3%); }
+@media (max-width: 1023px) {
+  .corely-shell { --rail-width: 72px; }
+  .corely-sidebar-label, .corely-sidebar-toggle { display: none; }
+  .corely-main { padding: 24px 20px 40px; }
+  .corely-topbar { padding: 8px 20px; }
+}
+@media (max-width: 639px) {
+  .corely-sidebar { position: relative; width: 100%; border-right: 0; border-bottom: 1px solid #e2e8f0; }
+  .corely-brand { min-height: 60px; padding: 12px 16px; }
+  .corely-brand .corely-sidebar-label { display: block; }
+  .corely-nav { flex-direction: row; padding: 0 12px 10px; gap: 6px; }
+  .corely-nav-link { flex: 1; justify-content: center; gap: 6px; padding: 10px 6px; font-size: 13px; }
+  .corely-nav .corely-sidebar-label { display: inline; }
+  .corely-main-shell { margin-left: 0; }
+  .corely-topbar { position: relative; min-height: 52px; padding: 4px 16px; }
+  .corely-main { padding: 20px 16px 32px; }
+}
+@media print {
+  .corely-sidebar, .corely-topbar { display: none; }
+  .corely-main-shell { margin-left: 0; }
+  .corely-main { padding: 0; max-width: none; }
+}
+
+.corely-settings-link { display: flex; flex: 1; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 9px; color: #64748b; font-size: 14px; }
+.corely-settings-link:hover { background: #eff6ff; color: #2563eb; }
+.corely-settings-link.corely-nav-link--active { color: #2563eb; }
+.corely-settings-link svg { flex-shrink: 0; }
+.corely-shell--collapsed .corely-sidebar-footer { flex-direction: column; gap: 6px; }
+.corely-resize-handle { position: absolute; top: 0; right: -4px; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; touch-action: none; }
+.corely-resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; }
+.corely-resize-handle:hover::after, .corely-resize-handle:focus-visible::after, .corely-shell--resizing .corely-resize-handle::after { background: #60a5fa; }
+.corely-shell--resizing { cursor: col-resize; user-select: none; }
+.corely-task-stat { --stat-rgb: 59 130 246; background: linear-gradient(115deg, #fff 45%, rgb(var(--stat-rgb) / 7%)); }
+.corely-task-stat--pick { --stat-rgb: 249 115 22; }
+.corely-task-stat--pack, .corely-task-stat--picked, .corely-task-stat--done { --stat-rgb: 16 185 129; }
+.corely-task-stat--inProgress, .corely-task-stat--mine { --stat-rgb: 168 85 247; }
+.wms-workspace .corely-task-stat:hover { border-color: rgb(var(--stat-rgb) / 65%); }
+.wms-workspace .corely-task-stat[aria-pressed="true"] { border-color: rgb(var(--stat-rgb)); box-shadow: 0 0 0 2px rgb(var(--stat-rgb) / 15%); }
+@media (max-width: 1023px) {
+  .corely-resize-handle { display: none; }
+}
+@media (max-width: 639px) {
+  .corely-sidebar-footer { position: absolute; top: 8px; right: 12px; margin: 0; padding: 0; border: 0; }
+  .corely-settings-link { flex: none; }
+}
+
+.wms-workstation-bar { position: sticky; top: 64px; z-index: 30; }
+#order-discussion { scroll-margin-top: 210px; }
+@media (max-width: 639px) {
+  .wms-workstation-bar { top: 0; }
+}
+@media print { .wms-workstation-bar { display: none; } }

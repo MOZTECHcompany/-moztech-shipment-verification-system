@@ -71,7 +71,10 @@ router.post('/refresh', refreshLimiter, async (req, res, next) => {
 
         res.json({ accessToken: newToken });
     } catch (error) {
-        res.status(401).json({ message: error.message });
+        if (error.status === 401) {
+            return res.status(401).json({ message: error.message });
+        }
+        next(error);
     }
 });
 

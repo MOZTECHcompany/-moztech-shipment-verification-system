@@ -8,7 +8,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM information_schema.table_constraints
-        WHERE constraint_name = 'chk_order_exceptions_type'
+        WHERE table_schema = current_schema() AND constraint_name = 'chk_order_exceptions_type'
           AND table_name = 'order_exceptions'
     ) THEN
         ALTER TABLE order_exceptions DROP CONSTRAINT chk_order_exceptions_type;

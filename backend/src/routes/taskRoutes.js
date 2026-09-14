@@ -5,11 +5,13 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
+const { getTaskPage } = require('../utils/taskPagination');
 
 // GET /api/tasks
 // 依使用者角色返回任務列表，與傳統 index.js 實作保持一致
 router.get('/tasks', async (req, res) => {
     try {
+        if (req.query.pagination === 'cursor') return res.json(await getTaskPage(pool, req.user, req.query, 'active'));
         const { id: userId, role } = req.user;
         const effectiveRole = role === 'superadmin' ? 'admin' : role;
         logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role} (effective=${effectiveRole})`);
@@ -74,6 +76,7 @@ router.get('/tasks', async (req, res) => {
         }
         res.json(result.rows);
     } catch (error) {
+        if (error.status === 400 || error.status === 403) return res.status(error.status).json({ message: error.message });
         logger.error('[/api/tasks] 獲取任務失敗:', error);
         logger.error('[/api/tasks] 錯誤詳情:', {
             message: error.message,
@@ -104,6 +107,7 @@ router.get('/users/basic', async (req, res) => {
 // 獲取已完成的任務列表
 router.get('/tasks/completed', async (req, res) => {
     try {
+        if (req.query.pagination === 'cursor') return res.json(await getTaskPage(pool, req.user, req.query, 'completed'));
         const { id: userId, role } = req.user;
         const effectiveRole = role === 'superadmin' ? 'admin' : role;
         const parsedLimit = parseInt(req.query.limit || '50', 10);
@@ -181,6 +185,7 @@ router.get('/tasks/completed', async (req, res) => {
         const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (error) {
+        if (error.status === 400 || error.status === 403) return res.status(error.status).json({ message: error.message });
         logger.error('[/api/tasks/completed] 獲取已完成任務失敗:', error);
         res.status(500).json({ message: '獲取已完成任務失敗' });
     }

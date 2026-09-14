@@ -8,10 +8,15 @@ const logger = require('../utils/logger');
 const userService = require('../services/userService');
 const jwt = require('jsonwebtoken');
 
+function localMaintenanceOnly(req, res, next) {
+  if (process.env.NODE_ENV === 'production') return res.status(404).json({ message: 'Not found' });
+  return next();
+}
+
 // POST /api/admin/bootstrap/superadmin
 // 用途：初始化最高管理員（通常只需要執行一次）
 // 安全：需提供 SUPERADMIN_BOOTSTRAP_SECRET（以 header 或 body），且資料庫目前不能已有 superadmin
-router.post('/bootstrap/superadmin', async (req, res) => {
+router.post('/bootstrap/superadmin', localMaintenanceOnly, async (req, res) => {
   try {
     const secret =
       req.headers['x-superadmin-bootstrap'] ||
@@ -98,7 +103,7 @@ router.post('/create-user', async (req, res) => {
 
 // POST /api/admin/maintenance/retention/run
 // 可接受可選參數覆寫保留期間：logsDays, mentionsDays, readsDays, idleMinutes
-router.post('/maintenance/retention/run', async (req, res) => {
+router.post('/maintenance/retention/run', localMaintenanceOnly, async (req, res) => {
   const { logsDays, mentionsDays, readsDays, idleMinutes } = req.body || {};
 
   const LOGS_DAYS = Number.isFinite(+logsDays) ? Math.max(0, parseInt(logsDays, 10)) : parseInt(process.env.RETENTION_LOGS_DAYS || '180', 10);

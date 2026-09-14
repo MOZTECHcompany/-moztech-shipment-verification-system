@@ -14,6 +14,7 @@ require('dotenv').config();
 
 // 中間件
 const { authenticateToken, authorizeAdmin } = require('./middleware/auth');
+const { createSocketAuthenticator, guardSocketSession } = require('./middleware/socketAuth');
 const { notFoundHandler, globalErrorHandler } = require('./middleware/errorHandler');
 
 // 路由
@@ -51,17 +52,10 @@ if (process.env.NODE_ENV !== 'test' && !process.env.JWT_SECRET) {
 // =================================================================
 // CORS 配置
 // =================================================================
-const allowlist = process.env.NODE_ENV === 'production' 
-    ? [
-        'https://moztech-shipment-verification-system.onrender.com',
-        'https://moztech-wms-98684976641.us-west1.run.app'
-      ]
-    : [
-        'https://moztech-shipment-verification-system.onrender.com',
-        'https://moztech-wms-98684976641.us-west1.run.app',
-        'http://localhost:3000',
-        'http://localhost:3001'
-      ];
+const { getAllowedOrigins } = require('./config/runtime');
+const { pool } = require('./config/database');
+const { assertSchemaReady } = require('./config/schemaReadiness');
+const allowlist = getAllowedOrigins(process.env);
 
 const corsOptions = {
     origin: function (origin, callback) {
@@ -79,9 +73,12 @@ const corsOptions = {
         'Authorization',
         'X-Requested-With',
         'Accept',
+        'If-None-Match',
+        'Cache-Control',
         'X-Superadmin-Bootstrap',
         'X-Superadmin-Bootstrap-Secret'
-    ]
+    ],
+    exposedHeaders: ['ETag', 'X-Request-Id']
 };
 
 // =================================================================
@@ -98,7 +95,11 @@ const io = new Server(server, {
     transports: ['websocket', 'polling']
 });
 
+// Authentication runs before connection/room membership, so unauthenticated
+// clients never receive the existing company-wide business event broadcasts.
+io.use(createSocketAuthenticator({ pool, secret: process.env.JWT_SECRET }));
 io.on('connection', (socket) => {
+    guardSocketSession(socket, { pool });
     logger.info(`Socket.IO: 客戶端已連接 - ${socket.id}`);
     
     socket.on('disconnect', (reason) => {
@@ -133,6 +134,8 @@ app.use((req, res, next) => {
 
 app.use(cors(corsOptions));
 app.use(express.json());
+app.use(require('./middleware/requestPerformance').requestPerformance(pool));
+app.use(require('./middleware/queryAdmission').createQueryAdmission());
 
 // =================================================================
 // 路由註冊
@@ -141,7 +144,7 @@ app.use(express.json());
 // 健康檢查（無需認證）
 app.get('/', (req, res) => {
     res.json({
-        name: 'Moztech WMS API',
+        name: 'Corely AI WMS API',
         version: '7.0.0',
         status: 'running',
         timestamp: new Date().toISOString()
@@ -152,10 +155,23 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/ready', async (req, res) => {
+    if (app.locals.draining) return res.status(503).json({ status: 'draining' });
+    try {
+        await assertSchemaReady(pool);
+        res.json({ status: 'ready' });
+    } catch {
+        res.status(503).json({ status: 'unavailable' });
+    }
+});
+
+app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').createLogisticsCallbackRouter({pool}));
+
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
 
 // 以下路由需要認證
+app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);
@@ -163,7 +179,11 @@ app.use('/api', authenticateToken, taskRoutes);
 app.use('/api', authenticateToken, orderRoutes);
 app.use('/api', authenticateToken, analyticsRoutes);
 app.use('/api', authenticateToken, commentRoutes);
-app.use('/api', authenticateToken, maintenanceRoutes);
+// Schema/diagnostic HTTP endpoints are local development tools. Production
+// schema changes run through an explicitly authorized job, never a public API.
+if (process.env.NODE_ENV !== 'production') {
+    app.use('/api', authenticateToken, maintenanceRoutes);
+}
 app.use('/api', authenticateToken, exceptionRoutes);
 app.use('/api', authenticateToken, teamBoardRoutes);
 

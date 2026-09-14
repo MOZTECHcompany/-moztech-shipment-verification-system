@@ -6,7 +6,7 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'task_comments' AND column_name = 'priority'
+        WHERE table_schema = current_schema() AND table_name = 'task_comments' AND column_name = 'priority'
     ) THEN
         ALTER TABLE task_comments 
         ADD COLUMN priority VARCHAR(20) DEFAULT 'normal' 

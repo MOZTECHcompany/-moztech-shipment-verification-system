@@ -23,8 +23,8 @@ class AuthService {
                 [username]
             );
 
-            if (result.rows.length === 0) {
-                logger.warn(`登入失敗: 用戶不存在 - ${username}`);
+            if (result.rows.length !== 1) {
+                logger.warn(`登入失敗: 無法確認唯一帳號 - ${username}`);
                 throw new Error('用戶名或密碼錯誤');
             }
 
@@ -79,7 +79,9 @@ class AuthService {
             return decoded;
         } catch (error) {
             logger.warn('Token 驗證失敗:', error.message);
-            throw new Error('Token 無效或已過期');
+            const invalidToken = new Error('Token 無效或已過期');
+            invalidToken.status = 401;
+            throw invalidToken;
         }
     }
 
@@ -94,34 +96,30 @@ class AuthService {
 
             const userId = decoded.id ?? decoded.userId;
             if (!userId) {
-                throw new Error('Token 無效或已過期');
+                const invalidToken = new Error('Token 無效或已過期');
+                invalidToken.status = 401;
+                throw invalidToken;
             }
 
-            let username = decoded.username;
-            let name = decoded.name;
-            let role = decoded.role ? String(decoded.role).trim().toLowerCase() : null;
-
-            if (!username || !name || !role) {
-                const userResult = await pool.query(
-                    'SELECT username, name, role FROM users WHERE id = $1',
-                    [userId]
-                );
-
-                if (userResult.rowCount === 0) {
-                    throw new Error('找不到用戶');
-                }
-
-                const dbUser = userResult.rows[0];
-                username = username || dbUser.username;
-                name = name || dbUser.name;
-                role = role || (dbUser.role ? String(dbUser.role).trim().toLowerCase() : null);
+            // The old token proves identity only. Always load the current account so a
+            // deleted user or an old elevated role cannot be renewed from stale claims.
+            const userResult = await pool.query(
+                'SELECT id, username, name, role FROM users WHERE id = $1',
+                [userId]
+            );
+            const user = userResult.rows[0];
+            if (!user) {
+                const missingUser = new Error('找不到用戶');
+                missingUser.status = 401;
+                throw missingUser;
             }
 
-            const payload = { id: userId, username, name, role };
+            const role = user.role ? String(user.role).trim().toLowerCase() : null;
+            const payload = { id: user.id, username: user.username, name: user.name, role };
 
             const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
 
-            logger.info(`Token 已刷新: ${username}`);
+            logger.info(`Token 已刷新: ${user.username}`);
             return newToken;
         } catch (error) {
             logger.error('刷新 Token 失敗:', error);

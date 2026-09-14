@@ -1,7 +1,7 @@
 // frontend/src/components/TaskComments.jsx
 // 任務評論系統 - 優化版（優先級、置頂、搜尋、未讀提示）
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { socket } from '@/api/socket';
 import { VariableSizeList as List } from 'react-window';
 import { formatDistanceToNow } from 'date-fns';
@@ -15,6 +15,9 @@ import {
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
 import { useComments } from '@/api/useComments';
+import { useVisibleCommentReads } from '@/api/useVisibleCommentReads';
+import { CommentsLoadState } from './CommentsLoadState';
+import { buildCommentThreads } from '@/api/commentPages';
 import desktopNotification from '@/utils/desktopNotification';
 import soundNotification from '@/utils/soundNotification';
 import { Button } from '@/ui';
@@ -57,8 +60,7 @@ const QUICK_REPLIES = [
 ];
 
 export function TaskComments({ orderId, currentUser, allUsers }) {
-    const { data, isLoading, fetchNextPage, hasNextPage, addOptimistic, invalidate } = useComments(orderId);
-    const comments = (data?.pages || []).flatMap(p => p.items ?? []);
+    const { comments, isLoading, isError, error, refetch, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage, hasNextPage, invalidate, markVisibleRead } = useComments(orderId);
     const [newComment, setNewComment] = useState('');
     const [replyTo, setReplyTo] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -81,8 +83,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     const textareaRef = useRef(null);
     const mentionsRef = useRef(null);
     const commentsEndRef = useRef(null);
+    const commentsViewportRef = useRef(null);
+    const visibleStartRef = useRef(0);
+    const jumpToCommentRef = useRef(null);
+    const historyAnchorRef = useRef(null);
+    const sendingRef = useRef(false);
+    useVisibleCommentReads({ orderId, rootRef: commentsViewportRef, comments, markVisibleRead });
     const listRef = useRef(null);
-    const shouldScrollBottomRef = useRef(false);
+    const shouldScrollBottomRef = useRef(true);
     const sizeMapRef = useRef({});
     const getSize = (index) => sizeMapRef.current[index] ?? 180;
     const setSize = (index, size) => {
@@ -93,6 +101,15 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             listRef.current?.resetAfterIndex(index, false);
         }
     };
+
+    const fetchMentions = useCallback(async () => {
+        try {
+            const res = await apiClient.get(`/api/tasks/${orderId}/mentions?status=unread&limit=20`);
+            setMentions(res.data.items || []);
+            setMentionsUnread(res.data.total || 0);
+        } catch (e) { /* ignore */ }
+    }, [orderId]);
+
 
     useEffect(() => {
         // 初始化：先讀本地，盡快呈現；再從雲端同步覆蓋
@@ -120,7 +137,6 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
         // 啟用 WebSocket 監聽新評論
         try {
-            if (!socket.connected) socket.connect();
             const onNewComment = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
@@ -134,12 +150,12 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         desktopNotification.show('有人提及了你', {
                             body: payload.content || '新提及',
                             duration: 4000,
-                            onClick: () => jumpToCommentId(payload.commentId)
+                            onClick: () => jumpToCommentRef.current?.(payload.commentId)
                         });
-                    } catch {}
+                    } catch { /* Optional notification must not interrupt the conversation. */ }
                     try {
                         soundNotification.play('newTask');
-                    } catch {}
+                    } catch { /* Optional notification must not interrupt the conversation. */ }
                     invalidate();
                     fetchMentions();
                 }
@@ -165,7 +181,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             // 若 socket 初始化失敗，不影響頁面其它功能
             return () => clearInterval(interval);
         }
-    }, [orderId]);
+    }, [orderId, currentUser.id, fetchMentions, invalidate]);
 
     useEffect(() => {
         // 點擊外部關閉提及列表
@@ -179,36 +195,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // 僅在需要時才自動滾動到底（例如送出成功後）
-    useEffect(() => {
-        if (shouldScrollBottomRef.current) {
-            if (listRef.current && typeof listRef.current.scrollToItem === 'function') {
-                // 嘗試捲到一般留言的最後一筆
-                const lastIndex = Math.max(0, normalList.length - 1);
-                listRef.current.scrollToItem(lastIndex, 'end');
-            } else {
-                commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-            }
-            shouldScrollBottomRef.current = false;
-        }
-    }, [comments]);
-
-    const fetchComments = async () => {
-        // 已改由 React Query 管理；這個函數保留舊呼叫點
-        await invalidate();
-        const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
-        setPinnedComments(pinned);
-    };
-
-    const fetchMentions = async () => {
-        try {
-            const res = await apiClient.get(`/api/tasks/${orderId}/mentions?status=unread&limit=20`);
-            setMentions(res.data.items || []);
-            setMentionsUnread(res.data.total || 0);
-        } catch (e) { /* ignore */ }
-    };
-
-    useEffect(() => { fetchMentions(); }, [orderId]);
+    useEffect(() => { fetchMentions(); }, [fetchMentions]);
 
     const handleInputChange = (e) => {
         const value = e.target.value;
@@ -251,7 +238,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         textareaRef.current?.focus();
     };
 
-    const useQuickReply = (reply) => {
+    const applyQuickReply = (reply) => {
         setNewComment(reply.text);
         setPriority(reply.priority);
         setShowQuickReplies(false);
@@ -266,24 +253,10 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             return;
         }
 
-        if (loading) return; // 防重複點擊
+        if (sendingRef.current) return;
+        sendingRef.current = true;
         setLoading(true);
         try {
-            const draft = {
-                id: `temp_${Date.now()}`,
-                content: newComment,
-                parent_id: replyTo?.id || null,
-                priority,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                user_id: currentUser.id,
-                username: currentUser.username,
-                user_name: currentUser.name,
-                replies: [],
-                __optimistic: true,
-            };
-            addOptimistic(draft);
-
             const payload = {
                 content: newComment,
                 parent_id: replyTo?.id || null,
@@ -295,16 +268,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             setNewComment('');
             setReplyTo(null);
             setPriority('normal');
-            await invalidate();
-            // 發送成功後再捲到底，避免背景重新整理時誤觸頁面跳動
             shouldScrollBottomRef.current = true;
+            await invalidate();
             setInlineStatus({ type: 'success', message: '已發送評論' });
             setTimeout(() => setInlineStatus(null), 1600);
         } catch (error) {
-            // 還原暫時卡片
-            await invalidate();
-            setInlineStatus({ type: 'error', message: error.message || '發送失敗，請重試' });
+            setInlineStatus({ type: 'error', message: `${error.message || '留言未送出'}。內容已保留，請先重新整理確認是否送達。` });
         } finally {
+            sendingRef.current = false;
             setLoading(false);
         }
     };
@@ -330,17 +301,17 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         }
     };
 
-    const filteredUsers = allUsers.filter(user => 
+    const filteredUsers = (allUsers || []).filter(user =>
         user.id !== currentUser.id &&
         (user.username.toLowerCase().includes(mentionFilter) ||
-         user.name.toLowerCase().includes(mentionFilter))
+         (user.name || '').toLowerCase().includes(mentionFilter))
     );
 
     // 過濾評論
     const filteredComments = comments.filter(comment => {
         // 搜尋過濾
         if (searchTerm && !comment.content.toLowerCase().includes(searchTerm.toLowerCase()) &&
-            !comment.username.toLowerCase().includes(searchTerm.toLowerCase())) {
+            !(comment.username || '').toLowerCase().includes(searchTerm.toLowerCase())) {
             return false;
         }
         
@@ -349,19 +320,15 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             return false;
         }
         
-        // 未讀過濾（簡化版：24小時內且不是自己的）
-        if (filterUnread) {
-            const isRecent = new Date(comment.created_at) > new Date(Date.now() - 24*60*60*1000);
-            const notMine = comment.user_id !== currentUser.id;
-            if (!isRecent || !notMine) return false;
-        }
-        
+        if (filterUnread && (comment.is_read || String(comment.user_id) === String(currentUser.id))) return false;
+
         return true;
     });
 
     // 分離置頂和普通評論
-    const pinnedListRaw = filteredComments.filter(c => pinnedComments.includes(c.id) && !c.parent_id);
-    const normalListRaw = filteredComments.filter(c => !pinnedComments.includes(c.id) && !c.parent_id);
+    const threads = buildCommentThreads(filteredComments);
+    const pinnedListRaw = threads.filter(c => pinnedComments.includes(c.id));
+    const normalListRaw = threads.filter(c => !pinnedComments.includes(c.id));
     // 各自去重（避免跨頁重複）
     const pinnedSeen = new Set();
     const pinnedList = pinnedListRaw.filter(c => {
@@ -377,11 +344,37 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     });
 
     // 未讀計數
-    const unreadCount = comments.filter(c => {
-        const isRecent = new Date(c.created_at) > new Date(Date.now() - 24*60*60*1000);
-        const notMine = c.user_id !== currentUser.id;
-        return isRecent && notMine;
-    }).length;
+    // 僅在需要時才自動滾動到底（例如送出成功後）
+    useEffect(() => {
+        if (shouldScrollBottomRef.current && comments.length) {
+            if (listRef.current && typeof listRef.current.scrollToItem === 'function') {
+                // 嘗試捲到一般留言的最後一筆
+                const lastIndex = Math.max(0, normalList.length - 1);
+                listRef.current.scrollToItem(lastIndex, 'end');
+            } else {
+                commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
+            shouldScrollBottomRef.current = false;
+        }
+    }, [comments, normalList.length]);
+
+    const unreadCount = comments.filter(c => !c.is_read && String(c.user_id) !== String(currentUser.id)).length;
+    const jumpToLatest = () => {
+        listRef.current?.scrollToItem(Math.max(0, normalList.length - 1), 'end');
+        const viewport = commentsViewportRef.current;
+        if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    };
+    const loadOlder = async () => {
+        historyAnchorRef.current = { id: normalList[visibleStartRef.current]?.id, firstId: comments[0]?.id };
+        const result = await fetchNextPage();
+        if (result.isError) historyAnchorRef.current = null;
+    };
+    useEffect(() => {
+        if (!historyAnchorRef.current || historyAnchorRef.current.firstId === comments[0]?.id) return;
+        const index = normalList.findIndex(item => item.id === historyAnchorRef.current.id);
+        if (index >= 0) listRef.current?.scrollToItem(index, 'start');
+        historyAnchorRef.current = null;
+    }, [comments, normalList]);
 
     const highlightMentions = (text) => {
         const mentionRegex = /@(\w+)/g;
@@ -404,29 +397,20 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         });
     };
 
-    const markMentionRead = async (commentId) => {
-        try {
-            await apiClient.patch(`/api/tasks/${orderId}/mentions/${commentId}/read`);
-            mentionPulseRef.current.delete(commentId);
-            await invalidate();
-        } catch {}
-    };
-
     const jumpToCommentId = (commentId) => {
         // 嘗試捲到 pinned
         const pinnedEl = document.getElementById(`comment-${commentId}`);
         if (pinnedEl) {
             pinnedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            markMentionRead(commentId);
             return;
         }
-        const idx = normalList.findIndex(c => c.id === commentId);
+        const idx = normalList.findIndex(c => c.id === commentId || c.replies?.some(reply => reply.id === commentId));
         if (idx >= 0) {
             listRef.current?.scrollToItem(idx, 'center');
-            // 等待渲染後再標記
-            setTimeout(() => markMentionRead(commentId), 300);
         }
     };
+
+    jumpToCommentRef.current = jumpToCommentId;
 
     const handleReplyClick = (comment) => {
         setReplyTo(comment);
@@ -482,7 +466,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
         );
 
         const actions = (
-            <div className="flex items-center gap-1.5 opacity-0 group-hover/thread:opacity-100 transition-opacity">
+            <div className="flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover/thread:opacity-100 transition-opacity">
                 <button
                     onClick={() => togglePin(comment.id)}
                     className={`px-1.5 py-0.5 rounded-md transition-colors ${isPinned ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
@@ -536,7 +520,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
             <div className="relative mt-2">
                 {isUrgent && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#FF3B30] rounded-full" />}
                 <div className={`ml-2 ${bubbleBase} ${replyNarrow} ${isUrgent ? 'bg-[rgba(255,59,48,0.10)] text-red-800' : ''}`}>
-                    <div className="whitespace-pre-wrap break-words break-anywhere leading-relaxed">
+                    <div data-comment-id={comment.id} className="whitespace-pre-wrap break-words break-anywhere leading-relaxed">
                         {highlightMentions(comment.content === '[已撤回]' ? '此評論已撤回' : comment.content)}
                     </div>
                 </div>
@@ -609,7 +593,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     );
 
     return (
-        <div className="flex flex-col h-full bg-gradient-to-br from-gray-50 to-white">
+        <div className="flex flex-col min-h-0 h-full bg-gradient-to-br from-gray-50 to-white">
             {/* 標題欄（行動裝置固定在頂端，方便篩選） */}
             <div className="glass-card p-4 border-b border-gray-200 sticky top-0 z-10">
                 <div className="flex items-center justify-between">
@@ -731,8 +715,14 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 </div>
             )}
 
+            <CommentsLoadState isError={isError} error={error} isFetching={isFetching}
+                retry={isFetchNextPageError ? loadOlder : refetch} jumpToLatest={jumpToLatest} />
             {/* 評論列表 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div ref={commentsViewportRef} className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3">
+                {hasNextPage && <button type="button" disabled={isFetching} onClick={loadOlder}
+                    className="mx-auto block rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-blue-700 disabled:opacity-50">
+                    {isFetchingNextPage ? '載入中…' : '載入更早留言'}
+                </button>}
                 {isLoading && (
                     <div className="space-y-3">
                         {Array.from({ length: 3 }).map((_, i) => (
@@ -744,7 +734,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         ))}
                     </div>
                 )}
-                {pinnedList.length + normalList.length === 0 ? (
+                {!isLoading && !isError && pinnedList.length + normalList.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                         <MessageSquare className="w-12 h-12 mb-3 opacity-50" />
                         <p className="text-sm">
@@ -755,7 +745,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         {/* 快捷建議 chips */}
                         <div className="mt-4 flex flex-wrap gap-2">
                             {QUICK_REPLIES.slice(0,4).map((r,idx) => (
-                                <button key={idx} aria-label={`插入 ${r.text}`} onClick={() => useQuickReply(r)} className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg text-xs text-gray-700 transition-all hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-apple-blue/50">
+                                <button key={idx} aria-label={`插入 ${r.text}`} onClick={() => applyQuickReply(r)} className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg text-xs text-gray-700 transition-all hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-apple-blue/50">
                                     {r.text}
                                 </button>
                             ))}
@@ -775,7 +765,8 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         {normalList.length > 0 && (
                             <List
                                 ref={listRef}
-                                height={420}
+                                height={Math.min(420, Math.max(180, window.innerHeight * 0.45))}
+                                onItemsRendered={({ visibleStartIndex }) => { visibleStartRef.current = visibleStartIndex; }}
                                 itemCount={normalList.length}
                                 itemSize={getSize}
                                 width={'100%'}
@@ -794,13 +785,6 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                         )}
                     </>
                 )}
-                {hasNextPage && (
-                    <div className="flex justify-center py-3">
-                        <Button variant="secondary" size="xs" className="rounded-full gap-1.5 px-3 py-1" onClick={() => fetchNextPage()} aria-label="載入更多評論" leadingIcon={ChevronDown}>
-                            載入更多
-                        </Button>
-                    </div>
-                )}
                 <div ref={commentsEndRef} />
             </div>
 
@@ -810,28 +794,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                 {inlineStatus && (
                     <div className={`mb-3 px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${inlineStatus.type==='success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`} role="status" aria-live="polite">
                         <span>{inlineStatus.message}</span>
-                        {inlineStatus.type==='error' && lastPayloadRef.current && (
-                            <button
-                                type="button"
-                                onClick={async ()=>{
-                                    if (loading) return;
-                                    try {
-                                        setLoading(true);
-                                        await apiClient.post(`/api/tasks/${orderId}/comments`, lastPayloadRef.current);
-                                        setInlineStatus({ type: 'success', message: '已發送評論' });
-                                        setTimeout(() => setInlineStatus(null), 1600);
-                                        setNewComment(''); setReplyTo(null); setPriority('normal');
-                                        await invalidate();
-                                    } catch (e) {
-                                        setInlineStatus({ type: 'error', message: e.message || '重試仍失敗' });
-                                    } finally { setLoading(false); }
-                                }}
-                                className="ml-auto px-3 py-1.5 text-xs bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-apple-blue/50"
-                                aria-label="重試發送評論"
-                            >
-                                重試
-                            </button>
-                        )}
+                        {inlineStatus.type === 'error' && <button type="button" onClick={() => refetch()} className="ml-auto shrink-0 rounded-lg bg-white px-3 py-2 text-xs">重新整理留言</button>}
                     </div>
                 )}
                 {/* 回覆提示 */}
@@ -890,7 +853,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
                             {QUICK_REPLIES.map((reply, index) => (
                                 <button
                                     key={index}
-                                    onClick={() => useQuickReply(reply)}
+                                    onClick={() => applyQuickReply(reply)}
                                     className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg text-xs text-gray-700 transition-all hover:shadow-sm"
                                 >
                                     {reply.text}
@@ -963,7 +926,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 }
 
 // 單列組件：避免不相關狀態變動造成整列重渲染
-const Row = React.memo(function Row({ style, index, item, measure, render }) {
+const Row = React.memo(function Row({ style, item, measure, render }) {
     const ref = React.useRef(null);
     React.useEffect(() => {
         if (!ref.current) return;

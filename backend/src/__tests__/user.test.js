@@ -43,7 +43,7 @@ describe('UserService', () => {
         });
 
         it('用戶名已存在時應該拋出錯誤', async () => {
-            pool.query.mockResolvedValueOnce({ 
+            pool.query.mockResolvedValueOnce({
                 rows: [{ id: 1 }] // 用戶已存在
             });
 
@@ -106,8 +106,8 @@ describe('UserService', () => {
 
     describe('deleteUser', () => {
         it('應該成功刪除用戶', async () => {
-            pool.query.mockResolvedValueOnce({ 
-                rows: [{ username: 'deleteduser' }] 
+            pool.query.mockResolvedValueOnce({
+                rows: [{ username: 'deleteduser' }]
             });
 
             const result = await userService.deleteUser(1);

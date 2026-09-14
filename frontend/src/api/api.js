@@ -1,11 +1,12 @@
 // src/api/api.js
 import axios from 'axios';
+import { API_ORIGIN } from './origin';
 import { toast } from 'sonner';
 import * as Sentry from '@sentry/react';
 
 // 1. 建立一個自訂的 axios 實例
 const apiClient = axios.create({
-    baseURL: 'https://moztech-wms-api.onrender.com', // 你的後端基礎 URL
+    baseURL: API_ORIGIN,
     headers: {
         'Content-Type': 'application/json',
     },
@@ -63,7 +64,7 @@ apiClient.interceptors.response.use(
                 tags: { requestId, status, code },
                 extra: { url: response?.config?.url, method: response?.config?.method, data }
             });
-        } catch {}
+        } catch { /* Error reporting must not interrupt the original API error. */ }
 
         // 將標準欄位附加回錯誤物件，給呼叫端使用
         error.requestId = requestId;

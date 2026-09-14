@@ -1,0 +1,416 @@
+[
+  {
+    "file": "backend/src/routes/adminExceptionRoutes.js",
+    "line": 26,
+    "method": "GET",
+    "path": "/exceptions"
+  },
+  {
+    "file": "backend/src/routes/adminRoutes.js",
+    "line": 14,
+    "method": "POST",
+    "path": "/bootstrap/superadmin"
+  },
+  {
+    "file": "backend/src/routes/adminRoutes.js",
+    "line": 70,
+    "method": "POST",
+    "path": "/create-user"
+  },
+  {
+    "file": "backend/src/routes/adminRoutes.js",
+    "line": 101,
+    "method": "POST",
+    "path": "/maintenance/retention/run"
+  },
+  {
+    "file": "backend/src/routes/analyticsRoutes.js",
+    "line": 13,
+    "method": "GET",
+    "path": "/operation-logs"
+  },
+  {
+    "file": "backend/src/routes/analyticsRoutes.js",
+    "line": 100,
+    "method": "GET",
+    "path": "/operation-logs/stats"
+  },
+  {
+    "file": "backend/src/routes/analyticsRoutes.js",
+    "line": 153,
+    "method": "GET",
+    "path": "/reports/export"
+  },
+  {
+    "file": "backend/src/routes/analyticsRoutes.js",
+    "line": 181,
+    "method": "GET",
+    "path": "/analytics"
+  },
+  {
+    "file": "backend/src/routes/analyticsRoutes.js",
+    "line": 268,
+    "method": "GET",
+    "path": "/scan-errors"
+  },
+  {
+    "file": "backend/src/routes/authRoutes.js",
+    "line": 39,
+    "method": "POST",
+    "path": "/login"
+  },
+  {
+    "file": "backend/src/routes/authRoutes.js",
+    "line": 62,
+    "method": "POST",
+    "path": "/refresh"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 25,
+    "method": "GET",
+    "path": "/tasks/:orderId/comments"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 105,
+    "method": "POST",
+    "path": "/tasks/:orderId/comments"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 207,
+    "method": "PATCH",
+    "path": "/tasks/:orderId/comments/:commentId/retract"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 232,
+    "method": "PATCH",
+    "path": "/tasks/:orderId/mentions/:commentId/read"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 250,
+    "method": "POST",
+    "path": "/tasks/:orderId/comments/:commentId/read"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 274,
+    "method": "POST",
+    "path": "/tasks/:orderId/comments/mark-all-read"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 311,
+    "method": "GET",
+    "path": "/comments/unread-summary"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 352,
+    "method": "GET",
+    "path": "/tasks/:orderId/mentions"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 397,
+    "method": "GET",
+    "path": "/tasks/pins"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 412,
+    "method": "PUT",
+    "path": "/tasks/pins/:orderId"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 453,
+    "method": "GET",
+    "path": "/tasks/:orderId/pins"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 474,
+    "method": "PUT",
+    "path": "/tasks/:orderId/pins/:commentId"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 493,
+    "method": "DELETE",
+    "path": "/tasks/:orderId/comments/:commentId"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 518,
+    "method": "POST",
+    "path": "/tasks/:orderId/session"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 557,
+    "method": "GET",
+    "path": "/tasks/:orderId/sessions"
+  },
+  {
+    "file": "backend/src/routes/commentRoutes.js",
+    "line": 582,
+    "method": "POST",
+    "path": "/tasks/:orderId/transfer"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 160,
+    "method": "GET",
+    "path": "/orders/:orderId/exceptions"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 221,
+    "method": "PATCH",
+    "path": "/orders/:orderId/exceptions/:exceptionId/reject"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 293,
+    "method": "POST",
+    "path": "/orders/:orderId/exceptions"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 598,
+    "method": "PATCH",
+    "path": "/orders/:orderId/exceptions/:exceptionId/propose"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 723,
+    "method": "PATCH",
+    "path": "/orders/:orderId/exceptions/:exceptionId/ack"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 886,
+    "method": "PATCH",
+    "path": "/orders/:orderId/exceptions/:exceptionId/resolve"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 952,
+    "method": "GET",
+    "path": "/orders/:orderId/exceptions/:exceptionId/attachments"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 980,
+    "method": "GET",
+    "path": "/orders/:orderId/exceptions/:exceptionId/attachments/:attachmentId/download"
+  },
+  {
+    "file": "backend/src/routes/exceptionRoutes.js",
+    "line": 1022,
+    "method": "POST",
+    "path": "/orders/:orderId/exceptions/:exceptionId/attachments"
+  },
+  {
+    "file": "backend/src/routes/maintenanceRoutes.js",
+    "line": 11,
+    "method": "POST",
+    "path": "/migrate/add-priority-test"
+  },
+  {
+    "file": "backend/src/routes/maintenanceRoutes.js",
+    "line": 90,
+    "method": "POST",
+    "path": "/admin/migrate/add-priority"
+  },
+  {
+    "file": "backend/src/routes/maintenanceRoutes.js",
+    "line": 169,
+    "method": "GET",
+    "path": "/debug/tables"
+  },
+  {
+    "file": "backend/src/routes/maintenanceRoutes.js",
+    "line": 187,
+    "method": "GET",
+    "path": "/debug/check-comment-reads"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 138,
+    "method": "POST",
+    "path": "/orders/batch-claim"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 176,
+    "method": "POST",
+    "path": "/orders/batch/claim"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 256,
+    "method": "POST",
+    "path": "/orders/:orderId/claim"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 319,
+    "method": "GET",
+    "path": "/orders/:orderId"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 420,
+    "method": "PATCH",
+    "path": "/orders/:orderId/void"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 434,
+    "method": "PATCH",
+    "path": "/orders/:orderId/urgent"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 500,
+    "method": "DELETE",
+    "path": "/orders/:orderId"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 524,
+    "method": "POST",
+    "path": "/orders/import"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 728,
+    "method": "POST",
+    "path": "/orders/update_item"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 1119,
+    "method": "POST",
+    "path": "/orders/batch/delete"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 1150,
+    "method": "POST",
+    "path": "/orders/:orderId/defect"
+  },
+  {
+    "file": "backend/src/routes/orderRoutes.js",
+    "line": 1285,
+    "method": "GET",
+    "path": "/admin/defects/stats"
+  },
+  {
+    "file": "backend/src/routes/taskRoutes.js",
+    "line": 11,
+    "method": "GET",
+    "path": "/tasks"
+  },
+  {
+    "file": "backend/src/routes/taskRoutes.js",
+    "line": 93,
+    "method": "GET",
+    "path": "/users/basic"
+  },
+  {
+    "file": "backend/src/routes/taskRoutes.js",
+    "line": 105,
+    "method": "GET",
+    "path": "/tasks/completed"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 95,
+    "method": "GET",
+    "path": "/team/channels"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 106,
+    "method": "GET",
+    "path": "/team/posts"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 180,
+    "method": "POST",
+    "path": "/team/posts"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 240,
+    "method": "GET",
+    "path": "/team/posts/:postId"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 312,
+    "method": "PATCH",
+    "path": "/team/posts/:postId/status"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 345,
+    "method": "POST",
+    "path": "/team/posts/:postId/comments"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 376,
+    "method": "GET",
+    "path": "/team/posts/:postId/attachments"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 397,
+    "method": "GET",
+    "path": "/team/posts/:postId/attachments/:attachmentId/download"
+  },
+  {
+    "file": "backend/src/routes/teamBoardRoutes.js",
+    "line": 438,
+    "method": "POST",
+    "path": "/team/posts/:postId/attachments"
+  },
+  {
+    "file": "backend/src/routes/userRoutes.js",
+    "line": 17,
+    "method": "POST",
+    "path": "/"
+  },
+  {
+    "file": "backend/src/routes/userRoutes.js",
+    "line": 51,
+    "method": "GET",
+    "path": "/"
+  },
+  {
+    "file": "backend/src/routes/userRoutes.js",
+    "line": 64,
+    "method": "GET",
+    "path": "/:userId"
+  },
+  {
+    "file": "backend/src/routes/userRoutes.js",
+    "line": 80,
+    "method": "PUT",
+    "path": "/:userId"
+  },
+  {
+    "file": "backend/src/routes/userRoutes.js",
+    "line": 124,
+    "method": "DELETE",
+    "path": "/:userId"
+  }
+]

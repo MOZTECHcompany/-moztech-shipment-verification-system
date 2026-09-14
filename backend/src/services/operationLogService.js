@@ -20,6 +20,7 @@ async function logOperation({
     details,
     io,
     db,
+    strict = Boolean(db),
     userName,
     userRole,
     voucherNumber,
@@ -77,6 +78,9 @@ async function logOperation({
         logger.debug(`[logOperation] 記錄操作: ${operationType} - 訂單 ${orderId}, 使用者 ${userId}`);
     } catch (error) {
         logger.error('記錄操作日誌失敗:', error);
+        // Transaction owners must roll back when their audit INSERT fails. Swallowing
+        // the error can make PostgreSQL COMMIT resolve as ROLLBACK and look successful.
+        if (strict) throw error;
     }
 }
 

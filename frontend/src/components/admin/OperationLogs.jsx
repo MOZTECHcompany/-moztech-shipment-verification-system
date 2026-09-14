@@ -187,9 +187,9 @@ export function OperationLogs() {
                     description="追蹤系統中所有操作記錄"
                     actions={
                         <div className="flex gap-3">
-                            <Link to="/admin">
+                            <Link to="/settings">
                                 <Button variant="secondary" size="sm" className="gap-1">
-                                    <ArrowLeft className="h-4 w-4" /> 返回
+                                    <ArrowLeft className="h-4 w-4" /> 返回設定
                                 </Button>
                             </Link>
                             <Button onClick={fetchLogs} disabled={loading} variant="primary" size="sm" className="gap-1">

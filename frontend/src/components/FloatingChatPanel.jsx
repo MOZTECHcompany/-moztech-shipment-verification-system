@@ -2,9 +2,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
-import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
+import { socket } from '@/api/socket';
 import { useComments } from '@/api/useComments.js';
+import { useVisibleCommentReads } from '@/api/useVisibleCommentReads';
+import { useCommentScroll } from '@/api/useCommentScroll';
+import { CommentsLoadState } from './CommentsLoadState';
 import { Button, Badge, EmptyState, Skeleton } from '../ui';
 
 const PANEL_WIDTH = 380;
@@ -88,6 +91,9 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
     const [showUserMention, setShowUserMention] = useState(false);
     const [mentionSearch, setMentionSearch] = useState('');
     const [isSending, setIsSending] = useState(false);
+    const [sendError, setSendError] = useState(null);
+    const sendingRef = useRef(false);
+    const scrollContainerRef = useRef(null);
     
     const panelRef = useRef(null);
     const dragStartPos = useRef({ x: 0, y: 0 });
@@ -95,9 +101,13 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
     const textareaRef = useRef(null);
     
     // 使用 useComments hook 獲取評論數據
-    const { data, isLoading, invalidate, addOptimistic } = useComments(orderId);
-    const comments = (data?.pages || []).flatMap(p => p.items ?? []);
+    const { comments, isLoading, isError, error, refetch, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage, hasNextPage, invalidate, markVisibleRead, currentUserId } = useComments(orderId);
     const loading = isLoading;
+    const { onScroll, loadOlder, jumpToLatest, hasNewMessages } = useCommentScroll({
+        rootRef: scrollContainerRef, comments, orderId, fetchNextPage, enabled: !isMinimized
+    });
+    useVisibleCommentReads({ orderId, rootRef: scrollContainerRef, comments, markVisibleRead, enabled: !isMinimized });
+
 
     const recomputePosition = useCallback(() => {
         const next = getDefaultPosition(position, alignToContent);
@@ -119,6 +129,14 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
         return () => window.removeEventListener('resize', handleResize);
     }, [recomputePosition, isMaximized, isDragging]);
 
+    useEffect(() => {
+        const onChange = event => { if (String(event.orderId) === String(orderId)) invalidate(); };
+        const events = ['new_comment', 'comment_deleted', 'comment_retracted'];
+        events.forEach(name => socket.on(name, onChange));
+        const timer = setInterval(invalidate, 60000);
+        return () => { clearInterval(timer); events.forEach(name => socket.off(name, onChange)); };
+    }, [orderId, invalidate]);
+
     // 獲取用戶列表
     useEffect(() => {
         const fetchUsers = async () => {
@@ -132,36 +150,9 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
         fetchUsers();
     }, []);
 
-    // 自動滾動
-    useEffect(() => {
-        if (messagesEndRef.current) {
-            const container = messagesEndRef.current.parentElement;
-            if (container) {
-                requestAnimationFrame(() => {
-                    container.scrollTop = container.scrollHeight;
-                });
-            }
-        }
-    }, [comments, isMaximized]);
-
-    // 標記所有評論為已讀
-    useEffect(() => {
-        if (!isMinimized && comments && comments.length > 0) {
-            markAllAsRead();
-        }
-    }, [comments, isMinimized]);
-
-    const markAllAsRead = async () => {
-        try {
-            await apiClient.post(`/api/tasks/${orderId}/comments/mark-all-read`);
-        } catch (error) {
-            console.error('標記已讀失敗:', error);
-        }
-    };
-
     // 拖曳功能
     const handleMouseDown = (e) => {
-        if (e.target.closest('.drag-handle')) {
+        if (window.innerWidth >= 640 && e.target.closest('.drag-handle') && !e.target.closest('button')) {
             setIsDragging(true);
             dragStartPos.current = {
                 x: e.clientX - panelPosition.x,
@@ -170,7 +161,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
         }
     };
 
-    const handleMouseMove = (e) => {
+    const handleMouseMove = useCallback((e) => {
         if (isDragging) {
             const xBounds = getXBounds();
             const yBounds = getYBounds();
@@ -181,11 +172,11 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                 y: clampToBounds(rawY, yBounds)
             });
         }
-    };
+    }, [isDragging]);
 
-    const handleMouseUp = () => {
+    const handleMouseUp = useCallback(() => {
         setIsDragging(false);
-    };
+    }, []);
 
     useEffect(() => {
         if (isDragging) {
@@ -196,7 +187,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                 document.removeEventListener('mouseup', handleMouseUp);
             };
         }
-    }, [isDragging]);
+    }, [isDragging, handleMouseMove, handleMouseUp]);
 
     // 處理 @ 提及
     const handleTextChange = (e) => {
@@ -236,53 +227,19 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
 
     // 發送消息
     const handleSend = async () => {
-        if (!message.trim() || isSending) return;
-        
-        setIsSending(true);
-        const currentMessage = message;
-        const currentPriority = priority;
-
+        if (!message.trim() || sendingRef.current) return;
+        sendingRef.current = true;
+        setIsSending(true); setSendError(null);
+        const submitted = message;
         try {
-            // 樂觀更新：立即顯示訊息
-            const draft = {
-                id: `temp_${Date.now()}`,
-                content: currentMessage,
-                priority: currentPriority,
-                parent_id: null,
-                created_at: new Date().toISOString(),
-                user_id: 99999, // 暫時 ID，會被後端覆蓋但這裡用於判斷 is_mine
-                is_mine: true,
-                user_name: '我', // 暫時名稱
-                __optimistic: true,
-            };
-            addOptimistic(draft);
-
-            setMessage('');
+            await apiClient.post(`/api/tasks/${orderId}/comments`, { content: submitted, priority, parent_id: null });
+            setMessage(value => value === submitted ? '' : value);
             setPriority('normal');
-
-            // 直接使用 apiClient 發送評論
-            await apiClient.post(`/api/tasks/${orderId}/comments`, {
-                content: currentMessage,
-                priority: currentPriority,
-                parent_id: null
-            });
-            
-            // 重新獲取評論列表
+            jumpToLatest();
             await invalidate();
-            
-            // 音效回饋
-            const audio = new Audio('/sounds/sent.mp3'); // 假設有這個音效，若無則忽略
-            audio.play().catch(() => {});
-            
         } catch (error) {
-            toast.error('發送失敗', {
-                description: error.response?.data?.message || error.message
-            });
-            // 失敗時恢復訊息（可選）
-            setMessage(currentMessage);
-        } finally {
-            setIsSending(false);
-        }
+            setSendError(error.response?.data?.message || error.message || '留言未送出，內容已保留');
+        } finally { sendingRef.current = false; setIsSending(false); }
     };
 
     // Emoji 選擇器（簡化版）
@@ -331,10 +288,10 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
             ref={panelRef}
             style={{
                 position: 'fixed',
-                left: isMaximized ? 0 : panelPosition.x,
-                top: isMaximized ? 0 : panelPosition.y,
-                width: isMaximized ? '100vw' : PANEL_WIDTH,
-                height: isMaximized ? '100vh' : PANEL_HEIGHT,
+                left: isMaximized || window.innerWidth < 640 ? 0 : panelPosition.x,
+                top: isMaximized || window.innerWidth < 640 ? 0 : panelPosition.y,
+                width: isMaximized || window.innerWidth < 640 ? '100%' : PANEL_WIDTH,
+                height: isMaximized || window.innerWidth < 640 ? '100dvh' : 'min(600px, calc(100dvh - 24px))',
                 zIndex: 50,
                 transition: isDragging ? 'none' : 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
@@ -383,8 +340,14 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                 </div>
             </div>
 
+            <CommentsLoadState isError={isError} error={error} isFetching={isFetching}
+                retry={isFetchNextPageError ? loadOlder : refetch} hasNewMessages={hasNewMessages} jumpToLatest={jumpToLatest} />
             {/* 消息列表 - iMessage 風格 */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50 dark:bg-gray-900/50">
+            <div ref={scrollContainerRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 bg-gray-50/50 dark:bg-gray-900/50">
+                {hasNextPage && <button type="button" disabled={isFetching} onClick={loadOlder}
+                    className="mx-auto block rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-blue-700 disabled:opacity-50">
+                    {isFetchingNextPage ? '載入中…' : '載入更早留言'}
+                </button>}
                 {loading ? (
                     <div className="space-y-6">
                         {Array.from({ length: 4 }).map((_, i) => (
@@ -396,7 +359,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                             </div>
                         ))}
                     </div>
-                ) : !comments || comments.length === 0 ? (
+                ) : comments.length === 0 && !isError ? (
                     <div className="h-full flex flex-col items-center justify-center text-center opacity-60">
                         <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
                             <MessageSquare size={32} className="text-gray-300" />
@@ -406,7 +369,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                     </div>
                 ) : (
                     comments.map((comment, index) => {
-                        const isMine = comment.is_mine;
+                        const isMine = String(comment.user_id) === String(currentUserId);
                         const isUrgent = comment.priority === 'urgent';
                         const showAvatar = index === 0 || comments[index - 1].user_id !== comment.user_id;
 
@@ -455,7 +418,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                                                 <AlertTriangle size={10} /> Urgent
                                             </div>
                                         )}
-                                        <p className="whitespace-pre-wrap break-words">{comment.content}</p>
+                                        <p data-comment-id={comment.id} className="whitespace-pre-wrap break-words">{comment.content}</p>
                                     </div>
                                 </div>
                             </div>
@@ -486,19 +449,20 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                 </div>
             )}
 
+            {sendError && <div role="alert" className="mx-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sendError}。內容已保留，請先重新整理確認是否送達。</div>}
             {/* 輸入區域 - 現代化工具列 */}
-            <div className="p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-t border-gray-200/50 dark:border-gray-700/50">
+            <div className="p-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-t border-gray-200/50 dark:border-gray-700/50">
                 <div className="flex items-end gap-2">
                     <div className="flex gap-1 pb-1">
                         <button 
                             className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"
-                            title="上傳圖片 (模擬)"
+                            disabled title="圖片附件尚未開放" aria-label="圖片附件尚未開放"
                         >
                             <ImageIcon size={20} />
                         </button>
                         <button 
                             className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-all"
-                            title="附件 (模擬)"
+                            disabled title="附件尚未開放" aria-label="附件尚未開放"
                         >
                             <Paperclip size={20} />
                         </button>
@@ -510,7 +474,7 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
                             value={message}
                             onChange={handleTextChange}
                             onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
+                                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                                     e.preventDefault();
                                     handleSend();
                                 }

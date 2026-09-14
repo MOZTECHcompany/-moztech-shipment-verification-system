@@ -204,13 +204,13 @@ export function UserManagement({ currentUser }) {
         return (
             <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
                 <PageHeader
-                    title="使用者管理"
+                    title="成員與角色"
                     description="新增、檢視、編輯或刪除系統操作員"
                     actions={
                         <div className="flex gap-3">
-                            <Link to="/admin">
+                            <Link to="/settings">
                                 <Button variant="secondary" size="sm" className="gap-1">
-                                    <ArrowLeft className="h-4 w-4" /> 返回
+                                    <ArrowLeft className="h-4 w-4" /> 返回設定
                                 </Button>
                             </Link>
                             <Button variant="primary" size="sm" className="gap-1" onClick={() => handleOpenModal()}>

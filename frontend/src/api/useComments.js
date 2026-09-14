@@ -1,63 +1,45 @@
-import { useQueryClient, useInfiniteQuery } from '@tanstack/react-query'
-import apiClient from '@/api/api'
-
-// 簡易 ETag 管理：每個 orderId 存最近一次 ETag
-const etagStore = {
-  get(orderId) {
-    try { return sessionStorage.getItem(`etag_comments_${orderId}`) || null } catch { return null }
-  },
-  set(orderId, etag) {
-    try { sessionStorage.setItem(`etag_comments_${orderId}`, etag) } catch {}
-  }
-}
+import { useCallback, useMemo } from 'react';
+import { useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
+import apiClient from '@/api/api';
+import { commentQueryKey, fetchCommentPage, flattenCommentPages } from './commentPages';
 
 export function useComments(orderId, pageSize = 50) {
-  const queryClient = useQueryClient()
-
-  const query = useInfiniteQuery({
-    queryKey: ['comments', orderId],
-    initialPageParam: null,
-    getNextPageParam: (lastPage) => lastPage?.nextCursor ?? undefined,
-    queryFn: async ({ pageParam }) => {
-      const params = new URLSearchParams()
-      params.set('limit', pageSize)
-      if (pageParam) params.set('after', pageParam)
-
-      const headers = {}
-      const prevTag = etagStore.get(orderId)
-      if (prevTag && !pageParam) headers['If-None-Match'] = prevTag
-
-      const res = await apiClient.get(`/api/tasks/${orderId}/comments?${params.toString()}`, {
-        headers,
-        validateStatus: (s) => (s >= 200 && s < 300) || s === 304,
-      })
-
-      const etag = res.headers?.etag
-      if (etag && !pageParam) etagStore.set(orderId, etag)
-
-      if (res.status === 304) {
-        // 沒變動，回傳快取內容
-        const cached = queryClient.getQueryData(['comments', orderId])
-        return cached?.pages?.[0] ?? { items: [], nextCursor: null, total: 0 }
-      }
-
-      return res.data
-    },
-  })
-
-  // 樂觀更新：新增評論時立即插入頁面快取
-  const addOptimistic = (draftComment) => {
-    queryClient.setQueryData(['comments', orderId], (old) => {
-      const base = old ?? { pages: [], pageParams: [null] }
-      const first = base.pages[0] ?? { items: [], nextCursor: null, total: 0 }
-      return {
-        ...base,
-        pages: [{ ...first, items: [...first.items, draftComment] }, ...base.pages.slice(1)],
-      }
-    })
-  }
-
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['comments', orderId] })
-
-  return { ...query, addOptimistic, invalidate }
+    const queryClient = useQueryClient();
+    let user;
+    try { user = JSON.parse(localStorage.getItem('wms_user') || 'null'); } catch { user = null; }
+    const userId = user?.id, userRole = user?.role;
+    const queryKey = useMemo(() => commentQueryKey(orderId, pageSize, { id: userId, role: userRole }), [orderId, pageSize, userId, userRole]);
+    const query = useInfiniteQuery({
+        queryKey,
+        enabled: !!orderId,
+        initialPageParam: null,
+        getNextPageParam: lastPage => lastPage?.previousCursor ?? undefined,
+        queryFn: ({ pageParam, signal }) => {
+            const stored = queryClient.getQueryData(queryKey);
+            const index = stored?.pageParams?.findIndex(value => value === pageParam) ?? -1;
+            return fetchCommentPage({ client: apiClient, orderId, pageSize, pageParam, signal, cached: stored?.pages?.[index] });
+        }
+    });
+    const comments = useMemo(() => flattenCommentPages(query.data), [query.data]);
+    const invalidate = useCallback(() => queryClient.invalidateQueries({ queryKey }), [queryClient, queryKey]);
+    const markVisibleRead = useCallback(async ids => {
+        const response = await apiClient.post(`/api/tasks/${orderId}/comments/mark-read`, { commentIds: ids });
+        const confirmed = new Set((response.data.commentIds || []).map(String));
+        queryClient.setQueryData(queryKey, old => old && ({
+            ...old,
+            pages: old.pages.map(page => ({
+                ...page, __etag: undefined,
+                items: page.items.map(item => confirmed.has(String(item.id)) ? { ...item, is_read: true, mention_is_read: true } : item)
+            }))
+        }));
+        return [...confirmed];
+    }, [orderId, queryClient, queryKey]);
+    // Kept for existing callers; synthetic cards must never reuse the server page validator.
+    const addOptimistic = useCallback(draft => {
+        queryClient.setQueryData(queryKey, old => {
+            const base = old ?? { pages: [{ items: [] }], pageParams: [null] };
+            return { ...base, pages: [{ ...base.pages[0], __etag: undefined, items: [...base.pages[0].items, draft] }, ...base.pages.slice(1)] };
+        });
+    }, [queryClient, queryKey]);
+    return { ...query, comments, invalidate, addOptimistic, markVisibleRead, currentUserId: userId };
 }

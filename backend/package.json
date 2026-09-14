@@ -4,26 +4,24 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "start:legacy": "node index.js",
     "dev": "nodemon src/server.js",
-    "dev:legacy": "nodemon index.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "migrate": "node migrations/run.js",
-    "migrate:single": "node migrations/run-single.js",
     "retention": "node src/maintenance/retention.js",
-    "retention:prod": "NODE_ENV=production node src/maintenance/retention.js",
-    "maintenance:fix-miscompleted-orders": "node maintenance/fix-miscompleted-orders.js"
+    "test:unit": "jest --runInBand --coverage=false",
+    "test:workflow": "node --test tests/warehouse-parity.pg.test.cjs"
   },
   "keywords": [
     "wms",
     "warehouse",
     "inventory"
   ],
-  "author": "MOZTECH",
+  "author": "Corely AI",
   "license": "ISC",
-  "description": "MOZTECH 倉儲管理系統後端 API",
+  "description": "Corely AI 儲運管理系統後端 API",
   "dependencies": {
+    "@google-cloud/storage": "8.1.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
@@ -40,6 +38,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "jest": "^29.7.0",
     "nodemon": "^3.1.11",
     "supertest": "^6.3.4"

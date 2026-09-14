@@ -7,9 +7,7 @@ const logger = require('../utils/logger');
 const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const { getAttachmentStorage, createAttachmentKey, cleanOriginalName, cleanupAttachments, sendAttachment, isMissing } = require('../services/attachmentStorage');
 const { validateOrderChangeProposal, applyOrderChangeProposal, hasAnyOpenOrderChange } = require('../services/orderChangeService');
 
 const router = express.Router();
@@ -131,19 +129,6 @@ const attachmentUpload = multer({
     }
 });
 
-function ensureAttachmentDir() {
-    const dir = path.join(__dirname, '..', '..', 'uploads', 'exception_attachments');
-    fs.mkdirSync(dir, { recursive: true });
-    return dir;
-}
-
-function safeFilename(originalName, fallbackExt = '') {
-    const name = String(originalName || '').trim();
-    const ext = name.includes('.') ? ('.' + name.split('.').pop()).toLowerCase() : fallbackExt;
-    const normalizedExt = ext && ext.length <= 10 ? ext : fallbackExt;
-    return normalizedExt;
-}
-
 function normalizeReasonCode(value) {
     if (!value) return null;
     const v = String(value).trim();
@@ -263,6 +248,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/reject', authorizeAdmin, 
             userId,
             orderId,
             operationType: String(row.type) === 'order_change' ? 'order_change_reject' : 'exception_reject',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 status: 'rejected',
@@ -456,6 +443,8 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             userId,
             orderId,
             operationType: 'exception_create',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId,
                 type: String(type),
@@ -501,7 +490,9 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
                     : await fetchAdminUserIds(client, 10));
 
             if (mentionIds.length > 0) {
-                const notifyClient = await pool.connect();
+                const notifyClient = client;
+                const notificationEvents = [];
+                const pendingIo = { emit: (event, body) => notificationEvents.push([event, body]) };
                 try {
                     await notifyClient.query('BEGIN');
                     await createTaskCommentAndMentions({
@@ -511,14 +502,13 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
                         content,
                         priority: 'urgent',
                         mentionUserIds: mentionIds,
-                        io
+                        io: pendingIo
                     });
                     await notifyClient.query('COMMIT');
+                    for (const [event, body] of notificationEvents) io?.emit(event, body);
                 } catch (e) {
                     await notifyClient.query('ROLLBACK');
                     logger.warn('exception_create: 建立通知 comment/mention 失敗（可忽略）:', e.message);
-                } finally {
-                    notifyClient.release();
                 }
             }
         } catch (e) {
@@ -694,6 +684,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
             userId,
             orderId,
             operationType: 'exception_propose',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 proposal: { resolutionAction: action, note: proposalNote, newSn: proposedNewSn, correctBarcode: proposedBarcode },
@@ -789,6 +781,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
             userId,
             orderId,
             operationType: String(row.type) === 'order_change' ? 'order_change_ack' : 'exception_ack',
+            db: client,
+            strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 status: 'ack',
@@ -992,27 +986,13 @@ router.get('/orders/:orderId/exceptions/:exceptionId/attachments/:attachmentId/d
             return res.status(404).json({ message: '找不到附件', requestId: req.requestId });
         }
 
-        const row = result.rows[0];
-        const filePath = path.join(__dirname, '..', '..', row.storage_key);
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ message: '附件檔案不存在', requestId: req.requestId });
-        }
-
-        res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
-        const filename = row.original_name ? String(row.original_name).replace(/\r|\n/g, '') : `attachment-${attachmentId}`;
-        const inline = String(req.query.inline || '').trim() === '1' || String(req.query.inline || '').toLowerCase() === 'true';
-        res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(filename)}"`);
-
-        const stream = fs.createReadStream(filePath);
-        stream.on('error', (e) => {
-            logger.error('attachment stream error:', e);
-            if (!res.headersSent) {
-                res.status(500).json({ message: '讀取附件失敗', requestId: req.requestId });
-            }
+        return await sendAttachment({
+            storage: getAttachmentStorage(), row: result.rows[0], res, attachmentId: attachmentId, requestId: req.requestId,
+            inline: ['1', 'true'].includes(String(req.query.inline || '').trim().toLowerCase()), logger
         });
-        return stream.pipe(res);
     } catch (error) {
         logger.error('[/api/orders/:orderId/exceptions/:exceptionId/attachments/:attachmentId/download] failed:', error);
+        if (isMissing(error) || error.code === 'INVALID_STORAGE_KEY') return res.status(404).json({ message: '附件檔案不存在', requestId: req.requestId });
         return res.status(500).json({ message: '下載附件失敗', requestId: req.requestId });
     }
 });
@@ -1028,9 +1008,13 @@ router.post('/orders/:orderId/exceptions/:exceptionId/attachments', attachmentUp
         return res.status(400).json({ message: '請上傳附件檔案（files）', requestId: req.requestId });
     }
 
-    const client = await pool.connect();
+    let client, storage, releaseError;
+    let transactionOpen = false, commitAttempted = false;
+    const receipts = [];
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
+        transactionOpen = true;
 
         const exists = await client.query(
             'SELECT 1 FROM order_exceptions WHERE id = $1 AND order_id = $2',
@@ -1038,28 +1022,18 @@ router.post('/orders/:orderId/exceptions/:exceptionId/attachments', attachmentUp
         );
         if (exists.rowCount === 0) {
             await client.query('ROLLBACK');
+            transactionOpen = false;
             return res.status(404).json({ message: '找不到例外事件', requestId: req.requestId });
         }
 
-        const baseDir = ensureAttachmentDir();
+        storage = getAttachmentStorage();
         const saved = [];
 
         for (const f of files) {
             const mimetype = String(f.mimetype || '').toLowerCase();
-            const fallbackExt = mimetype === 'image/jpeg' ? '.jpg'
-                : mimetype === 'image/png' ? '.png'
-                : mimetype === 'image/webp' ? '.webp'
-                : mimetype === 'application/pdf' ? '.pdf'
-                : '';
-
-            const ext = safeFilename(f.originalname, fallbackExt);
-            const key = `${exceptionId}-${Date.now()}-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}${ext}`;
-            const abs = path.join(baseDir, key);
-
-            fs.writeFileSync(abs, f.buffer);
-
-            // storage_key 存相對 backend/ 路徑，避免環境差異
-            const storageKey = path.join('uploads', 'exception_attachments', key);
+            // Keep the legacy relative key as the private GCS object name; no public URL in metadata.
+            const storageKey = createAttachmentKey('exception_attachments', exceptionId, mimetype);
+            receipts.push(await storage.put(storageKey, f.buffer, mimetype));
 
             const inserted = await client.query(
                 `INSERT INTO order_exception_attachments (
@@ -1070,9 +1044,9 @@ router.post('/orders/:orderId/exceptions/:exceptionId/attachments', attachmentUp
                     exceptionId,
                     orderId,
                     storageKey,
-                    f.originalname ? String(f.originalname).slice(0, 255) : null,
+                    cleanOriginalName(f.originalname),
                     mimetype || null,
-                    Number.isFinite(f.size) ? f.size : null,
+                    f.buffer.length,
                     userId || null
                 ]
             );
@@ -1080,15 +1054,30 @@ router.post('/orders/:orderId/exceptions/:exceptionId/attachments', attachmentUp
             saved.push(inserted.rows[0]);
         }
 
+        commitAttempted = true;
         await client.query('COMMIT');
+        transactionOpen = false;
 
         return res.status(201).json({ message: '附件已上傳', items: saved });
     } catch (error) {
-        await client.query('ROLLBACK');
-        logger.error('[/api/orders/:orderId/exceptions/:exceptionId/attachments] failed:', error);
+        if (error.attachmentReceipt) receipts.push(error.attachmentReceipt);
+        let rolledBack = !transactionOpen;
+        if (transactionOpen) {
+            try { await client.query('ROLLBACK'); rolledBack = true; }
+            catch (rollbackError) { releaseError = rollbackError; }
+        }
+        if (!commitAttempted && rolledBack) {
+            if (storage && receipts.length) await cleanupAttachments(storage, receipts, logger);
+        } else {
+            // Never remove objects whose metadata might already have committed.
+            releaseError ||= error;
+            logger.warn('附件交易結果待對帳，保留上傳物件', { requestId: req.requestId, keys: receipts.map(item => item.key) });
+            return res.status(503).json({ code: 'ATTACHMENT_RESULT_UNKNOWN', message: '附件上傳結果尚未確認，請重新整理附件清單核對，請勿立即重複上傳。', requestId: req.requestId });
+        }
+        logger.error('附件上傳失敗', { code: error.code, requestId: req.requestId });
         return res.status(500).json({ message: '上傳附件失敗', requestId: req.requestId });
     } finally {
-        client.release();
+        client?.release(releaseError);
     }
 });
 

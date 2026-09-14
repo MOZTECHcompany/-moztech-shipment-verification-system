@@ -1,9 +1,13 @@
-# .gitignore
-node_modules/
-dist/
+**/node_modules
+**/dist/
+**/coverage/
 .env
-backend/.env
-frontend/.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.log
+.DS_Store
 
-# Jest coverage output
-backend/coverage/
+**/uploads/

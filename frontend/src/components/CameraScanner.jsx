@@ -5,14 +5,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import { Camera, X, Zap, AlertCircle, CheckCircle, Scan, RefreshCw, Settings } from 'lucide-react';
 import { toast } from 'sonner';
-import { soundNotification } from '@/utils/soundNotification';
 import { Button, Card } from '@/ui';
 
 export function CameraScanner({ onScan, onClose, mode = 'single' }) {
-    const [isScanning, setIsScanning] = useState(false);
+    const [, setIsScanning] = useState(false);
     const [error, setError] = useState(null);
     const [lastScanned, setLastScanned] = useState(null);
-    const [scannedCodes, setScannedCodes] = useState([]);
     const [cameraDevices, setCameraDevices] = useState([]);
     const [selectedDevice, setSelectedDevice] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
@@ -20,6 +18,12 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
     const videoRef = useRef(null);
     const codeReaderRef = useRef(null);
     const scanTimeoutRef = useRef(null);
+    const lastScannedRef = useRef(null);
+    const scannedCodesRef = useRef([]);
+    const onScanRef = useRef(onScan);
+    const modeRef = useRef(mode);
+    onScanRef.current = onScan;
+    modeRef.current = mode;
 
     useEffect(() => {
         initializeScanner();
@@ -87,18 +91,17 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
 
     const handleScanResult = (code) => {
         // 防止重複掃描（1秒內的重複條碼會被忽略）
-        if (lastScanned === code && scanTimeoutRef.current) {
+        if (lastScannedRef.current === code && scanTimeoutRef.current) {
             return;
         }
 
         // 批次掃描模式：檢查是否已掃描過
-        if (mode === 'batch' && scannedCodes.includes(code)) {
-            // 重複條碼音效
-            soundNotification.play('warning');
+        if (modeRef.current === 'batch' && scannedCodesRef.current.includes(code)) {
             toast.warning('重複掃描', { description: `條碼 ${code} 已掃描過` });
             return;
         }
 
+        lastScannedRef.current = code;
         setLastScanned(code);
         
         // 清除舊的超時
@@ -108,33 +111,23 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
         
         // 設定新的超時，1秒後清除 lastScanned
         scanTimeoutRef.current = setTimeout(() => {
+            lastScannedRef.current = null;
             setLastScanned(null);
             scanTimeoutRef.current = null;
         }, 1000);
 
-        // 播放成功音效
-        soundNotification.play('success');
-        
-        // 視覺反饋
-        const overlay = document.getElementById('scan-overlay');
-        if (overlay) {
-            overlay.classList.add('border-green-500', 'bg-green-500/20');
-            setTimeout(() => {
-                overlay.classList.remove('border-green-500', 'bg-green-500/20');
-            }, 300);
-        }
-
-        if (mode === 'batch') {
-            setScannedCodes(prev => [...prev, code]);
-            onScan(code);
-        } else {
-            onScan(code);
-            // 單次模式掃描後不自動關閉，讓用戶決定何時關閉
-            // onClose(); 
+        // Decoding is not server acceptance. The order view owns success/error feedback.
+        const accepted = onScanRef.current(code);
+        if (accepted === false) return;
+        if (modeRef.current === 'batch') {
+            scannedCodesRef.current = [...scannedCodesRef.current, code];
         }
     };
 
     const stopScanning = () => {
+        if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+        scanTimeoutRef.current = null;
+        lastScannedRef.current = null;
         if (codeReaderRef.current) {
             codeReaderRef.current.reset();
         }
@@ -229,9 +222,9 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
 
                     <div className="flex flex-col items-center gap-2">
                         {lastScanned ? (
-                            <div className="px-4 py-2 bg-green-500/20 border border-green-500/50 rounded-full flex items-center gap-2 animate-scale-in">
-                                <CheckCircle size={16} className="text-green-400" />
-                                <span className="text-green-400 font-mono font-bold">{lastScanned}</span>
+                            <div className="px-4 py-2 bg-blue-500/20 border border-blue-500/50 rounded-full flex items-center gap-2 animate-scale-in">
+                                <Scan size={16} className="text-blue-400" />
+                                <span className="text-blue-400 font-mono font-bold">已讀取：{lastScanned}</span>
                             </div>
                         ) : (
                             <div className="h-10 flex items-center text-white/40 text-sm">
@@ -241,7 +234,13 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
                     </div>
 
                     <button 
-                        onClick={() => setScannedCodes([])}
+                        onClick={() => {
+                            scannedCodesRef.current = [];
+                            lastScannedRef.current = null;
+                            if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+                            scanTimeoutRef.current = null;
+                            setLastScanned(null);
+                        }}
                         className="flex flex-col items-center gap-1 text-white/60 hover:text-white transition-colors"
                     >
                         <div className="p-3 rounded-full bg-white/5 border border-white/10">

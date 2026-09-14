@@ -4,7 +4,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
 import { 
     Loader2, ArrowLeft, Check, ScanLine, Package, 
     Plus, Minus, FileDown, XCircle, User, AlertTriangle, ChevronDown,
@@ -17,12 +16,18 @@ import withReactContent from 'sweetalert2-react-content';
 import apiClient from '@/api/api';
 import { socket } from '@/api/socket';
 import soundNotification from '@/utils/soundNotification';
+import { createScanSubmission } from '@/utils/scanSubmission';
+import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
+import SerialList from './SerialList';
+import { buildWorkItems, filterWorkItems, workStage } from '@/utils/orderWorkProgress';
 import voiceNotification from '@/utils/voiceNotification';
 import desktopNotification from '@/utils/desktopNotification';
 import { CameraScanner } from './CameraScanner';
 import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
-import { ShippingLabel, PickingList } from './LabelPrinter';
+import { WarehouseOrderHeader } from './WarehouseOrderHeader';
+import { WorkstationBar } from './WorkstationBar';
+import { PersonalSoundControls } from './PersonalSoundControls';
 import ErrorBoundary from './ErrorBoundary';
 import DefectReportModal from './DefectReportModal';
 
@@ -41,8 +46,8 @@ const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" 
     );
 };
 
-const QuantityButton = ({ icon: Icon, onClick, disabled, isUpdating }) => (
-    <button onClick={onClick} disabled={disabled || isUpdating} 
+const QuantityButton = ({ icon: Icon, label, onClick, disabled, isUpdating }) => (
+    <button aria-label={label} onClick={onClick} disabled={disabled || isUpdating}
         className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-gray-200 hover:bg-gray-50 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-sm active:scale-95 active:bg-gray-100">
         <Icon size={14} className="text-gray-700" />
     </button>
@@ -54,8 +59,8 @@ const StatusBadge = ({ status }) => {
         picking: { color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200', label: '揀貨中', icon: ShoppingCart },
         picked: { color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200', label: '已揀貨', icon: CheckCircle2 },
         packing: { color: 'text-green-600', bg: 'bg-green-50 border-green-200', label: '裝箱中', icon: Box },
-        completed: { color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', label: '已完成', icon: Check },
-        void: { color: 'text-red-600', bg: 'bg-red-50 border-red-200', label: '已作廢', icon: XCircle }
+        completed: { color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', label: '核對完成', icon: Check },
+        voided: { color: 'text-red-600', bg: 'bg-red-50 border-red-200', label: '已作廢', icon: XCircle }
     };
     const style = statusStyles[status] || statusStyles.pending;
     const Icon = style.icon;
@@ -67,178 +72,13 @@ const StatusBadge = ({ status }) => {
     );
 };
 
-// --- 进度仪表板 ---
-const ProgressDashboard = ({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions, order, items, isFocusMode, toggleFocusMode }) => {
-    const completionPercentage = stats.totalSkus > 0 ? (stats.packedSkus / stats.totalSkus) * 100 : 0;
-    
-    return (
-        <div className="mb-6 animate-fade-in">
-            {/* 頂部控制列 */}
-            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6">
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-3">
-                        任務總覽
-                        {activeSessions.length > 0 && (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
-                                <span className="relative flex h-2 w-2">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                                </span>
-                                {activeSessions.length} 人在線
-                            </span>
-                        )}
-                    </h2>
-                    <p className="text-gray-500 text-sm mt-1">管理與追蹤目前的訂單進度</p>
-                </div>
-
-                <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                    {/* 專注模式切換 */}
-                    <button
-                        onClick={toggleFocusMode}
-                        className={`px-3 py-2 rounded-lg transition-all duration-200 flex items-center gap-2 text-sm font-medium border ${
-                            isFocusMode 
-                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200' 
-                                : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                        }`}
-                    >
-                        {isFocusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                        <span>{isFocusMode ? '退出專注' : '專注模式'}</span>
-                    </button>
-
-                    <div className="w-px h-8 bg-gray-200 mx-1 hidden sm:block"></div>
-
-                    {/* 相機掃描按鈕 */}
-                    <button 
-                        onClick={onOpenCamera}
-                        className="px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-gray-200 active:scale-95 flex items-center gap-2"
-                    >
-                        <Camera size={16} />
-                        <span>掃描</span>
-                    </button>
-
-                    {/* 新品不良 SN 更換 - 快捷入口 */}
-                    <button
-                        onClick={() => onOpenDefectModal?.()}
-                        className="px-3 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-red-200 active:scale-95 flex items-center gap-2"
-                        title="新品不良 SN 更換"
-                    >
-                        <AlertTriangle size={16} />
-                        <span>新品不良更換</span>
-                    </button>
-                    
-                    {/* 列印按鈕群組 */}
-                    <div className="flex items-center gap-2">
-                        <ShippingLabel 
-                            order={order} 
-                            items={items} 
-                            className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-blue-200 active:scale-95 flex items-center gap-2"
-                        />
-                        <PickingList 
-                            order={order} 
-                            items={items} 
-                            className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all duration-200 shadow-md shadow-emerald-200 active:scale-95 flex items-center gap-2"
-                        />
-                    </div>
-
-                    {/* 更多操作 */}
-                    <div className="flex items-center gap-2">
-                        <button 
-                            onClick={onExport} 
-                            className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 transition-all duration-200 hover:shadow-sm active:scale-95"
-                            title="匯出報告"
-                        >
-                            <FileDown size={18} />
-                        </button>
-                        
-                        {(user.role === 'admin' || user.role === 'superadmin') && (
-                            <button 
-                                onClick={onVoid} 
-                                className="p-2 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 transition-all duration-200 hover:shadow-sm active:scale-95"
-                                title="作廢訂單"
-                            >
-                                <XCircle size={18} />
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </div>
-            
-            {!isFocusMode && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* SKU Progress */}
-                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
-                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                            <Package size={48} className="text-blue-600" />
-                        </div>
-                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">SKU 完成度</p>
-                        <div className="z-10">
-                            <div className="flex items-baseline gap-1 mb-1">
-                                <span className="text-2xl font-bold text-gray-900">{stats.packedSkus}</span>
-                                <span className="text-xs text-gray-400">/{stats.totalSkus}</span>
-                            </div>
-                            <ProgressBar value={stats.packedSkus} max={stats.totalSkus} colorClass="bg-blue-500" />
-                        </div>
-                    </div>
-
-                    {/* Total Quantity */}
-                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
-                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                            <Box size={48} className="text-gray-600" />
-                        </div>
-                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">總件數</p>
-                        <div className="z-10">
-                            <div className="flex items-baseline gap-1 mb-1">
-                                <span className="text-2xl font-bold text-gray-900">{stats.totalQuantity}</span>
-                                <span className="text-xs text-gray-400">件</span>
-                            </div>
-                            <div className="w-full bg-gray-100 rounded-full h-1.5"></div>
-                        </div>
-                    </div>
-
-                    {/* Picked Quantity */}
-                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
-                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                            <ShoppingCart size={48} className="text-orange-600" />
-                        </div>
-                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">已揀貨</p>
-                        <div className="z-10">
-                            <div className="flex items-baseline gap-1 mb-1">
-                                <span className="text-2xl font-bold text-gray-900">{stats.totalPickedQty}</span>
-                                <span className="text-xs text-gray-400">/{stats.totalQuantity}</span>
-                            </div>
-                            <ProgressBar value={stats.totalPickedQty} max={stats.totalQuantity} colorClass="bg-orange-500" />
-                        </div>
-                    </div>
-
-                    {/* Packed Quantity */}
-                    <div className="glass-panel p-4 rounded-xl flex flex-col justify-between h-24 relative overflow-hidden group">
-                        <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                            <Check size={48} className="text-green-600" />
-                        </div>
-                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider z-10">已裝箱</p>
-                        <div className="z-10">
-                            <div className="flex items-baseline gap-1 mb-1">
-                                <span className="text-2xl font-bold text-gray-900">{stats.totalPackedQty}</span>
-                                <span className="text-xs text-gray-400">/{stats.totalQuantity}</span>
-                            </div>
-                            <ProgressBar value={stats.totalPackedQty} max={stats.totalQuantity} colorClass="bg-green-500" />
-                        </div>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
-
 // --- SN模式的品项卡片 ---
-const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
+const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
     const [expanded, setExpanded] = useState(false);
     
-    const pickedCount = instances.filter(i => i.status === 'picked' || i.status === 'packed').length;
-    const packedCount = instances.filter(i => i.status === 'packed').length;
-    const isComplete = packedCount >= item.quantity;
-    
-    if (isFocusMode && isComplete && !expanded) return null;
+    const pickedCount = progress.picked;
+    const packedCount = progress.packed;
+    const isComplete = progress.complete;
 
     return (
         <div className={`group relative glass-panel rounded-xl overflow-hidden transition-all duration-300 ${
@@ -271,11 +111,11 @@ const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
                         
                         {/* 進度條 */}
                         <div className="w-full max-w-md">
-                            <div className="flex justify-between text-[10px] text-gray-400 mb-1 uppercase font-bold tracking-wider">
-                                <span>進度</span>
-                                <span>{Math.round((packedCount / item.quantity) * 100)}%</span>
+                            <div className="flex justify-between text-xs text-gray-600 mb-1 font-medium">
+                                <span>{stage === 'pick' ? '揀貨' : '裝箱'}進度 · 尚餘 {progress.remaining} 件</span>
+                                <span>{Math.round(progress.ratio * 100)}%</span>
                             </div>
-                            <ProgressBar value={packedCount} max={item.quantity} colorClass={isComplete ? "bg-green-500" : "bg-blue-500"} height="h-1.5" />
+                            <ProgressBar value={progress.count} max={item.quantity} colorClass={isComplete ? "bg-green-500" : "bg-blue-500"} height="h-1.5" />
                         </div>
                     </div>
                     
@@ -297,6 +137,9 @@ const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
                     </div>
                 </div>
                 
+                {progress.serialMismatch && (
+                    <p role="status" className="mt-3 text-sm text-amber-700">SN 資料需核對：應有 {progress.quantity} 筆，目前 {instances.length} 筆。請通知拋單員檢查訂單。</p>
+                )}
                 {instances.length > 0 && (
                     <button onClick={() => setExpanded(!expanded)} 
                         className="mt-3 w-full flex items-center justify-center gap-1 text-xs text-gray-400 hover:text-gray-600 py-1.5 rounded hover:bg-gray-50 transition-colors">
@@ -308,22 +151,7 @@ const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
             
             {expanded && instances.length > 0 && (
                 <div className="border-t border-gray-100 bg-gray-50/50 p-3 animate-slide-up">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
-                        {instances.map((inst, idx) => (
-                            <div key={idx} 
-                                className={`px-2 py-1.5 rounded text-xs font-mono border flex items-center justify-between ${
-                                    inst.status === 'packed' 
-                                        ? 'bg-green-50 border-green-200 text-green-700' 
-                                        : inst.status === 'picked' 
-                                            ? 'bg-blue-50 border-blue-200 text-blue-700' 
-                                            : 'bg-white border-gray-200 text-gray-500'
-                                }`}>
-                                <span className="truncate">{inst.serial_number}</span>
-                                {inst.status === 'packed' && <Check size={12} />}
-                                {inst.status === 'picked' && <ShoppingCart size={12} />}
-                            </div>
-                        ))}
-                    </div>
+                    <SerialList instances={instances} />
                 </div>
             )}
         </div>
@@ -331,12 +159,10 @@ const SNItemCard = ({ item, instances, isFocusMode, lineInfo }) => {
 };
 
 // --- 数量模式的品项卡片 ---
-const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFocusMode, lineInfo }) => {
+const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progress, stage, lineInfo }) => {
     const canAdjustPick = (user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && orderStatus === 'picking';
     const canAdjustPack = (user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && orderStatus === 'packing';
-    const isComplete = item.packed_quantity >= item.quantity;
-    
-    if (isFocusMode && isComplete) return null;
+    const isComplete = progress.complete;
 
     return (
         <div className={`group relative glass-panel rounded-xl p-4 transition-all duration-300 ${
@@ -368,20 +194,20 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
 
                     {/* 進度條 */}
                     <div className="w-full max-w-md">
-                        <div className="flex justify-between text-[10px] text-gray-400 mb-1 uppercase font-bold tracking-wider">
-                            <span>進度</span>
-                            <span>{Math.round((item.packed_quantity / item.quantity) * 100)}%</span>
+                        <div className="flex justify-between text-xs text-gray-600 mb-1 font-medium">
+                            <span>{stage === 'pick' ? '揀貨' : '裝箱'}進度 · 尚餘 {progress.remaining} 件</span>
+                            <span>{Math.round(progress.ratio * 100)}%</span>
                         </div>
-                        <ProgressBar value={item.packed_quantity} max={item.quantity} colorClass={isComplete ? "bg-green-500" : "bg-blue-500"} height="h-1.5" />
+                        <ProgressBar value={progress.count} max={item.quantity} colorClass={isComplete ? "bg-green-500" : "bg-blue-500"} height="h-1.5" />
                     </div>
                 </div>
                 
-                <div className="w-full sm:w-auto flex items-center gap-3">
+                <div className="w-full sm:w-auto flex flex-wrap items-center gap-3">
                     {/* Pick Controls */}
                     <div className={`flex items-center gap-2 p-1.5 rounded-lg border transition-all ${
                         item.picked_quantity >= item.quantity ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100'
                     }`}>
-                        <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pick', -1, item.id)} 
+                        <QuantityButton icon={Minus} label={`減少 ${item.product_name} 揀貨數量`} onClick={() => onUpdate(item.barcode, 'pick', -1, item.id)}
                             disabled={!canAdjustPick || item.picked_quantity <= 0} isUpdating={isUpdating} />
                         
                         <div className="flex flex-col items-center min-w-[50px]">
@@ -394,7 +220,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                             </div>
                         </div>
 
-                        <QuantityButton icon={Plus} onClick={() => onUpdate(item.barcode, 'pick', 1, item.id)} 
+                        <QuantityButton icon={Plus} label={`增加 ${item.product_name} 揀貨數量`} onClick={() => onUpdate(item.barcode, 'pick', 1, item.id)}
                             disabled={!canAdjustPick || item.picked_quantity >= item.quantity} isUpdating={isUpdating} />
                     </div>
                     
@@ -402,7 +228,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                     <div className={`flex items-center gap-2 p-1.5 rounded-lg border transition-all ${
                         item.packed_quantity >= item.quantity ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
                     }`}>
-                        <QuantityButton icon={Minus} onClick={() => onUpdate(item.barcode, 'pack', -1, item.id)} 
+                        <QuantityButton icon={Minus} label={`減少 ${item.product_name} 裝箱數量`} onClick={() => onUpdate(item.barcode, 'pack', -1, item.id)}
                             disabled={!canAdjustPack || item.packed_quantity <= 0} isUpdating={isUpdating} />
                         
                         <div className="flex flex-col items-center min-w-[50px]">
@@ -415,7 +241,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
                             </div>
                         </div>
 
-                        <QuantityButton icon={Plus} onClick={() => onUpdate(item.barcode, 'pack', 1, item.id)} 
+                        <QuantityButton icon={Plus} label={`增加 ${item.product_name} 裝箱數量`} onClick={() => onUpdate(item.barcode, 'pack', 1, item.id)}
                             disabled={!canAdjustPack || item.packed_quantity >= item.picked_quantity} isUpdating={isUpdating} />
                     </div>
                 </div>
@@ -426,55 +252,9 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, isFoc
 
 
 // 操作提示組件
-const OperationHint = ({ order, scanError, isUpdating }) => {
-    // 如果有錯誤，顯示錯誤（由外部組件處理），但這裡我們也可以選擇顯示提示
-    // 為了避免空白，如果沒有錯誤，我們顯示提示
-    if (scanError) return null;
-    
-    let hint = "等待掃描輸入...";
-    let subHint = "請掃描商品條碼或 SN 碼";
-    let icon = <ScanLine size={20} className="text-blue-400" />;
-
-    if (isUpdating) {
-        hint = "正在處理...";
-        subHint = "請稍候";
-        icon = <Loader2 size={20} className="text-blue-400 animate-spin" />;
-    } else if (order?.status === 'completed') {
-        hint = "訂單已完成";
-        subHint = "所有品項已處理完畢";
-        icon = <CheckCircle2 size={20} className="text-green-400" />;
-    } else if (order?.status === 'picking') {
-        hint = "揀貨作業中";
-        subHint = "請掃描商品進行揀貨";
-    } else if (order?.status === 'picked') {
-        hint = "揀貨完成";
-        subHint = "請掃描商品進行裝箱";
-        icon = <Box size={20} className="text-orange-400" />;
-    } else if (order?.status === 'packing') {
-        hint = "裝箱作業中";
-        subHint = "請掃描商品進行裝箱";
-    }
-
-    return (
-        <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm animate-fade-in">
-            <div className="flex items-start gap-3">
-                <div className="mt-1">{icon}</div>
-                <div>
-                    <p className="text-sm font-bold text-white">{hint}</p>
-                    <p className="text-xs text-gray-400">{subHint}</p>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 // --- 主作业视图组件 ---
 export function OrderWorkView({ user }) {
     const { orderId } = useParams();
-    const navigate = useNavigate();
-    const MySwal = withReactContent(Swal);
-
-    // 安全檢查：如果 user 為空，顯示載入中或重導向
     if (!user) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -482,12 +262,27 @@ export function OrderWorkView({ user }) {
             </div>
         );
     }
+    return <AuthenticatedOrderWorkView key={orderId} user={user} />;
+}
+
+function AuthenticatedOrderWorkView({ user }) {
+    const { orderId } = useParams();
+    const navigate = useNavigate();
+    const MySwal = withReactContent(Swal);
 
     const [currentOrderData, setCurrentOrderData] = useState({ order: null, items: [], instances: [] });
     const [loading, setLoading] = useState(true);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
+    const [rejectedScan, setRejectedScan] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
+    const scanSubmissionRef = useRef(null);
+    if (!scanSubmissionRef.current) scanSubmissionRef.current = createScanSubmission();
+    const [scanNeedsReview, setScanNeedsReview] = useState(false);
+    const orderDataVersionRef = useRef(0);
+    const orderRequestSequenceRef = useRef(0);
+    const activeOrderIdRef = useRef(orderId);
+    activeOrderIdRef.current = orderId;
 
     // 例外事件（open/ack/resolved）
     const [orderExceptions, setOrderExceptions] = useState([]);
@@ -542,20 +337,38 @@ export function OrderWorkView({ user }) {
     const [attachmentPreviewLoading, setAttachmentPreviewLoading] = useState(false);
 
     const barcodeInputRef = useRef(null);
-    // 移除對外部 mp3 的依賴，統一使用 WebAudio 產生提示音，避免 404 或自動播放限制
-    useEffect(() => { barcodeInputRef.current?.focus(); }, [currentOrderData.order]);
+    const [itemSearch, setItemSearch] = useState('');
+    const [lastAcceptedScan, setLastAcceptedScan] = useState(null);
+    const [pendingScan, setPendingScan] = useState('');
+    const [loadError, setLoadError] = useState('');
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
+    // Only the initial order arrival may focus the scanner. Background refreshes must
+    // not pull the caret out of a comment, exception form, search field or dialog.
+    useEffect(() => {
+        if (currentOrderData.order?.id && document.activeElement === document.body) barcodeInputRef.current?.focus();
+    }, [currentOrderData.order?.id]);
 
     const fetchOrderDetails = useCallback(async (id) => {
         if (!id) return;
+        const sequence = ++orderRequestSequenceRef.current;
+        const dataVersion = orderDataVersionRef.current;
+        const isCurrent = () => sequence === orderRequestSequenceRef.current
+            && dataVersion === orderDataVersionRef.current
+            && String(id) === String(activeOrderIdRef.current);
         try {
             setLoading(true);
-            const response = await apiClient.get(`/api/orders/${id}`);
-            setCurrentOrderData(response.data);
+            setLoadError('');
+            const response = await apiClient.get(`/api/orders/${id}/work-snapshot`, { timeout: 15000 });
+            if (isCurrent() && !scanSubmissionRef.current.isBusy()) setCurrentOrderData(response.data);
         } catch (err) {
-            toast.error('無法獲取訂單詳情', { description: err.response?.data?.message || '請返回任務列表重試' });
-            navigate('/tasks');
+            if (!isCurrent()) return;
+            setLoadError(err.response?.data?.message || '暫時無法更新訂單，請檢查連線後重試。');
         } finally {
-            setLoading(false);
+            if (sequence === orderRequestSequenceRef.current) setLoading(false);
         }
     }, [navigate]);
 
@@ -700,33 +513,38 @@ export function OrderWorkView({ user }) {
         // 每30秒更新一次心跳
         const interval = setInterval(updateSession, 30000);
 
+        const handleReconnect = () => { fetchOrderDetails(orderId); fetchOrderExceptions(orderId); };
+        socket.on('connect', handleReconnect);
+
         // 監聽即時協作事件
-        socket.on('active_sessions_update', (data) => {
+        const handleActiveSessions = (data) => {
             if (data.orderId === parseInt(orderId)) {
                 setActiveSessions(data.sessions.filter(s => s.user_id !== user.id));
             }
-        });
+        };
 
-        socket.on('new_comment', (data) => {
+        const handleNewComment = (data) => {
             if (data.orderId === parseInt(orderId)) {
                 toast.info('💬 新評論', { description: '有人發表了新評論' });
             }
-        });
+        };
 
         // 監聽任務狀態變更 (自動跳轉或更新 UI)
-        socket.on('task_status_changed', (data) => {
+        const handleTaskStatusChanged = (data) => {
             if (data.orderId === parseInt(orderId)) {
+                // The scan response handles our own in-flight operation and completion exactly once.
+                if (scanSubmissionRef.current.isBusy()) return;
                 // 如果狀態變為 completed，顯示完成動畫並跳轉
                 if (data.newStatus === 'completed') {
                     soundNotification.play('taskCompleted');
                     MySwal.fire({
-                        title: '🎉 訂單已完成！',
-                        text: '所有品項已裝箱完畢，即將返回任務列表...',
+                        title: '裝箱核對完成',
+                        text: '所有品項已完成裝箱核對，即將返回任務列表。',
                         icon: 'success',
                         timer: 2000,
                         showConfirmButton: false
                     }).then(() => {
-                        navigate('/tasks', { state: { view: 'completed' } });
+                        if (mountedRef.current) navigate('/tasks', { state: { view: 'completed' } });
                     });
                 } 
                 // 如果狀態變為 picked (揀貨完成)，且當前用戶是 picker，提示完成
@@ -739,7 +557,7 @@ export function OrderWorkView({ user }) {
                         timer: 2000,
                         showConfirmButton: false
                     }).then(() => {
-                        navigate('/tasks', { state: { view: 'completed' } });
+                        if (mountedRef.current) navigate('/tasks', { state: { view: 'completed' } });
                     });
                 }
                 // 其他狀態變更則重新載入資料
@@ -747,20 +565,26 @@ export function OrderWorkView({ user }) {
                     fetchOrderDetails(orderId);
                 }
             }
-        });
+        };
 
-        socket.on('order_exception_changed', (data) => {
+        const handleExceptionChanged = (data) => {
             if (data.orderId === parseInt(orderId)) {
                 fetchOrderExceptions(orderId);
             }
-        });
+        };
+
+        socket.on('active_sessions_update', handleActiveSessions);
+        socket.on('new_comment', handleNewComment);
+        socket.on('task_status_changed', handleTaskStatusChanged);
+        socket.on('order_exception_changed', handleExceptionChanged);
 
         return () => {
             clearInterval(interval);
-            socket.off('active_sessions_update');
-            socket.off('new_comment');
-            socket.off('task_status_changed');
-            socket.off('order_exception_changed');
+            socket.off('connect', handleReconnect);
+            socket.off('active_sessions_update', handleActiveSessions);
+            socket.off('new_comment', handleNewComment);
+            socket.off('task_status_changed', handleTaskStatusChanged);
+            socket.off('order_exception_changed', handleExceptionChanged);
         };
     }, [orderId, user.id, user.role, navigate, fetchOrderDetails, fetchOrderExceptions]);
 
@@ -783,10 +607,10 @@ export function OrderWorkView({ user }) {
     };
 
     const statusBadge = (status) => {
-        if (status === 'open') return <Badge variant="warning">Open</Badge>;
-        if (status === 'ack') return <Badge variant="info">Ack</Badge>;
-        if (status === 'resolved') return <Badge variant="success">Resolved</Badge>;
-        if (status === 'rejected') return <Badge variant="danger">Rejected</Badge>;
+        if (status === 'open') return <Badge variant="warning">待核可</Badge>;
+        if (status === 'ack') return <Badge variant="info">已核可</Badge>;
+        if (status === 'resolved') return <Badge variant="success">已結案</Badge>;
+        if (status === 'rejected') return <Badge variant="danger">已駁回</Badge>;
         return <Badge variant="neutral">{status}</Badge>;
     };
 
@@ -801,6 +625,8 @@ export function OrderWorkView({ user }) {
     }, [exceptionsMeta?.responsibleRole, exceptionsMeta?.responsibleUserId, isDispatcher, user?.id]);
 
     const canProposeOrderChange = isAdminLike || canDispatcherPropose;
+    const orderChangeReady = !loading && !loadError
+        && String(currentOrderData.order?.id) === String(orderId);
 
     const resolutionActionLabel = (action) => {
         const map = { short_ship: '少出', restock: '補貨', exchange: '換貨', void: '作廢', other: '其他' };
@@ -1112,11 +938,12 @@ export function OrderWorkView({ user }) {
     }, [currentOrderData.items, currentOrderData.instances]);
 
     const openOrderChangeEditor = useCallback(() => {
+        if (!orderChangeReady) return;
         setOrderChangeReason('');
         setOrderChangeStep('edit');
         setOrderChangeDraftItems(buildOrderChangeDraftFromOrder());
         setOrderChangeOpen(true);
-    }, [buildOrderChangeDraftFromOrder]);
+    }, [buildOrderChangeDraftFromOrder, orderChangeReady]);
 
     const updateOrderChangeDraft = (id, patch) => {
         setOrderChangeDraftItems((prev) => (prev || []).map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -1477,125 +1304,142 @@ export function OrderWorkView({ user }) {
         }
     };
 
-    const updateItemState = async (scanValue, type, amount = 1, orderItemId) => {
-        if (isUpdating || !currentOrderData.order) return;
-        setIsUpdating(true);
-        try {
-            const response = await apiClient.post(`/api/orders/update_item`, {
-                orderId: currentOrderData.order.id,
-                scanValue,
-                type,
-                amount,
-                ...(orderItemId ? { orderItemId } : {})
-            });
-            setCurrentOrderData(response.data);
+    const updateItemState = (scanValue, type, amount = 1, orderItemId) => {
+        if (!currentOrderData.order) return false;
+        const submission = scanSubmissionRef.current.submit(scanValue, async () => {
+            try {
+                const command = makeScanCommand(currentOrderData, {
+                    orderId: currentOrderData.order.id, scanValue, type, amount,
+                    ...(orderItemId ? { orderItemId } : {})
+                });
+                const response = await sendScanCommand(apiClient, command);
+                const updatedSnapshot = applyScanResponse(currentOrderData, response.data);
+                if (!mountedRef.current) return;
+                orderDataVersionRef.current++;
+                setCurrentOrderData(updatedSnapshot);
+                setLastAcceptedScan({ value: scanValue, type, amount });
+                soundNotification.play(type === 'pick' ? 'pickSuccess' : 'packSuccess');
 
-            // 不只依賴 socket：若回應已更新狀態，直接提示並導回任務列表
-            const newStatus = response.data?.order?.status;
-            if (newStatus === 'completed') {
-                soundNotification.play('taskCompleted');
-                MySwal.fire({
-                    title: '🎉 訂單已完成！',
-                    text: '所有品項已裝箱完畢，即將返回任務列表...',
-                    icon: 'success',
-                    timer: 2000,
-                    showConfirmButton: false
-                }).then(() => {
-                    navigate('/tasks', { state: { view: 'completed' } });
-                });
-                return;
-            }
-            if (newStatus === 'picked' && user.role === 'picker') {
-                soundNotification.play('taskCompleted');
-                MySwal.fire({
-                    title: '✅ 揀貨完成！',
-                    text: '此訂單已完成揀貨，即將返回任務列表...',
-                    icon: 'success',
-                    timer: 2000,
-                    showConfirmButton: false
-                }).then(() => {
-                    navigate('/tasks', { state: { view: 'completed' } });
-                });
-                return;
-            }
-            
-            // 正確計算已掃描和剩餘數量（包含 instances）
-            let totalScanned = 0;
-            let totalRequired = 0;
-            
-            response.data.items.forEach(item => {
-                totalRequired += item.quantity;
-                
-                // 檢查是否有 instances
-                const itemInstances = response.data.instances.filter(i => i.order_item_id === item.id);
-                if (itemInstances.length > 0) {
-                    // 有 SN 碼的商品，計算已掃描的 instances
-                    if (type === 'pick') {
-                        totalScanned += itemInstances.filter(i => i.status === 'picked' || i.status === 'packed').length;
-                    } else if (type === 'pack') {
-                        totalScanned += itemInstances.filter(i => i.status === 'packed').length;
-                    }
-                } else {
-                    // 無 SN 碼的商品，使用 picked_quantity 或 packed_quantity
-                    totalScanned += (type === 'pick' ? item.picked_quantity : item.packed_quantity);
+                // 不只依賴 socket：若回應已更新狀態，直接提示並導回任務列表
+                const newStatus = response.data?.order?.status;
+                if (newStatus === 'completed') {
+                    MySwal.fire({
+                        title: '裝箱核對完成',
+                        text: '所有品項已完成裝箱核對，即將返回任務列表。',
+                        icon: 'success',
+                        timer: 2000,
+                        showConfirmButton: false
+                    }).then(() => {
+                        if (mountedRef.current) navigate('/tasks', { state: { view: 'completed' } });
+                    });
+                    return;
                 }
-            });
-            
-            const remaining = totalRequired - totalScanned;
-            
-            // 語音播報
-            voiceNotification.speakScanSuccess(totalScanned, remaining);
-            
-            toast.success(`掃描成功: ${scanValue}`);
-        } catch (err) {
-            const statusCode = err.response?.status;
+                if (newStatus === 'picked' && user.role === 'picker') {
+                    MySwal.fire({
+                        title: '✅ 揀貨完成！',
+                        text: '此訂單已完成揀貨，即將返回任務列表...',
+                        icon: 'success',
+                        timer: 2000,
+                        showConfirmButton: false
+                    }).then(() => {
+                        if (mountedRef.current) navigate('/tasks', { state: { view: 'completed' } });
+                    });
+                    return;
+                }
 
-            const serverMsg = err.response?.data?.message;
-            const isExceptionBlocking = statusCode === 409;
-            const errorMsg = isExceptionBlocking
-                ? (serverMsg || '此訂單存在未核可例外，請先主管核可（ack）後再進行裝箱作業。')
-                : (serverMsg || '發生未知錯誤');
+                const scanRows = buildWorkItems(updatedSnapshot.items, updatedSnapshot.instances, type);
+                const totalScanned = scanRows.reduce((sum, row) => sum + row.count, 0);
+                const remaining = scanRows.reduce((sum, row) => sum + row.remaining, 0);
 
-            setScanError(errorMsg);
+                // 語音播報
+                voiceNotification.speakScanSuccess(totalScanned, remaining, { name: user.name, type });
 
-            if (isExceptionBlocking) {
-                // 盡量同步最新例外狀態，避免使用者一直碰到 409
-                fetchOrderExceptions(orderId);
+                toast.success(`掃描成功: ${scanValue}`, { id: `scan-success-${orderId}`, duration: 1300 });
+            } catch (err) {
+                if (!mountedRef.current) return;
+                orderDataVersionRef.current++;
+                const statusCode = err.response?.status;
+
+                const serverMsg = err.response?.data?.message;
+                const isUnknownResult = !err.response
+                    || err.response?.data?.code === 'SCAN_RESULT_UNKNOWN'
+                    || (statusCode >= 500 && err.response?.data?.code !== 'SCAN_NOT_APPLIED');
+                const isConflict = statusCode === 409;
+                if (isUnknownResult || err.response?.data?.reason === 'STATE_CHANGED') {
+                    scanSubmissionRef.current.requireReview();
+                    setScanNeedsReview(true);
+                }
+                // A submitted code belongs in the result area, never back in the input.
+                // In particular, leave any NEXT barcode being typed during this request intact.
+                setRejectedScan({ value: scanValue, retryable: false });
+                const errorMsg = isUnknownResult
+                    ? '掃描結果尚未確認，請重新載入訂單核對後再作業，請勿直接重刷。'
+                    : isConflict
+                    ? (serverMsg || '此筆作業尚未套用，請確認訂單狀態後再試。')
+                    : (serverMsg || '發生未知錯誤');
+
+                setScanError(errorMsg);
+
+                if (isConflict) {
+                    // 盡量同步最新例外狀態，避免使用者一直碰到 409
+                    fetchOrderExceptions(orderId);
+                }
+
+                // 播放錯誤音效（WebAudio）
+                soundNotification.play('error');
+
+                // 語音播報
+                voiceNotification.speakScanError({ name: user.name, type });
+
+                // 桌面通知
+                desktopNotification.notifyScanError(errorMsg);
+
+                // 震動提示 (如果支援)
+                if (navigator.vibrate) {
+                    navigator.vibrate([200, 100, 200]);
+                }
+
+                // 顯示 Toast 提醒
+                toast.error(isUnknownResult ? '掃描結果待確認' : isConflict ? '暫時無法掃描' : '掃描失敗', {
+                    description: errorMsg,
+                    duration: 3500
+                });
+
+            } finally {
+                setIsUpdating(false);
             }
-            
-            // 播放錯誤音效（WebAudio）
+        });
+        if (!submission.accepted) {
+            setRejectedScan({ value: submission.scanValue, retryable: submission.reason === 'busy' });
+            const message = submission.reason === 'review'
+                ? '上一筆掃描結果尚未確認，請先重新載入訂單核對。'
+                : `條碼 ${scanValue} 尚未處理，請等候上一筆完成後再送出。`;
+            setScanError(message);
             soundNotification.play('error');
-            
-            // 語音播報
-            voiceNotification.speakScanError();
-            
-            // 桌面通知
-            desktopNotification.notifyScanError(errorMsg);
-            
-            // 震動提示 (如果支援)
-            if (navigator.vibrate) {
-                navigator.vibrate([200, 100, 200]);
-            }
-            
-            // 顯示 Toast 提醒
-            toast.error(isExceptionBlocking ? '需先主管核可' : '掃描失敗', {
-                description: errorMsg,
-                duration: 3500
-            });
-            
-            setTimeout(() => setScanError(null), 3000);
-        } finally {
-            setIsUpdating(false);
+            toast.warning('條碼尚未處理', { description: message });
+            return false;
         }
+        orderDataVersionRef.current++;
+        setIsUpdating(true);
+        setPendingScan(scanValue);
+        // The operation handles its API errors; do not automatically retry a mutation.
+        void submission.completion;
+        return true;
     };
 
-    const handleScan = () => {
-        const scanValue = barcodeInput.trim();
-        if (!scanValue) return;
+    const handleScan = (rawValue = barcodeInput) => {
+        const scanValue = String(rawValue ?? '').trim();
+        if (!scanValue) return false;
+        if (scanNeedsReview) return false;
+        // Consume each scanner Enter exactly once, including rejected/busy submissions.
+        // A camera result must not erase unrelated keyboard input.
+        setBarcodeInput(current => current.trim() === scanValue ? '' : current);
         setScanError(null);
+        setRejectedScan(null);
 
         const status = currentOrderData.order?.status;
         if (!status) {
+            setRejectedScan({ value: scanValue, retryable: false });
             setScanError('訂單尚未載入，請稍候再試');
             return;
         }
@@ -1617,12 +1461,11 @@ export function OrderWorkView({ user }) {
                     description: errorMsg,
                     duration: 3500
                 });
-                setTimeout(() => setScanError(null), 3000);
-                setBarcodeInput('');
-                return;
+                setRejectedScan({ value: scanValue, retryable: false });
+                return false;
             }
             if (operationType === 'pack' && hasOpenExceptions) {
-                const errorMsg = '此訂單存在未核可例外（Open），需先主管核可（ack）後才能裝箱/完成。請先在「例外處理」區塊處理。';
+                const errorMsg = '此訂單存在未核可待核可例外，需先主管核可（ack）後才能裝箱/完成。請先在「例外處理」區塊處理。';
                 setScanError(errorMsg);
                 soundNotification.play('error');
                 voiceNotification.speakOperationError('需先主管核可');
@@ -1634,11 +1477,11 @@ export function OrderWorkView({ user }) {
                     description: errorMsg,
                     duration: 3500
                 });
-                setTimeout(() => setScanError(null), 3000);
-                setBarcodeInput('');
-                return;
+                setRejectedScan({ value: scanValue, retryable: false });
+                return false;
             }
-            updateItemState(scanValue, operationType, 1);
+            const accepted = updateItemState(scanValue, operationType, 1);
+            return accepted;
         } else {
             const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
             setScanError(errorMsg);
@@ -1663,21 +1506,26 @@ export function OrderWorkView({ user }) {
                 duration: 3000 
             });
             
-            setTimeout(() => setScanError(null), 3000);
         }
-        setBarcodeInput('');
+        setRejectedScan({ value: scanValue, retryable: false });
+        return false;
     };
 
     const canOperate = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'picker' || user?.role === 'packer';
+    const orderStatus = currentOrderData.order?.status;
+    const canScanNow = ((user.role === 'picker' || isAdminLike) && orderStatus === 'picking')
+        || ((user.role === 'packer' || isAdminLike) && ['picked', 'packing'].includes(orderStatus));
 
-    const handleKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleScan(); } };
-    const handleClick = () => { handleScan(); };
+    const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(e.currentTarget?.value ?? barcodeInput); } };
+    const handleClick = () => { barcodeInputRef.current?.focus(); handleScan(); };
+    const handleQuantityUpdate = (...args) => {
+        const accepted = updateItemState(...args);
+        if (accepted) barcodeInputRef.current?.focus();
+        return accepted;
+    };
     
     // 相機掃描處理
-    const handleCameraScan = (code) => {
-        setBarcodeInput(code);
-        setTimeout(() => handleScan(), 100);
-    };
+    const handleCameraScan = (code) => handleScan(code);
 
     const handleVoidOrder = async () => {
         if (!currentOrderData.order) return;
@@ -1704,73 +1552,54 @@ export function OrderWorkView({ user }) {
         }
     };
 
-    const handleExportReport = () => {
-        if (!currentOrderData.items) return;
-        const data = currentOrderData.items.map(item => ({ 
-            "國際條碼": item.barcode, 
-            "品項型號": item.product_code, 
-            "品項名稱": item.product_name, 
-            "應出數量": item.quantity, 
-            "已揀数量(計數)": item.picked_quantity, 
-            "已装箱数量(計數)": item.packed_quantity,
-            "SN列表": currentOrderData.instances.filter(i => i.order_item_id === item.id).map(i => i.serial_number).join(', ')
-        }));
-        const worksheet = XLSX.utils.json_to_sheet(data);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "出貨報告");
-        XLSX.writeFile(workbook, `出貨明細-${currentOrderData.order.voucher_number}.xlsx`);
-        toast.success('檔案已成功匯出');
+    const exportPendingRef = useRef(false);
+    const handleExportReport = async () => {
+        if (!currentOrderData.order || exportPendingRef.current) return;
+        exportPendingRef.current = true;
+        const snapshot = currentOrderData;
+        const toastId = toast.loading('正在產生出貨明細…');
+        try {
+            const XLSX = await import('xlsx');
+            const serialsByItem = new Map();
+            for (const instance of snapshot.instances) {
+                const serials = serialsByItem.get(instance.order_item_id) || [];
+                serials.push(instance.serial_number);
+                serialsByItem.set(instance.order_item_id, serials);
+            }
+            const data = snapshot.items.map(item => ({
+                '國際條碼': item.barcode,
+                '品項型號': item.product_code,
+                '品項名稱': item.product_name,
+                '應出數量': item.quantity,
+                '已揀數量(計數)': item.picked_quantity,
+                '已裝箱數量(計數)': item.packed_quantity,
+                'SN列表': (serialsByItem.get(item.id) || []).join(', ')
+            }));
+            const worksheet = XLSX.utils.json_to_sheet(data);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, '出貨報告');
+            XLSX.writeFile(workbook, `出貨明細-${snapshot.order.voucher_number}.xlsx`);
+            toast.success('出貨明細已產生', { id: toastId });
+        } catch {
+            toast.error('明細產生失敗，請稍後重試。', { id: toastId });
+        } finally { exportPendingRef.current = false; }
     };
 
     const handleReturnToTasks = () => navigate('/tasks');
 
-    const progressStats = useMemo(() => {
-        const { items, instances } = currentOrderData;
-        if (!items || items.length === 0) return { totalSkus: 0, packedSkus: 0, totalQuantity: 0, totalPickedQty: 0, totalPackedQty: 0 };
-        
-        let totalQty = 0, pickedQty = 0, packedQty = 0, packedSkus = 0;
-
-        items.forEach(item => {
-            const itemInstances = instances.filter(i => i.order_item_id === item.id);
-            totalQty += item.quantity;
-            if (itemInstances.length > 0) {
-                const itemPickedCount = itemInstances.filter(i => i.status === 'picked' || i.status === 'packed').length;
-                const itemPackedCount = itemInstances.filter(i => i.status === 'packed').length;
-                pickedQty += itemPickedCount;
-                packedQty += itemPackedCount;
-                if(itemPackedCount >= item.quantity) packedSkus++;
-            } else {
-                pickedQty += item.picked_quantity;
-                packedQty += item.packed_quantity;
-                if(item.packed_quantity >= item.quantity) packedSkus++;
-            }
-        });
-
-        return {
-            totalSkus: items.length,
-            packedSkus: packedSkus,
-            totalQuantity: totalQty,
-            totalPickedQty: pickedQty,
-            totalPackedQty: packedQty,
-        };
-    }, [currentOrderData]);
-
-    const sortedItems = useMemo(() => {
-        const { items, instances } = currentOrderData;
-        if (!items) return [];
-        return [...items].sort((a, b) => {
-            const getPackedRatio = (item) => {
-                const itemInstances = instances.filter(i => i.order_item_id === item.id);
-                if (itemInstances.length > 0) {
-                    if(item.quantity === 0) return 1;
-                    return itemInstances.filter(i => i.status === 'packed').length / item.quantity;
-                }
-                if(item.quantity === 0) return 1;
-                return item.packed_quantity / item.quantity;
-            };
-            return getPackedRatio(a) - getPackedRatio(b);
-        });
-    }, [currentOrderData]);
+    const stage = workStage(user.role, currentOrderData.order?.status);
+    const stageLabel = stage === 'pick' ? '揀貨' : '裝箱';
+    const workItems = useMemo(() => buildWorkItems(currentOrderData.items, currentOrderData.instances, stage), [currentOrderData, stage]);
+    const visibleItems = useMemo(() => filterWorkItems(workItems, itemSearch, isFocusMode), [workItems, itemSearch, isFocusMode]);
+    const allStageComplete = workItems.length > 0 && workItems.every(row => row.complete);
+    const remainingQty = workItems.reduce((sum, row) => sum + row.remaining, 0);
+    const progressStats = useMemo(() => ({
+        totalSkus: workItems.length,
+        packedSkus: workItems.filter(row => row.quantity > 0 && !row.serialMismatch && row.packed >= row.quantity).length,
+        totalQuantity: workItems.reduce((sum, row) => sum + row.quantity, 0),
+        totalPickedQty: workItems.reduce((sum, row) => sum + row.picked, 0),
+        totalPackedQty: workItems.reduce((sum, row) => sum + row.packed, 0)
+    }), [workItems]);
 
     // 同一張訂單內，若有相同條碼的多行品項，顯示「第 X/N 行」提示
     const barcodeLineInfoByItemId = useMemo(() => {
@@ -1798,21 +1627,27 @@ export function OrderWorkView({ user }) {
 
     return (
         <div className="min-h-screen bg-transparent pb-20">
-            <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div className="w-full">
                 {/* 頂部導航 (已整合至 Dashboard) */}
-                <div className="mb-6">
+                <div className="mb-3">
                     <Button variant="ghost" size="sm" onClick={handleReturnToTasks} leadingIcon={ArrowLeft} className="text-gray-500 hover:text-gray-900 hover:bg-gray-100">
                         返回看板
                     </Button>
                 </div>
 
-                { (loading || !currentOrderData.order) && (
+                {loadError && (
+                    <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                        <span>{loadError}{currentOrderData.order ? ' 畫面保留上次資料。' : ''}</span>
+                        <Button variant="secondary" size="sm" disabled={loading || isUpdating} onClick={() => fetchOrderDetails(orderId)}>重試載入訂單</Button>
+                    </div>
+                )}
+                { loading && !currentOrderData.order && (
                   <Card className="mb-6 border-0 shadow-sm"><CardContent className="p-6"><SkeletonText lines={4} /></CardContent></Card>
                 )}
                 
-                { !(loading || !currentOrderData.order) && (
+                { currentOrderData.order && (
                   <ErrorBoundary>
-                    <ProgressDashboard 
+                    <WarehouseOrderHeader
                         stats={progressStats} 
                         onExport={handleExportReport} 
                         onVoid={handleVoidOrder} 
@@ -1828,29 +1663,51 @@ export function OrderWorkView({ user }) {
                   </ErrorBoundary>
                 )}
 
+                {currentOrderData.order && <WorkstationBar
+                    orderId={orderId} user={user} voucher={currentOrderData.order.voucher_number}
+                    stageLabel={stageLabel} remainingQty={remainingQty}
+                    onScan={() => {
+                        barcodeInputRef.current?.scrollIntoView({ block: 'center' });
+                        barcodeInputRef.current?.focus({ preventScroll: true });
+                    }}
+                    onDiscussion={() => {
+                        setIsFocusMode(false);
+                        requestAnimationFrame(() => {
+                            const panel = document.getElementById('order-discussion');
+                            panel?.scrollIntoView({ block: 'start' });
+                            panel?.focus({ preventScroll: true });
+                        });
+                    }}
+                />}
+
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     {/* 左側：掃描與討論 (在專注模式下隱藏討論) */}
-                    <div className={`lg:col-span-4 xl:col-span-3 space-y-6 ${isFocusMode ? 'hidden lg:block lg:opacity-50 lg:pointer-events-none' : ''}`}>
-                        {/* 掃描區 - 重新設計為深色主題以突顯 */}
-                        <div className="bg-slate-900/60 backdrop-blur-xl border border-white/10 rounded-2xl p-5 shadow-xl shadow-black/20 text-white relative overflow-hidden group">
+                    <div className="lg:col-span-4 xl:col-span-3 space-y-6 min-w-0">
+                        {/* 掃描區 */}
+                        <div className="bg-white border border-blue-200 rounded-xl p-5 text-slate-900 relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                                 <ScanLine size={80} />
                             </div>
                             
                             <div className="relative z-10">
                                 <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
-                                    <ScanLine size={20} className="text-blue-400"/>
+                                    <ScanLine size={20} className="text-blue-600"/>
                                     掃描作業
                                 </h3>
-                                <p className="text-gray-400 text-sm mb-4">請掃描商品條碼或 SN 碼</p>
+                                <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品條碼或 SN，按 Enter 送出</p>
+                                <PersonalSoundControls user={user} compact />
+                                <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
+                                    <span>{stageLabel}尚餘 <strong className="text-lg">{remainingQty}</strong> 件</span>
+                                    <button type="button" className="underline underline-offset-4 text-blue-700" onClick={() => barcodeInputRef.current?.focus()}>回到掃碼</button>
+                                </div>
 
                                 {packBlockedByExceptions && (
-                                    <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-sm flex items-start gap-2 animate-fade-in">
+                                    <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 text-sm flex items-start gap-2 animate-fade-in">
                                         <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0">
                                             <div className="font-bold">需先主管核可</div>
-                                            <div className="text-xs text-amber-200/80 mt-0.5 break-words">
-                                                此訂單存在 Open 例外，請先在「例外處理」按「核可」後再進行裝箱掃描。
+                                            <div className="text-xs text-amber-800 mt-0.5 break-words">
+                                                此訂單存在 待核可例外，請先在「例外處理」按「核可」後再進行裝箱掃描。
                                                 {isAdminLike ? '（你是管理員，可直接核可，但會留痕）' : ''}
                                             </div>
                                         </div>
@@ -1858,24 +1715,33 @@ export function OrderWorkView({ user }) {
                                 )}
                                 
                                 <div className="relative mb-3">
+                                    <label htmlFor="order-scan-input" className="sr-only">商品條碼或 SN 碼</label>
                                     <input
+                                        id="order-scan-input"
+                                        autoComplete="off"
+                                        autoCapitalize="none"
+                                        spellCheck={false}
+                                        aria-describedby="scan-instructions"
                                         ref={barcodeInputRef}
                                         type="text"
-                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (operationBlockedByOrderChange ? '訂單異動審核中（需先主管核可）' : (packBlockedByExceptions ? '需先主管核可（Open 例外）' : '點擊掃描...'))}
+                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (!canScanNow ? '目前訂單狀態不可掃描' : (operationBlockedByOrderChange ? '訂單異動審核中（需先主管核可）' : (packBlockedByExceptions ? '需先主管核可（待核可例外）' : '掃描或輸入條碼')))}
                                         value={barcodeInput}
-                                        onChange={(e) => setBarcodeInput(e.target.value)}
+                                        onChange={(e) => { if (!scanNeedsReview) setBarcodeInput(e.target.value); }}
                                         onKeyDown={handleKeyDown}
-                                        disabled={!canOperate || packBlockedByExceptions || operationBlockedByOrderChange}
-                                        className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-gray-800 border-2 text-white placeholder-gray-500 focus:outline-none transition-all ${
+                                        readOnly={scanNeedsReview}
+                                        aria-invalid={!!scanError}
+                                        disabled={!canScanNow || packBlockedByExceptions || operationBlockedByOrderChange}
+                                        className={`w-full pl-4 pr-12 py-3.5 rounded-xl bg-white border-2 text-slate-900 placeholder-slate-400 focus:outline-none transition-all ${
                                             scanError 
                                                 ? 'border-red-500 animate-shake' 
-                                                : 'border-gray-700 focus:border-blue-500 focus:bg-gray-800'
+                                                : 'border-slate-300 focus:border-blue-500 focus:bg-white'
                                         }`}
                                     />
                                     <div className="absolute right-2 top-1/2 -translate-y-1/2">
                                         <button 
                                             onClick={handleClick}
-                                            disabled={isUpdating || !canOperate || packBlockedByExceptions || operationBlockedByOrderChange}
+                                            aria-label="送出掃描"
+                                            disabled={isUpdating || scanNeedsReview || !canScanNow || packBlockedByExceptions || operationBlockedByOrderChange}
                                             className="p-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-colors"
                                         >
                                             {isUpdating ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} className="rotate-180" />}
@@ -1883,18 +1749,29 @@ export function OrderWorkView({ user }) {
                                     </div>
                                 </div>
 
+                                <div role="status" aria-live="polite" className="mb-3 text-sm break-all">
+                                    {isUpdating ? <span className="text-blue-700">正在確認：{pendingScan}</span> : lastAcceptedScan && (
+                                        <span className="text-emerald-700">✓ 最近{lastAcceptedScan.type === 'pick' ? '揀貨' : '裝箱'}{lastAcceptedScan.amount < 0 ? '數量已修正' : '已確認'}：{lastAcceptedScan.value}</span>
+                                    )}
+                                </div>
+                                {scanNeedsReview && (
+                                    <button type="button" className="mb-3 text-sm underline text-amber-800" onClick={() => window.location.reload()}>
+                                        重新載入訂單並核對掃描結果
+                                    </button>
+                                )}
                                 {scanError && (
-                                    <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-start gap-2 animate-fade-in">
+                                    <div role="alert" className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-700 text-sm flex items-start gap-2 animate-fade-in">
                                         <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-                                        <span>{scanError}</span>
+                                        <div className="min-w-0 break-words">
+                                            <span>{scanError}</span>
+                                            {rejectedScan && <p className="mt-1 break-all">{scanNeedsReview ? '待核對條碼' : '未完成條碼'}：{rejectedScan.value}</p>}
+                                            {!scanNeedsReview && rejectedScan && <p className="mt-1">{isUpdating ? '上一筆仍在確認，請等候完成後再掃描。' : '輸入框已就緒，可直接重新掃描。'}</p>}
+                                            {rejectedScan?.retryable && !scanNeedsReview && <button type="button" disabled={isUpdating} className="mt-2 underline disabled:opacity-40" onClick={() => { handleScan(rejectedScan.value); barcodeInputRef.current?.focus(); }}>重新送出這筆條碼</button>}
+                                        </div>
                                     </div>
                                 )}
                                 
-                                <OperationHint 
-                                    order={currentOrderData.order} 
-                                    scanError={scanError} 
-                                    isUpdating={isUpdating} 
-                                />
+
                             </div>
                         </div>
 
@@ -1922,7 +1799,7 @@ export function OrderWorkView({ user }) {
                                         {canProposeOrderChange && (
                                             <Button
                                                 size="sm"
-                                                disabled={hasOpenOrderChange}
+                                                disabled={hasOpenOrderChange || !orderChangeReady}
                                                 onClick={openOrderChangeEditor}
                                             >
                                                 申請異動
@@ -1931,13 +1808,13 @@ export function OrderWorkView({ user }) {
                                     </div>
                                 </div>
                             </CardHeader>
-                            <CardContent className="pt-0 max-h-[55vh] overflow-auto">
+                            <CardContent className={`pt-0 max-h-[55vh] overflow-auto ${isFocusMode && !exceptionsLoading && orderExceptions.length === 0 ? 'hidden' : ''}`}>
                                 {exceptionsLoading && <SkeletonText lines={3} />}
 
                                 {!exceptionsLoading && (orderExceptions || []).length === 0 && (
                                     <EmptyState
                                         title="尚無例外"
-                                        description="需要時可先建立 open，待主管核可後再結案。"
+                                        description="遇到缺貨、破損或數量不符時，可新增回報並追蹤處理。"
                                     />
                                 )}
 
@@ -2124,31 +2001,32 @@ export function OrderWorkView({ user }) {
                         </Card>
 
                         {/* 討論區塊 */}
-                        <div className="bg-white/30 backdrop-blur-md rounded-2xl shadow-sm border border-white/20 overflow-hidden flex flex-col h-[600px]">
-                            <div className="flex-1 overflow-hidden relative">
+                        <section id="order-discussion" tabIndex={-1} aria-label="訂單備註與討論" className={`rounded-xl border border-slate-200 bg-white ${isFocusMode ? 'hidden' : ''}`}>
+                            <h2 className="p-4 text-sm font-semibold text-slate-700">訂單備註與討論</h2>
+                            <div className="h-[600px] overflow-hidden relative">
                                 <ErrorBoundary>
                                     <TaskComments orderId={orderId} currentUser={user} allUsers={allUsers} mode="embedded" />
                                 </ErrorBoundary>
                             </div>
-                        </div>
+                        </section>
                     </div>
 
                     {/* 右側：作業清單 */}
-                    <div className={`lg:col-span-8 xl:col-span-9 transition-all duration-500`}>
+                    <div className={`lg:col-span-8 xl:col-span-9 min-w-0`}>
                         <div className="min-h-[600px]">
-                            <div className="p-6 mb-4 rounded-2xl glass-panel flex flex-col sm:flex-row sm:items-center justify-between gap-4 sticky top-0 z-20">
+                            <div className="p-4 mb-4 rounded-2xl glass-panel flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div>
                                     <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                                         作業清單
                                         {currentOrderData.order && <StatusBadge status={currentOrderData.order.status} />}
                                     </h3>
                                     <p className="text-gray-500 text-sm mt-1">
-                                        {isFocusMode ? '專注模式：僅顯示未完成項目' : '顯示所有訂單品項'}
+                                        {isFocusMode ? `專注模式：僅顯示尚未${stageLabel}完成的品項` : `依${stageLabel}進度顯示所有品項`}
                                     </p>
                                 </div>
                                 
                                 {currentOrderData.order && (
-                                    <div className="flex items-center gap-3 text-sm text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+                                    <div className="flex flex-wrap items-center gap-3 break-all text-sm text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
                                         <User size={14} />
                                         <span className="font-medium">{currentOrderData.order.customer_name}</span>
                                         <span className="text-gray-300">|</span>
@@ -2157,28 +2035,34 @@ export function OrderWorkView({ user }) {
                                 )}
                             </div>
                             
+                            <div className="mb-4 flex flex-wrap items-center gap-3">
+                                <label htmlFor="order-item-search" className="text-sm font-medium text-gray-700">查找品項</label>
+                                <input id="order-item-search" type="search" value={itemSearch} onChange={event => setItemSearch(event.target.value)} placeholder="品名、型號、條碼或 SN" className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+                                {itemSearch && <button type="button" className="text-sm text-blue-700 underline" onClick={() => setItemSearch('')}>清除搜尋</button>}
+                                <span className="text-sm text-gray-500">顯示 {visibleItems.length} / {workItems.length} 個品項</span>
+                            </div>
                             <div className="min-h-full">
                                                                 <ErrorBoundary>
                                 {currentOrderData.order ? (
                                   <>
                                     <div className="space-y-3">
-                                        {sortedItems.map((item, index) => {
-                                            const itemInstances = currentOrderData.instances.filter(i => i.order_item_id === item.id);
+                                        {visibleItems.map((progress) => {
+                                            const { item, instances: itemInstances } = progress;
                                             const hasSN = itemInstances.length > 0;
                                             const lineInfo = barcodeLineInfoByItemId[item.id];
                                             return (
-                                                <div key={item.id} className="animate-slide-up" style={{ animationDelay: `${index * 30}ms` }}>
+                                                <div key={item.id}>
                                                     {hasSN ? (
-                                                        <SNItemCard item={item} instances={itemInstances} isFocusMode={isFocusMode} lineInfo={lineInfo} />
+                                                        <SNItemCard item={item} instances={itemInstances} progress={progress} stage={stage} lineInfo={lineInfo} />
                                                     ) : (
-                                                        <QuantityItemCard item={item} onUpdate={updateItemState} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating} isFocusMode={isFocusMode} lineInfo={lineInfo} />
+                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} />
                                                     )}
                                                 </div>
                                             );
                                         })}
                                     </div>
                                     
-                                    {sortedItems.length === 0 && !loading && (
+                                    {workItems.length === 0 && !loading && (
                                         <EmptyState 
                                             icon={Package}
                                             title="尚無品項" 
@@ -2186,14 +2070,17 @@ export function OrderWorkView({ user }) {
                                         />
                                     )}
 
+                                    {visibleItems.length === 0 && workItems.length > 0 && itemSearch && (
+                                        <EmptyState icon={Package} title="找不到符合的品項" description="請確認品名、條碼或 SN；專注模式會隱藏已完成品項。" />
+                                    )}
                                     {/* 專注模式下的完成提示 */}
-                                    {isFocusMode && sortedItems.every(item => item.packed_quantity >= item.quantity) && (
+                                    {isFocusMode && allStageComplete && !itemSearch && (
                                         <div className="text-center py-12 animate-fade-in">
                                             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
                                                 <Check size={32} className="text-green-600" />
                                             </div>
-                                            <h3 className="text-lg font-bold text-gray-900 mb-1">太棒了！</h3>
-                                            <p className="text-gray-500 text-sm">所有項目都已完成</p>
+                                            <h3 className="text-lg font-bold text-gray-900 mb-1">本階段核對完成</h3>
+                                            <p className="text-gray-500 text-sm">所有品項都已{stageLabel}核對，訂單狀態以系統回覆為準。</p>
                                             <Button onClick={() => setIsFocusMode(false)} variant="secondary" size="sm" className="mt-4">
                                                 退出專注模式
                                             </Button>

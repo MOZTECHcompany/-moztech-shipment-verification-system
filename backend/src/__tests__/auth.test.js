@@ -1,3 +1,6 @@
+const priorJwtSecret = process.env.JWT_SECRET;
+beforeAll(() => { process.env.JWT_SECRET = 'local-jest-auth-fixture-only'; });
+afterAll(() => { if (priorJwtSecret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = priorJwtSecret; });
 // backend/src/__tests__/auth.test.js
 // 認證功能測試
 

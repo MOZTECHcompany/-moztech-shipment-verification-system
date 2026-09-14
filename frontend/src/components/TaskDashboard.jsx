@@ -1,12 +1,11 @@
-// frontend/src/components/TaskDashboard-modern.jsx
-// 現代化 Apple 風格任務儀表板
+// Corely AI task dashboard: bounded server search and role-aware work queues.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
-import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Bell, Flame, AlertTriangle, Pin, RefreshCw } from 'lucide-react';
+import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Flame, AlertTriangle, Pin, RefreshCw } from 'lucide-react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import soundNotification from '@/utils/soundNotification.js';
@@ -15,61 +14,14 @@ import desktopNotification from '@/utils/desktopNotification.js';
 import FloatingChatPanel from './FloatingChatPanel';
 import NotificationCenter from './NotificationCenter';
 import DefectReportModal from './DefectReportModal';
-import { PageHeader, FilterBar, Button, Skeleton, SkeletonText } from '@/ui';
+import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
+import TaskListFilters from './TaskListFilters';
+import { filterTasks, canBatchPick, isActiveTaskForRole } from '@/utils/taskFilters';
+import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
 
-// 可調整：任務分區數字徽章呼吸動畫秒數與光暈強度
-const BADGE_PULSE_SECONDS = 2.75; // 推薦：2.5~3.5 之間
-const BADGE_GLOW_ALPHA = 0.18;    // 推薦：0.12~0.22 之間
-
-// 數字滾動動畫：摘要卡數字在變化時垂直滾動過渡
-function NumberTicker({ value, duration = 300 }) {
-    const [display, setDisplay] = useState(value);
-    const [prev, setPrev] = useState(value);
-    const [anim, setAnim] = useState(null); // 'up' | 'down' | null
-    const timeoutRef = useRef(null);
-
-    useEffect(() => {
-        if (value === display) return;
-        // 設定方向與觸發動畫
-        setPrev(display);
-        setAnim(value > display ? 'up' : 'down');
-        // 動畫結束後更新顯示值並清理狀態
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => {
-            setDisplay(value);
-            setAnim(null);
-        }, duration);
-        return () => clearTimeout(timeoutRef.current);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [value]);
-
-    // 容器高度以 1 行文字高度為準
-    const baseClass = 'relative h-[1em] overflow-hidden inline-block align-bottom';
-    const commonRow = 'block leading-none';
-
-    if (!anim) {
-        return <span className={baseClass}><span className={commonRow}>{display}</span></span>;
-    }
-
-    const translateStart = anim === 'up' ? 'translate-y-0' : '-translate-y-full';
-    const translateEnd = anim === 'up' ? '-translate-y-full' : 'translate-y-0';
-    const nextStart = anim === 'up' ? 'translate-y-full' : 'translate-y-0';
-    const nextEnd = anim === 'up' ? 'translate-y-0' : 'translate-y-full';
-
-    const style = { transition: `transform ${duration}ms ease-in-out` };
-
-    return (
-        <span className={baseClass} aria-live="polite">
-            <span className={`absolute inset-0 ${commonRow} ${translateStart}`} style={style}>{prev}</span>
-            <span className={`absolute inset-0 ${commonRow} ${nextStart}`} style={style}>{value}</span>
-            {/* 觸發下一個 frame 將 class 切換至結束狀態 */}
-            <span className="sr-only">&nbsp;</span>
-            <style>{`
-                /* 動態應用 translate 的結束狀態透過 requestAnimationFrame 會更穩定，
-                   這裡簡化為下一次 reflow 自動過渡（實務表現足夠平滑） */
-            `}</style>
-        </span>
-    );
+// Counts should stay readable while tasks refresh.
+function NumberTicker({ value }) {
+    return <span aria-live="polite" aria-atomic="true">{value}</span>;
 }
 
 const statusConfig = {
@@ -106,11 +58,10 @@ const statusConfig = {
 };
 
 // 現代化任務卡片 - 2025 重構版 (Spatial Style)
-const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin, onReportDefect, viewMode = 'active', onViewOrder }) => {
+const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTasks, toggleTaskSelection, onOpenChat, isPinned, onTogglePin, onReportDefect, viewMode = 'active', onViewOrder, isClaiming = false, claimDisabled = false }) => {
     const isMyTask = task.current_user;
     const isUrgent = task.is_urgent || false;
     const hasComments = task.total_comments > 0;
-    const hasUnread = task.unread_comments > 0;
     const hasUrgentComments = task.urgent_comments > 0;
     const latestComment = task.latest_comment;
 
@@ -125,7 +76,6 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
         icon: Package,
         dot: 'bg-gray-500'
     };
-    const StatusIcon = statusInfo.icon;
 
     const handleSetUrgent = async (e) => {
         e.stopPropagation();
@@ -151,47 +101,34 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     const mineRing = isDispatcherMine ? 'ring-2 ring-blue-500/20' : '';
     
     // 根據狀態決定卡片邊框與陰影風格
-    let cardStyle = 'glass-panel hover:shadow-2xl hover:scale-[1.02] hover:-rotate-1 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)]';
+    let cardStyle = 'bg-white border border-slate-200 shadow-sm transition-shadow hover:shadow-md';
     if (isUrgent) {
-        cardStyle = 'glass-panel bg-red-500/10 border-red-500/30 shadow-[0_0_30px_-10px_rgba(239,68,68,0.3)] hover:shadow-red-500/40 hover:scale-[1.02] hover:-rotate-1';
+        cardStyle = 'bg-white border border-red-300 shadow-sm';
     } else if (isPinned) {
-        cardStyle = 'glass-panel bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_-10px_rgba(59,130,246,0.3)] hover:shadow-blue-500/40 hover:scale-[1.02] hover:-rotate-1';
+        cardStyle = 'bg-white border border-blue-300 shadow-sm';
     }
 
     return (
         <div className={`
             group relative flex flex-col
-            rounded-[32px]
+            rounded-2xl
             ${cardStyle} ${selectionRing} ${mineRing}
             overflow-hidden
         `}>
-            {/* 頂部狀態光條 - 僅在非緊急/置頂時顯示一般顏色，緊急/置頂由邊框主導 */}
-            {!isUrgent && !isPinned && (
-                <div className={`h-1.5 w-full opacity-80 ${
-                    task.status === 'picking' ? 'bg-gradient-to-r from-blue-500 to-cyan-400' : (
-                    task.status === 'picked' ? 'bg-gradient-to-r from-purple-500 to-pink-400' : (
-                    task.status === 'packing' ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gray-200'))
-                }`} />
-            )}
-            
             {/* 緊急/置頂 頂部標籤 */}
             {(isUrgent || isPinned) && (
                 <div className={`h-1.5 w-full ${isUrgent ? 'bg-red-500 animate-pulse' : 'bg-blue-500'}`} />
             )}
             
-            <div className="p-5 sm:p-7 flex flex-col h-full relative">
-                {/* 背景裝飾 - 更加微妙的光暈 */}
-                <div className={`absolute top-0 right-0 w-40 h-40 bg-gradient-to-br rounded-bl-[100px] -z-0 opacity-10 pointer-events-none blur-2xl ${
-                    isUrgent ? 'from-red-500 to-transparent' : (isPinned ? 'from-blue-500 to-transparent' : 'from-white to-transparent')
-                }`}></div>
-
+            <div className="p-4 sm:p-5 flex flex-col h-full relative">
                 {/* Header Section */}
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between mb-6 relative z-10">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between mb-4 relative z-10">
                     <div className="flex items-start gap-4 flex-1 min-w-0">
-                        {batchMode && (
+                        {batchMode && canBatchPick(task) && (
                             <div className="pt-1">
                                 <input
                                     type="checkbox"
+                                    aria-label={`選取揀貨任務 ${task.voucher_number}`}
                                     checked={selectedTasks.includes(task.id)}
                                     onChange={() => toggleTaskSelection(task.id)}
                                     className="w-6 h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 cursor-pointer transition-all"
@@ -200,22 +137,22 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         )}
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3 mb-1">
-                                <h3 className="font-black text-3xl sm:text-4xl text-gray-900 tracking-tighter group-hover:text-blue-600 transition-colors drop-shadow-sm">
+                                <h3 className="font-bold text-xl sm:text-2xl text-gray-900 tracking-tight break-all group-hover:text-blue-600 transition-colors drop-shadow-sm">
                                     {task.voucher_number}
                                 </h3>
                             </div>
                             
                             <div className="flex flex-wrap items-center gap-3 mt-2">
-                                <div className={`flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full backdrop-blur-md border border-white/20 shadow-sm ${statusInfo.color.replace('border', '')} bg-opacity-60`}>
+                                <div className={`flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full shadow-sm ${statusInfo.color}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
                                     {statusInfo.text}
                                 </div>
                                 {user?.role === 'dispatcher' && Number(task?.imported_by_user_id) === Number(user?.id) && (
-                                    <div className="flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full backdrop-blur-md border border-white/30 shadow-sm bg-white/40 text-gray-700">
+                                    <div className="flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full border border-white/30 shadow-sm bg-slate-50 text-gray-700">
                                         我的拋單
                                     </div>
                                 )}
-                                <div className="flex items-center gap-1.5 text-gray-600 font-bold bg-white/40 backdrop-blur-md border border-white/30 px-2.5 py-1 rounded-full text-[11px] sm:text-[12px] shadow-sm">
+                                <div className="flex items-center gap-1.5 text-gray-600 font-bold bg-slate-50 border border-white/30 px-2.5 py-1 rounded-full text-[11px] sm:text-[12px] shadow-sm">
                                     <User size={10} />
                                     <span className="truncate max-w-[100px]">{task.customer_name}</span>
                                 </div>
@@ -226,7 +163,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     {/* 右上角工具列 - 總是顯示重要狀態 */}
                     <div className="flex items-center gap-2 flex-wrap">
                         {isPinned && (
-                            <div className="w-10 h-10 rounded-full bg-gray-900/90 backdrop-blur text-white flex items-center justify-center shadow-lg">
+                            <div className="w-10 h-10 rounded-full bg-gray-900/90 text-white flex items-center justify-center shadow-lg">
                                 <Pin size={18} />
                             </div>
                         )}
@@ -238,17 +175,17 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                         
                         {/* 管理操作 - Hover Reveal（admin / superadmin / 自己拋單的 dispatcher） */}
                         {user && canManageTask && (
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-4 group-hover:translate-x-0 ml-2">
-                                <button onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-blue-600 transition-colors backdrop-blur-sm">
+                            <div className="flex items-center gap-1 ml-2">
+                                <button onClick={(e) => { e.stopPropagation(); onTogglePin?.(task.id); }} aria-label={isPinned ? '取消置頂' : '置頂任務'} title={isPinned ? '取消置頂' : '置頂任務'} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-blue-600 transition-colors ">
                                     <Pin size={18} />
                                 </button>
-                                <button onClick={handleSetUrgent} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-red-600 transition-colors backdrop-blur-sm">
+                                <button onClick={handleSetUrgent} aria-label={isUrgent ? '取消緊急' : '標記緊急'} title={isUrgent ? '取消緊急' : '標記緊急'} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-red-600 transition-colors ">
                                     <AlertTriangle size={18} />
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); onReportDefect(task); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-orange-600 transition-colors backdrop-blur-sm" title="新品不良更換">
+                                <button onClick={(e) => { e.stopPropagation(); onReportDefect(task); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-orange-600 transition-colors " title="新品不良更換">
                                     <RefreshCw size={18} />
                                 </button>
-                                <button onClick={() => onDelete(task.id, task.voucher_number)} className="p-2 hover:bg-red-50/50 rounded-full text-gray-400 hover:text-red-600 transition-colors backdrop-blur-sm">
+                                <button onClick={() => onDelete(task.id, task.voucher_number)} aria-label={`刪除訂單 ${task.voucher_number}`} title="刪除訂單" className="p-2 hover:bg-red-50/50 rounded-full text-gray-400 hover:text-red-600 transition-colors ">
                                     <Trash2 size={18} />
                                 </button>
                             </div>
@@ -258,7 +195,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 
                 {/* 揀貨員資訊 */}
                 {task.task_type === 'pack' && task.picker_name && (
-                    <div className="mb-6 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50/40 backdrop-blur-sm rounded-lg border border-blue-100/30 w-fit">
+                    <div className="mb-6 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-lg border border-blue-100/30 w-fit">
                         <CheckCircle2 size={14} className="text-blue-600" />
                         <span className="text-xs text-blue-900 font-medium">
                             揀貨員: <span className="font-bold">{task.picker_name}</span>
@@ -266,50 +203,52 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                 )}
 
-                {/* 評論區塊 - 依照第二張圖設計重構 */}
-                <div className="mt-auto mb-6">
+                {/* 留言入口 */}
+                <div className="mt-auto mb-3">
                     {hasComments ? (
-                        <div 
+                        <button
+                            type="button"
+                            aria-label={`查看訂單 ${task.voucher_number} 的留言`}
                             onClick={handleOpenChat}
-                            className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/40 backdrop-blur-md border border-white/40 transition-all hover:bg-white/60 hover:shadow-lg group/chat"
+                            className="w-full min-h-[44px] text-left relative overflow-hidden rounded-xl bg-slate-50 border border-slate-200 transition-colors hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 group/chat"
                         >
-                            <div className="p-5">
+                            <span className="block p-3">
                                 {/* Header: Avatar + Name + Status */}
-                                <div className="flex items-center gap-3 mb-4">
-                                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold text-white shadow-md border border-white/20">
+                                <span className="flex items-center gap-3 mb-2">
+                                    <span className="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-bold text-white shadow-md border border-white/20">
                                         {latestComment?.user_name?.[0] || 'U'}
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-base font-bold text-gray-900">
+                                    </span>
+                                    <span className="flex min-w-0 flex-col">
+                                        <span className="flex flex-wrap items-center gap-x-2">
+                                            <span className="text-sm font-semibold text-gray-900 break-words">
                                                 {latestComment?.user_name}
                                             </span>
                                             <span className="text-xs text-gray-500 font-medium">• 最新留言</span>
-                                        </div>
+                                        </span>
                                         {/* 緊急標籤 */}
                                         {hasUrgentComments && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100/80 text-red-600 text-[10px] font-bold w-fit mt-0.5 backdrop-blur-sm">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100/80 text-red-600 text-[10px] font-bold w-fit mt-0.5 ">
                                                 <Flame size={10} /> 緊急
                                             </span>
                                         )}
-                                    </div>
-                                </div>
+                                    </span>
+                                </span>
                                 
                                 {/* Message Body - Large Text with Indicator */}
-                                <div className="flex gap-4">
+                                <span className="flex gap-4">
                                     {/* Vertical Indicator Bar */}
-                                    <div className="w-1.5 rounded-full bg-gray-400/30 flex-shrink-0 self-stretch backdrop-blur-sm"></div>
+                                    <span className="w-1.5 rounded-full bg-gray-400/30 flex-shrink-0 self-stretch "></span>
                                     
-                                    <div className="flex-1 py-1">
-                                        <p className="text-lg sm:text-xl font-bold text-gray-800 leading-relaxed line-clamp-2 drop-shadow-sm">
+                                    <span className="min-w-0 flex-1">
+                                        <span className="text-sm font-medium text-gray-800 leading-relaxed line-clamp-2 break-words">
                                             {latestComment?.content || '...'}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
+                                        </span>
+                                    </span>
+                                </span>
+                            </span>
                             
                             {/* Footer Action */}
-                            <div className="px-5 py-3 bg-white/30 border-t border-white/20 flex items-center justify-between backdrop-blur-sm">
+                            <span className="px-3 py-2 bg-white border-t border-slate-200 flex items-center justify-between ">
                                 <span className="text-sm font-bold text-blue-600 flex items-center gap-2">
                                     <MessageSquare size={16} />
                                     {task.total_comments} 則對話紀錄
@@ -317,18 +256,18 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 <span className="text-sm font-bold text-blue-600 flex items-center gap-1 group-hover/chat:translate-x-1 transition-transform">
                                     回覆 <ArrowRight size={16} />
                                 </span>
-                            </div>
-                        </div>
+                            </span>
+                        </button>
                     ) : (
-                        <div 
+                        <button
+                            type="button"
                             onClick={handleOpenChat}
-                            className="cursor-pointer relative overflow-hidden rounded-[24px] bg-white/20 backdrop-blur-sm border border-white/20 border-dashed transition-all hover:bg-white/40 hover:border-white/40 hover:shadow-md group/chat flex flex-col items-center justify-center py-6 gap-2 text-gray-500 hover:text-blue-600"
+                            aria-label={`開始討論訂單 ${task.voucher_number}`}
+                            className="flex w-full min-h-[44px] items-center gap-2 rounded-xl border border-dashed border-slate-200 px-3 py-2 text-left text-slate-500 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
                         >
-                            <div className="w-10 h-10 rounded-full bg-white/30 flex items-center justify-center mb-1 group-hover/chat:scale-110 transition-transform">
-                                <MessageSquare size={20} className="opacity-70" />
-                            </div>
-                            <span className="text-sm font-bold">尚無留言，點擊開始討論</span>
-                        </div>
+                            <MessageSquare size={16} className="shrink-0" aria-hidden="true" />
+                            <span className="min-w-0 truncate text-sm font-medium">尚無留言 · 開始討論</span>
+                        </button>
                     )}
                 </div>
 
@@ -373,9 +312,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 size="lg"
                                 className="flex-1 justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                                 onClick={() => onClaim(task.id, isMyTask)}
+                                disabled={claimDisabled}
                             >
                                 <span className="flex items-center gap-2">
-                                    {isMyTask ? '繼續作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} <ArrowRight size={20} />
+                                    {isClaiming ? '認領中…' : isMyTask ? '開啟作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                                 </span>
                             </Button>
                         </div>
@@ -385,6 +325,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             size="lg"
                             className="w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                             onClick={() => onClaim(task.id, true)}
+                            disabled={claimDisabled}
                         >
                             <span className="flex items-center gap-2">
                                 繼續作業 <ArrowRight size={20} />
@@ -400,9 +341,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                     : 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20'
                             }`}
                             onClick={() => onClaim(task.id, false)}
+                            disabled={claimDisabled}
                         >
                             <span className="flex items-center gap-2">
-                                {task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} <ArrowRight size={20} />
+                                {isClaiming ? '認領中…' : task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                             </span>
                         </Button>
                     )}
@@ -415,25 +357,44 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 export function TaskDashboard({ user }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [pageInfo, setPageInfo] = useState({ hasMore: false, nextCursor: null });
+    const [pagination, setPagination] = useState({ scope: null, index: 0, cursors: [null] });
+    const [listChanged, setListChanged] = useState(false);
+    const listVersionRef = useRef(0);
+    const requestScopeRef = useRef('');
+    const requestSequence = useRef(0);
+    const loadedScope = useRef(null);
+    const activeClaimId = useRef(null);
+    const [claimingId, setClaimingId] = useState(null);
+    const mountedRef = useRef(false);
+    const claimContextRef = useRef(0);
+    const batchClaimPending = useRef(false);
+    const [isBatchClaiming, setIsBatchClaiming] = useState(false);
     const location = useLocation();
     const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
     const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
     const prevViewRef = useRef(currentView);
 
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            claimContextRef.current += 1;
+        };
+    }, []);
+
     const getLocalISODate = useCallback(() => {
-        // 以使用者瀏覽器本地時間產生 YYYY-MM-DD
-        const now = new Date();
-        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-        return local.toISOString().slice(0, 10);
+        // 與已完成清單 API 的 Asia/Taipei 日期範圍一致。
+        const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+        const datePart = (type) => parts.find(part => part.type === type).value;
+        return `${datePart('year')}-${datePart('month')}-${datePart('day')}`;
     }, []);
 
     const [completedDate, setCompletedDate] = useState(() => getLocalISODate());
-    const completedDateRef = useRef(completedDate);
     
-    useEffect(() => {
-        currentViewRef.current = currentView;
-    }, [currentView]);
+    currentViewRef.current = currentView;
 
     useEffect(() => {
         // 每次「切換到已完成」都強制回到今天（避免保留上次選的日期）
@@ -444,16 +405,44 @@ export function TaskDashboard({ user }) {
         prevViewRef.current = currentView;
     }, [currentView, getLocalISODate]);
 
-    useEffect(() => {
-        completedDateRef.current = completedDate;
-    }, [completedDate]);
 
-    const [soundEnabled, setSoundEnabled] = useState(soundNotification.isEnabled());
-    const [voiceEnabled, setVoiceEnabled] = useState(voiceNotification.isEnabled());
-    const [notificationEnabled, setNotificationEnabled] = useState(desktopNotification.isEnabled());
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
     const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+        return () => clearTimeout(timer);
+    }, [search]);
+    const [taskGroup, setTaskGroup] = useState('all');
+    const [taskSummary, setTaskSummary] = useState(null);
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [urgentOnly, setUrgentOnly] = useState(false);
+    const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || urgentOnly || taskGroup !== 'all';
+    const query = { view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup };
+    const queryScope = taskQueryScope(query);
+    requestScopeRef.current = taskQueryScope({ ...query, search });
+    const searchPending = search.trim() !== debouncedSearch;
+    const pageIndex = pagination.scope === queryScope ? pagination.index : 0;
+    const pageCursors = pagination.scope === queryScope ? pagination.cursors : [null];
+    const pageCursor = pageCursors[pageIndex];
+    useEffect(() => {
+        setPagination(current => current.scope === queryScope ? current : { scope: queryScope, index: 0, cursors: [null] });
+    }, [queryScope]);
+    const requestKey = `${queryScope}:${pageCursor || ''}`;
+    const requestKeyRef = useRef(requestKey);
+    requestKeyRef.current = requestKey;
+    const resetFilters = () => { setTaskGroup('all'); setSearch(''); setStatusFilter('all'); setUrgentOnly(false); };
+    const changeView = (view) => {
+        if (view !== currentViewRef.current) claimContextRef.current += 1;
+        setCurrentView(view);
+        setTaskGroup('all');
+        setStatusFilter('all');
+        setUrgentOnly(false);
+        setBatchMode(false);
+        setSelectedTasks([]);
+    };
+    useEffect(() => { setSelectedTasks([]); }, [search, statusFilter, urgentOnly, currentView, completedDate, taskGroup]);
     const [pickHighlight, setPickHighlight] = useState(false);
     const [pinnedTaskIds, setPinnedTaskIds] = useState([]);
     
@@ -535,54 +524,6 @@ export function TaskDashboard({ user }) {
         setOpenChats(prev => prev.filter(chat => chat.orderId !== orderId));
     };
 
-    const toggleSound = () => {
-        const newState = !soundEnabled;
-        soundNotification.setEnabled(newState);
-        setSoundEnabled(newState);
-        
-        // 測試音效
-        if (newState) {
-            setTimeout(() => {
-                soundNotification.play('success');
-            }, 100);
-        }
-        
-        toast.success(newState ? '🔊 音效通知已開啟' : '🔇 音效通知已關閉');
-    };
-
-    const toggleVoice = () => {
-        const newState = !voiceEnabled;
-        voiceNotification.setEnabled(newState);
-        setVoiceEnabled(newState);
-        
-        // 測試語音
-        if (newState) {
-            setTimeout(() => {
-                voiceNotification.speak('語音播報已開啟');
-            }, 100);
-        }
-        
-        toast.success(newState ? '🗣️ 語音播報已開啟' : '🔇 語音播報已關閉');
-    };
-
-    const toggleNotification = async () => {
-        const newState = !notificationEnabled;
-        const success = await desktopNotification.setEnabled(newState);
-        
-        if (success) {
-            setNotificationEnabled(newState);
-            
-            // 測試通知
-            if (newState) {
-                desktopNotification.notifySystemMessage('通知已開啟', '您將收到新任務的桌面通知');
-            }
-            
-            toast.success(newState ? '🔔 桌面通知已開啟' : '🔕 桌面通知已關閉');
-        } else {
-            toast.error('無法開啟桌面通知，請檢查瀏覽器權限');
-        }
-    };
-
     const toggleBatchMode = () => {
         setBatchMode(!batchMode);
         setSelectedTasks([]);
@@ -597,240 +538,168 @@ export function TaskDashboard({ user }) {
         );
     };
 
-    const handleBatchClaim = async () => {
-        if (selectedTasks.length === 0) {
-            toast.error('請至少選擇一個任務');
-            return;
+    const fetchTasks = useCallback(async () => {
+        if (!user || !mountedRef.current || searchPending) return;
+        const sequence = ++requestSequence.current;
+        const listVersion = listVersionRef.current;
+        const isCurrent = () => mountedRef.current && sequence === requestSequence.current &&
+            requestScopeRef.current === queryScope && requestKeyRef.current === requestKey;
+        setLoading(true);
+        setLoadError('');
+        if (loadedScope.current !== requestKey) {
+            setTasks([]);
+            setTaskSummary(null);
+            setPageInfo({ hasMore: false, nextCursor: null });
         }
-
         try {
-            const response = await apiClient.post('/api/orders/batch-claim', {
-                orderIds: selectedTasks
-            });
-            toast.success(response.data.message);
-            setSelectedTasks([]);
-            setBatchMode(false);
-            fetchTasks();
+            const endpoint = taskPageUrl({ view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup, cursor: pageCursor });
+            const response = await apiClient.get(endpoint, { timeout: 15000 });
+            if (!isCurrent()) return;
+            const page = readTaskPage(response.data);
+            setTasks(page.items);
+            setTaskSummary(page.summary);
+            setPageInfo({ hasMore: page.hasMore, nextCursor: page.nextCursor });
+            setListChanged(listVersionRef.current !== listVersion);
+            loadedScope.current = requestKey;
         } catch (error) {
-            toast.error('批次認領失敗', { 
-                description: error.response?.data?.message 
-            });
+            if (isCurrent()) setLoadError(error.response?.data?.message || error.message || '暫時無法取得任務，請檢查連線後重試。');
+        } finally {
+            if (isCurrent()) setLoading(false);
         }
+    }, [user, currentView, completedDate, debouncedSearch, statusFilter, urgentOnly, taskGroup, pageCursor, queryScope, requestKey, searchPending]);
+
+    const refreshTasks = () => {
+        setSelectedTasks([]);
+        if (pageIndex > 0) setPagination({ scope: queryScope, index: 0, cursors: [null] });
+        else void fetchTasks();
+    };
+    const changePage = (direction) => {
+        if (loading || searchPending || (direction > 0 && (!pageInfo.hasMore || listChanged))) return;
+        setSelectedTasks([]);
+        if (direction > 0) setPagination({ scope: queryScope, index: pageIndex + 1, cursors: [...pageCursors.slice(0, pageIndex + 1), pageInfo.nextCursor] });
+        else if (pageIndex > 0) setPagination({ scope: queryScope, index: pageIndex - 1, cursors: pageCursors });
     };
 
-    const fetchTasks = useCallback(async () => {
-        if (user) { 
-            try {
-                setLoading(true);
-                // 已完成清單後端預設 limit=50；這裡拉高一點避免「明明已完成但看不到」
-                const endpoint = currentView === 'completed'
-                    ? `/api/tasks/completed?limit=200&date=${encodeURIComponent(completedDate)}`
-                    : '/api/tasks';
-                const response = await apiClient.get(endpoint);
-                setTasks(response.data);
-            } catch (error) {
-                if (error.response?.status !== 401) {
-                    toast.error('載入任務失敗', { description: error.response?.data?.message || '請稍後再試' });
-                }
-            } finally {
-                setLoading(false);
-            }
+    const handleBatchClaim = async () => {
+        if (batchClaimPending.current || activeClaimId.current !== null) return;
+        const claimableIds = selectedTasks.filter(id => tasks.some(task => task.id === id && canBatchPick(task)));
+        if (claimableIds.length === 0) {
+            toast.error('請選擇尚未認領的揀貨任務');
+            return;
         }
-    }, [user, currentView, completedDate]);
+        batchClaimPending.current = true;
+        setIsBatchClaiming(true);
+        try {
+            const response = await apiClient.post('/api/orders/batch-claim', { orderIds: claimableIds }, { timeout: 15000 });
+            if (response.data.failed?.length) toast.error(response.data.message, { description: '部分任務未認領，清單已重新整理，請確認狀態。' });
+            else toast.success(response.data.message);
+            setSelectedTasks([]);
+            setBatchMode(false);
+            await fetchTasks();
+        } catch (error) {
+            toast.error(error.response ? '批次認領失敗' : '認領結果尚未確認', { description: error.response?.data?.message || '請重新整理任務清單核對，避免重複認領。' });
+        } finally {
+            batchClaimPending.current = false;
+            setIsBatchClaiming(false);
+        }
+    };
 
     useEffect(() => {
         fetchTasks();
     }, [fetchTasks]);
 
     useEffect(() => {
+        // Events may change the result order or membership. Keep the bounded page
+        // and ask for a fresh first page instead of appending an unbounded stream.
+        const markChanged = () => { listVersionRef.current += 1; setListChanged(true); };
         const handleNewTask = (newTask) => {
-            toast.info(`📦 收到新任務: ${newTask.voucher_number}`);
+            if (currentViewRef.current !== 'active' || !isActiveTaskForRole(newTask, user)) return;
+            markChanged();
+            toast.info(`收到新任務：${newTask.voucher_number}`);
             soundNotification.play('newTask');
             voiceNotification.speakNewTask(1);
             desktopNotification.notifyNewTask(newTask);
-            setTasks(currentTasks => 
-                currentTasks.some(task => task.id === newTask.id) ? currentTasks : [...currentTasks, newTask]
-            );
         };
-        
         const handleTaskUpdate = (payload) => {
-             // 兼容不同的 payload 格式 (完整 task 物件 或 { orderId, newStatus })
-             const taskId = payload.id || payload.orderId;
-             const newStatus = payload.status || payload.newStatus;
-             
-             if (!taskId) return;
-
-             const maybeRefetchCompleted = async () => {
-                // Socket 事件常只有 { orderId, newStatus }，缺少 voucher_number 等欄位。
-                // 若使用者目前在「已完成」視圖，且事件代表此訂單應出現在已完成清單，
-                // 就直接 refetch，確保新完成訂單會同步顯示。
-                if (currentViewRef.current !== 'completed') return;
-
-                // 已完成視圖預設是「今天」；若使用者選了非今日日期，避免 socket 事件打亂結果
-                const today = getLocalISODate();
-                if (completedDateRef.current !== today) return;
-
-                const shouldAppearInCompleted =
-                    newStatus === 'completed' ||
-                    (user.role === 'picker' && (newStatus === 'picked' || newStatus === 'packing')) ||
-                    (((user.role === 'admin' || user.role === 'superadmin') || user.role === 'dispatcher') && (newStatus === 'picked' || newStatus === 'packing'));
-
-                if (!shouldAppearInCompleted) return;
-
-                try {
-                    const response = await apiClient.get(`/api/tasks/completed?limit=200&date=${encodeURIComponent(today)}`);
-                    // 避免切換視圖後的 race condition
-                    if (currentViewRef.current === 'completed') {
-                        setTasks(response.data);
-                    }
-                } catch {
-                    // 靜默失敗：避免 Socket 事件頻繁時干擾使用者
-                }
-             };
-
-             setTasks(currentTasks => {
-                const index = currentTasks.findIndex(t => t.id === taskId);
-                
-                // 如果任務不在列表中
-                if (index === -1) {
-                    // 如果 payload 是完整任務物件，且符合當前用戶角色，則加入列表
-                    if (payload.id && payload.task_type) {
-                        if ((user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && payload.task_type === 'pick') return [...currentTasks, payload];
-                        if ((user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && payload.task_type === 'pack') return [...currentTasks, payload];
-                        if (user.role === 'dispatcher') return [...currentTasks, payload];
-                    }
-
-                    // 已完成視圖：若收到狀態變更但缺少完整資料，改用 refetch 同步
-                    void maybeRefetchCompleted();
-                    return currentTasks;
-                }
-                
-                // 構建更新後的任務物件
-                const currentTask = currentTasks[index];
-                const updatedTask = { ...currentTask, status: newStatus || currentTask.status };
-                // 如果 payload 有其他欄位也合併進去
-                if (payload.id) Object.assign(updatedTask, payload);
-
-                // 檢查是否需要從列表中移除
-                const isCompletedView = currentViewRef.current === 'completed';
-
-                // 1. 作廢的任務在任何視圖都應該移除
-                if (updatedTask.status === 'voided') {
-                    return currentTasks.filter(t => t.id !== taskId);
-                }
-
-                // 2. Active View 邏輯：完成或已撿貨(對撿貨員)的任務應移除
-                if (!isCompletedView) {
-                    if (
-                        (updatedTask.status === 'picked' && user.role === 'picker') ||
-                        (updatedTask.status === 'completed')
-                    ) {
-                        if (updatedTask.status === 'completed') {
-                            soundNotification.play('taskCompleted');
-                        }
-                        return currentTasks.filter(t => t.id !== taskId);
-                    }
-                }
-
-                // 3. Completed View 邏輯：如果任務變回未完成狀態(pending)，應該移除
-                if (isCompletedView) {
-                    if (updatedTask.status === 'pending') {
-                        return currentTasks.filter(t => t.id !== taskId);
-                    }
-                }
-                
-                const newTasks = [...currentTasks];
-                newTasks[index] = updatedTask;
-                return newTasks;
-            });
+            const taskId = payload.id || payload.orderId;
+            if (!taskId) return;
+            markChanged();
+            setTasks(current => current.flatMap(task => {
+                if (Number(task.id) !== Number(taskId)) return [task];
+                const updated = { ...task, ...(payload.id ? payload : {}), status: payload.status || payload.newStatus || task.status };
+                if (updated.status === 'voided') return [];
+                if (currentViewRef.current === 'active' && !isActiveTaskForRole(updated, user)) return [];
+                if (currentViewRef.current === 'completed' && !['picked', 'packing', 'completed'].includes(updated.status)) return [];
+                if (currentViewRef.current === 'completed' && user.role === 'packer' && updated.status !== 'completed') return [];
+                updated.task_type = ['pending', 'picking'].includes(updated.status) ? 'pick' : updated.status === 'completed' ? 'done' : 'pack';
+                return [updated];
+            }));
         };
-
         const handleTaskDeleted = ({ orderId }) => {
-            toast.warning('⚠️ 訂單已被管理員刪除');
-            soundNotification.play('error');
-            setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
-            setPinnedTaskIds(prev => {
-                const next = prev.filter(id => id !== orderId);
-                if (next.length !== prev.length) localStorage.setItem(pinStorageKey, JSON.stringify(next));
+            markChanged();
+            setTasks(current => current.filter(task => Number(task.id) !== Number(orderId)));
+            setPinnedTaskIds(current => {
+                const next = current.filter(id => Number(id) !== Number(orderId));
+                if (next.length !== current.length) localStorage.setItem(pinStorageKey, JSON.stringify(next));
                 return next;
             });
         };
-
-        const handleUrgentChanged = ({ orderId, isUrgent, voucherNumber }) => {
-            setTasks(prevTasks => {
-                const updatedTasks = prevTasks.map(task => 
-                    task.id === orderId 
-                        ? { ...task, is_urgent: isUrgent }
-                        : task
-                );
-                // 重新排序：緊急任務優先
-                return updatedTasks.sort((a, b) => {
-                    if (a.is_urgent === b.is_urgent) return 0;
-                    return a.is_urgent ? -1 : 1;
-                });
-            });
-            
-            if (isUrgent) {
-                toast.warning(`🔥 ${voucherNumber} 已被標記為緊急任務！`, {
-                    description: '請優先處理此訂單'
-                });
-                soundNotification.play('newTask');
-            }
+        const handleUrgentChanged = ({ orderId, isUrgent }) => {
+            markChanged();
+            setTasks(current => current.map(task => Number(task.id) === Number(orderId) ? { ...task, is_urgent: isUrgent } : task));
         };
-
-        socket.on('new_task', handleNewTask);
-        socket.on('task_claimed', handleTaskUpdate);
-        socket.on('task_status_changed', handleTaskUpdate);
-        socket.on('task_deleted', handleTaskDeleted);
-        socket.on('task_urgent_changed', handleUrgentChanged);
         const handleTaskPinChanged = ({ orderId, pinned }) => {
-            setPinnedTaskIds(prev => {
-                const exists = prev.includes(orderId);
-                const next = pinned ? (exists ? prev : [...prev, orderId]) : prev.filter(id => id !== orderId);
+            markChanged();
+            setPinnedTaskIds(current => {
+                const next = pinned ? (current.includes(orderId) ? current : [...current, orderId]) : current.filter(id => id !== orderId);
                 localStorage.setItem(pinStorageKey, JSON.stringify(next));
                 return next;
             });
         };
-        socket.on('task_pin_changed', handleTaskPinChanged);
-        
-        return () => {
-            socket.off('new_task', handleNewTask);
-            socket.off('task_claimed', handleTaskUpdate);
-            socket.off('task_status_changed', handleTaskUpdate);
-            socket.off('task_deleted', handleTaskDeleted);
-            socket.off('task_urgent_changed', handleUrgentChanged);
-            socket.off('task_pin_changed', handleTaskPinChanged);
-        };
-    }, [user]);
+        const events = { new_task: handleNewTask, task_claimed: handleTaskUpdate, task_status_changed: handleTaskUpdate,
+            task_deleted: handleTaskDeleted, task_urgent_changed: handleUrgentChanged, task_pin_changed: handleTaskPinChanged };
+        Object.entries(events).forEach(([name, handler]) => socket.on(name, handler));
+        return () => Object.entries(events).forEach(([name, handler]) => socket.off(name, handler));
+    }, [user, pinStorageKey]);
 
-    // 當任務列表變動時，清理已不存在的置頂 ID
+    // Pins are shared across dates/views: a filtered list must not delete them.
     useEffect(() => {
-        const currentIds = new Set(tasks.map(t => t.id));
-        setPinnedTaskIds(prev => {
-            const next = prev.filter(id => currentIds.has(id));
-            if (next.length !== prev.length) localStorage.setItem(pinStorageKey, JSON.stringify(next));
-            return next;
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        setSelectedTasks(prev => prev.filter(id => tasks.some(task => task.id === id && canBatchPick(task))));
     }, [tasks]);
 
+    const handleViewOrder = (orderId) => {
+        claimContextRef.current += 1;
+        navigate(`/order/${orderId}`);
+    };
+
     const handleClaimTask = async (orderId, isContinue) => {
+        // One opening flow at a time, including callbacks fired before a rerender.
+        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current) return;
         if (isContinue) {
             navigate(`/order/${orderId}`);
             return;
         }
-        const promise = apiClient.post(`/api/orders/${orderId}/claim`);
-        toast.promise(promise, {
-            loading: '正在認領任務...',
-            success: () => {
-                soundNotification.play('taskClaimed');
-                return '✅ 任務認領成功！';
-            },
-            error: (err) => {
-                soundNotification.play('error');
-                return err.response?.data?.message || '認領失敗';
-            },
-        });
+        const claimContext = claimContextRef.current;
+        const canFollowUp = () => mountedRef.current && currentViewRef.current === 'active' && claimContextRef.current === claimContext;
+        activeClaimId.current = orderId;
+        setClaimingId(orderId);
+        try {
+            await apiClient.post(`/api/orders/${orderId}/claim`, undefined, { timeout: 15000 });
+            // The accepted claim remains on the server if the operator has left.
+            // Do not redirect their newer workflow or replay the request.
+            if (!canFollowUp()) return;
+            soundNotification.play('taskClaimed');
+            toast.success('任務認領成功，正在開啟訂單');
+            navigate(`/order/${orderId}`);
+        } catch (error) {
+            if (!canFollowUp()) return;
+            soundNotification.play('error');
+            toast.error(error.response?.data?.message || '認領未確認，請重新整理任務後查看狀態。');
+            await fetchTasks();
+        } finally {
+            activeClaimId.current = null;
+            if (mountedRef.current) setClaimingId(null);
+        }
     };
 
     const handleDeleteOrder = (orderId, voucherNumber) => {
@@ -865,32 +734,15 @@ export function TaskDashboard({ user }) {
         });
     };
 
-    const normalizedSearch = search.trim().toLowerCase();
-
-    // 寬鬆正規化：保留中英文/數字，移除空白與常見分隔符，讓「2025/12/12 -2」或「202512122」可命中「2025/12/12-2」
-    const normalizeLoose = useCallback((value) => {
-        return String(value ?? '')
-            .toLowerCase()
-            .replace(/[\s\/_\-().]+/g, '')
-            .replace(/[^0-9a-z\u4e00-\u9fff]/g, '');
-    }, []);
-
-    const normalizedLooseSearch = useMemo(() => normalizeLoose(search), [search, normalizeLoose]);
-
-    const visibleTasks = useMemo(() => {
-        if (!normalizedSearch && !normalizedLooseSearch) return tasks;
-        return tasks.filter((t) => {
-            const parts = [t.voucher_number, t.customer_name].filter(Boolean);
-            const hay = parts.join(' ').toLowerCase();
-            if (normalizedSearch && hay.includes(normalizedSearch)) return true;
-            if (normalizedLooseSearch) {
-                const looseHay = normalizeLoose(hay);
-                if (looseHay.includes(normalizedLooseSearch)) return true;
-            }
-            return false;
-        });
-    }, [tasks, normalizedSearch, normalizedLooseSearch, normalizeLoose]);
-
+    const visibleTasks = useMemo(
+        () => filterTasks(tasks, { status: statusFilter, urgentOnly, group: taskGroup, user, view: currentView }),
+        [tasks, statusFilter, urgentOnly, taskGroup, user, currentView]
+    );
+    const statusOptions = Object.entries(statusConfig)
+        .filter(([status]) => currentView === 'completed'
+            ? (user?.role === 'packer' ? status === 'completed' : ['picked', 'packing', 'completed'].includes(status))
+            : status !== 'completed' && (user?.role === 'picker' ? ['pending', 'picking'].includes(status) : user?.role === 'packer' ? ['picked', 'packing'].includes(status) : true))
+        .map(([value, config]) => ({ value, label: config.text }));
     // 依置頂/緊急排序後，再切分揀貨/裝箱
     const sortedVisibleTasks = useMemo(() => {
         const arr = [...visibleTasks];
@@ -923,147 +775,45 @@ export function TaskDashboard({ user }) {
     );
 
     const statCards = useMemo(() => {
-        if (currentView === 'completed') {
-            return [
-                {
-                    label: '揀貨待裝箱',
-                    value: completedPickPhaseTasks.length,
-                    color: 'from-emerald-500 to-teal-500',
-                    bg: 'bg-emerald-50',
-                    text: 'text-emerald-600',
-                    icon: Box,
-                },
-                {
-                    label: '已完成裝箱',
-                    value: completedPackDoneTasks.length,
-                    color: 'from-green-500 to-emerald-500',
-                    bg: 'bg-green-50',
-                    text: 'text-green-600',
-                    icon: CheckCircle2,
-                },
-                {
-                    label: '已完成總數',
-                    value: completedTasks.length,
-                    color: 'from-blue-500 to-indigo-500',
-                    bg: 'bg-blue-50',
-                    text: 'text-blue-600',
-                    icon: LayoutDashboard,
-                },
-                {
-                    label: '我的任務',
-                    value: visibleTasks.filter(t => t.current_user).length,
-                    color: 'from-purple-500 to-pink-500',
-                    bg: 'bg-purple-50',
-                    text: 'text-purple-600',
-                    icon: User,
-                },
-            ];
-        }
-
-        return [
-            {
-                label:'待揀貨',
-                value: pickTasks.length,
-                color:'from-orange-500 to-amber-500',
-                bg: 'bg-orange-50',
-                text: 'text-orange-600',
-                icon: Package,
-                highlight: pickHighlight
-            },
-            {
-                label:'待裝箱',
-                value: packTasks.length,
-                color:'from-emerald-500 to-teal-500',
-                bg: 'bg-emerald-50',
-                text: 'text-emerald-600',
-                icon: Box
-            },
-            {
-                label:'總任務',
-                value: visibleTasks.length,
-                color:'from-blue-500 to-indigo-500',
-                bg: 'bg-blue-50',
-                text: 'text-blue-600',
-                icon: LayoutDashboard
-            },
-            {
-                label:'我的任務',
-                value: visibleTasks.filter(t=>t.current_user).length,
-                color:'from-purple-500 to-pink-500',
-                bg: 'bg-purple-50',
-                text: 'text-purple-600',
-                icon: User
-            },
-        ];
-    }, [currentView, completedPickPhaseTasks.length, completedPackDoneTasks.length, completedTasks.length, visibleTasks, pickTasks.length, packTasks.length, pickHighlight]);
-
-    // 當待揀貨數量變動時，短暫高亮
+        const personal = user?.role === 'dispatcher' ? ['mine', '我的拋單']
+            : ['admin', 'superadmin'].includes(user?.role) ? ['inProgress', '作業中'] : ['mine', '我的任務'];
+        const definitions = currentView === 'completed'
+            ? [['picked', '揀貨待裝箱', Box, 'from-emerald-500 to-teal-500'], ['done', '已完成裝箱', CheckCircle2, 'from-green-500 to-emerald-500'], ['all', '已完成總數', LayoutDashboard, 'from-blue-500 to-indigo-500']]
+            : [['pick', '揀貨任務', Package, 'from-orange-500 to-amber-500'], ['pack', '裝箱任務', Box, 'from-emerald-500 to-teal-500'], ['all', '總任務', LayoutDashboard, 'from-blue-500 to-indigo-500']];
+        definitions.push([...personal, User, 'from-purple-500 to-pink-500']);
+        return definitions.map(([group, label, icon, color]) => ({ group, label, icon, color,
+            value: taskSummary?.[group === 'all' ? 'total' : group] ?? null }));
+    }, [currentView, user?.role, taskSummary]);
     useEffect(() => {
         setPickHighlight(true);
         const timer = setTimeout(() => setPickHighlight(false), 800);
         return () => clearTimeout(timer);
     }, [pickTasks.length]);
+    const selectedGroupLabel = statCards.find(card => card.group === taskGroup)?.label || '全部任務';
 
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-transparent">
-                <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-                    {/* Header Skeleton */}
-                    <div className="mb-4">
-                        <Skeleton className="h-8 w-48 mb-2" />
-                        <Skeleton className="h-4 w-72" />
-                    </div>
-                    {/* FilterBar Skeleton */}
-                    <div className="mb-6">
-                        <Skeleton className="h-10 w-full rounded-xl" />
-                    </div>
-                    {/* Stats Skeleton */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-2 mb-6">
-                        {Array.from({ length: 4 }).map((_, i) => (
-                            <div key={i} className="bg-white/40 backdrop-blur-md rounded-2xl p-5 border border-white/20">
-                                <Skeleton className="h-6 w-24 mb-3" />
-                                <Skeleton className="h-8 w-16" />
-                            </div>
-                        ))}
-                    </div>
-                    {/* Cards Skeleton */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <div key={i} className="bg-white/40 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-                                <Skeleton className="h-6 w-40 mb-4" />
-                                <SkeletonText lines={3} />
-                                <div className="mt-6">
-                                    <Skeleton className="h-11 w-full rounded-xl" />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="min-h-screen bg-transparent">
-            <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+            <div className="w-full">
                 {/* 頁面標題 + 動作 */}
                 <PageHeader
-                  title="📋 任務看板"
-                  description={`${user?.name || user?.username}，您好`}
-                  className="relative z-50"
+                  title="任務看板"
+                  className="relative z-30"
                                     actions={(
                                         <div className="flex flex-wrap items-center gap-2 justify-end">
                       {/* 視圖切換 */}
                       <div className="flex bg-gray-100/80 p-1 rounded-xl mr-2">
                           <button 
-                              onClick={() => setCurrentView('active')}
-                              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${currentView === 'active' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                              onClick={() => changeView('active')}
+                              aria-pressed={currentView === 'active'}
+                              className={`px-3 min-h-11 rounded-lg text-sm font-bold transition-all ${currentView === 'active' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                           >
                               進行中
                           </button>
                           <button 
-                              onClick={() => setCurrentView('completed')}
-                              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${currentView === 'completed' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                              onClick={() => changeView('completed')}
+                              aria-pressed={currentView === 'completed'}
+                              className={`px-3 min-h-11 rounded-lg text-sm font-bold transition-all ${currentView === 'completed' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                           >
                               已完成
                           </button>
@@ -1072,11 +822,12 @@ export function TaskDashboard({ user }) {
                                             {/* 已完成：日期篩選（預設今天，可選日期） */}
                                             {currentView === 'completed' && (
                                                 <div className="flex items-center gap-2 bg-white/50 backdrop-blur-sm rounded-xl px-3 py-1.5 border border-gray-200/50 shadow-sm">
-                                                    <span className="text-xs font-bold text-gray-600">日期</span>
+                                                    <label htmlFor="completed-date" className="text-xs font-bold text-gray-600">更新日期</label>
                                                     <input
+                                                        id="completed-date"
                                                         type="date"
                                                         value={completedDate}
-                                                        onChange={(e) => setCompletedDate(e.target.value)}
+                                                        onChange={(e) => setCompletedDate(e.target.value || getLocalISODate())}
                                                         className="text-sm bg-white/70 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
                                                     />
                                                     <button
@@ -1092,111 +843,122 @@ export function TaskDashboard({ user }) {
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
-                      {user && (user.role === 'admin' || user.role === 'superadmin') && (
+                      {currentView === 'active' && user && (user.role === 'admin' || user.role === 'superadmin') && (
                         <Button 
                             variant={batchMode ? 'primary' : 'secondary'} 
                             size="sm" 
-                            onClick={toggleBatchMode} 
+                            onClick={toggleBatchMode}
+                            disabled={isBatchClaiming || claimingId !== null}
                             leadingIcon={ListChecks}
                             className={batchMode ? 'shadow-lg shadow-primary/30' : ''}
                         >
-                          {batchMode ? '✓ 批次模式' : '批次操作'}
+                          {batchMode ? '退出批次揀貨' : '批次揀貨'}
                         </Button>
                       )}
                       
                       {batchMode && selectedTasks.length > 0 && (
-                        <Button variant="primary" size="sm" onClick={handleBatchClaim} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
-                          認領 {selectedTasks.length} 個
+                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
+                          {isBatchClaiming ? '認領中…' : `認領 ${selectedTasks.length} 個揀貨任務`}
                         </Button>
                       )}
 
-                      {/* 設定群組 */}
-                      <div className="flex items-center bg-white/50 backdrop-blur-sm rounded-xl p-1 border border-gray-200/50 shadow-sm">
-                          <button 
-                            onClick={toggleSound}
-                            className={`p-2 rounded-lg transition-all ${soundEnabled ? 'bg-white text-primary shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                            title="音效開關"
-                          >
-                              {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-                          </button>
-                          <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                          <button 
-                            onClick={toggleVoice}
-                            className={`p-2 rounded-lg transition-all ${voiceEnabled ? 'bg-white text-primary shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                            title="語音播報"
-                          >
-                              <MessageSquare size={18} />
-                          </button>
-                          <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                          <button 
-                            onClick={toggleNotification}
-                            className={`p-2 rounded-lg transition-all ${notificationEnabled ? 'bg-white text-primary shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                            title="桌面通知"
-                          >
-                              <Bell size={18} />
-                          </button>
-                      </div>
 
-                                            {user && ((user.role === 'admin' || user.role === 'superadmin') || user.role === 'dispatcher') && (
-                        <Button as={Link} to="/admin" variant="secondary" size="sm" leadingIcon={LayoutDashboard}>
-                          管理中心
-                        </Button>
-                      )}
+
+
                     </div>
                   )}
                 />
 
-                {/* 篩選／搜尋列 */}
-                <div className="lg:sticky lg:top-6 z-30 -mx-4 px-4 py-3 mb-6">
-                    <div className="glass rounded-2xl p-2 shadow-lg border border-white/40 backdrop-blur-xl">
-                        <FilterBar 
-                            value={search} 
-                            onChange={setSearch} 
-                            placeholder="搜尋單號、客戶名稱..." 
-                            className="mb-0 border-0 shadow-none bg-transparent"
-                        />
+                <TaskListFilters
+                    search={search} onSearch={setSearch}
+                    status={statusFilter} onStatus={setStatusFilter}
+                    urgentOnly={urgentOnly} onUrgentOnly={setUrgentOnly}
+                    showUrgent={true}
+                    statusOptions={statusOptions}
+                    total={tasks.length} matched={visibleTasks.length}
+                    onReset={resetFilters} onRefresh={refreshTasks} loading={loading || searchPending}
+                    serverSearch pageIndex={pageIndex} pageSize={TASK_PAGE_SIZE} hasMore={pageInfo.hasMore}
+                />
+                {batchMode && <p className="text-sm text-slate-700 mb-4">請勾選尚未認領的揀貨任務。切換搜尋或篩選會清除已選項目。</p>}
+                {currentView === 'completed' && <p className="text-xs text-slate-600 mb-4">依台灣時間的訂單更新日期查詢；包含已完成揀貨與裝箱的階段，搜尋涵蓋所有符合條件的訂單。</p>}
+                {listChanged && !loading && (
+                    <div role="status" className="flex flex-wrap items-center justify-between gap-2 mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                        <span>任務有更新，統計與清單可能已變動。請重新整理以取得最新資料。</span>
+                        <Button size="sm" variant="secondary" onClick={refreshTasks} disabled={searchPending}>更新任務清單</Button>
                     </div>
-                </div>
+                )}
+                {loadError && (
+                    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 p-4 mb-6 rounded-xl border border-red-200 bg-red-50 text-red-800">
+                        <div className="flex items-start gap-3"><ServerOff size={20} className="shrink-0 mt-0.5" /><div><p className="font-semibold">任務載入失敗</p><p className="text-sm mt-1">{loadError}</p>{tasks.length > 0 && <p className="text-xs mt-1">目前保留上次成功取得的清單，請重新整理確認最新狀態。</p>}</div></div>
+                        <Button variant="secondary" size="sm" disabled={loading || searchPending} onClick={fetchTasks}>重試載入</Button>
+                    </div>
+                )}
 
-                {/* 統計卡片 Widget 風格 */}
-                                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 mt-6 mb-8">
-                                    {statCards.map((c, i)=>{
+                <p className="sr-only">統計涵蓋目前權限、搜尋、狀態與日期條件下的全部任務；點選卡片可篩選下方清單。</p>
+                {/* 本頁統計 */}
+                                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3 mb-5">
+                                    {statCards.map((c)=>{
                     const Icon = c.icon;
                     return (
-                      <div key={i} className="relative group overflow-hidden bg-white/80 backdrop-blur-md rounded-2xl p-5 border border-white/60 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
-                        <div className={`absolute top-0 right-0 w-24 h-24 bg-gradient-to-br ${c.color} opacity-10 rounded-full blur-2xl -mr-8 -mt-8 group-hover:opacity-20 transition-opacity`}></div>
+                      <button type="button" key={c.group} aria-label={`查看${c.label}`} aria-pressed={taskGroup === c.group}
+                        onClick={() => { setTaskGroup(c.group); setSelectedTasks([]); }}
+                        className={`corely-task-stat corely-task-stat--${c.group} relative group text-left overflow-hidden bg-white rounded-xl p-3 sm:p-4 border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${taskGroup === c.group ? 'border-blue-600 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-400'}`}>
+                        
                         
                         <div className="relative z-10 flex items-center justify-between">
                           <div>
                             <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">{c.label}</p>
-                            <p className={`text-3xl sm:text-4xl font-black tracking-tight text-gray-900 ${c.highlight ? 'animate-pulse text-orange-500' : ''}`}>
-                                <NumberTicker value={c.value} />
+                            <p className={`text-2xl sm:text-3xl font-bold tracking-tight text-gray-900`}>
+                                {loading || searchPending ? '…' : c.value === null ? '—' : <NumberTicker value={c.value} />}
                             </p>
                           </div>
-                          <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${c.color} flex items-center justify-center shadow-lg shadow-gray-200 group-hover:scale-110 transition-transform duration-300`}>
-                            <Icon className="text-white" size={22} />
+                          <div className={`corely-stat-icon w-10 h-10 rounded-xl bg-gradient-to-br ${c.color} flex items-center justify-center text-white`}>
+                            <Icon size={20} />
                           </div>
                         </div>
-                      </div>
+                        <span className="relative block mt-2 text-xs text-blue-700">{taskGroup === c.group ? '目前顯示' : '查看任務 →'}</span>
+                      </button>
                     );
                   })}
                 </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <p role="status" className="text-sm font-semibold text-slate-700">目前清單：{selectedGroupLabel}</p>
+                    {taskGroup !== 'all' && <button type="button" className="text-sm text-blue-700 underline min-h-9" onClick={() => setTaskGroup('all')}>查看全部分類</button>}
+                </div>
+                {!loading && !searchPending && !taskSummary && <p role="status" className="text-sm text-amber-700 mb-3">統計暫時無法取得，請重新整理；下方仍可查看已載入的任務。</p>}
                 
 
                 {/* 任務列表 */}
-                {currentView === 'active' ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+                {(loading || searchPending) && (tasks.length === 0 || searchPending) ? (
+                    <div aria-busy="true" className="space-y-4">
+                        <p role="status" className="text-sm text-slate-600">正在載入任務…</p>
+                        {[0, 1, 2].map(index => <div key={index} className="bg-white/70 p-6 rounded-2xl"><Skeleton className="h-6 w-40 mb-4" /><SkeletonText lines={2} /></div>)}
+                    </div>
+                ) : loadError && tasks.length === 0 ? null : visibleTasks.length === 0 ? (
+                    <div className="text-center py-12 px-6 bg-white/75 border border-white rounded-2xl">
+                        <Package size={26} className="mx-auto mb-4 text-slate-400" />
+                        <h2 className="text-xl font-semibold text-slate-800">{hasFilters ? '沒有符合條件的任務' : currentView === 'completed' ? '這個日期沒有完成階段的任務' : '目前沒有可處理的任務'}</h2>
+                        <p className="text-sm text-slate-600 mt-2">{hasFilters ? '可修改單號、客戶或作業狀態，也可以清除篩選。' : currentView === 'completed' ? '請選擇其他更新日期，或回到進行中的任務。' : '收到出貨任務後，選擇「開始揀貨」或「開始裝箱」即可刷條碼核對。'}</p>
+                        <div className="flex justify-center gap-3 mt-5">
+                            {hasFilters ? <Button variant="secondary" onClick={resetFilters}>清除篩選</Button> : <Button variant="secondary" onClick={fetchTasks}>重新整理任務</Button>}
+                            {currentView === 'completed' && <Button variant="secondary" onClick={() => changeView('active')}>查看進行中</Button>}
+                            {!hasFilters && currentView === 'active' && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <Button onClick={() => navigate('/admin')}>匯入出貨單</Button>}
+                        </div>
+                    </div>
+                ) : currentView === 'active' ? (
+                <div className={`grid grid-cols-1 ${['picker', 'packer'].includes(user?.role) ? '' : 'lg:grid-cols-2'} gap-6 lg:gap-8`}>
                     {/* 揀貨任務區 */}
+                    {user?.role !== 'packer' && taskGroup !== 'pack' && (
                     <section className="animate-slide-up flex flex-col h-full">
-                        <div className="glass-panel rounded-2xl p-1.5 mb-4 lg:sticky lg:top-28 z-20 shadow-lg">
-                            <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl px-4 py-3 flex items-center justify-between border border-orange-100/50">
+                        <div className="mb-4 lg:sticky lg:top-20 z-20">
+                            <div className="bg-orange-50 rounded-xl px-4 py-3 flex items-center justify-between border border-orange-100/50">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white text-orange-500 flex items-center justify-center shadow-sm">
                                         <Package size={20} />
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-bold text-gray-900 leading-none">待揀貨任務</h2>
-                                        <p className="text-xs text-orange-600/80 font-medium mt-1">等待處理的訂單</p>
+                                        <h2 className="text-lg font-bold text-gray-900 leading-none">揀貨任務</h2>
+                                        <p className="text-xs text-orange-600/80 font-medium mt-1">待揀貨與正在揀貨的訂單</p>
                                     </div>
                                 </div>
                                 <span
@@ -1207,17 +969,19 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
                         
-                        <div className="flex flex-col gap-6 flex-1">
+                        <div className="flex flex-col gap-4 flex-1">
                             {pickTasks.length > 0 ? (
                                 pickTasks.map((task, index) => (
                                     <div 
                                         key={task.id} 
-                                        style={{ animationDelay: `${index * 50}ms` }}
+                                        style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
                                         className="animate-fade-in"
                                     >
                                         <ModernTaskCard 
                                             task={task} 
-                                            onClaim={handleClaimTask} 
+                                            onClaim={handleClaimTask}
+                                            isClaiming={claimingId === task.id}
+                                            claimDisabled={claimingId !== null || isBatchClaiming}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}
@@ -1227,33 +991,35 @@ export function TaskDashboard({ user }) {
                                             isPinned={pinnedTaskIds.includes(task.id)}
                                             onTogglePin={togglePinTask}
                                             onReportDefect={handleReportDefect}
-                                            onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
+                                            onViewOrder={handleViewOrder}
                                         />
                                     </div>
                                 ))
                             ) : (
-                                <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
-                                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                                        <Package className="text-gray-300" size={40} />
+                                <div className="h-44 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
+                                    <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                                        <Package className="text-gray-300" size={26} />
                                     </div>
-                                    <p className="text-gray-500 font-medium">目前沒有待揀貨任務</p>
-                                    <p className="text-gray-400 text-sm mt-1">稍作休息，喝杯咖啡吧 ☕️</p>
+                                    <p className="text-gray-500 font-medium">{hasFilters ? '沒有符合條件的揀貨任務' : '目前沒有揀貨任務'}</p>
+                                    <p className="text-gray-400 text-sm mt-1">{hasFilters ? '可調整上方搜尋或篩選' : '新揀貨任務會顯示在這裡'}</p>
                                 </div>
                             )}
                         </div>
                     </section>
+                    )}
 
                     {/* 裝箱任務區 */}
+                    {user?.role !== 'picker' && taskGroup !== 'pick' && (
                     <section className="animate-slide-up flex flex-col h-full" style={{ animationDelay: '100ms' }}>
-                        <div className="glass-panel rounded-2xl p-1.5 mb-4 lg:sticky lg:top-28 z-20 shadow-lg">
-                            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
+                        <div className="mb-4 lg:sticky lg:top-20 z-20">
+                            <div className="bg-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">
                                         <Box size={20} />
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-bold text-gray-900 leading-none">待裝箱任務</h2>
-                                        <p className="text-xs text-emerald-600/80 font-medium mt-1">已完成揀貨，等待包裝</p>
+                                        <h2 className="text-lg font-bold text-gray-900 leading-none">裝箱任務</h2>
+                                        <p className="text-xs text-emerald-600/80 font-medium mt-1">待裝箱與正在裝箱的訂單</p>
                                     </div>
                                 </div>
                                 <span
@@ -1264,17 +1030,19 @@ export function TaskDashboard({ user }) {
                             </div>
                         </div>
 
-                        <div className="flex flex-col gap-6 flex-1">
+                        <div className="flex flex-col gap-4 flex-1">
                             {packTasks.length > 0 ? (
                                 packTasks.map((task, index) => (
                                     <div 
                                         key={task.id} 
-                                        style={{ animationDelay: `${index * 50}ms` }}
+                                        style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
                                         className="animate-fade-in"
                                     >
                                         <ModernTaskCard 
                                             task={task} 
-                                            onClaim={handleClaimTask} 
+                                            onClaim={handleClaimTask}
+                                            isClaiming={claimingId === task.id}
+                                            claimDisabled={claimingId !== null || isBatchClaiming}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}
@@ -1284,33 +1052,34 @@ export function TaskDashboard({ user }) {
                                             isPinned={pinnedTaskIds.includes(task.id)}
                                             onTogglePin={togglePinTask}
                                             onReportDefect={handleReportDefect}
-                                            onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
+                                            onViewOrder={handleViewOrder}
                                         />
                                     </div>
                                 ))
                             ) : (
-                                <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
-                                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                                        <Box className="text-gray-300" size={40} />
+                                <div className="h-44 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
+                                    <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                                        <Box className="text-gray-300" size={26} />
                                     </div>
-                                    <p className="text-gray-500 font-medium">目前沒有待裝箱任務</p>
-                                    <p className="text-gray-400 text-sm mt-1">所有包裹都已處理完畢 ✨</p>
+                                    <p className="text-gray-500 font-medium">{hasFilters ? '沒有符合條件的裝箱任務' : '目前沒有裝箱任務'}</p>
+                                    <p className="text-gray-400 text-sm mt-1">{hasFilters ? '可調整上方搜尋或篩選' : '完成揀貨後，任務會進入裝箱階段'}</p>
                                 </div>
                             )}
                         </div>
                     </section>
+                    )}
                 </div>
                 ) : (
                     <div className="space-y-6">
                         <div className="glass-panel rounded-2xl p-1.5 mb-4 shadow-lg">
-                            <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
+                            <div className="bg-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white text-green-500 flex items-center justify-center shadow-sm">
                                         <CheckCircle2 size={20} />
                                     </div>
                                     <div>
                                         <h2 className="text-lg font-bold text-gray-900 leading-none">已完成任務</h2>
-                                        <p className="text-xs text-green-600/80 font-medium mt-1">近期完成的訂單</p>
+                                        <p className="text-xs text-green-600/80 font-medium mt-1">{completedDate} 更新的訂單</p>
                                     </div>
                                 </div>
                                 <span className="px-3 py-1 rounded-lg bg-white text-green-600 text-sm font-bold shadow-sm border border-green-100">
@@ -1320,9 +1089,9 @@ export function TaskDashboard({ user }) {
                         </div>
 
                         {completedTasks.length === 0 ? (
-                            <div className="h-64 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
-                                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                                    <CheckCircle2 className="text-gray-300" size={40} />
+                            <div className="h-44 flex flex-col items-center justify-center text-center p-8 glass rounded-2xl border-2 border-dashed border-gray-200/50">
+                                <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                                    <CheckCircle2 className="text-gray-300" size={26} />
                                 </div>
                                 <p className="text-gray-500 font-medium">尚無已完成任務</p>
                                 <p className="text-gray-400 text-sm mt-1">完成的任務將會顯示在這裡</p>
@@ -1331,8 +1100,8 @@ export function TaskDashboard({ user }) {
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
                                 {/* 左欄：已完成揀貨（待裝箱/裝箱中） */}
                                 <section className="flex flex-col">
-                                    <div className="glass-panel rounded-2xl p-1.5 shadow-lg mb-4 lg:sticky lg:top-28 z-20">
-                                        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
+                                    <div className="glass-panel rounded-2xl p-1.5 shadow-lg mb-4 lg:sticky lg:top-20 z-20">
+                                        <div className="bg-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-10 h-10 rounded-xl bg-white text-emerald-500 flex items-center justify-center shadow-sm">
                                                     <Box size={20} />
@@ -1358,7 +1127,7 @@ export function TaskDashboard({ user }) {
                                             {completedPickPhaseTasks.map((task, index) => (
                                                 <div
                                                     key={task.id}
-                                                    style={{ animationDelay: `${index * 50}ms` }}
+                                                    style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
                                                     className="animate-fade-in"
                                                 >
                                                     <ModernTaskCard
@@ -1366,7 +1135,7 @@ export function TaskDashboard({ user }) {
                                                         user={user}
                                                         onClaim={() => {}}
                                                         viewMode="completed"
-                                                        onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
+                                                        onViewOrder={handleViewOrder}
                                                         onDelete={handleDeleteOrder}
                                                         batchMode={false}
                                                         selectedTasks={[]}
@@ -1384,8 +1153,8 @@ export function TaskDashboard({ user }) {
 
                                 {/* 右欄：已完成裝箱（訂單已完成） */}
                                 <section className="flex flex-col">
-                                    <div className="glass-panel rounded-2xl p-1.5 shadow-lg mb-4 lg:sticky lg:top-28 z-20">
-                                        <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
+                                    <div className="glass-panel rounded-2xl p-1.5 shadow-lg mb-4 lg:sticky lg:top-20 z-20">
+                                        <div className="bg-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-green-100/50">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-10 h-10 rounded-xl bg-white text-green-500 flex items-center justify-center shadow-sm">
                                                     <CheckCircle2 size={20} />
@@ -1411,7 +1180,7 @@ export function TaskDashboard({ user }) {
                                             {completedPackDoneTasks.map((task, index) => (
                                                 <div
                                                     key={task.id}
-                                                    style={{ animationDelay: `${index * 50}ms` }}
+                                                    style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}
                                                     className="animate-fade-in"
                                                 >
                                                     <ModernTaskCard
@@ -1419,7 +1188,7 @@ export function TaskDashboard({ user }) {
                                                         user={user}
                                                         onClaim={() => {}}
                                                         viewMode="completed"
-                                                        onViewOrder={(orderId) => navigate(`/order/${orderId}`)}
+                                                        onViewOrder={handleViewOrder}
                                                         onDelete={handleDeleteOrder}
                                                         batchMode={false}
                                                         selectedTasks={[]}
@@ -1439,16 +1208,14 @@ export function TaskDashboard({ user }) {
                     </div>
                 )}
 
-                {/* 全部完成狀態 */}
-                {currentView === 'active' && visibleTasks.length === 0 && !loading && (
-                    <div className="text-center py-24 animate-fade-in">
-                        <div className="glass rounded-3xl p-12 max-w-md mx-auto">
-                            <CheckCircle2 size={80} className="mx-auto mb-6 text-green-500" />
-                            <h3 className="text-3xl font-bold text-gray-900 mb-2">太棒了！</h3>
-                            <p className="text-gray-500 text-lg">所有任務都已完成</p>
-                        </div>
+                <nav aria-label="任務分頁" className="flex flex-wrap items-center justify-between gap-3 mt-6 rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm text-slate-600">第 {pageIndex + 1} 頁 · 本頁 {visibleTasks.length} 筆 · 每頁最多 {TASK_PAGE_SIZE} 筆{!loading && !searchPending && !loadError && !pageInfo.hasMore ? ' · 已到最後一頁' : ''}</p>
+                    <div className="flex gap-2">
+                        <Button variant="secondary" size="sm" className="min-h-11" disabled={pageIndex === 0 || loading || searchPending} onClick={() => changePage(-1)}>上一頁</Button>
+                        <Button variant="secondary" size="sm" className="min-h-11" disabled={!pageInfo.hasMore || loading || searchPending || listChanged || Boolean(loadError)} onClick={() => changePage(1)}>下一頁</Button>
                     </div>
-                )}
+                </nav>
+
             </div>
 
             {/* Defect Report Modal */}

@@ -57,8 +57,8 @@ class DesktopNotification {
         }
 
         const defaultOptions = {
-            icon: '/vite.svg', // 可以換成你的 logo
-            badge: '/vite.svg',
+            icon: '/branding/corely-app.png',
+            badge: '/branding/corely-app.png',
             dir: 'auto',
             lang: 'zh-TW',
             requireInteraction: false,
@@ -102,7 +102,7 @@ class DesktopNotification {
         return this.show('🆕 新任務到達', {
             body: `訂單: ${task.voucher_number}\n客戶: ${task.customer_name}`,
             tag: 'new-task',
-            icon: '/vite.svg',
+            icon: '/branding/corely-app.png',
             requireInteraction: true, // 需要用戶手動關閉
             data: { type: 'new-task', taskId: task.id }
         });
@@ -116,7 +116,7 @@ class DesktopNotification {
         return this.show('🆕 新任務到達', {
             body: `有 ${count} 個新任務等待處理`,
             tag: 'new-tasks',
-            icon: '/vite.svg',
+            icon: '/branding/corely-app.png',
             requireInteraction: true
         });
     }

@@ -5,13 +5,14 @@ const { Pool } = require('pg');
 const logger = require('../utils/logger');
 
 // 資料庫連接池配置
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    max: 20, // 最大連接數
-    idleTimeoutMillis: 30000, // 空閒連接超時
-    connectionTimeoutMillis: 10000, // 連接超時 (從 2000ms 增加到 10000ms)
-});
+const { getDatabaseOptions } = require('./runtime');
+// DB_POOL_MAX is the TOTAL per-instance budget, including reporting. Reserve
+// one slot for bounded exports without increasing the database role's budget.
+const options = getDatabaseOptions(process.env);
+const reportSlots = options.max > 1 ? 1 : 0;
+const pool = new Pool({ ...options, max: options.max - reportSlots, statement_timeout: 8000 });
+const reportPool = reportSlots ? new Pool({ ...options, max: 1, statement_timeout: 8000 }) : pool;
+if (reportPool !== pool) reportPool.on('error', error => logger.error('Report database connection failed', { code: error.code }));
 
 // 連接池事件監聽
 pool.on('connect', (client) => {
@@ -30,8 +31,8 @@ pool.on('remove', (client) => {
 const testConnection = async () => {
     try {
         const client = await pool.connect();
-        const result = await client.query('SELECT NOW()');
-        client.release();
+        let result;
+        try { result = await client.query('SELECT NOW()'); } finally { client.release(); }
         logger.info('資料庫連接成功:', result.rows[0].now);
         return true;
     } catch (error) {
@@ -43,7 +44,7 @@ const testConnection = async () => {
 // 優雅關閉
 const closePool = async () => {
     try {
-        await pool.end();
+        await Promise.all([pool.end(), ...(reportPool !== pool ? [reportPool.end()] : [])]);
         logger.info('資料庫連接池已關閉');
     } catch (error) {
         logger.error('關閉資料庫連接池時發生錯誤:', error);
@@ -52,6 +53,7 @@ const closePool = async () => {
 
 module.exports = {
     pool,
+    reportPool,
     testConnection,
     closePool
 };

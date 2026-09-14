@@ -1,7 +1,7 @@
 // frontend/src/components/TaskComments-modern.jsx
 // 任務評論系統 - 現代化重構版 (iMessage/LINE 風格)
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { socket } from '@/api/socket';
 import { formatDistanceToNow } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
@@ -15,6 +15,10 @@ import {
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
 import { useComments } from '@/api/useComments';
+import { usePinnedComments } from '@/api/usePinnedComments';
+import { useVisibleCommentReads } from '@/api/useVisibleCommentReads';
+import { useCommentScroll } from '@/api/useCommentScroll';
+import { CommentsLoadState } from './CommentsLoadState';
 import desktopNotification from '@/utils/desktopNotification';
 import soundNotification from '@/utils/soundNotification';
 import { Button, Skeleton } from '@/ui';
@@ -86,18 +90,20 @@ const UserAvatar = ({ name, size = "md" }) => {
 };
 
 export default function TaskComments({ orderId, currentUser, allUsers, mode = 'embedded' }) {
-    const { data, isLoading, fetchNextPage, hasNextPage, addOptimistic, invalidate } = useComments(orderId);
-    const comments = (data?.pages || []).flatMap(p => p.items ?? []);
+    const { comments, isLoading, isError, error, refetch, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage, hasNextPage, invalidate, markVisibleRead } = useComments(orderId);
     const [newComment, setNewComment] = useState('');
     const [replyTo, setReplyTo] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [sendError, setSendError] = useState(null);
+    const sendingRef = useRef(false);
     const [showMentions, setShowMentions] = useState(false);
     const [mentionFilter, setMentionFilter] = useState('');
     const [cursorPosition, setCursorPosition] = useState(0);
     const [priority, setPriority] = useState('normal');
     const [showQuickReplies, setShowQuickReplies] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [pinnedComments, setPinnedComments] = useState([]);
+    const { pinnedComments, invalidatePins } = usePinnedComments(orderId, currentUser);
+    const pinSavingRef = useRef(false);
     const [isMinimized, setIsMinimized] = useState(false); // Widget mode only
     const [mentionsOpen, setMentionsOpen] = useState(false);
     const [mentions, setMentions] = useState([]);
@@ -109,6 +115,11 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     const commentsEndRef = useRef(null);
     const scrollContainerRef = useRef(null);
     const mentionPulseRef = useRef(new Set());
+    const { onScroll, loadOlder, jumpToLatest, hasNewMessages } = useCommentScroll({
+        rootRef: scrollContainerRef, comments, orderId, fetchNextPage, enabled: !isMinimized
+    });
+    useVisibleCommentReads({ orderId, rootRef: scrollContainerRef, comments, markVisibleRead, enabled: !isMinimized });
+
 
     // 建立評論 ID 對照表，用於快速查找父評論
     const commentMap = useMemo(() => {
@@ -118,32 +129,18 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     }, [comments]);
 
     // 初始化與 Socket 監聽
-    useEffect(() => {
+    const fetchMentions = useCallback(async () => {
         try {
-            const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
-            setPinnedComments(Array.isArray(pinned) ? pinned : []);
-        } catch { setPinnedComments([]); }
-
-        (async () => {
-            try {
-                const res = await apiClient.get(`/api/tasks/${orderId}/pins`);
-                const list = Array.isArray(res?.data?.pinned) ? res.data.pinned : [];
-                // 確保資料完整性與唯一性
-                const validList = list.filter(item => item && item.id && item.content);
-                const uniqueList = Array.from(new Map(validList.map(item => [item.id, item])).values());
-                
-                setPinnedComments(uniqueList);
-                localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(uniqueList));
-            } catch (e) {
-                console.error('Failed to fetch pins:', e);
-            }
-        })();
+            const res = await apiClient.get(`/api/tasks/${orderId}/mentions?status=unread&limit=20`);
+            setMentions(res.data.items || []);
+            setMentionsUnread(res.data.total || 0);
+        } catch (e) { /* ignore */ }
     }, [orderId]);
+
 
     useEffect(() => {
         const interval = setInterval(() => invalidate(), 60000);
         try {
-            if (!socket.connected) socket.connect();
             
             const onNewComment = (data) => {
                 if (String(data.orderId) === String(orderId)) {
@@ -153,7 +150,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                     if (data.userId !== currentUser.id) {
                         try {
                             soundNotification.play('message');
-                        } catch {}
+                        } catch { /* Optional notification must not interrupt the conversation. */ }
                     }
                 }
             };
@@ -161,6 +158,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             const onCommentRetracted = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
+                    invalidatePins();
                     toast.info('一則訊息已收回');
                 }
             };
@@ -168,6 +166,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             const onCommentDeleted = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
+                    invalidatePins();
                 }
             };
 
@@ -180,15 +179,16 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                             duration: 4000,
                             onClick: () => {}
                         });
-                    } catch {}
+                    } catch { /* Optional notification must not interrupt the conversation. */ }
                     try {
                         soundNotification.play('newTask');
-                    } catch {}
+                    } catch { /* Optional notification must not interrupt the conversation. */ }
                     invalidate();
                     fetchMentions();
                 }
             };
 
+            socket.on('connect', invalidatePins);
             socket.on('new_comment', onNewComment);
             socket.on('comment_retracted', onCommentRetracted);
             socket.on('comment_deleted', onCommentDeleted);
@@ -196,6 +196,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             
             return () => {
                 clearInterval(interval);
+                socket.off('connect', invalidatePins);
                 socket.off('new_comment', onNewComment);
                 socket.off('comment_retracted', onCommentRetracted);
                 socket.off('comment_deleted', onCommentDeleted);
@@ -204,7 +205,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
         } catch (e) {
             return () => clearInterval(interval);
         }
-    }, [orderId, currentUser.id, invalidate]);
+    }, [orderId, currentUser.id, invalidate, invalidatePins, fetchMentions]);
 
     // 點擊外部關閉選單
     useEffect(() => {
@@ -220,27 +221,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
         };
     }, [activeMessageId]);
 
-    // 自動滾動
-    useEffect(() => {
-        if (scrollContainerRef.current) {
-            // 使用 scrollTop 替代 scrollIntoView 以避免頁面跳動
-            const container = scrollContainerRef.current;
-            // 使用 requestAnimationFrame 確保 DOM 更新後再滾動
-            requestAnimationFrame(() => {
-                container.scrollTop = container.scrollHeight;
-            });
-        }
-    }, [comments.length, activeMessageId]); // 當評論增加或操作選單開啟時滾動
-
-    const fetchMentions = async () => {
-        try {
-            const res = await apiClient.get(`/api/tasks/${orderId}/mentions?status=unread&limit=20`);
-            setMentions(res.data.items || []);
-            setMentionsUnread(res.data.total || 0);
-        } catch (e) { /* ignore */ }
-    };
-
-    useEffect(() => { fetchMentions(); }, [orderId]);
+    useEffect(() => { fetchMentions(); }, [fetchMentions]);
 
     const handleInputChange = (e) => {
         const value = e.target.value;
@@ -273,7 +254,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
         textareaRef.current?.focus();
     };
 
-    const useQuickReply = (reply) => {
+    const applyQuickReply = (reply) => {
         setNewComment(reply.text);
         setPriority(reply.priority);
         setShowQuickReplies(false);
@@ -289,6 +270,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
         try {
             await apiClient.patch(`/api/tasks/${orderId}/comments/${comment.id}/retract`);
             toast.success('訊息已收回');
+            await invalidate();
             setActiveMessageId(null);
         } catch (error) {
             toast.error('收回失敗', { description: error.response?.data?.message });
@@ -296,31 +278,18 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     };
 
     const handlePin = async (comment) => {
+        if (pinSavingRef.current) return;
+        pinSavingRef.current = true;
         try {
-            const isPinned = pinnedComments.some(p => p.id === comment.id);
-            await apiClient.put(`/api/tasks/${orderId}/pins/${comment.id}`, {
-                pinned: !isPinned
-            });
-            
-            // 更新本地狀態
-            let newPinned;
-            if (isPinned) {
-                newPinned = pinnedComments.filter(p => p.id !== comment.id);
-                toast.success('已取消置頂');
-            } else {
-                // 避免重複添加
-                if (!pinnedComments.some(p => p.id === comment.id)) {
-                    newPinned = [...pinnedComments, comment];
-                } else {
-                    newPinned = [...pinnedComments];
-                }
-                toast.success('已置頂留言');
-            }
-            setPinnedComments(newPinned);
-            localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(newPinned));
+            const isPinned = pinnedComments.some(p => String(p.id) === String(comment.id));
+            await apiClient.put(`/api/tasks/${orderId}/pins/${comment.id}`, { pinned: !isPinned });
+            await invalidatePins();
+            toast.success(isPinned ? '已取消置頂' : '已置頂留言');
             setActiveMessageId(null);
         } catch (error) {
             toast.error('操作失敗', { description: error.response?.data?.message });
+        } finally {
+            pinSavingRef.current = false;
         }
     };
 
@@ -343,6 +312,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             try {
                 await apiClient.delete(`/api/tasks/${orderId}/comments/${comment.id}`);
                 toast.success('訊息已刪除');
+                await invalidate();
                 setActiveMessageId(null);
             } catch (error) {
                 toast.error('刪除失敗', { description: error.response?.data?.message });
@@ -352,39 +322,19 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
 
     const handleSubmit = async (e) => {
         e?.preventDefault();
-        if (!newComment.trim()) return;
-        if (loading) return;
-        
-        setLoading(true);
+        if (!newComment.trim() || sendingRef.current) return;
+        sendingRef.current = true;
+        setLoading(true); setSendError(null);
+        const submitted = newComment;
         try {
-            const draft = {
-                id: `temp_${Date.now()}`,
-                content: newComment,
-                parent_id: replyTo?.id || null,
-                priority,
-                created_at: new Date().toISOString(),
-                user_id: currentUser.id,
-                username: currentUser.username,
-                user_name: currentUser.name,
-                __optimistic: true,
-            };
-            addOptimistic(draft);
-
-            await apiClient.post(`/api/tasks/${orderId}/comments`, {
-                content: newComment,
-                parent_id: replyTo?.id || null,
-                priority: priority
-            });
-            
-            setNewComment('');
-            setReplyTo(null);
-            setPriority('normal');
+            await apiClient.post(`/api/tasks/${orderId}/comments`, { content: submitted, parent_id: replyTo?.id || null, priority });
+            setNewComment(value => value === submitted ? '' : value);
+            setReplyTo(null); setPriority('normal');
+            jumpToLatest();
             await invalidate();
         } catch (error) {
-            toast.error('發送失敗');
-        } finally {
-            setLoading(false);
-        }
+            setSendError(error.response?.data?.message || error.message || '留言未送出，內容已保留');
+        } finally { sendingRef.current = false; setLoading(false); }
     };
 
     const filteredUsers = (allUsers || []).filter(u => 
@@ -394,7 +344,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
 
     // 渲染單個評論
     const renderComment = (comment) => {
-        const isMine = comment.user_id === currentUser.id;
+        const isMine = String(comment.user_id) === String(currentUser.id);
         const isUrgent = comment.priority === 'urgent';
         const isPinned = pinnedComments.some(p => p.id === comment.id);
         const isRetracted = comment.content === '[已撤回]';
@@ -403,7 +353,8 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
 
         return (
             <div 
-                key={comment.id} 
+                key={comment.id}
+                id={`comment-${comment.id}`}
                 className={`flex gap-3 mb-4 ${isMine ? 'flex-row-reverse' : ''} group relative`}
             >
                 {/* Avatar */}
@@ -463,15 +414,14 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                                     <AlertTriangle size={10} /> Urgent
                                 </div>
                             )}
-                            <p className="whitespace-pre-wrap break-words font-medium">{comment.content}</p>
+                            <p data-comment-id={comment.id} className="whitespace-pre-wrap break-words font-medium">{comment.content}</p>
                         </div>
 
                         {/* Actions Menu (Hover/Click) */}
                         {!isRetracted && (
                             <div className={`
-                                absolute top-0 ${isMine ? '-left-12' : '-right-12'} 
-                                ${isActive ? 'opacity-100 z-30' : 'opacity-0 group-hover/bubble:opacity-100'} 
-                                transition-opacity flex flex-col gap-1 action-menu-container
+                                relative mt-1 flex items-center ${isMine ? 'justify-end' : 'justify-start'}
+                                gap-1 action-menu-container
                             `}>
                                 <button 
                                     onClick={() => handleReply(comment)}
@@ -484,6 +434,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                                 {(isMine || currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
                                     <div className="relative">
                                         <button 
+                                            aria-label="留言操作"
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 setActiveMessageId(activeMessageId === comment.id ? null : comment.id);
@@ -552,8 +503,8 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     }
 
     const containerClasses = mode === 'widget' 
-        ? "fixed bottom-6 right-6 z-50 w-[380px] h-[600px] rounded-[24px] bg-white/80 backdrop-blur-2xl shadow-2xl border border-white/40 flex flex-col overflow-hidden transition-all duration-300"
-        : "flex flex-col h-full bg-transparent relative w-full";
+        ? "fixed bottom-0 right-0 sm:bottom-6 sm:right-6 z-50 w-full sm:w-[380px] h-[min(600px,100dvh)] rounded-[24px] bg-white/80 backdrop-blur-2xl shadow-2xl border border-white/40 flex flex-col overflow-hidden transition-all duration-300"
+        : "flex flex-col min-h-0 h-full bg-transparent relative w-full";
 
     return (
         <div className={containerClasses}>
@@ -580,7 +531,8 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                     )}
                     {mode !== 'widget' && (
                         <button 
-                            onClick={() => setMentionsOpen(!mentionsOpen)}
+                            onClick={() => { setMentionsOpen(!mentionsOpen); fetchMentions(); }}
+                            aria-label="提及收件匣"
                             className="p-2 hover:bg-white/50 rounded-xl text-gray-500 hover:text-gray-700 relative transition-all"
                         >
                             <AtSign size={20} />
@@ -592,11 +544,25 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                 </div>
             </div>
 
+            <div className="mx-4 mt-2">
+                <input type="search" value={searchTerm} onChange={event => setSearchTerm(event.target.value)}
+                    aria-label="搜尋已載入留言" placeholder="搜尋已載入留言" className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm" />
+                {mentionsOpen && <div ref={mentionsRef} className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-blue-100 bg-white p-3">
+                    <p className="mb-2 text-xs font-medium text-gray-500">未讀提及</p>
+                    {mentions.length === 0 ? <p className="text-sm text-gray-500">目前沒有未讀提及</p> : mentions.map(mention => <button key={mention.comment_id} type="button"
+                        className="mb-1 block w-full rounded-lg p-2 text-left text-sm hover:bg-blue-50"
+                        onClick={() => {
+                            const element = scrollContainerRef.current?.querySelector(`[id="comment-${mention.comment_id}"]`);
+                            if (element) { setSearchTerm(''); element.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+                            else toast.info('這則留言位於較早對話，請載入更早留言後查看。');
+                        }}>{mention.content}</button>)}
+                </div>}
+            </div>
             {/* Pinned Section */}
             {pinnedComments.length > 0 && (
-                <div className="mx-4 mt-2 bg-blue-50/60 backdrop-blur-md border border-blue-100/50 rounded-2xl px-4 py-3 shadow-sm">
+                <div className="mx-4 mt-2 max-h-40 shrink-0 overflow-y-auto bg-blue-50/60 backdrop-blur-md border border-blue-100/50 rounded-2xl px-4 py-3 shadow-sm">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
-                        <Pin size={12} className="fill-blue-700" /> 置頂公告
+                        <Pin size={12} className="fill-blue-700" /> 我的釘選
                     </div>
                     <div className="space-y-2">
                         {pinnedComments.map(pin => (
@@ -619,8 +585,14 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                 </div>
             )}
 
+            <CommentsLoadState isError={isError} error={error} isFetching={isFetching}
+                retry={isFetchNextPageError ? loadOlder : refetch} hasNewMessages={hasNewMessages} jumpToLatest={jumpToLatest} />
             {/* Comments List */}
-            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 space-y-6 scroll-smooth">
+            <div ref={scrollContainerRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-6">
+                {hasNextPage && <button type="button" disabled={isFetching} onClick={loadOlder}
+                    className="mx-auto block rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-blue-700 disabled:opacity-50">
+                    {isFetchingNextPage ? '載入中…' : '載入更早留言'}
+                </button>}
                 {isLoading ? (
                     <div className="space-y-6">
                         {[1,2,3].map(i => (
@@ -633,7 +605,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                             </div>
                         ))}
                     </div>
-                ) : comments.length === 0 ? (
+                ) : comments.length === 0 && !isError ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400">
                         <div className="w-24 h-24 bg-white/30 backdrop-blur rounded-full flex items-center justify-center mb-4 shadow-inner">
                             <MessageSquare size={40} className="text-gray-300" />
@@ -649,8 +621,9 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                 <div ref={commentsEndRef} />
             </div>
 
+            {sendError && <div role="alert" className="mx-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sendError}。內容已保留，請先重新整理確認是否送達。</div>}
             {/* Input Area */}
-            <div className="p-4 z-20">
+            <div className="shrink-0 p-3 sm:p-4 z-20 pb-[max(12px,env(safe-area-inset-bottom))]">
                 <div className="bg-white/30 backdrop-blur-md border border-white/20 shadow-sm p-2 rounded-[2rem]">
                     {/* Reply Preview */}
                     {replyTo && (
@@ -674,13 +647,13 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                     )}
 
                     <div className="flex items-end gap-2">
-                        <div className={`flex-1 bg-gray-50/50 rounded-[1.5rem] border border-transparent transition-all duration-300 flex flex-col focus-within:bg-white/80 focus-within:shadow-inner`}>
+                        <div className={`min-w-0 flex-1 bg-gray-50/50 rounded-[1.5rem] border border-transparent transition-all duration-300 flex flex-col focus-within:bg-white/80 focus-within:shadow-inner`}>
                             <textarea
                                 ref={textareaRef}
                                 value={newComment}
                                 onChange={handleInputChange}
                                 onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                                         e.preventDefault();
                                         handleSubmit();
                                     }
@@ -693,7 +666,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                             
                             {/* Toolbar */}
                             <div className="flex items-center justify-between px-3 pb-2">
-                                <div className="flex items-center gap-1">
+                                <div className="flex flex-wrap items-center gap-1">
                                     <button
                                         onClick={() => setShowQuickReplies(!showQuickReplies)}
                                         className={`p-2 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${showQuickReplies ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100/50 hover:text-gray-600'}`}
@@ -720,7 +693,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                         
                         <button
                             onClick={handleSubmit}
-                            disabled={!newComment.trim()}
+                            disabled={!newComment.trim() || loading}
                             className={`
                                 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 flex-shrink-0
                                 ${newComment.trim() 
@@ -728,7 +701,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                                     : 'bg-gray-100 text-gray-300 cursor-not-allowed'}
                             `}
                         >
-                            <Send size={20} className={newComment.trim() ? 'ml-0.5' : ''} />
+                            {loading ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
                         </button>
                     </div>
                 </div>
@@ -739,7 +712,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                         {QUICK_REPLIES.map((reply, idx) => (
                             <button
                                 key={idx}
-                                onClick={() => useQuickReply(reply)}
+                                onClick={() => applyQuickReply(reply)}
                                 className="px-4 py-2 bg-white/80 backdrop-blur border border-white/50 hover:border-blue-300 hover:bg-blue-50 rounded-xl text-xs font-bold text-gray-600 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95"
                             >
                                 {reply.text}

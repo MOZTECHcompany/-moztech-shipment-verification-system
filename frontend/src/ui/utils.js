@@ -12,8 +12,8 @@ export const variants = {
       lg: 'px-6 py-3 text-base',
     },
     variants: {
-      primary: 'bg-primary text-white hover:bg-primary/90 shadow-primary/30 shadow-lg border border-transparent',
-      secondary: 'bg-white/80 backdrop-blur-md text-gray-700 border border-gray-200/50 hover:bg-white hover:border-gray-300 shadow-sm',
+      primary: 'bg-primary text-white hover:bg-primary/90 border border-transparent',
+      secondary: 'bg-white text-gray-700 border border-slate-200 hover:bg-white hover:border-gray-300 shadow-sm',
       destructive: 'bg-destructive text-white hover:bg-destructive/90 shadow-destructive/30 shadow-lg',
       danger: 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/30 shadow-lg',
       success: 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/30 shadow-lg',
@@ -24,7 +24,7 @@ export const variants = {
   badge: {
     base: 'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium backdrop-blur-sm border shadow-sm',
     variants: {
-      neutral: 'bg-gray-100/50 text-gray-700 border-gray-200/50',
+      neutral: 'bg-gray-100/50 text-gray-700 border-slate-200',
       info: 'bg-blue-100/50 text-blue-700 border-blue-200/50',
       success: 'bg-green-100/50 text-green-700 border-green-200/50',
       warning: 'bg-amber-100/50 text-amber-700 border-amber-200/50',
@@ -33,6 +33,6 @@ export const variants = {
     },
   },
   card: {
-    base: 'glass rounded-2xl border border-white/40 shadow-xl transition-all duration-300 hover:shadow-2xl',
+    base: 'rounded-xl border border-slate-200 bg-white shadow-sm',
   },
 };

@@ -2,12 +2,15 @@
 // 任務評論、提及、協作與活躍會話端點（需先通過 authenticateToken）
 
 const express = require('express');
+const { createHash } = require('crypto');
+const { encodeCommentCursor, decodeCommentCursor } = require('../utils/commentCursor');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 
 const router = express.Router();
+const { deferredEvents } = require('../utils/transactionEvents');
 
 const rateMap = new Map();
 function rateLimit(key, limit, windowMs = 60_000) {
@@ -24,81 +27,112 @@ function rateLimit(key, limit, windowMs = 60_000) {
 
 router.get('/tasks/:orderId/comments', async (req, res) => {
     const { orderId } = req.params;
-    const { after, limit } = req.query;
-    const pageSize = Math.min(Math.max(parseInt(limit || '50', 10), 1), 200);
-    const client = await pool.connect();
+    const { after, before, latest } = req.query;
+    const parsedLimit = parseInt(req.query.limit, 10);
+    const pageSize = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 50, 1), 200);
+    let client;
     try {
-        const agg = await client.query(
-            `SELECT COUNT(*)::int AS total, MAX(updated_at) AS latest FROM task_comments WHERE order_id = $1`,
-            [orderId]
+        if (after && before) {
+            return res.status(400).json({ code: 'INVALID_COMMENT_CURSOR', message: 'after 與 before 不可同時使用' });
+        }
+        const cursor = decodeCommentCursor(after || before);
+        const backwards = !!before || (!after && latest === '1');
+        client = await pool.connect();
+        const params = [orderId, req.user.id];
+        let where = 'c.order_id = $1';
+        if (cursor) {
+            params.push(cursor.createdAt);
+            const timestampIndex = params.length;
+            const comparator = backwards ? '<' : '>';
+            if (cursor.id !== null) {
+                params.push(cursor.id);
+                where += ` AND (c.created_at, c.id) ${comparator} ($${timestampIndex}, $${params.length}::integer)`;
+            } else {
+                where += ` AND c.created_at ${comparator} $${timestampIndex}`;
+            }
+        }
+        params.push(pageSize + 1);
+        const direction = backwards ? 'DESC' : 'ASC';
+        const comments = await client.query(
+            `SELECT c.id, c.content, c.parent_id, c.priority, c.created_at, c.updated_at,
+                    c.created_at::text AS cursor_created_at,
+                    u.id AS user_id, u.username, u.name AS user_name,
+                    EXISTS (SELECT 1 FROM task_mentions tm WHERE tm.comment_id = c.id AND tm.mentioned_user_id = $2) AS mentioned_me,
+                    COALESCE((SELECT BOOL_AND(tm.is_read) FROM task_mentions tm WHERE tm.comment_id = c.id AND tm.mentioned_user_id = $2), FALSE) AS mention_is_read,
+                    (c.user_id = $2 OR EXISTS (
+                        SELECT 1 FROM task_comment_reads cr WHERE cr.comment_id = c.id AND cr.user_id = $2
+                    )) AS is_read
+               FROM task_comments c
+               LEFT JOIN users u ON c.user_id = u.id
+              WHERE ${where}
+              ORDER BY c.created_at ${direction}, c.id ${direction}
+              LIMIT $${params.length}`,
+            params
         );
-        const total = agg.rows[0]?.total || 0;
-        const latest = agg.rows[0]?.latest || null;
+        const hasMore = comments.rows.length > pageSize;
+        const items = comments.rows.slice(0, pageSize);
+        if (backwards) items.reverse();
+        const agg = await client.query(
+            `SELECT COUNT(*)::int AS total FROM task_comments WHERE order_id = $1`, [orderId]
+        );
         const unreadAgg = await client.query(
-            `SELECT COUNT(*)::int AS unread
-               FROM task_mentions tm
+            `SELECT COUNT(*)::int AS unread FROM task_mentions tm
                JOIN task_comments c ON c.id = tm.comment_id
               WHERE c.order_id = $1 AND tm.mentioned_user_id = $2 AND tm.is_read = FALSE`,
             [orderId, req.user.id]
         );
-        const unreadMentions = unreadAgg.rows[0]?.unread || 0;
-        const etag = `W/"comments:${orderId}:u${req.user.id}:${total}:${latest ? new Date(latest).getTime() : 0}:unread:${unreadMentions}"`;
+        const body = {
+            items,
+            nextCursor: !backwards && hasMore ? encodeCommentCursor(items[items.length - 1]) : null,
+            previousCursor: backwards && hasMore ? encodeCommentCursor(items[0]) : null,
+            newestCursor: encodeCommentCursor(items[items.length - 1]),
+            hasMore,
+            total: agg.rows[0]?.total || 0,
+            unreadMentions: unreadAgg.rows[0]?.unread || 0
+        };
+        // A validator belongs to this user's exact page body, including read state.
+        const digest = createHash('sha256').update(JSON.stringify([orderId, req.user.id, req.query, body])).digest('hex');
+        const etag = `W/"comments:${digest}"`;
         res.setHeader('ETag', etag);
-
-        const ifNoneMatch = req.headers['if-none-match'];
-        if (ifNoneMatch && ifNoneMatch === etag && !after) {
-            return res.status(304).end();
-        }
-
-        const params = [orderId];
-        let where = 'c.order_id = $1';
-        if (after) {
-            const afterDate = new Date(after);
-            if (!Number.isNaN(afterDate.getTime())) {
-                params.push(afterDate);
-                where += ` AND c.created_at > $${params.length}`;
-            }
-        }
-        const userParamIndex = params.length + 1;
-        params.push(req.user.id);
-        const limitParamIndex = params.length + 1;
-        params.push(pageSize);
-
-        const comments = await client.query(
-            `SELECT 
-                c.id,
-                c.content,
-                c.parent_id,
-                c.priority,
-                c.created_at,
-                c.updated_at,
-                u.id as user_id,
-                u.username,
-                u.name as user_name,
-                (tm.id IS NOT NULL) AS mentioned_me,
-                COALESCE(tm.is_read, FALSE) AS mention_is_read
-            FROM task_comments c
-            LEFT JOIN users u ON c.user_id = u.id
-            LEFT JOIN task_mentions tm 
-              ON tm.comment_id = c.id 
-             AND tm.mentioned_user_id = $${userParamIndex}
-            WHERE ${where}
-            ORDER BY c.created_at ASC
-            LIMIT $${limitParamIndex}
-            `,
-            params
-        );
-
-        const nextCursor = comments.rows.length > 0
-            ? comments.rows[comments.rows.length - 1].created_at
-            : null;
-
-        res.json({ items: comments.rows, nextCursor, total, unreadMentions });
+        res.setHeader('Cache-Control', 'private, no-cache');
+        res.vary('Authorization');
+        if (req.headers['if-none-match'] === etag) return res.status(304).end();
+        return res.json(body);
     } catch (error) {
         logger.error('[/api/tasks/:orderId/comments] 獲取評論失敗:', error);
-        res.status(500).json({ code: 'COMMENTS_FETCH_FAILED', message: '獲取評論失敗', requestId: req.requestId });
+        return res.status(error.status || 500).json({ code: error.code === 'INVALID_COMMENT_CURSOR' ? error.code : 'COMMENTS_FETCH_FAILED', message: error.status === 400 ? error.message : '獲取評論失敗', requestId: req.requestId });
     } finally {
-        client.release();
+        client?.release();
+    }
+});
+
+// Automatic read receipts must name only comments actually visible in the UI.
+// Keep mark-all-read below for the existing explicit "mark everything read" action.
+router.post('/tasks/:orderId/comments/mark-read', async (req, res) => {
+    const { commentIds } = req.body || {};
+    if (!Array.isArray(commentIds) || commentIds.length > 200 ||
+        commentIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+        return res.status(400).json({ code: 'INVALID_COMMENT_IDS', message: '請提供最多 200 個有效留言 ID' });
+    }
+    const ids = [...new Set(commentIds)];
+    if (!ids.length) return res.json({ count: 0, commentIds: [] });
+    try {
+        // Both receipt types are written atomically; IDs from another order are ignored.
+        const result = await pool.query(`
+            WITH visible AS (
+                SELECT id FROM task_comments WHERE order_id = $1 AND id = ANY($3::integer[])
+            ), reads AS (
+                INSERT INTO task_comment_reads (comment_id, user_id, read_at)
+                SELECT id, $2, NOW() FROM visible
+                ON CONFLICT (comment_id, user_id) DO NOTHING
+            ), mentions AS (
+                UPDATE task_mentions SET is_read = TRUE
+                WHERE mentioned_user_id = $2 AND comment_id IN (SELECT id FROM visible)
+            ) SELECT id FROM visible ORDER BY id`, [req.params.orderId, req.user.id, ids]);
+        return res.json({ count: result.rowCount, commentIds: result.rows.map(row => row.id) });
+    } catch (error) {
+        logger.error('[/api/tasks/:orderId/comments/mark-read] 標記已讀失敗:', error);
+        return res.status(500).json({ code: 'COMMENTS_MARK_READ_FAILED', message: '標記已讀失敗', requestId: req.requestId });
     }
 });
 
@@ -140,6 +174,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
         `, [orderId, userId, content, parent_id, priority]);
 
         const commentId = result.rows[0].id;
+        const mentionEvents = [];
 
         const mentionRegex = /@([A-Za-z0-9._-]+)/g;
         const mentions = content.match(mentionRegex);
@@ -161,7 +196,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
                         VALUES ($1, $2)
                     `, [commentId, userResult.rows[0].id]);
 
-                    io?.emit('new_mention', {
+                    mentionEvents.push({
                         userId: userResult.rows[0].id,
                         orderId,
                         commentId,
@@ -173,6 +208,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
         }
 
         await client.query('COMMIT');
+        for (const event of mentionEvents) io?.emit('new_mention', event);
 
         io?.emit('new_comment', {
             orderId,
@@ -216,7 +252,7 @@ router.patch('/tasks/:orderId/comments/:commentId/retract', async (req, res) => 
         if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
         const ownerId = info.rows[0].user_id;
         const isOwner = Number(ownerId) === Number(requester.id);
-        const isAdmin = String(requester.role || '').toLowerCase() === 'admin';
+        const isAdmin = ['admin', 'superadmin'].includes(String(requester.role || '').toLowerCase());
         if (!isOwner && !isAdmin) return res.status(403).json({ code: 'FORBIDDEN', message: '無權撤回此評論', requestId: req.requestId });
 
         await pool.query('UPDATE task_comments SET content = $1, updated_at = NOW() WHERE id = $2', ['[已撤回]', commentId]);
@@ -502,7 +538,7 @@ router.delete('/tasks/:orderId/comments/:commentId', async (req, res) => {
         if (info.rowCount === 0) return res.status(404).json({ code: 'COMMENT_NOT_FOUND', message: '找不到評論', requestId: req.requestId });
         const ownerId = info.rows[0].user_id;
         const isOwner = Number(ownerId) === Number(requester.id);
-        const isAdmin = String(requester.role || '').toLowerCase() === 'admin';
+        const isAdmin = ['admin', 'superadmin'].includes(String(requester.role || '').toLowerCase());
         if (!isOwner && !isAdmin) return res.status(403).json({ code: 'FORBIDDEN', message: '無權刪除此評論', requestId: req.requestId });
 
         await pool.query('DELETE FROM task_comments WHERE id = $1', [commentId]);
@@ -582,59 +618,35 @@ router.get('/tasks/:orderId/sessions', async (req, res) => {
 router.post('/tasks/:orderId/transfer', async (req, res) => {
     const { orderId } = req.params;
     const { to_user_id, task_type, reason } = req.body;
-    const { id: fromUserId } = req.user;
-    const io = req.app.get('io');
-
-    if (!to_user_id || !task_type) {
-        return res.status(400).json({ message: '缺少必要參數' });
-    }
-
-    const client = await pool.connect();
+    const { id: fromUserId, role } = req.user;
+    const isAdmin = ['admin', 'superadmin'].includes(role);
+    const events = deferredEvents(req.app.get('io'));
+    const fail = (status, message) => Object.assign(new Error(message), { status });
+    if (!['pick', 'pack'].includes(task_type) || !Number.isSafeInteger(Number(to_user_id)) || Number(to_user_id) <= 0) return res.status(400).json({ message: '請提供正確的作業類型與接手人員' });
+    let client, transactionOpen = false, commitAttempted = false, releaseError;
     try {
-        await client.query('BEGIN');
-
-        await client.query(`
-            INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason)
-            VALUES ($1, $2, $3, $4, $5)
-        `, [orderId, fromUserId, to_user_id, task_type, reason]);
-
-        if (task_type === 'pick') {
-            await client.query(
-                'UPDATE orders SET picker_id = $1 WHERE id = $2',
-                [to_user_id, orderId]
-            );
-        } else if (task_type === 'pack') {
-            await client.query(
-                'UPDATE orders SET packer_id = $1 WHERE id = $2',
-                [to_user_id, orderId]
-            );
-        }
-
-        await client.query('COMMIT');
-
-        await logOperation({
-            userId: fromUserId,
-            orderId,
-            operationType: 'transfer',
-            details: { to_user_id, task_type, reason },
-            io
-        });
-
-        io?.emit('task_transferred', {
-            orderId,
-            from_user_id: fromUserId,
-            to_user_id,
-            task_type
-        });
-
+        client = await pool.connect();
+        await client.query('BEGIN'); transactionOpen = true;
+        const order = (await client.query('SELECT id, status, picker_id, packer_id FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
+        if (!order) throw fail(404, '找不到指定訂單');
+        const expectedRole = task_type === 'pick' ? 'picker' : 'packer';
+        const owner = task_type === 'pick' ? order.picker_id : order.packer_id;
+        if (!isAdmin && (role !== expectedRole || owner !== fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
+        if (order.status !== (task_type === 'pick' ? 'picking' : 'packing')) throw fail(409, '僅能轉交進行中的同階段作業');
+        const target = (await client.query('SELECT id, role FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
+        if (!target || ![expectedRole, 'admin', 'superadmin'].includes(target.role)) throw fail(400, '接手人員沒有此作業的權限');
+        await client.query('INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason) VALUES ($1,$2,$3,$4,$5)', [orderId, fromUserId, to_user_id, task_type, reason]);
+        await client.query(task_type === 'pick' ? 'UPDATE orders SET picker_id=$1, updated_at=NOW() WHERE id=$2' : 'UPDATE orders SET packer_id=$1, updated_at=NOW() WHERE id=$2', [to_user_id, orderId]);
+        await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', details: { to_user_id, task_type, reason }, db: client, io: events });
+        events.emit('task_transferred', { orderId, from_user_id: fromUserId, to_user_id, task_type });
+        commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
+        events.publish();
         res.json({ message: '任務已成功轉移' });
     } catch (error) {
-        await client.query('ROLLBACK');
-        logger.error('[/api/tasks/:orderId/transfer] 任務轉移失敗:', error);
-        res.status(500).json({ message: '任務轉移失敗' });
-    } finally {
-        client.release();
-    }
+        if (transactionOpen) { try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError = rollbackError; } }
+        if (commitAttempted || releaseError) { releaseError ||= error; return res.status(503).json({ code: 'TRANSFER_RESULT_UNKNOWN', message: '轉交結果尚未確認，請重新整理核對，避免重複轉交。' }); }
+        res.status(error.status || 500).json({ message: error.status ? error.message : '任務轉移失敗' });
+    } finally { client?.release(releaseError); }
 });
 
 module.exports = router;

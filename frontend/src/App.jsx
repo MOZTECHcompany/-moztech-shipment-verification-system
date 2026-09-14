@@ -1,25 +1,27 @@
 // frontend/src/App.jsx
 
-import { useEffect } from 'react';
+import { lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import apiClient from './api/api';
-import { socket } from './api/socket'; // 引入我们创建的 socket 实例
+import { socket, setSocketSession } from './api/socket';
+import soundNotification from './utils/soundNotification';
 
 import { LoginPage } from './components/LoginPage';
-import { AdminDashboard } from './components/admin/AdminDashboard';
-import { UserManagement } from './components/admin/UserManagement';
-import { OperationLogs } from './components/admin/OperationLogs';
-import { Analytics } from './components/admin/Analytics';
-import { ScanErrors } from './components/admin/ScanErrors';
-import { DefectStats } from './components/admin/DefectStats';
-import { Exceptions } from './components/admin/Exceptions';
-import { TaskDashboard } from './components/TaskDashboard';
-import { OrderWorkView } from './components/OrderWorkView';
-import { TeamBoard } from './components/TeamBoard';
-import { TeamPostView } from './components/TeamPostView';
+const LogisticsSettings = lazy(() => import('./components/LogisticsSettings').then(module => ({ default: module.LogisticsSettings })));
+const SettingsPage = lazy(() => import('./components/SettingsPage').then(module => ({ default: module.SettingsPage })));
+const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard').then(module => ({ default: module.AdminDashboard })));
+const UserManagement = lazy(() => import('./components/admin/UserManagement').then(module => ({ default: module.UserManagement })));
+const OperationLogs = lazy(() => import('./components/admin/OperationLogs').then(module => ({ default: module.OperationLogs })));
+const Analytics = lazy(() => import('./components/admin/Analytics').then(module => ({ default: module.Analytics })));
+const ScanErrors = lazy(() => import('./components/admin/ScanErrors').then(module => ({ default: module.ScanErrors })));
+const DefectStats = lazy(() => import('./components/admin/DefectStats').then(module => ({ default: module.DefectStats })));
+const Exceptions = lazy(() => import('./components/admin/Exceptions').then(module => ({ default: module.Exceptions })));
+const TaskDashboard = lazy(() => import('./components/TaskDashboard').then(module => ({ default: module.TaskDashboard })));
+const OrderWorkView = lazy(() => import('./components/OrderWorkView').then(module => ({ default: module.OrderWorkView })));
+const TeamBoard = lazy(() => import('./components/TeamBoard').then(module => ({ default: module.TeamBoard })));
+const TeamPostView = lazy(() => import('./components/TeamPostView').then(module => ({ default: module.TeamPostView })));
 import { useLocalStorage } from './hooks/useLocalStorage';
-import { LogOut } from 'lucide-react';
 import { AppLayout } from '@/ui';
 
 // AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
@@ -35,34 +37,52 @@ function App() {
     const [user, setUser] = useLocalStorage('wms_user', null);
     const [token, setToken] = useLocalStorage('wms_token', null);
 
-    // 【关键修改】在 token 变化时控制 apiClient 和 socket 连接
+    useEffect(() => { soundNotification.setUser(user?.id); }, [user?.id]);
+
+    // Update the transport credentials on login, refresh, account switch and logout.
     useEffect(() => {
         if (token) {
             apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-            // 如果有 token 且 socket 未连接，则手动连接
-            if (!socket.connected) {
-                socket.connect();
-            }
         } else {
             delete apiClient.defaults.headers.common['Authorization'];
-            // 如果没有 token（例如登出时），则断开连接
-            socket.disconnect();
         }
+        setSocketSession(token);
+        return () => setSocketSession(null);
     }, [token]);
 
+    useEffect(() => {
+        const requireLogin = (reason = {}) => {
+            setSocketSession(null);
+            setUser(null);
+            setToken(null);
+            toast.error(reason.code === 'SOCKET_AUTH_UNAVAILABLE' ? '即時連線驗證暫時無法完成，請稍後重新登入' : '登入已失效，請重新登入');
+        };
+        const onConnectError = error => {
+            if (error.data?.code === 'SOCKET_AUTH_REQUIRED') requireLogin();
+        };
+        socket.on('session_expired', requireLogin);
+        socket.on('connect_error', onConnectError);
+        return () => {
+            socket.off('session_expired', requireLogin);
+            socket.off('connect_error', onConnectError);
+        };
+    }, [setToken, setUser]);
+
     const handleLogin = (data) => {
+        soundNotification.setUser(data.user?.id);
         setToken(data.accessToken);
         setUser(data.user);
     };
 
     const handleLogout = () => {
+        soundNotification.setUser(null);
+        setSocketSession(null);
         setUser(null);
         setToken(null);
     };
     
     const getHomeRoute = () => {
         if (!user || !token) return "/login";
-        if (user.role === 'admin' || user.role === 'superadmin' || user.role === 'dispatcher') return "/admin";
         return "/tasks";
     };
 
@@ -75,6 +95,8 @@ function App() {
                     
                     <Route element={<ProtectedRoute user={user} token={token} />}>
                         <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
+                            <Route path="/settings/logistics" element={['admin','superadmin'].includes(user?.role) ? <LogisticsSettings /> : <Navigate to="/tasks" />} />
+                            <Route path="/settings" element={<SettingsPage user={user} />} />
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/users" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <OperationLogs /> : <Navigate to="/tasks" />} />
