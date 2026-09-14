@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Camera, Check, CheckCheck, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
 import { ShippingLabel, PickingList } from './LabelPrinter';
+import { sourceOrderLabel } from '../utils/sourceOrders';
 
 const stages = [
   { label: '待揀貨', icon: Package },
@@ -12,7 +13,7 @@ const statusIndex = { pending: 0, picking: 1, picked: 2, packing: 2, completed: 
 const statusLabel = { pending: '待揀貨', picking: '揀貨中', picked: '待裝箱', packing: '裝箱中', completed: '核對完成', voided: '已作廢' };
 const actionClass = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-50';
 
-export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions = [], order, items, isFocusMode, toggleFocusMode }) {
+export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions = [], order, items, instances = [], isFocusMode, toggleFocusMode }) {
   const stage = statusIndex[order.status];
   const canManageDefect = ['admin', 'superadmin'].includes(user?.role)
     || (user?.role === 'dispatcher' && Number(order.imported_by_user_id) === Number(user.id));
@@ -29,6 +30,9 @@ export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCame
           <p className="mb-1 text-xs font-semibold tracking-wider text-slate-500">出貨核對</p>
           <h1 className="break-all text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">{order.voucher_number}</h1>
           <p className="mt-1 break-words text-sm text-slate-600">{order.customer_name || '未指定客戶'}</p>
+          {order.batch_number && <p className="mt-2 break-all text-sm text-slate-600">ERP 匯入批次：{order.batch_number}</p>}
+          {order.source_order_number && <p className="mt-1 break-all text-sm font-medium text-slate-800">商城訂單：{sourceOrderLabel(order)}</p>}
+          <p className="mt-2 text-xs text-slate-500">揀貨負責人：{order.picker_name || '尚未認領'} · 裝箱負責人：{order.packer_name || '尚未認領'}</p>
         </div>
         <span className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${order.status === 'voided' ? 'bg-red-50 text-red-700' : order.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel[order.status] || '狀態待確認'}</span>
       </div>
@@ -51,7 +55,7 @@ export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCame
         <button type="button" onClick={onOpenCamera} className={actionClass}><Camera size={16} />相機掃描</button>
         {canManageDefect && order.status !== 'voided' && <button type="button" onClick={onOpenDefectModal} className={`${actionClass} !text-orange-700`}><TriangleAlert size={16} />新品不良異動</button>}
         <ShippingLabel order={order} items={items} className={actionClass} />
-        <PickingList order={order} items={items} className={actionClass} />
+        <PickingList order={order} items={items} instances={instances} className={actionClass} />
         <button type="button" onClick={onExport} className={actionClass}><FileDown size={16} />匯出出貨明細</button>
         {['admin', 'superadmin'].includes(user.role) && <button type="button" onClick={onVoid} className={`${actionClass} !text-red-700`}><XCircle size={16} />作廢訂單</button>}
         {activeSessions.length > 0 && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-slate-500"><Users size={14} />{activeSessions.length} 人正在查看</span>}

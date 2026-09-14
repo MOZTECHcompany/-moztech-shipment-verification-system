@@ -36,6 +36,8 @@ router.get('/operation-logs', authorizeAdmin, async (req, res) => {
                 u.name as user_name,
                 u.role as user_role,
                 o.voucher_number,
+                o.import_batch_id, o.source_order_number, o.source_platform, o.source_store, o.work_barcode,
+                (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number,
                 o.customer_name,
                 o.status as order_status
             FROM operation_logs ol

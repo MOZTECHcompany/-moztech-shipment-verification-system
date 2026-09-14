@@ -51,6 +51,82 @@ test('uses expected quantity to disambiguate a continuous 156-character 13-digit
     expect(parseOrderRows(makeRows([['BAR', 'Item', 12, serials.join('')]])).items[0].serials).toEqual(serials);
 });
 
+const sourceHeader = ['理貨單號', '序號', '商城訂單編號', '平台', '店鋪', '來源明細號', '品項編碼', '品項名', '國際條碼', '數量', '序號 / 批號'];
+const sourceRows = () => [sourceHeader,
+    ['PICK-DEMO-1', '1', 'SHOP-100', 'Shopify', 'Demo store', 'line-1', 'SKU-A', 'Product A', '4710000000013', 1, 'DEMO00000001'],
+    ['PICK-DEMO-1', '2', 'ONE-200', '1Shop', 'Demo store', 'line-1', 'SKU-A', 'Product A', '4710000000013', 2, '']];
+
+test.each(['xlsx', 'biff8', 'csv'])('source detail %s retains one ERP batch and groups separate marketplace work orders', bookType => {
+    const parsed = parseOrderImport(workbook(sourceRows(), bookType));
+    expect(parsed).toMatchObject({ voucherNumber: 'PICK-DEMO-1', totalQuantity: 3, serialCount: 1 });
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.workOrders).toHaveLength(2);
+    expect(parsed.items[0]).toMatchObject({ productCode: 'SKU-A', barcode: '4710000000013', sourceOrderNumber: 'SHOP-100', sourcePlatform: 'Shopify', sourceStore: 'Demo store', sourceLineId: 'line-1', serials: ['DEMO00000001'], sourceRow: 2 });
+    expect(parsed.items[1]).toMatchObject({ sourceOrderNumber: 'ONE-200', sourcePlatform: '1Shop', sourceLineId: 'line-1', quantity: 2, serials: [] });
+});
+
+test('explicit aliases and neutral field names map without replacing SKU with barcode', () => {
+    const parsed = parseOrderRows([
+        ['voucher_number', 'source_order_number', 'product_code', 'product_name', 'barcode', 'quantity'],
+        ['PICK-1', 'ORDER-1', 'SKU-1', 'Name', '00001234', 1],
+        ['PICK-1', 'ORDER-1', 'SKU-1', 'Name', '00001234', 2]
+    ]);
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.items.map(item => item.sourceLineId)).toEqual([null, null]);
+    expect(parsed.items[0]).toMatchObject({ barcode: '00001234', productCode: 'SKU-1', sourceOrderNumber: 'ORDER-1' });
+    const aliases = sourceRows(); aliases[0] = [...sourceHeader]; aliases[0][0] = '理貨單單號'; aliases[0][2] = '商城訂單號';
+    expect(parseOrderRows(aliases).voucherNumber).toBe('PICK-DEMO-1');
+});
+
+test.each([
+    ['different warehouse documents', rows => { rows[2][0] = 'PICK-DEMO-2'; }, /只能包含一張理貨單/],
+    ['blank marketplace order', rows => { rows[1][2] = ''; }, /商城訂單編號必填/],
+    ['blank warehouse document', rows => { rows[1][0] = ''; }, /理貨單號必填/],
+    ['blank SKU', rows => { rows[1][6] = ''; }, /SKU/],
+    ['blank barcode', rows => { rows[1][8] = ''; }, /國際條碼必填/],
+    ['duplicate source line', rows => { rows[2][2] = 'SHOP-100'; rows[2][3] = 'Shopify'; }, /来源|來源明細號重複/],
+    ['row-group sequence is not SN', rows => { rows[1][10] = 'BAD'; }, /第 2 列.*SN/],
+    ['duplicate barcode columns', rows => { rows[0] = [...sourceHeader, '條碼']; }, /表頭重複/]
+])('rejects source detail %s without a DB connection', (_, change, error) => {
+    const rows = sourceRows(); change(rows);
+    expect(() => parseOrderImport(workbook(rows))).toThrow(error);
+    expect(pool.connect).not.toHaveBeenCalled();
+});
+
+test('source detail refuses multiple worksheets rather than silently losing another document', () => {
+    const book = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(sourceRows()), 'First');
+    xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(sourceRows()), 'Second');
+    expect(() => parseOrderImport(xlsx.write(book, {type: 'buffer', bookType: 'xlsx'}))).toThrow(/單一工作表/);
+});
+
+test.each([
+    ['TESTSN000001ㆍTESTSN000002', 2],
+    ['TESTSN000001ㆍTESTSN000002', 1],
+    ['SN:TESTSN000001ㆍSN:TESTSN000002', 2],
+    ['SN：待補', 1],
+    ['TESTSN000001TESTSN000002', 2]
+])('source detail rejects serial-bearing summary %s when explicit SN is empty', (summary, quantity) => {
+    const rows = sourceRows();
+    rows[0] = [...sourceHeader, '摘要'];
+    rows[2][9] = quantity;
+    rows[2][10] = '';
+    rows[2][11] = summary;
+    expect(() => parseOrderImport(workbook(rows))).toThrow(/第 3 列.*摘要.*序號\/批號/);
+    expect(pool.connect).not.toHaveBeenCalled();
+});
+
+test.each(['', '促銷品，請輕放', '請下午配送；訂單備註待確認', '4710000000013'])('source detail permits ordinary summary %s without treating it as SN', summary => {
+    const rows = sourceRows(); rows[0] = [...sourceHeader, '摘要']; rows[2][11] = summary;
+    expect(parseOrderImport(workbook(rows)).items[1].serials).toEqual([]);
+});
+
+test('moving ECOUNT summary serials into the explicit column preserves both item instances', () => {
+    const rows = sourceRows(); rows[0] = [...sourceHeader, '摘要'];
+    rows[2][10] = 'TESTSN000001ㆍTESTSN000002'; rows[2][11] = '請輕放';
+    expect(parseOrderImport(workbook(rows)).items[1].serials).toEqual(['TESTSN000001', 'TESTSN000002']);
+});
+
 test.each([
     ['missing voucher', [['title'], [], [], ['國際條碼', '品項名稱', '數量']]],
     ['empty items', makeRows([])],
@@ -122,8 +198,10 @@ function database({ existing = false, failLog = false, failCommit = false, failR
             if (sql.startsWith('SET LOCAL') || sql.includes('pg_advisory_xact_lock')) return result([]);
             if (sql === 'ROLLBACK') { if (failRollback) throw new Error('rollback lost'); pending = undefined; return result([]); }
             if (sql === 'COMMIT') { if (failCommit) throw new Error('commit lost'); state = pending; pending = undefined; return result([]); }
+            if (sql.startsWith('SELECT id FROM warehouse_import_batches')) return result([]);
+            if (sql.startsWith('INSERT INTO warehouse_import_batches')) return result([{ id: 20 }]);
             if (sql.startsWith('SELECT id FROM orders')) return result(existing ? [{ id: 42 }] : []);
-            if (sql.startsWith('INSERT INTO orders')) { pending.orders.push(values); return result([{ id: 12 }]); }
+            if (sql.startsWith('INSERT INTO orders')) { pending.orders.push(values); return result([{ id: 11 + pending.orders.length }]); }
             if (sql.startsWith('INSERT INTO order_items')) { pending.items.push(values); return result([{ id: pending.items.length }]); }
             if (sql.startsWith('INSERT INTO order_item_instances')) { pending.instances.push(...values[1]); return result([]); }
             if (sql.startsWith('INSERT INTO operation_logs')) {
@@ -160,12 +238,37 @@ test('valid import writes required log using one client before commit and return
     expect(db.client.release).toHaveBeenCalledTimes(1);
 });
 
+test('source detail persists one batch and distinct marketplace work orders atomically', async () => {
+    const db = database();
+    const result = await invoke(db, workbook(sourceRows()));
+    expect(result.status).toBe(201);
+    expect(result.body).toMatchObject({ batchId: 20, batchNumber: 'PICK-DEMO-1', workOrderCount: 2 });
+    expect(db.state().orders).toHaveLength(2);
+    expect(db.state().orders.map(row => row.slice(3, 7))).toEqual([[20, 'SHOP-100', 'Shopify', 'Demo store'], [20, 'ONE-200', '1Shop', 'Demo store']]);
+    expect(db.state().items).toHaveLength(2);
+    expect(db.state().items[0]).toEqual([12, 'SKU-A', 'Product A', 1, '4710000000013', 'SHOP-100', 'Shopify', 'Demo store', 'line-1']);
+    expect(db.state().items[1].slice(5)).toEqual(['ONE-200', '1Shop', 'Demo store', 'line-1']);
+    expect(db.state().items[1][0]).toBe(13);
+    expect(db.earlyEvents()).toBe(0);
+});
+
 test('parse failure does not acquire a database connection', async () => {
     const db = database();
     const result = await invoke(db, workbook(makeRows([['BAR', 'Name', 2, 'SN:B19B52004735']])));
     expect(result.body.code).toBe('IMPORT_NOT_APPLIED');
     expect(result.body.message).toMatch(/第 5 列/);
     expect(pool.connect).not.toHaveBeenCalled();
+});
+
+test('source summary SN guard rejects before persistence even when the explicit SN column is absent', async () => {
+    const db = database();
+    const rows = sourceRows().map(row => row.slice(0, -1));
+    rows[0].push('summary'); rows[2].push('TESTSN000001ㆍTESTSN000002');
+    const result = await invoke(db, workbook(rows));
+    expect(result).toMatchObject({ status: 400, body: { code: 'IMPORT_NOT_APPLIED' } });
+    expect(result.body.message).toMatch(/第 3 列.*序號\/批號/);
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(db.state()).toEqual({ orders: [], items: [], instances: [], logs: [] });
 });
 
 test('duplicate voucher returns existing order without modifying it', async () => {

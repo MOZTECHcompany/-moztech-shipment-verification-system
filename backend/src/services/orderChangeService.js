@@ -2,6 +2,7 @@
 // Apply order item change requests (add/remove/adjust) with rollback rules.
 
 const logger = require('../utils/logger');
+const { normalizeSourceIdentity, sourceIdentityFromRow, sourceIdentityValues, SOURCE_FIELDS } = require('./orderSourceIdentity');
 
 function isNonEmptyString(value) {
     return typeof value === 'string' && value.trim().length > 0;
@@ -70,6 +71,11 @@ function validateOrderChangeProposal(proposal) {
         const noSn = !!raw?.noSn;
         const snList = parseSnList(raw?.snList);
         const removedSnList = parseSnList(raw?.removedSnList);
+        const orderItemId = raw?.orderItemId ?? null;
+        if (orderItemId !== null && (!Number.isSafeInteger(orderItemId) || orderItemId < 1 || orderItemId > 2147483647)) return { ok: false, message: 'orderItemId 必須為有效商品明細識別' };
+        let source;
+        try { source = normalizeSourceIdentity(raw); }
+        catch (error) { return { ok: false, message: error.message }; }
 
         if (!barcode) return { ok: false, message: '品項 barcode 必填' };
         if (!productName) return { ok: false, message: `品項 ${barcode} productName 必填` };
@@ -92,7 +98,8 @@ function validateOrderChangeProposal(proposal) {
             }
         }
 
-        items.push({ barcode, productName, quantityChange, noSn, snList, removedSnList });
+        items.push({ barcode, productName, quantityChange, noSn, snList, removedSnList, ...(orderItemId !== null ? { orderItemId } : {}),
+            ...(source.sourceOrderNumber ? source : {}) });
     }
 
     return { ok: true, value: { note, items } };
@@ -226,6 +233,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
         throw e;
     }
     const order = orderResult.rows[0];
+    if (order.import_batch_id) await client.query('SELECT id FROM warehouse_import_batches WHERE id=$1 FOR UPDATE', [order.import_batch_id]);
     const originalStatus = normalizeOrderStatusForRollback(order.status);
 
     const changesApplied = [];
@@ -234,7 +242,31 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
         const { barcode, productName, quantityChange, noSn, snList, removedSnList } = change;
 
         const itemRows = await fetchOrderItemsByBarcodeForUpdate(client, orderId, barcode);
-        const existingItems = itemRows.rows || [];
+        let existingItems = itemRows.rows || [];
+        if (change.orderItemId !== undefined) {
+            existingItems = existingItems.filter(item => Number(item.id) === change.orderItemId);
+            if (existingItems.length !== 1) throw Object.assign(new Error('指定商品明細已異動或不屬於此訂單／條碼，請重新載入'), { status: 409 });
+        } else if (existingItems.length > 1 && existingItems.some(item => item.source_order_number)) {
+            throw Object.assign(new Error('此條碼包含多筆商城商品明細，請指定 orderItemId 後再申請異動'), { status: 409 });
+        }
+        const requestedSource = normalizeSourceIdentity(change);
+        const source = existingItems.length ? sourceIdentityFromRow(existingItems[0]) : requestedSource;
+        if (order.import_batch_id && ['sourceOrderNumber', 'sourcePlatform', 'sourceStore'].some(key => source[key] !== (order[SOURCE_FIELDS[key]] || null))) {
+            throw Object.assign(new Error('此工作單只可包含其所屬商城訂單的商品，不能加入其他來源。'), { status: 409 });
+        }
+        if (existingItems.length && requestedSource.sourceOrderNumber && Object.keys(SOURCE_FIELDS).some(key => source[key] !== requestedSource[key])) {
+            throw Object.assign(new Error('商品異動不可更改商城訂單來源關係，請保留原商品明細'), { status: 409 });
+        }
+        if (!existingItems.length) {
+            const mappedOrder = await client.query('SELECT 1 FROM order_items WHERE order_id = $1 AND source_order_number IS NOT NULL LIMIT 1', [orderId]);
+            if (mappedOrder.rowCount && !source.sourceOrderNumber) throw Object.assign(new Error('此理貨單包含商城訂單，新增商品必須指定商城訂單編號'), { status: 400 });
+            if (source.sourceLineId) {
+                const duplicate = await client.query(`SELECT 1 FROM order_items WHERE order_id = $1 AND source_order_number = $2
+                    AND source_platform IS NOT DISTINCT FROM $3 AND source_store IS NOT DISTINCT FROM $4 AND source_line_id = $5 LIMIT 1`, [orderId, ...sourceIdentityValues(source)]);
+                if (duplicate.rowCount) throw Object.assign(new Error('此商城訂單的來源明細號已存在，請選擇原商品明細異動'), { status: 409 });
+            }
+        }
+        const recordChange = detail => changesApplied.push({ ...detail, ...(change.orderItemId !== undefined ? { orderItemId: change.orderItemId } : {}), ...(source.sourceOrderNumber ? source : {}) });
         const existingTotalQty = sumBy(existingItems, 'quantity');
         const targetTotalQty = existingTotalQty + quantityChange;
 
@@ -262,6 +294,11 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
             // Ensure new SNs don't collide
             if (quantityChange > 0) {
                 await ensureNoDuplicateSerialsInOrder(client, orderId, snList);
+                if (order.import_batch_id) {
+                    const duplicate = await client.query(`SELECT 1 FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id
+                        JOIN orders o ON o.id=oi.order_id WHERE o.import_batch_id=$1 AND i.serial_number=ANY($2::text[]) LIMIT 1`, [order.import_batch_id, snList]);
+                    if (duplicate.rowCount) throw Object.assign(new Error('新增 SN 已存在於此 ERP 批次的其他工作單'), { status: 409 });
+                }
             }
 
             // Create row if missing
@@ -273,10 +310,10 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                 }
 
                 const insert = await client.query(
-                    `INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode)
-                     VALUES ($1, $2, $3, $4, $5)
+                    `INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                      RETURNING id`,
-                    [orderId, barcode, productName, quantityChange, barcode]
+                    [orderId, barcode, productName, quantityChange, barcode, ...sourceIdentityValues(source)]
                 );
                 const newOrderItemId = insert.rows[0].id;
 
@@ -287,7 +324,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     );
                 }
 
-                changesApplied.push({
+                recordChange({
                     barcode,
                     mode: 'sn',
                     action: 'add',
@@ -319,7 +356,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     );
                 }
 
-                changesApplied.push({
+                recordChange({
                     barcode,
                     mode: 'sn',
                     action: 'increase',
@@ -372,15 +409,16 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                         `DELETE FROM order_items oi
                          WHERE oi.order_id = $1
                            AND oi.barcode = $2
+                           AND oi.id = ANY($3::int[])
                            AND COALESCE(oi.quantity, 0) <= 0
                            AND NOT EXISTS (
                                SELECT 1 FROM order_item_instances i
                                WHERE i.order_item_id = oi.id
                            )`,
-                        [orderId, barcode]
+                        [orderId, barcode, existingOrderItemIds]
                     );
 
-                    changesApplied.push({
+                    recordChange({
                         barcode,
                         mode: 'sn',
                         action: 'decrease',
@@ -459,15 +497,16 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     `DELETE FROM order_items oi
                      WHERE oi.order_id = $1
                        AND oi.barcode = $2
+                       AND oi.id = ANY($3::int[])
                        AND COALESCE(oi.quantity, 0) <= 0
                        AND NOT EXISTS (
                            SELECT 1 FROM order_item_instances i
                            WHERE i.order_item_id = oi.id
                        )`,
-                    [orderId, barcode]
+                    [orderId, barcode, existingOrderItemIds]
                 );
 
-                changesApplied.push({
+                recordChange({
                     barcode,
                     mode: 'sn',
                     action: 'decrease',
@@ -494,12 +533,12 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
             }
 
             await client.query(
-                `INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, picked_quantity, packed_quantity)
-                 VALUES ($1, $2, $3, $4, $5, 0, 0)`,
-                [orderId, barcode, productName, quantityChange, barcode]
+                `INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, picked_quantity, packed_quantity, source_order_number, source_platform, source_store, source_line_id)
+                 VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9)`,
+                [orderId, barcode, productName, quantityChange, barcode, ...sourceIdentityValues(source)]
             );
 
-            changesApplied.push({
+            recordChange({
                 barcode,
                 mode: 'barcode',
                 action: 'add',
@@ -538,7 +577,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
             await client.query('DELETE FROM order_items WHERE id = $1', [first.id]);
         }
 
-        changesApplied.push({
+        recordChange({
             barcode,
             mode: 'barcode',
             action: quantityChange > 0 ? 'increase' : (quantityChange < 0 ? 'decrease' : 'noop'),

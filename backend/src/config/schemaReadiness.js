@@ -1,13 +1,15 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    warehouse_import_batches: ['id', 'voucher_number', 'created_by', 'created_at'],
+    wms_claim_commands: ['user_id', 'command_id', 'request_hash', 'order_id', 'stage', 'response', 'created_at'],
     wms_scan_commands: ['user_id', 'command_id', 'order_id', 'request_hash', 'response', 'created_at'],
     wms_logistics_shipments: ['id', 'account_id', 'environment', 'merchant_id', 'logistics_id', 'status', 'checked_at'],
     wms_logistics_events: ['id', 'dedupe_key', 'shipment_id', 'evidence'],
     wms_logistics_expected_returns: ['id', 'shipment_id', 'status'],
     users: ['id', 'username', 'password', 'name', 'role', 'created_at'],
-    orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at'],
-    order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at'],
+    orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'import_batch_id', 'source_order_number', 'source_platform', 'source_store', 'work_barcode'],
+    order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'source_order_number', 'source_platform', 'source_store', 'source_line_id'],
     order_item_instances: ['id', 'order_item_id', 'serial_number', 'status', 'created_at', 'updated_at'],
     operation_logs: ['id', 'user_id', 'order_id', 'item_id', 'action_type', 'operation_type', 'details', 'created_at'],
     task_comments: ['id', 'order_id', 'user_id', 'content', 'parent_id', 'priority', 'created_at', 'updated_at'],

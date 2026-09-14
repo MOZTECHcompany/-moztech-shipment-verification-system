@@ -16,6 +16,8 @@ import NotificationCenter from './NotificationCenter';
 import DefectReportModal from './DefectReportModal';
 import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
 import TaskListFilters from './TaskListFilters';
+import ScanToClaim from './ScanToClaim';
+import { sourceOrderLabel } from '../utils/sourceOrders';
 import { filterTasks, canBatchPick, isActiveTaskForRole } from '@/utils/taskFilters';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
 
@@ -142,6 +144,9 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 </h3>
                             </div>
                             
+                            {task.batch_number && <p className="break-all text-xs text-slate-500">ERP 批次：{task.batch_number}</p>}
+                            {task.source_order_number && <p className="mt-1 break-all text-sm font-medium text-slate-700">{sourceOrderLabel(task)}</p>}
+                            {(task.picker_name || task.packer_name) && <p className="mt-1 text-xs text-slate-500">揀貨：{task.picker_name || '待認領'} · 裝箱：{task.packer_name || '待認領'}</p>}
                             <div className="flex flex-wrap items-center gap-3 mt-2">
                                 <div className={`flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full shadow-sm ${statusInfo.color}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
@@ -367,6 +372,9 @@ export function TaskDashboard({ user }) {
     const loadedScope = useRef(null);
     const activeClaimId = useRef(null);
     const [claimingId, setClaimingId] = useState(null);
+    const scanClaimPending = useRef(false);
+    const scanClaimContext = useRef(null);
+    const [isScanClaimPending, setIsScanClaimPending] = useState(false);
     const mountedRef = useRef(false);
     const claimContextRef = useRef(0);
     const batchClaimPending = useRef(false);
@@ -581,7 +589,7 @@ export function TaskDashboard({ user }) {
     };
 
     const handleBatchClaim = async () => {
-        if (batchClaimPending.current || activeClaimId.current !== null) return;
+        if (batchClaimPending.current || activeClaimId.current !== null || scanClaimPending.current) return;
         const claimableIds = selectedTasks.filter(id => tasks.some(task => task.id === id && canBatchPick(task)));
         if (claimableIds.length === 0) {
             toast.error('請選擇尚未認領的揀貨任務');
@@ -674,7 +682,7 @@ export function TaskDashboard({ user }) {
 
     const handleClaimTask = async (orderId, isContinue) => {
         // One opening flow at a time, including callbacks fired before a rerender.
-        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current) return;
+        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current || scanClaimPending.current) return;
         if (isContinue) {
             navigate(`/order/${orderId}`);
             return;
@@ -848,7 +856,7 @@ export function TaskDashboard({ user }) {
                             variant={batchMode ? 'primary' : 'secondary'} 
                             size="sm" 
                             onClick={toggleBatchMode}
-                            disabled={isBatchClaiming || claimingId !== null}
+                            disabled={isBatchClaiming || claimingId !== null || isScanClaimPending}
                             leadingIcon={ListChecks}
                             className={batchMode ? 'shadow-lg shadow-primary/30' : ''}
                         >
@@ -857,7 +865,7 @@ export function TaskDashboard({ user }) {
                       )}
                       
                       {batchMode && selectedTasks.length > 0 && (
-                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
+                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null || isScanClaimPending} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
                           {isBatchClaiming ? '認領中…' : `認領 ${selectedTasks.length} 個揀貨任務`}
                         </Button>
                       )}
@@ -869,6 +877,22 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
+                {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
+                    key={user.id} user={user} active={currentView === 'active'}
+                    disabled={claimingId !== null || isBatchClaiming}
+                    onAcquire={() => {
+                        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current || scanClaimPending.current) return false;
+                        scanClaimContext.current = claimContextRef.current;
+                        scanClaimPending.current = true; setIsScanClaimPending(true); return true;
+                    }}
+                    onLockChange={locked => { if (locked) scanClaimContext.current = claimContextRef.current; scanClaimPending.current = locked; setIsScanClaimPending(locked); }}
+                    onSuccess={result => {
+                        if (!mountedRef.current || currentViewRef.current !== 'active' || scanClaimContext.current !== claimContextRef.current) return;
+                        soundNotification.play('taskClaimed');
+                        toast.success(`${result.owner.name} · ${result.stage === 'pick' ? '揀貨' : '裝箱'}${result.outcome === 'continued' ? '繼續作業' : '認領成功'}`);
+                        navigate(`/order/${result.orderId}`);
+                    }}
+                />}
                 <TaskListFilters
                     search={search} onSearch={setSearch}
                     status={statusFilter} onStatus={setStatusFilter}
@@ -981,7 +1005,7 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask}
                                             isClaiming={claimingId === task.id}
-                                            claimDisabled={claimingId !== null || isBatchClaiming}
+                                            claimDisabled={claimingId !== null || isBatchClaiming || isScanClaimPending}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}
@@ -1042,7 +1066,7 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask}
                                             isClaiming={claimingId === task.id}
-                                            claimDisabled={claimingId !== null || isBatchClaiming}
+                                            claimDisabled={claimingId !== null || isBatchClaiming || isScanClaimPending}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}

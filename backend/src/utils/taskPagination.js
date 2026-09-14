@@ -58,7 +58,7 @@ async function getTaskPage(pool, user, query, view) {
         conditions.push(`o.${timeColumn} >= ((${date}::date)::timestamp AT TIME ZONE 'Asia/Taipei') AND o.${timeColumn} < ((${date}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Taipei')`);
     }
     if (page.search) {
-        const fields = ['o.voucher_number', 'o.customer_name'];
+        const fields = ['o.voucher_number', 'o.customer_name', 'o.source_order_number', 'o.work_barcode', 'b.voucher_number'];
         const normalized = field => `lower(normalize(COALESCE(${field}, ''), NFKC))`;
         const stripped = field => `regexp_replace(${normalized(field)}, '[^[:alnum:]]', '', 'g')`;
         const terms = page.search.split(/\s+/).map(term => {
@@ -94,6 +94,7 @@ async function getTaskPage(pool, user, query, view) {
     const result = await pool.query(`
         WITH eligible AS (
             SELECT o.id, o.voucher_number, o.customer_name, o.status, o.picker_id, o.packer_id,
+                o.import_batch_id, o.source_order_number, o.source_platform, o.source_store, o.work_barcode, b.voucher_number AS batch_number,
                 COALESCE(o.is_urgent, FALSE) AS is_urgent, o.updated_at AS completed_at,
                 import_log.user_id AS imported_by_user_id,
                 CASE WHEN $2 = 'dispatcher' AND import_log.user_id = $1 THEN 1 ELSE 0 END AS _mine,
@@ -101,6 +102,7 @@ async function getTaskPage(pool, user, query, view) {
                 CASE WHEN COALESCE(o.is_urgent, FALSE) THEN 1 ELSE 0 END AS _urgent,
                 ${view === 'completed' ? '-' : ''}EXTRACT(EPOCH FROM COALESCE(o.${timeColumn}, o.created_at)) AS _at
             FROM orders o
+            LEFT JOIN warehouse_import_batches b ON b.id=o.import_batch_id
             LEFT JOIN LATERAL (SELECT user_id FROM operation_logs WHERE $2 = 'dispatcher' AND order_id = o.id AND action_type = 'import' ORDER BY created_at DESC, id DESC LIMIT 1) import_log ON TRUE
             WHERE ${conditions.join(' AND ')}
         ), selected AS (

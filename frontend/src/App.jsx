@@ -104,7 +104,7 @@ function App() {
                             <Route path="/admin/scan-errors" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <ScanErrors /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/defects" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <DefectStats /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions /> : <Navigate to="/tasks" />} />
-                            <Route path="/tasks" element={<TaskDashboard user={user} />} />
+                            <Route path="/tasks" element={<TaskDashboard key={`${user?.id}:${user?.role}`} user={user} />} />
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />

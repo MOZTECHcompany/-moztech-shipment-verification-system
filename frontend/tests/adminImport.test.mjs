@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
+import * as workOrders from '../src/utils/workOrders.js';
 
 const source = await readFile(new URL('../src/components/admin/AdminDashboard.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.DEV': 'true' } });
@@ -40,6 +41,8 @@ function dashboard({ role = 'admin', storage = new Map() } = {}) {
     const deferred = (bucket, data) => new Promise((resolve, reject) => bucket.push({ ...data, resolve, reject }));
     const imports = {
         react,
+        '../../utils/workOrders': workOrders,
+        '../LabelPrinter': { BatchPrintLabels: 'BatchPrintLabels' },
         'react-router-dom': { Link: 'Link' },
         'react-datepicker': 'DatePicker',
         'date-fns': { format: date => date.toISOString().slice(0, 10) },
@@ -238,4 +241,18 @@ test('retention keeps the existing endpoint and only sends one in-flight request
     await promise;
     await view.settle();
     assert.equal(view.button('執行資料清理').props.disabled, false);
+});
+
+test('batch import result exposes every independent work order and one bulk print action', async () => {
+    const view = dashboard({ role: 'dispatcher' });
+    const pending = view.select(file());
+    const orders = [1, 2].map(id => ({ orderId: id, voucherNumber: `WT00000000000000000${id}`, workBarcode: `WT00000000000000000${id}`, sourceOrderNumber: '000123', sourcePlatform: 'Shopify', sourceStore: `Store ${id}` }));
+    view.posts[0].resolve({ status: 201, data: { batchId: 1, batchNumber: 'ERP-001', workOrderCount: 2, itemCount: 5, totalQuantity: 7, serialCount: 3, orders } });
+    await pending; await view.settle();
+    assert.match(view.text(view.control('import-result')), /ERP 批次 ERP-001 已成功匯入/);
+    assert.match(view.text(view.control('import-result')), /2 張商城工作單 ·\s*5\s*個品項 · 總數量\s*7/);
+    const print = view.find(view.render(), node => node.type === 'BatchPrintLabels');
+    assert.equal(print.props.orders, orders);
+    for (const order of orders) assert.ok(view.find(view.render(), node => node.type === 'Link' && node.props.to === `/order/${order.orderId}`));
+    assert.equal(view.storage.size, 0);
 });

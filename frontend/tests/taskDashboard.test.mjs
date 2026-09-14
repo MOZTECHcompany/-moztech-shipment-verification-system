@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
+import * as sourceOrders from '../src/utils/sourceOrders.js';
 import { filterTasks, canBatchPick, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
 
@@ -77,7 +78,9 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
         '@/utils/desktopNotification.js': notifications,
         sonner: { toast: { success: (...args) => successes.push(args), info: noop, warning: noop, error: (...args) => failures.push(args) } },
         'sweetalert2-react-content': () => ({ fire: async () => ({}) }),
-        './TaskListFilters': 'TaskListFilters'
+        './TaskListFilters': 'TaskListFilters',
+        './ScanToClaim': 'ScanToClaim',
+        '../utils/sourceOrders': sourceOrders
     };
     const generic = new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) });
     const module = { exports: {} };
@@ -566,4 +569,34 @@ test('status events remove tasks that no longer belong to the selected group and
     view.listeners.get('task_status_changed')({ orderId: 3, newStatus: 'picked' }); view.render();
     assert.equal(view.card(3), undefined);
     assert.match(view.text(view.render()), /統計與清單可能已變動/);
+});
+
+test('scan claim gate excludes manual claims synchronously and remains explicit for all operating roles', async () => {
+    for (const role of ['picker', 'packer', 'admin', 'superadmin']) {
+        const view = dashboard({ role });
+        view.reads[0].resolve({ data: fixtures }); await view.settle();
+        const scanner = view.find(view.render(), node => node.type === 'ScanToClaim');
+        assert.equal(scanner.props.user.role, role);
+        assert.equal(scanner.props.onAcquire(), true);
+        const card = view.card(role === 'packer' ? 2 : 1);
+        await card.props.onClaim(card.props.task.id, false);
+        assert.equal(view.posts.length, 0);
+        assert.equal(view.find(view.render(), node => node.type === 'ScanToClaim').props.onAcquire(), false);
+        scanner.props.onLockChange(false);
+        await view.find(view.render(), node => node.type === 'ScanToClaim').props.onSuccess({ orderId: 1, owner: { name: 'Test' }, stage: 'pick', outcome: 'claimed' });
+        assert.deepEqual(view.navigation, ['/order/1']);
+    }
+    const dispatcher = dashboard({ role: 'dispatcher' });
+    assert.equal(dispatcher.find(dispatcher.render(), node => node.type === 'ScanToClaim'), undefined);
+});
+
+test('late scan claim completion cannot redirect after the operator changed dashboard views', async () => {
+    const view = dashboard(); view.reads[0].resolve({ data: fixtures }); await view.settle();
+    const scanner = view.find(view.render(), node => node.type === 'ScanToClaim');
+    assert.equal(scanner.props.onAcquire(), true);
+    view.button('已完成').props.onClick(); view.render();
+    view.button('進行中').props.onClick(); view.render();
+    scanner.props.onLockChange(false);
+    scanner.props.onSuccess({ orderId: 1, owner: { name: 'Test' }, stage: 'pick', outcome: 'claimed' });
+    assert.equal(view.navigation.length, 0);
 });

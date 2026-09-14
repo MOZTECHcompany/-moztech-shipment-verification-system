@@ -142,3 +142,19 @@ test('comment panels cannot reconnect an unauthenticated transport outside App l
         assert.doesNotMatch(content, /socket\.connect\s*\(/);
     }
 });
+
+test('task route remounts claim controllers and locks when the logged-in account changes', () => {
+    const view = app();
+    const routeKey = node => {
+        if (node?.props?.path === '/tasks') return node.props.element.props.key;
+        for (const child of [...(node?.props?.children || []).flat(Infinity), node?.props?.element]) {
+            if (child && typeof child === 'object') { const result = routeKey(child); if (result !== undefined) return result; }
+        }
+    };
+    const first = routeKey(view.render());
+    view.callback('onLogin')({ accessToken: 'token-B', user: { id: 8, role: 'picker' } });
+    assert.notEqual(routeKey(view.render()), first);
+    const second = routeKey(view.render());
+    view.callback('onLogin')({ accessToken: 'token-C', user: { id: 8, role: 'admin' } });
+    assert.notEqual(routeKey(view.render()), second);
+});

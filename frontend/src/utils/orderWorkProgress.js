@@ -34,3 +34,11 @@ export function filterWorkItems(rows, query = '', remainingOnly = false) {
             .some(value => String(value ?? '').toLocaleLowerCase().includes(text));
     }).sort((a, b) => a.ratio - b.ratio);
 }
+
+// Product confirmation requires this stage's current owner, including administrators.
+export function canOperateWorkStage(user, order, type) {
+    if (!user?.id || !order || !['pick', 'pack'].includes(type)) return false;
+    const roleAllowed = ['admin', 'superadmin', type === 'pick' ? 'picker' : 'packer'].includes(user.role);
+    return roleAllowed && order.status === (type === 'pick' ? 'picking' : 'packing')
+        && Number(order[type === 'pick' ? 'picker_id' : 'packer_id']) === Number(user.id);
+}
