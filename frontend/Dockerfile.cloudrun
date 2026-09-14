@@ -5,6 +5,8 @@ RUN npm ci
 COPY . .
 # Same-origin API and Socket.IO are proxied to the backend sidecar.
 ENV VITE_API_BASE_URL=
+ARG VITE_DEPLOY_ENV=production
+ENV VITE_DEPLOY_ENV=${VITE_DEPLOY_ENV}
 RUN npm run build
 
 FROM nginx:stable-alpine

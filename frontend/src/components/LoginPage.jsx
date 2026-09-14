@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Box, CheckCheck, Eye, EyeOff, Loader2, LockKeyhole, ScanLine, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api';
+import { EnvironmentBanner } from './EnvironmentBanner';
 import './LoginPage.css';
 
 export function LoginPage({ onLogin }) {
@@ -73,6 +74,7 @@ export function LoginPage({ onLogin }) {
 
           <section className="corely-login__access" aria-labelledby="corely-login-title">
             <div className="corely-login__card">
+              <EnvironmentBanner className="mb-5 rounded-lg border" />
               <span className="corely-login__card-icon" aria-hidden="true"><LockKeyhole size={23} strokeWidth={1.7} /></span>
               <p className="corely-login__eyebrow">工作從這裡開始</p>
               <h2 id="corely-login-title">歡迎回來</h2>

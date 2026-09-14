@@ -2,6 +2,7 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { EnvironmentBanner } from '../components/EnvironmentBanner';
 
 const roleLabels = { picker: '揀貨員', packer: '裝箱員', dispatcher: '出貨調度', admin: '管理員', superadmin: '系統管理員' };
 
@@ -78,6 +79,7 @@ export function AppLayout({ user, onLogout, children }) {
             <button type="button" onClick={onLogout} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-100" aria-label="登出"><LogOut size={16} aria-hidden="true" /><span className="hidden sm:inline">登出</span></button>
           </div>}
         </header>
+        <EnvironmentBanner className="sticky top-0 z-30 border-b sm:top-16" />
         {offline && <div role="status" className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><WifiOff className="mt-0.5 shrink-0" size={17} /><span>網路已離線。請恢復連線並核對操作結果後，再繼續掃碼。</span></div>}
         <main id="main-content" tabIndex={-1} data-layout-content className="corely-main safe-bottom">
           <ErrorBoundary key={location.pathname}>
