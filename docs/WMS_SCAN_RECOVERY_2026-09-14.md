@@ -24,4 +24,17 @@
 
 只發布前端映像；後端沿用正式 digest d1660dca18c5e4d2c6d26e66364ca34f8265083fa8da0415360585c2a96b322b，不做 schema migration、資料回灌、庫存扣帳或物流建單。
 
-私有候選、正式零流量候選及正式驗證結果在發布後補記。正式回退目標 corely-wms-workstation-20260914，保留目前資料庫。
+正式回退目標 corely-wms-workstation-20260914，保留目前資料庫。
+
+## 正式發布結果
+
+- 2026-09-14 公司 moztech-main-db / asia-east1 / corely-wms 已切到 corely-wms-scan-sound-20260914，100% 流量。
+- 程式提交：407c5729bbc7dfaffa1205c604f949c12633a664；Cloud Build：a0b4266b-476b-4203-8600-211655529eca。
+- 前端映像：asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-frontend@sha256:f7a69eacd8362930f842ec7fdf776fb5907ad60ee483985f7ad4b5b3d52284bf。
+- 私有 Cloud Run corely-wms-migration-validation-scan-sound-0914 的 12 個瀏覽器流程通過；獨立驗收 DB 合成帳號與訂單已移除。匿名入口仍拒絕。
+- 正式零流量候選、https://wms.corely.cc 與 https://corely-wms-249593319772.asia-east1.run.app 的登入殼、健康／就緒、匿名拒絕、已驗證身分查詢與新版資源均通過。
+- 最終前端單元測試 106/106，本機 SQL／瀏覽器測試 34/34，Vite build 通過；已確認手機版音效控制沒有水平溢出。
+- 已逐項比對 runtime spec，只更新前端映像；後端、DB、附件、秘密、IAM 權限保持既有設定。本次無正式業務資料寫入或資料遷移。
+- 使用者完成手上作業後重新整理，於掃碼區「我的音效」或左下角設定選擇個人音色。這是瀏覽器音訊；實體條碼槍內建提示音仍依裝置設定。
+- 原 GitHub main 沒有更新；此工作樹沒有可寫 remote，本次保存在上述隔離分支與提交，不宣稱已推送。
+- 完整建置與驗收證據：/Users/moztecheason/Documents/ChatGPT/AI 儲運管理系統/artifacts/wms-scan-recovery-20260914。
