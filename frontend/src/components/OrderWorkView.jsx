@@ -26,6 +26,7 @@ import { CameraScanner } from './CameraScanner';
 import TaskComments from './TaskComments-modern';
 import FloatingChatPanel from './FloatingChatPanel';
 import { WarehouseOrderHeader } from './WarehouseOrderHeader';
+import { WorkstationBar } from './WorkstationBar';
 import ErrorBoundary from './ErrorBoundary';
 import DefectReportModal from './DefectReportModal';
 
@@ -1620,7 +1621,7 @@ function AuthenticatedOrderWorkView({ user }) {
         <div className="min-h-screen bg-transparent pb-20">
             <div className="w-full">
                 {/* 頂部導航 (已整合至 Dashboard) */}
-                <div className="mb-6">
+                <div className="mb-3">
                     <Button variant="ghost" size="sm" onClick={handleReturnToTasks} leadingIcon={ArrowLeft} className="text-gray-500 hover:text-gray-900 hover:bg-gray-100">
                         返回看板
                     </Button>
@@ -1653,6 +1654,23 @@ function AuthenticatedOrderWorkView({ user }) {
                     />
                   </ErrorBoundary>
                 )}
+
+                {currentOrderData.order && <WorkstationBar
+                    orderId={orderId} user={user} voucher={currentOrderData.order.voucher_number}
+                    stageLabel={stageLabel} remainingQty={remainingQty}
+                    onScan={() => {
+                        barcodeInputRef.current?.scrollIntoView({ block: 'center' });
+                        barcodeInputRef.current?.focus({ preventScroll: true });
+                    }}
+                    onDiscussion={() => {
+                        setIsFocusMode(false);
+                        requestAnimationFrame(() => {
+                            const panel = document.getElementById('order-discussion');
+                            panel?.scrollIntoView({ block: 'start' });
+                            panel?.focus({ preventScroll: true });
+                        });
+                    }}
+                />}
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     {/* 左側：掃描與討論 (在專注模式下隱藏討論) */}
@@ -1967,7 +1985,7 @@ function AuthenticatedOrderWorkView({ user }) {
                         </Card>
 
                         {/* 討論區塊 */}
-                        <section aria-label="訂單備註與討論" className={`rounded-xl border border-slate-200 bg-white ${isFocusMode ? 'hidden' : ''}`}>
+                        <section id="order-discussion" tabIndex={-1} aria-label="訂單備註與討論" className={`rounded-xl border border-slate-200 bg-white ${isFocusMode ? 'hidden' : ''}`}>
                             <h2 className="p-4 text-sm font-semibold text-slate-700">訂單備註與討論</h2>
                             <div className="h-[600px] overflow-hidden relative">
                                 <ErrorBoundary>

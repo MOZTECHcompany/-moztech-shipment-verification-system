@@ -75,7 +75,10 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await bubble.getByRole('button', { name: '留言操作', exact: true }).click();
             await response(dispatcher, `/api/tasks/${orderId}/pins/${comment}`, 'PUT', () => bubble.getByRole('button', { name: '置頂', exact: true }).click());
             await dispatcher.reload();
-            await dispatcher.getByText('置頂公告', { exact: true }).waitFor();
+            await discussion.getByText('我的釘選', { exact: true }).waitFor();
+            const bar = dispatcher.getByRole('region', { name: '作業快捷列' });
+            await bar.getByText('我的釘選 1', { exact: true }).waitFor();
+            assert.ok((await bar.innerText()).includes('備註：請確認包裝'));
             assert.ok((await dispatcher.getByRole('region', { name: '訂單備註與討論' }).innerText()).includes('備註：請確認包裝'));
             const fits = await discussion.evaluate(el => {
                 const input = el.querySelector('textarea').getBoundingClientRect(), bounds = el.getBoundingClientRect();
@@ -101,6 +104,9 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
                 const page = await pageFor(role); await page.goto(webBase + '/order/' + orderId);
                 assert.equal(await page.getByRole('button', { name: '新品不良異動', exact: true }).count(), 0);
                 const input = page.locator('#order-scan-input'); await input.waitFor({state:'visible'});
+                await page.getByRole('button', { name: '回到掃碼輸入', exact: true }).click();
+                assert.equal(await input.evaluate(el => document.activeElement === el), true);
+                assert.equal(await page.getByRole('region', { name: '作業快捷列' }).getByText('我的釘選 1', { exact: true }).count(), 0);
                 for (const sn of serials) {
                     await page.waitForFunction(() => !document.querySelector('button[aria-label="送出掃描"]')?.disabled);
                     await input.fill(sn);

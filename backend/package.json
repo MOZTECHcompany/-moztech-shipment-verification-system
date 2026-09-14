@@ -4,16 +4,13 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "start:legacy": "node index.js",
     "dev": "nodemon src/server.js",
-    "dev:legacy": "nodemon index.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "migrate": "node migrations/run.js",
-    "migrate:single": "node migrations/run-single.js",
     "retention": "node src/maintenance/retention.js",
-    "retention:prod": "NODE_ENV=production node src/maintenance/retention.js",
-    "maintenance:fix-miscompleted-orders": "node maintenance/fix-miscompleted-orders.js"
+    "test:unit": "jest --runInBand --coverage=false",
+    "test:workflow": "node --test tests/warehouse-parity.pg.test.cjs"
   },
   "keywords": [
     "wms",

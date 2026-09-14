@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import apiClient from '@/api/api';
 import { useComments } from '@/api/useComments';
+import { usePinnedComments } from '@/api/usePinnedComments';
 import { useVisibleCommentReads } from '@/api/useVisibleCommentReads';
 import { useCommentScroll } from '@/api/useCommentScroll';
 import { CommentsLoadState } from './CommentsLoadState';
@@ -101,7 +102,8 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     const [priority, setPriority] = useState('normal');
     const [showQuickReplies, setShowQuickReplies] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [pinnedComments, setPinnedComments] = useState([]);
+    const { pinnedComments, invalidatePins } = usePinnedComments(orderId, currentUser);
+    const pinSavingRef = useRef(false);
     const [isMinimized, setIsMinimized] = useState(false); // Widget mode only
     const [mentionsOpen, setMentionsOpen] = useState(false);
     const [mentions, setMentions] = useState([]);
@@ -137,28 +139,6 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
 
 
     useEffect(() => {
-        try {
-            const pinned = JSON.parse(localStorage.getItem(`pinned_comments_${orderId}`) || '[]');
-            setPinnedComments(Array.isArray(pinned) ? pinned : []);
-        } catch { setPinnedComments([]); }
-
-        (async () => {
-            try {
-                const res = await apiClient.get(`/api/tasks/${orderId}/pins`);
-                const list = Array.isArray(res?.data?.pinned) ? res.data.pinned : [];
-                // 確保資料完整性與唯一性
-                const validList = list.filter(item => item && item.id && item.content);
-                const uniqueList = Array.from(new Map(validList.map(item => [item.id, item])).values());
-                
-                setPinnedComments(uniqueList);
-                localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(uniqueList));
-            } catch (e) {
-                console.error('Failed to fetch pins:', e);
-            }
-        })();
-    }, [orderId]);
-
-    useEffect(() => {
         const interval = setInterval(() => invalidate(), 60000);
         try {
             
@@ -178,6 +158,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             const onCommentRetracted = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
+                    invalidatePins();
                     toast.info('一則訊息已收回');
                 }
             };
@@ -185,6 +166,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             const onCommentDeleted = (data) => {
                 if (String(data.orderId) === String(orderId)) {
                     invalidate();
+                    invalidatePins();
                 }
             };
 
@@ -206,6 +188,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                 }
             };
 
+            socket.on('connect', invalidatePins);
             socket.on('new_comment', onNewComment);
             socket.on('comment_retracted', onCommentRetracted);
             socket.on('comment_deleted', onCommentDeleted);
@@ -213,6 +196,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             
             return () => {
                 clearInterval(interval);
+                socket.off('connect', invalidatePins);
                 socket.off('new_comment', onNewComment);
                 socket.off('comment_retracted', onCommentRetracted);
                 socket.off('comment_deleted', onCommentDeleted);
@@ -221,7 +205,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
         } catch (e) {
             return () => clearInterval(interval);
         }
-    }, [orderId, currentUser.id, invalidate, fetchMentions]);
+    }, [orderId, currentUser.id, invalidate, invalidatePins, fetchMentions]);
 
     // 點擊外部關閉選單
     useEffect(() => {
@@ -294,31 +278,18 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     };
 
     const handlePin = async (comment) => {
+        if (pinSavingRef.current) return;
+        pinSavingRef.current = true;
         try {
-            const isPinned = pinnedComments.some(p => p.id === comment.id);
-            await apiClient.put(`/api/tasks/${orderId}/pins/${comment.id}`, {
-                pinned: !isPinned
-            });
-            
-            // 更新本地狀態
-            let newPinned;
-            if (isPinned) {
-                newPinned = pinnedComments.filter(p => p.id !== comment.id);
-                toast.success('已取消置頂');
-            } else {
-                // 避免重複添加
-                if (!pinnedComments.some(p => p.id === comment.id)) {
-                    newPinned = [...pinnedComments, comment];
-                } else {
-                    newPinned = [...pinnedComments];
-                }
-                toast.success('已置頂留言');
-            }
-            setPinnedComments(newPinned);
-            localStorage.setItem(`pinned_comments_${orderId}`, JSON.stringify(newPinned));
+            const isPinned = pinnedComments.some(p => String(p.id) === String(comment.id));
+            await apiClient.put(`/api/tasks/${orderId}/pins/${comment.id}`, { pinned: !isPinned });
+            await invalidatePins();
+            toast.success(isPinned ? '已取消置頂' : '已置頂留言');
             setActiveMessageId(null);
         } catch (error) {
             toast.error('操作失敗', { description: error.response?.data?.message });
+        } finally {
+            pinSavingRef.current = false;
         }
     };
 
@@ -591,7 +562,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
             {pinnedComments.length > 0 && (
                 <div className="mx-4 mt-2 max-h-40 shrink-0 overflow-y-auto bg-blue-50/60 backdrop-blur-md border border-blue-100/50 rounded-2xl px-4 py-3 shadow-sm">
                     <div className="flex items-center gap-2 text-xs font-bold text-blue-700 mb-2">
-                        <Pin size={12} className="fill-blue-700" /> 置頂公告
+                        <Pin size={12} className="fill-blue-700" /> 我的釘選
                     </div>
                     <div className="space-y-2">
                         {pinnedComments.map(pin => (

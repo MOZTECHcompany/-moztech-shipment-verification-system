@@ -403,3 +403,10 @@
   .corely-sidebar-footer { position: absolute; top: 8px; right: 12px; margin: 0; padding: 0; border: 0; }
   .corely-settings-link { flex: none; }
 }
+
+.wms-workstation-bar { position: sticky; top: 64px; z-index: 30; }
+#order-discussion { scroll-margin-top: 210px; }
+@media (max-width: 767px) {
+  .wms-workstation-bar { top: 0; }
+}
+@media print { .wms-workstation-bar { display: none; } }
