@@ -18,7 +18,7 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
  const {loadMigrationManifest}=require('../src/config/migrationManifest');
  await runMigrations({pool,targetDatabase:database,manifest:loadMigrationManifest().filter(m=>m.name<'030')});
  const legacy=(await pool.query("INSERT INTO orders(voucher_number) VALUES('MKT-LEGACY') RETURNING id")).rows[0].id;
- assert.deepEqual((await runMigrations({pool,targetDatabase:database})).applied,['030_marketplace_intakes.sql']);
+ assert.deepEqual((await runMigrations({pool,targetDatabase:database})).applied,['030_marketplace_intakes.sql','031_marketplace_batch_management.sql']);
  assert.equal((await pool.query('SELECT id FROM orders WHERE id=$1',[legacy])).rows.length,1);
  await require('../src/config/schemaReadiness').assertSchemaReady(pool);
  const {server,io:socket}=require('../src/app');io=socket;
@@ -79,10 +79,22 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   for(const edit of edits){const rows=erpRows();edit(rows);const result=await upload(rows);assert.ok([400,409].includes(result.status),JSON.stringify(result));assert.equal(result.data.code,'IMPORT_NOT_APPLIED');assert.deepEqual(await state(),original);}
   assert.equal((await upload(erpRows(),saved.id,'picker')).status,403);
  });
+ await t.test('archive retains snapshot, duplicate protection and ERP return matching',async()=>{
+  const path='/api/marketplace-intakes/'+saved.id;
+  for(const role of ['picker','packer'])for(const [method,suffix] of [['PATCH','/archive'],['PATCH','/restore'],['DELETE','']])assert.equal((await api(role,method,path+suffix,{confirmed:true,batchNumber:saved.batchNumber})).status,403);
+  ok(await api('dispatcher','PATCH',path+'/archive'));
+  assert.equal(ok(await api('dispatcher','GET','/api/marketplace-intakes')).total,0);
+  assert.equal(ok(await api('dispatcher','GET','/api/marketplace-intakes?status=archived')).total,1);
+  const archived=ok(await api('dispatcher','GET',path));assert.ok(archived.archivedAt);assert.deepEqual(archived.rows,saved.rows);
+  assert.equal(ok(await post()).id,saved.id);
+  const changed=body();changed.settings.customerCode='OTHER';assert.equal((await post(changed)).status,409);
+ });
  await t.test('successful return creates two linked barcode work orders and one physical prepick group',async()=>{
   imported=ok(await upload(),201);assert.equal(imported.workOrderCount,2);assert.equal(imported.totalQuantity,2);assert.equal(imported.itemCount,2);
   assert.equal(new Set(imported.orders.map(o=>o.workBarcode)).size,2);assert.ok(imported.orders.every(o=>o.marketplaceIntakeId===saved.id));
-  const list=ok(await api('dispatcher','GET','/api/marketplace-intakes'));assert.equal(list.intakes[0].linked_count,2);
+  const list=ok(await api('dispatcher','GET','/api/marketplace-intakes?status=all'));assert.equal(list.intakes[0].linked_count,2);
+  const detail=ok(await api('dispatcher','GET','/api/marketplace-intakes/'+saved.id));assert.equal(detail.links.length,2);assert.ok(detail.links.every(l=>l.import_batch_id===imported.batchId&&l.work_barcode));
+  assert.equal((await api('admin','DELETE','/api/marketplace-intakes/'+saved.id,{confirmed:true,batchNumber:saved.batchNumber})).status,409);
   const batch=ok(await api('picker','GET','/api/order-import-batches/'+imported.batchId));
   assert.ok(JSON.stringify(batch).includes('SYN-MKT-A'));assert.ok(JSON.stringify(batch).includes('SYN-BAR-001'));assert.doesNotMatch(JSON.stringify(batch),/FREIGHT/);
   for(const o of imported.orders){const snap=ok(await api('picker','GET','/api/orders/'+o.orderId+'/work-snapshot'));assert.equal(snap.items.length,1);assert.equal(snap.items[0].source_order_number,o.sourceOrderNumber);}
@@ -135,4 +147,29 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   const snapshot=ok(await api('picker','GET','/api/orders/'+result.orders[0].orderId+'/work-snapshot'));
   assert.equal(snapshot.items[0].source_order_number,'#SYN-NATIVE-SL');assert.ok(result.orders[0].workBarcode.startsWith('WT'));
  });
+ await t.test('permanent delete requires exact confirmation, retains audit, and releases only unlinked source orders',async()=>{
+  const b=body();b.rows=table([item('SYN-DELETE')]);b.settings.batchNumber='TEST-DELETE';
+  const r=ok(await post(b),201),path='/api/marketplace-intakes/'+r.id;
+  for(const confirm of [{},{confirmed:true,batchNumber:'WRONG'},{confirmed:'true',batchNumber:r.batchNumber}])assert.equal((await api('admin','DELETE',path,confirm)).status,400);
+  ok(await api('admin','PATCH',path+'/archive'));ok(await api('admin','PATCH',path+'/restore'));
+  assert.equal(ok(await api('admin','GET',path)).archivedAt,null);
+  const results=await Promise.all([api('admin','DELETE',path,{confirmed:true,batchNumber:r.batchNumber}),api('admin','DELETE',path,{confirmed:true,batchNumber:r.batchNumber})]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,404]);
+  assert.equal((await api('admin','GET',path)).status,404);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM marketplace_intake_orders WHERE intake_id=$1',[r.id])).rows[0].n,0);
+  assert.deepEqual((await pool.query('SELECT action FROM marketplace_intake_events WHERE intake_id=$1 ORDER BY id',[r.id])).rows.map(x=>x.action),['archive','restore','delete']);
+  assert.notEqual(ok(await post(b),201).id,r.id);
+ });
+ await t.test('filters use sales date and exact platform/store; pagination reaches beyond the old 100 batch cap',async()=>{
+  const snapshot={...saved,settings:{...settings,date:'2026-09-10'},summary:{orderCount:2}};
+  await pool.query(`INSERT INTO marketplace_intakes(batch_number,source_platform,source_store,fingerprint,snapshot)
+   SELECT 'PAGE-'||n,'Shopify','分頁店鋪',md5(n::text)||md5(n::text),$1::jsonb FROM generate_series(1,105) n`,[JSON.stringify(snapshot)]);
+  const query='/api/marketplace-intakes?platform=Shopify&store='+encodeURIComponent('分頁店鋪')+'&from=2026-09-10&to=2026-09-10';
+  const first=ok(await api('admin','GET',query));assert.equal(first.total,105);assert.equal(first.orders,210);assert.equal(first.intakes.length,20);
+  const last=ok(await api('admin','GET',query+'&page=6'));assert.equal(last.intakes.length,5);assert.ok(last.intakes.every(r=>r.sales_date==='2026-09-10'));
+  assert.equal(ok(await api('admin','GET',query+'&q=PAGE-105')).total,1);
+  assert.equal(ok(await api('admin','GET',query.replace('Shopify','SHOPLINE'))).total,0);
+  for(const invalid of ['status=bad','page=0','from=2026-02-30','from=2026-10-10&to=2026-09-01'])assert.equal((await api('admin','GET','/api/marketplace-intakes?'+invalid)).status,400);
+ });
+
 });

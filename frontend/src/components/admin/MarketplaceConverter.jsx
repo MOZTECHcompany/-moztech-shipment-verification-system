@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { ArrowLeft, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { ArrowLeft, Download, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
 import { Button, PageHeader } from '../../ui';
 import apiClient from '@/api/api.js';
+import MarketplaceBatchManager from './MarketplaceBatchManager';
 import { batchSessionMatches } from '../../utils/importBatches';
 import { formatMinor, buildEcountUploadTable } from '../../utils/marketplaceIntake.mjs';
 import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, parseUnifiedMarketplace, prepareUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
@@ -28,6 +29,7 @@ export function MarketplaceConverter({user}){
 function ConverterPage({user}){
  const [input,setInput]=useState(null),[settings,setSettings]=useState(initialSettings),[name,setName]=useState('');
  const [busy,setBusy]=useState(false),[access,setAccess]=useState('loading'),[message,setMessage]=useState(''),[records,setRecords]=useState([]),[saved,setSaved]=useState(null);
+ const [dragging,setDragging]=useState(false);
  const fileRef=useRef(null),request=useRef(0),mounted=useRef(true),token=useRef(null),actor=useRef({id:user.id,role:user.role}),inFlight=useRef(false);
  const currentSession=()=>batchSessionMatches(localStorage,actor.current,token.current);
  const loadRecords=async()=>{
@@ -109,20 +111,14 @@ function ConverterPage({user}){
   }catch(e){if(mounted.current)setMessage(e.response?.data?.message||'保存或下載未完成，請先查看已保存批次；結果不明時不要改單號重送。');}
   finally{inFlight.current=false;if(mounted.current)setBusy(false);}
  };
- const redownload=async id=>{
-  if(locked||inFlight.current)return;inFlight.current=true;setBusy(true);setMessage('');
-  try{const response=await apiClient.get(`/api/marketplace-intakes/${id}`);if(currentSession()&&mounted.current)await writeBook(response.data,'ecount');}
-  catch(e){if(mounted.current)setMessage(e.response?.data?.message||'無法取得已保存轉檔批次。');}
-  finally{inFlight.current=false;if(mounted.current)setBusy(false);}
- };
  return <main className="mx-auto max-w-7xl space-y-5 pb-8 text-slate-900" data-testid="marketplace-converter">
   <Link to="/admin" className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16}/>返回出貨管理</Link>
-  <PageHeader title="商城訂單轉檔"/>
+  <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title="商城訂單轉檔"/><a href="#saved-batches" className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">管理已保存批次</a></div>
   <p className="text-sm leading-6 text-slate-600">上傳 Shopify、1Shop 或 SHOPLINE 訂單，下載後即可到 ECOUNT 匯入銷貨。</p>
   {message&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">{message}</p>}
-  <section className={`${sectionClass} border-dashed`} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();selectFiles(Array.from(e.dataTransfer.files||[]));}} aria-label="商城訂單檔案區">
-   <h2 className="font-semibold">1. 上傳訂單</h2><p className="mt-2 text-sm text-slate-600">拖曳或選擇平台匯出的 Excel／CSV，系統自動辨識格式。</p>
-   <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={()=>fileRef.current?.click()}>{busy?<Loader2 className="mr-2 animate-spin" size={18}/>:<FileSpreadsheet className="mr-2" size={18}/>}選擇原始訂單檔</Button>
+  <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging?"border-blue-500 bg-blue-50":"border-slate-300"}`} onDragOver={e=>{e.preventDefault();if(!locked)setDragging(true);}} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget))setDragging(false);}} onDrop={e=>{e.preventDefault();setDragging(false);selectFiles(Array.from(e.dataTransfer.files||[]));}} aria-label="商城訂單檔案區">
+   <div className="flex flex-col items-center py-4 text-center"><UploadCloud size={36} className="mb-3 text-blue-600"/><h2 className="text-lg font-semibold">{dragging?"放開檔案，開始讀取":"將訂單檔拖曳到這裡"}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p><p className="mt-1 text-xs text-slate-500">每次一個平台／店鋪，一個檔案，上限 10 MiB</p>
+   <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={()=>fileRef.current?.click()}>{busy?<Loader2 className="mr-2 animate-spin" size={18}/>:<FileSpreadsheet className="mr-2" size={18}/>}選擇原始訂單檔</Button></div>
    <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={locked} onChange={e=>{const files=Array.from(e.target.files||[]);e.target.value='';return selectFiles(files);}} aria-label="商城原始訂單檔"/>
    {name&&<p className="mt-3 text-sm">已辨識：<strong>{input?.parsed.platform}</strong> · {name}</p>}
    <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">各平台下載方式</summary><ul className="mt-2 list-disc space-y-1 pl-5"><li>Shopify：訂單 → 匯出 → 訂單 CSV；不要選交易紀錄。</li><li>1Shop：選取本批訂單 → 匯出 Excel。</li><li>SHOPLINE：訂單 → 更多動作 → 訂單報表，包含商品貨號、商品明細及訂單金額欄。客製欄位或組合商品仍須用實際檔驗收。</li></ul></details>
@@ -160,9 +156,7 @@ function ConverterPage({user}){
     {!!warnings.length&&<details className="mt-4 text-sm text-slate-600"><summary className="cursor-pointer">查看提醒（{warnings.length}）</summary><ul className="mt-2 space-y-1">{warnings.map((v,i)=><li key={i}>{v.orderNumber?`${v.orderNumber}：`:''}{v.message}</li>)}</ul></details>}
    </details>
   </>}
-  <details className={sectionClass}><summary className="cursor-pointer font-semibold">已保存的轉檔批次（{records.length}）</summary><p className="mt-2 text-sm text-slate-600">從對應批次開啟理貨單匯入，系統會核對整批訂單、品項及數量，再建立可列印條碼的商城工作單。重下載不代表需要再次送出 ERP 銷貨。</p>
-   <div className="mt-4 overflow-x-auto"><table className="w-full text-sm" aria-label="已保存轉檔批次"><thead className="bg-slate-50"><tr>{['批次','平台／店鋪','訂單／已連結','操作'].map(v=><th key={v} className={cell}>{v}</th>)}</tr></thead><tbody>{records.map(r=><tr key={r.id}><td className={cell}>#{r.id} · {r.batch_number}</td><td className={cell}>{r.source_platform}／{r.source_store}</td><td className={cell}>{r.order_count}／{r.linked_count}</td><td className={cell}><button disabled={locked} className="mr-4 min-h-10 text-blue-700 underline" onClick={()=>redownload(r.id)}>重下載銷貨檔</button><Link className="text-blue-700 underline" to={`/admin?intakeId=${r.id}`}>匯入理貨單</Link></td></tr>)}</tbody></table></div>
-   {access==='ready'&&!records.length&&<p className="mt-3 text-sm text-slate-500">尚無保存的轉檔批次。</p>}
-  </details>
+  <MarketplaceBatchManager enabled={access==='ready'} currentSession={currentSession} refreshKey={records}/>
+
  </main>;
 }

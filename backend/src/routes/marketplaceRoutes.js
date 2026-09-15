@@ -1,6 +1,7 @@
 const express=require('express');
 const {createHash}=require('node:crypto');
 const {authorizeRoles}=require('../middleware/auth');
+const {validId,listBatches,batchLinks,changeBatch}=require('../services/marketplaceBatchManagement');
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clean=value=>String(value??'').trim();
 const pick=(value,keys)=>Object.fromEntries(keys.filter(k=>Object.hasOwn(value||{},k)).map(k=>[k,value[k]]));
@@ -26,25 +27,24 @@ function safeSettings(input){
  validate(value.shippingSku);
  return value;
 }
-const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,...row.snapshot});
+const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
 function createMarketplaceRouter({pool}){
  const router=express.Router();
  router.use(authorizeRoles('admin','dispatcher'));
  router.get('/',async(req,res,next)=>{try{
-  const rows=await pool.query(`SELECT i.id,i.batch_number,i.source_platform,i.source_store,i.created_at,
-   i.snapshot->'summary' AS summary,
-   COUNT(o.id)::int AS order_count,COUNT(l.intake_order_id)::int AS linked_count
-   FROM marketplace_intakes i LEFT JOIN marketplace_intake_orders o ON o.intake_id=i.id
-   LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=o.id
-   GROUP BY i.id ORDER BY i.id DESC LIMIT 100`);
-  res.set('Cache-Control','private, no-store').json({intakes:rows.rows});
- }catch(e){next(e);}});
+  res.set('Cache-Control','private, no-store').json(await listBatches(pool,req.query));
+ }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  router.get('/:id',async(req,res,next)=>{try{
-  if(!/^[1-9]\d{0,9}$/.test(req.params.id)||Number(req.params.id)>2147483647)return res.status(400).json({message:'轉檔批次編號無效'});
+  if(!validId(req.params.id))return res.status(400).json({message:'轉檔批次編號無效'});
   const rows=await pool.query('SELECT * FROM marketplace_intakes WHERE id=$1',[req.params.id]);
   if(!rows.rows.length)return res.status(404).json({message:'找不到轉檔批次'});
-  res.set('Cache-Control','private, no-store').json(publicRecord(rows.rows[0]));
- }catch(e){next(e);}});
+  res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),links:await batchLinks(pool,req.params.id)});
+ }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
+ for(const [method,path,action] of [['patch','/:id/archive','archive'],['patch','/:id/restore','restore'],['delete','/:id','delete']]){
+  router[method](path,async(req,res,next)=>{try{
+   res.json(await changeBatch(pool,req.params.id,action,req.user.id,req.body));
+  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
+ }
  router.post('/',async(req,res,next)=>{
   let db,open=false,commitAttempted=false,tainted=false;
   try{

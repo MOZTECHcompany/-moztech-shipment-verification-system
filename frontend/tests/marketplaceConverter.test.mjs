@@ -39,7 +39,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false } = {}) 
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
     const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [] } }; }, post: async (url, body) => { requests.push({url,body}); if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
-    const imports = { '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {} };
+    const imports = { '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -168,7 +168,7 @@ test('compact converter keeps one primary download before collapsed details and 
     const table = nodes.findIndex(n => n.type === 'table');
     assert.ok(download >= 0 && download < table);
     assert.equal(view.all(n => n.type === 'Button' && view.text(n).includes('ECOUNT 銷貨檔')).length, 1);
-    for (const title of ['商品對照（', 'ECOUNT 設定', '訂單明細與納入／排除', '其他下載與轉檔說明', '已保存的轉檔批次']) {
+    for (const title of ['商品對照（', 'ECOUNT 設定', '訂單明細與納入／排除', '其他下載與轉檔說明']) {
         const details = view.all(n => n.type === 'details').find(n => view.text(n.props.children[0]).includes(title));
         assert.ok(details, title); assert.ok(!details.props.open, title);
     }
