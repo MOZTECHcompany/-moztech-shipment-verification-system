@@ -186,6 +186,11 @@ export function AdminDashboard({ user }) {
                     <Button as={Link} to="/tasks" className="gap-2"><LayoutGrid size={18} />前往作業看板</Button>
                 } />
 
+                {import.meta.env?.VITE_DEPLOY_ENV === 'dev' && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <section className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-5" aria-label="商城原始訂單轉檔">
+                    <div><h2 className="font-semibold text-slate-900">1Shop 測試訂單轉檔</h2><p className="mt-1 text-sm text-slate-600">先預覽原始訂單與金額，再下載 ECOUNT 銷貨檔及預揀核對表。</p></div>
+                    <Button as={Link} to="/admin/marketplace-converter" variant="secondary">開啟轉檔<ArrowRight size={16} className="ml-2" /></Button>
+                </section>}
+
                 <div className="grid gap-5 lg:grid-cols-3">
                     <section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
                         <div className="flex items-start gap-3">
