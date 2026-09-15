@@ -18,7 +18,7 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
  const {loadMigrationManifest}=require('../src/config/migrationManifest');
  await runMigrations({pool,targetDatabase:database,manifest:loadMigrationManifest().filter(m=>m.name<'030')});
  const legacy=(await pool.query("INSERT INTO orders(voucher_number) VALUES('MKT-LEGACY') RETURNING id")).rows[0].id;
- assert.deepEqual((await runMigrations({pool,targetDatabase:database})).applied,['030_marketplace_intakes.sql','031_marketplace_batch_management.sql']);
+ assert.deepEqual((await runMigrations({pool,targetDatabase:database})).applied,['030_marketplace_intakes.sql','031_marketplace_batch_management.sql','032_marketplace_store_profiles.sql']);
  assert.equal((await pool.query('SELECT id FROM orders WHERE id=$1',[legacy])).rows.length,1);
  await require('../src/config/schemaReadiness').assertSchemaReady(pool);
  const {server,io:socket}=require('../src/app');io=socket;
@@ -62,12 +62,40 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   assert.equal((await api('admin','GET','/api/marketplace-intakes/9999999999')).status,400);
  });
  await t.test('server recalculates 27 columns, stores no contacts and retries reuse the persisted batch',async()=>{
-  saved=ok(await post(),201);assert.equal(saved.headers.length,27);assert.equal(saved.rows.length,4);assert.equal(saved.summary.physicalQuantity,2);assert.equal(saved.summary.ecountTotalMinor,22000);
+  const forged=body();forged.handler={userId:users.admin,name:'FORGED'};forged.settings.handler='FORGED';
+  saved=ok(await post(forged),201);assert.deepEqual(saved.handler,{userId:users.dispatcher,name:'Synthetic dispatcher',username:'mkt_dispatcher'});assert.equal(saved.headers.length,27);assert.equal(saved.rows.length,4);assert.equal(saved.summary.physicalQuantity,2);assert.equal(saved.summary.ecountTotalMinor,22000);
   assert.doesNotMatch(JSON.stringify(saved),/PRIVATE-NOT-PERSISTED|IGNORED/);
-  const retry=body();retry.settings.batchNumber='TEST-RETRY';const again=ok(await post(retry));assert.equal(again.id,saved.id);assert.equal(again.reused,true);
+  const retry=body();retry.settings.batchNumber='TEST-RETRY';const again=ok(await post(retry,'admin'));assert.deepEqual(again.handler,saved.handler);assert.equal(again.id,saved.id);assert.equal(again.reused,true);
   assert.deepEqual(ok(await api('superadmin','GET','/api/marketplace-intakes/'+saved.id)).rows,saved.rows);
   const changed=body();changed.settings.customerCode='DIFFERENT';assert.equal((await post(changed)).status,409);
   assert.equal((await state()).orders,1);
+ });
+ await t.test('shared store profiles keep only reusable settings and enforce current roles',async()=>{
+  const path='/api/marketplace-intakes/store-profiles';
+  for(const role of [null,'picker','packer']){
+   assert.equal((await api(role,'GET',path)).status,role?403:401);
+   assert.equal((await api(role,'POST',path,{platform:'Shopify',settings})).status,role?403:401);
+  }
+  const profile=ok(await api('dispatcher','POST',path,{platform:'Shopify',settings}));
+  assert.equal(profile.settings.customerCode,'CUST');
+  for(const key of ['skuMappings','date','batchNumber','includeTestOrders','handler','discountAllocationConfirmed'])assert.equal(profile.settings[key],undefined);
+  assert.equal(ok(await api('admin','GET',path)).profiles[0].id,profile.id);
+  const updated=ok(await api('admin','POST',path,{platform:'Shopify',settings:{...settings,customerCode:'OTHER'}}));assert.equal(updated.id,profile.id);
+  const other=ok(await api('admin','POST',path,{platform:'SHOPLINE',settings}));assert.notEqual(other.id,profile.id);
+  assert.equal((await api('admin','POST',path,{platform:'Unknown',settings})).status,400);
+  assert.equal((await api('admin','POST',path,{platform:'Shopify',settings:{...settings,taxConfirmed:'true'}})).status,400);
+  assert.equal((await api('admin','POST',path,{platform:'Shopify',settings:{...settings,store:''}})).status,400);
+ });
+ await t.test('saved handler survives account rename and another staff download',async()=>{
+  await pool.query("UPDATE users SET name='Renamed dispatcher' WHERE id=$1",[users.dispatcher]);
+  const detail=ok(await api('admin','GET','/api/marketplace-intakes/'+saved.id));assert.deepEqual(detail.handler,saved.handler);
+  const response=await fetch(base+'/api/marketplace-intakes/'+saved.id+'/download-link',{method:'POST',headers:{Authorization:'Bearer '+tokens.admin,'Content-Type':'application/json'},body:JSON.stringify({kind:'prepick'})});
+  const cookie=response.headers.get('set-cookie').split(';')[0],link=await response.json();
+  const download=await fetch(base+link.url,{headers:{Cookie:cookie}});assert.equal(download.status,200);
+  const book=xlsx.read(Buffer.from(await download.arrayBuffer()));
+  for(const sheet of ['批次說明','預揀總表','訂單商品明細']){
+   const rows=xlsx.utils.sheet_to_json(book.Sheets[sheet],{header:1,defval:''});assert.ok(rows.flat().includes('Synthetic dispatcher'));assert.ok(!rows.flat().includes('Synthetic admin'));
+  }
  });
  await t.test('downloads require short-lived scoped cookies and preserve actual 27-column XLSX',async()=>{
   const path='/api/marketplace-intakes/'+saved.id+'/download-link';

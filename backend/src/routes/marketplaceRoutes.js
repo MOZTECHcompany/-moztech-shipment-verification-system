@@ -1,6 +1,7 @@
 const express=require('express');
 const {createHash}=require('node:crypto');
 const {authorizeRoles}=require('../middleware/auth');
+const {captureHandler,batchHandler}=require('../services/marketplaceHandler');
 const {validId,listBatches,batchLinks,changeBatch}=require('../services/marketplaceBatchManagement');
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clean=value=>String(value??'').trim();
@@ -31,6 +32,7 @@ const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.so
 function createMarketplaceRouter({pool}){
  const router=express.Router();
  router.use(authorizeRoles('admin','dispatcher'));
+ require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool);
  router.get('/',async(req,res,next)=>{try{
   res.set('Cache-Control','private, no-store').json(await listBatches(pool,req.query));
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
@@ -41,7 +43,7 @@ function createMarketplaceRouter({pool}){
   let reviewWarning='';
   const snapshot=rows.rows[0].snapshot;
   try{await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))]);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
-  res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
+  res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  router.post('/:id/download-link',async(req,res,next)=>{try{
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
@@ -65,7 +67,7 @@ function createMarketplaceRouter({pool}){
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))]);
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows});
-   const snapshot={settings,summary:output.summary,headers:output.headers,rows:output.rows,reportHeaders:output.reportHeaders,reportRows:output.reportRows,
+   const snapshot={handler:captureHandler(req.user),settings,summary:output.summary,headers:output.headers,rows:output.rows,reportHeaders:output.reportHeaders,reportRows:output.reportRows,
     orders:parsed.orders.map(o=>({...o,sourceFinancial:raw.orders.find(r=>r.sourceOrderNumber===o.sourceOrderNumber)?.financial})),items:parsed.items,
     prepick:{headers:conversion.prepick.headers,rows:conversion.prepick.rows}};
    db=await pool.connect();await db.query('BEGIN');open=true;

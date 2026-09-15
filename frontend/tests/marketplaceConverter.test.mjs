@@ -24,7 +24,7 @@ function file(rows = fixtureRows, name = 'synthetic.csv') {
 
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [] } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -38,7 +38,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         useMemo(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { deps, value: callback() }; return hooks[i].value; },
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
-    const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [] } }; }, post: async (url, body) => { requests.push({url,body}); if(url==='/api/marketplace-products/resolve')return {data:resolved||{sync:null,products:{}}}; if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}}; if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
+    const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles } }; }, post: async (url, body) => { requests.push({url,body}); if(url==='/api/marketplace-intakes/store-profiles')return {data:{id:9,platform:body.platform,store:body.settings.store,settings:body.settings}}; if(url==='/api/marketplace-products/resolve')return {data:resolved||{sync:null,products:{}}}; if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}}; if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
     const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
     const module = { exports: {} };
     vm.runInNewContext(code, {
@@ -106,7 +106,7 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
         cards = view.all(node => node.type === 'div' && node.props.className === 'rounded-lg border border-slate-200 p-4');
         view.find(cards[index], node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } }); view.render();
     }
-    view.change('商城店鋪', '合成店鋪'); view.change('ECOUNT 客戶／供應商編碼', '00027'); view.change('已確認本次金額為 TWD', true);
+    view.change('商城店鋪', '合成店鋪'); view.change('ECOUNT 銷貨客戶編碼', '00027'); view.change('已確認本次金額為 TWD', true);
     assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, false, view.text(view.find(view.render(), node => node.props?.['aria-label'] === '轉檔檢查結果')));
     await view.button('ECOUNT 銷貨檔').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
@@ -123,7 +123,7 @@ test('draft audit downloads without customer, tax, payment release or barcode co
     await view.button('預揀與金額核對表').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
     const book = view.downloads[0].book;
-    assert.deepEqual(book.SheetNames, ['預揀總表', '訂單金額核對', '來源商品對照', '本批納入與排除', 'ECOUNT成交核對']);
+    assert.deepEqual(book.SheetNames, ['承辦人', '預揀總表', '訂單金額核對', '來源商品對照', '本批納入與排除', 'ECOUNT成交核對']);
     const summary = XLSX.utils.sheet_to_json(book.Sheets['預揀總表'], { header: 1 });
     assert.match(JSON.stringify(summary), /待核對/); assert.match(JSON.stringify(summary), /00123/);
     const items = XLSX.utils.sheet_to_json(book.Sheets['來源商品對照'], { header: 1 });
@@ -182,4 +182,15 @@ test('unique ECOUNT reference automatically resolves source SKU while stopped su
  assert.match(view.text(view.render()),/00124：ECOUNT 已中止使用/);
  const codes=view.all(n=>n.type==='input').map(n=>n.props.value);assert.ok(codes.includes('NEW00123'));assert.ok(codes.includes('00124'));
  assert.equal(view.button('ECOUNT 銷貨檔').props.disabled,true);assert.equal(view.requests.length,1);
+});
+
+
+test('selecting a stored profile fills customer and tax settings only for the uploaded platform',async()=>{
+ const profiles=[{id:1,platform:'1Shop',store:'Saved Store',settings:{store:'Saved Store',customerCode:'00020',customerName:'Saved Customer',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true}},{id:2,platform:'Shopify',store:'Other',settings:{store:'Other',customerCode:'WRONG'}}];
+ const c=await converter({profiles});await c.select(file());
+ c.change('選擇本批店鋪','1');assert.match(c.text(c.render()),/00020\s+·\s+Saved Customer/);
+ const options=c.all(n=>n.type==='option').map(n=>c.text(n));assert.ok(!options.includes('Other · WRONG'));
+ await c.select(file());
+ const stores=c.all(n=>n.type==='input').filter(n=>n.props.value==='Saved Store');assert.equal(stores.length,0,'new file must select its store explicitly');
+ c.change('選擇本批店鋪','2');assert.doesNotMatch(c.text(c.render()),/銷貨客戶： WRONG/);
 });
