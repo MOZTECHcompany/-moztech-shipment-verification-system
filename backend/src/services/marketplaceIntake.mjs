@@ -227,7 +227,7 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   if (!/^\d{1,4}$/.test(text(settings.batchSequence)) || !Number.isSafeInteger(Number(settings.batchSequence)) || Number(settings.batchSequence) <= 0) issues.push(issue('INVALID_BATCH_SEQUENCE', '銷貨分組序號必須是 1 至 9999 的正整數'));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text(settings.date)) || Number.isNaN(Date.parse(`${settings.date}T00:00:00Z`)) || new Date(`${settings.date}T00:00:00Z`).toISOString().slice(0, 10) !== settings.date) issues.push(issue('DATE_REQUIRED', '請指定有效的銷貨日期'));
   if (settings.currency !== 'TWD') issues.push(issue('CURRENCY_REQUIRED', '本次 ECOUNT 轉檔僅支援明確確認的 TWD'));
-  if (!/^TEST-[A-Za-z0-9-]{1,15}$/.test(text(settings.batchNumber))) issues.push(issue('BATCH_NUMBER_REQUIRED', '請填寫 TEST- 開頭、最長 20 字的本次唯一測試追蹤號；仍須在 ERP 確認未重複使用'));
+  if ((!/^(?:WMS|TEST)-[A-Za-z0-9-]+$/.test(text(settings.batchNumber)) || text(settings.batchNumber).length>20)) issues.push(issue('BATCH_NUMBER_REQUIRED', '請填寫 WMS- 或 TEST- 開頭、最長 20 字的唯一銷貨追蹤號；仍須在 ERP 確認未重複使用'));
   if (!settings.taxConfirmed || settings.taxMode !== 'erp_inclusive' || text(settings.taxType) !== '11') issues.push(issue('TAX_SETTING_REQUIRED', '請確認 ECOUNT 營業稅交易類型 11，以含稅單價交由 ERP 依既有設定計稅'));
   if (text(settings.erpCurrencyCode) && settings.erpCurrencyConfirmed !== true) issues.push(issue('ERP_CURRENCY_REQUIRED', 'ECOUNT 貨幣代碼須另行確認；來源 TWD 不代表 ERP 主檔代碼'));
   for (const i of (parsed.issues || []).filter((i) => i.severity === 'confirmation')) {

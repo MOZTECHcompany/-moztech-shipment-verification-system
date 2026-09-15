@@ -171,8 +171,12 @@ app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').cr
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
 
+// File downloads require a short-lived, batch-scoped HttpOnly grant minted by an authenticated staff request.
+app.get('/api/marketplace-files/:id/:kind',require('./services/marketplaceDownloads').downloadFile({pool}));
+
 // 以下路由需要認證
 app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));
+app.use('/api/marketplace-products',authenticateToken,require('./services/marketplaceProductCatalog').createProductRouter({pool}));
 app.use('/api/marketplace-intakes', authenticateToken, require('./routes/marketplaceRoutes').createMarketplaceRouter({pool}));
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);

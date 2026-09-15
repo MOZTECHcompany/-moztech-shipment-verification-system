@@ -40,6 +40,13 @@ function createMarketplaceRouter({pool}){
   if(!rows.rows.length)return res.status(404).json({message:'找不到轉檔批次'});
   res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),links:await batchLinks(pool,req.params.id)});
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
+ router.post('/:id/download-link',async(req,res,next)=>{try{
+  if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
+  const record=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
+  if(!record)return res.status(404).json({message:'找不到轉檔批次'});
+  if(req.body?.kind==='ecount')await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))]);
+  require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id);
+ }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  for(const [method,path,action] of [['patch','/:id/archive','archive'],['patch','/:id/restore','restore'],['delete','/:id','delete']]){
   router[method](path,async(req,res,next)=>{try{
    res.json(await changeBatch(pool,req.params.id,action,req.user.id,req.body));
@@ -52,6 +59,7 @@ function createMarketplaceRouter({pool}){
    const settings=safeSettings(req.body?.settings);
    const conversion=buildUnifiedConversion(req.body?.rows,settings);
    const {parsed,output,source,raw}=conversion;
+   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))]);
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows});
    const snapshot={settings,summary:output.summary,headers:output.headers,rows:output.rows,reportHeaders:output.reportHeaders,reportRows:output.reportRows,

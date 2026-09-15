@@ -49,8 +49,8 @@ for (const flag of [undefined, 'production', 'dev']) {
             const html = renderToStaticMarkup(page);
             if (flag === 'dev') {
                 assert.equal((html.match(/data-testid="deployment-environment"/g) || []).length, 1);
-                assert.match(html, /DEV 測試環境/); assert.match(html, /測試站 · 合成資料/);
-            } else assert.doesNotMatch(html, /deployment-environment|DEV 測試環境|測試站 · 合成資料/);
+                assert.match(html, /DEV 開發環境/); assert.match(html, /開發環境/);
+            } else assert.doesNotMatch(html, /deployment-environment|DEV 開發環境|開發環境/);
         }
     });
 }

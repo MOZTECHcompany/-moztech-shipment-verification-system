@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { ArrowLeft, Download, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
 import { Button, PageHeader } from '../../ui';
 import apiClient from '@/api/api.js';
+import { API_ORIGIN } from '../../api/origin';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
 import { batchSessionMatches } from '../../utils/importBatches';
 import { formatMinor, buildEcountUploadTable } from '../../utils/marketplaceIntake.mjs';
@@ -18,18 +19,18 @@ const sectionClass='rounded-xl border border-slate-200 bg-white p-4 sm:p-6';
 const cell='px-3 py-3 text-left align-top';
 const money=n=>n==null?'未提供':formatMinor(n);
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-const batchNumber=()=>`TEST-${today().replaceAll('-','')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)),v=>v.toString(16).padStart(2,'0')).join('').toUpperCase()}`;
+const batchNumber=()=>`WMS-${today().replaceAll('-','')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)),v=>v.toString(16).padStart(2,'0')).join('').toUpperCase()}`;
 const initialSettings=()=>({store:'',customerCode:'',customerName:'',warehouseCode:'003',date:today(),batchSequence:'1',batchNumber:batchNumber(),currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:false,includeTestOrders:false,bundleZeroConfirmed:false,discountAllocationConfirmed:false,skuMappings:{},shippingSku:{erpSku:'00001',name:'運費',confirmed:false,nonStock:false}});
 function Field({label,help,children,...props}){return <label className="block min-w-0 text-sm font-medium text-slate-800">{label}{children||<input className={inputClass} {...props}/>} {help&&<span className="mt-1 block text-xs font-normal leading-5 text-slate-500">{help}</span>}</label>;}
 function Check({children,checked,onChange}){return <label className="flex min-h-11 cursor-pointer items-start gap-3 py-2 text-sm leading-6 text-slate-800"><input type="checkbox" checked={!!checked} onChange={e=>onChange(e.target.checked)} className="mt-1 h-4 w-4 shrink-0"/><span>{children}</span></label>;}
 export function MarketplaceConverter({user}){
- if(import.meta.env?.VITE_DEPLOY_ENV!=='dev'||!MARKETPLACE_ROLES.includes(user?.role))return <Navigate to="/tasks" replace/>;
+ if(!MARKETPLACE_ROLES.includes(user?.role))return <Navigate to="/tasks" replace/>;
  return <ConverterPage user={user}/>;
 }
 function ConverterPage({user}){
  const [input,setInput]=useState(null),[settings,setSettings]=useState(initialSettings),[name,setName]=useState('');
  const [busy,setBusy]=useState(false),[access,setAccess]=useState('loading'),[message,setMessage]=useState(''),[records,setRecords]=useState([]),[saved,setSaved]=useState(null);
- const [dragging,setDragging]=useState(false);
+ const [dragging,setDragging]=useState(false),[catalog,setCatalog]=useState(null),[catalogError,setCatalogError]=useState(''),[fileLink,setFileLink]=useState('');
  const fileRef=useRef(null),request=useRef(0),mounted=useRef(true),token=useRef(null),actor=useRef({id:user.id,role:user.role}),inFlight=useRef(false);
  const currentSession=()=>batchSessionMatches(localStorage,actor.current,token.current);
  const loadRecords=async()=>{
@@ -57,12 +58,14 @@ function ConverterPage({user}){
   }
   return [...groups.values()].map(group=>({...group,title:group.items[0].code==='PRODUCT_MAPPING_REQUIRED'?`${group.items.length} 項商品需確認 ECOUNT 對照`:group.items[0].message}));
  },[prepared]);
+ const catalogIssues=products.flatMap(i=>{const r=catalog?.products?.[i.sku];return r?.status==='inactive'?[`${i.sku}：ECOUNT 已中止使用，請確認出貨品項。`]:r?.status==='ambiguous'?[`${i.sku}：品項編碼／條碼對應多個商品，請先核對主檔。`]:[];});
+ const catalogBlocked=!!catalogError||catalogIssues.length>0;
  const warnings=prepared?.output.issues.filter(v=>v.severity==='warning')||[];
  const update=(key,value)=>{setSaved(null);setSettings(s=>({...s,[key]:value,...(key==='currency'?{taxConfirmed:false}:{})}));};
  const mapping=(sku,key,value)=>{setSaved(null);setSettings(s=>({...s,skuMappings:{...s.skuMappings,[sku]:{...s.skuMappings[sku],[key]:value,...(['erpSku','erpName'].includes(key)?{confirmed:false}:{}),...(key==='barcode'?{barcodeConfirmed:false}:{})}}}));};
  const selectFiles=async files=>{
   if(locked||!files?.length)return;
-  setMessage('');setInput(null);setSaved(null);setName('');
+  setMessage('');setInput(null);setSaved(null);setName('');setCatalog(null);setCatalogError('');setFileLink('');
   if(!currentSession()){setAccess('denied');return;}
   const file=files[0];
   if(files.length!==1||! /\.(xlsx|xls|csv)$/i.test(file.name)||!file.size||file.size>10*1024*1024){setMessage('請選擇一個非空白的 Excel 或 CSV，檔案上限 10 MiB。');return;}
@@ -78,6 +81,16 @@ function ConverterPage({user}){
    if(!mounted.current||sequence!==request.current||!currentSession())return;
    setInput(result);setName(file.name);
    const mappings=Object.fromEntries(result.parsed.items.map(i=>[i.sku,{...(knownMappings[i.sku]||{erpSku:i.sku,erpName:i.productName,barcode:''}),confirmed:false,barcodeConfirmed:false,category:''}]));
+   let matched=null;
+   try{
+    matched=(await apiClient.post('/api/marketplace-products/resolve',{skus:[...new Set(result.parsed.items.map(i=>i.sku))]})).data;
+    if(!mounted.current||sequence!==request.current||!currentSession())return;
+    setCatalog(matched);
+    for(const [sku,r] of Object.entries(matched.products||{}))if(r.status==='matched'){
+     const p=r.matches[0];mappings[sku]={erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec,barcode:p.barcode,confirmed:true,barcodeConfirmed:!!p.barcode,category:''};
+    }
+   }catch{if(mounted.current&&sequence===request.current)setCatalogError('ECOUNT 商品主檔暫時無法讀取，請重新上傳檔案再試。');}
+   if(!mounted.current||sequence!==request.current||!currentSession())return;
    setSettings(s=>({...initialSettings(),store:s.store,warehouseCode:s.warehouseCode,skuMappings:mappings}));
   }catch(e){if(mounted.current&&sequence===request.current)setMessage(e.message||'無法讀取來源檔');}
   finally{if(mounted.current&&sequence===request.current)setBusy(false);}
@@ -98,15 +111,19 @@ function ConverterPage({user}){
  };
  const download=async kind=>{
   if(locked||inFlight.current||!input||!currentSession())return;
-  if(kind==='ecount'&&!prepared.output.ok)return;
+  if(kind==='ecount'&&(!prepared.output.ok||catalogBlocked))return;
   if(kind==='audit'&&(!prepared.audit.ok||!prepared.prepick.ok))return;
   inFlight.current=true;setBusy(true);setMessage('');
   try{
    if(kind==='ecount'){
     const response=await apiClient.post('/api/marketplace-intakes',{rows:input.source.rows,settings},{timeout:45000});
     if(!mounted.current||!currentSession())return;
-    setSaved(response.data);await writeBook(response.data,'ecount');await loadRecords();
-    setMessage(`轉檔批次 #${response.data.id} 已保存，ECOUNT 銷貨檔已下載。請先在 ERP 核對並完成銷貨，再由此批次匯入理貨單。`);
+    setSaved(response.data);
+    const link=await apiClient.post(`/api/marketplace-intakes/${response.data.id}/download-link`,{kind:'ecount'},{withCredentials:true});
+    if(!mounted.current||!currentSession())return;
+    const url=`${API_ORIGIN}${link.data.url}`;setFileLink(url);
+    const anchor=document.createElement('a');anchor.href=url;anchor.download='';document.body.appendChild(anchor);anchor.click();anchor.remove();
+    await loadRecords();setMessage(`轉檔批次 #${response.data.id} 已保存，檔案已準備好。若未開始下載，請點下方下載連結。`);
    }else{if(!await loadRecords())throw Error('登入已失效');await writeBook(null,'audit');setMessage('預揀與金額核對表已下載；商品彙總只計本批納入的訂單。');}
   }catch(e){if(mounted.current)setMessage(e.response?.data?.message||'保存或下載未完成，請先查看已保存批次；結果不明時不要改單號重送。');}
   finally{inFlight.current=false;if(mounted.current)setBusy(false);}
@@ -115,6 +132,7 @@ function ConverterPage({user}){
   <Link to="/admin" className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16}/>返回出貨管理</Link>
   <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title="商城訂單轉檔"/><a href="#saved-batches" className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">管理已保存批次</a></div>
   <p className="text-sm leading-6 text-slate-600">上傳 Shopify、1Shop 或 SHOPLINE 訂單，下載後即可到 ECOUNT 匯入銷貨。</p>
+  {fileLink&&<a href={fileLink} download className="inline-flex min-h-11 items-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white">下載已保存的 ECOUNT 銷貨檔</a>}
   {message&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">{message}</p>}
   <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging?"border-blue-500 bg-blue-50":"border-slate-300"}`} onDragOver={e=>{e.preventDefault();if(!locked)setDragging(true);}} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget))setDragging(false);}} onDrop={e=>{e.preventDefault();setDragging(false);selectFiles(Array.from(e.dataTransfer.files||[]));}} aria-label="商城訂單檔案區">
    <div className="flex flex-col items-center py-4 text-center"><UploadCloud size={36} className="mb-3 text-blue-600"/><h2 className="text-lg font-semibold">{dragging?"放開檔案，開始讀取":"將訂單檔拖曳到這裡"}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p><p className="mt-1 text-xs text-slate-500">每次一個平台／店鋪，一個檔案，上限 10 MiB</p>
@@ -127,14 +145,16 @@ function ConverterPage({user}){
    <section className={`${sectionClass} border-blue-200`} aria-label="轉檔與下載">
     <div className="flex flex-wrap items-start justify-between gap-4">
      <div><h2 className="font-semibold">2. 下載 ECOUNT 銷貨檔</h2><p className="mt-2 text-sm text-slate-600">{prepared.parsed.summary.orderCount} 筆訂單 · {prepared.parsed.summary.totalQuantity} 件商品 · 訂單總額 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p><p className="mt-1 text-xs text-slate-500">已排除 {input.parsed.orders.length-prepared.parsed.summary.orderCount} 筆不符合出貨條件的訂單</p></div>
-     <Button disabled={locked||!prepared.output.ok} onClick={()=>download('ecount')}><Download size={16} className="mr-2"/>下載 ECOUNT 銷貨檔</Button>
+     <Button disabled={locked||!prepared.output.ok||catalogBlocked} onClick={()=>download('ecount')}><Download size={16} className="mr-2"/>下載 ECOUNT 銷貨檔</Button>
     </div>
-    {issueGroups.length>0?<div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">請先處理以下問題，即可下載</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">{issueGroups.map(g=><li key={g.key}>{g.items.length>1?<details><summary className="cursor-pointer">{g.title}{g.items[0].code!=='PRODUCT_MAPPING_REQUIRED'?`（${g.items.length} 筆）`:''}</summary><ul className="mt-2 space-y-1 pl-4">{g.items.map((v,i)=><li key={i}>{v.orderNumber?`${v.orderNumber}：`:''}{v.sourceRow?`第 ${v.sourceRow} 列：`:''}{v.message}</li>)}</ul></details>:<>{g.items[0].orderNumber?`${g.items[0].orderNumber}：`:''}{g.items[0].sourceRow?`第 ${g.items[0].sourceRow} 列：`:''}{g.title}</>}</li>)}</ul><p className="mt-3 text-xs text-amber-900">商品與設定問題可在下方展開核對；訂單資料有誤時，請修正來源檔再上傳。</p></div>:<p className="mt-4 text-sm text-emerald-700">檢查通過，可以下載。</p>}
+    {catalog?.sync&&<p className="mt-3 text-xs text-slate-500">ECOUNT 唯讀對照來源 · 資料日期 {new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
+    {catalogBlocked&&<ul role="alert" className="mt-3 rounded-lg bg-amber-50 p-4 text-sm text-amber-950">{[catalogError,...catalogIssues].filter(Boolean).map(x=><li key={x}>{x}</li>)}</ul>}
+    {issueGroups.length>0?<div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">請先處理以下問題，即可下載</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">{issueGroups.map(g=><li key={g.key}>{g.items.length>1?<details><summary className="cursor-pointer">{g.title}{g.items[0].code!=='PRODUCT_MAPPING_REQUIRED'?`（${g.items.length} 筆）`:''}</summary><ul className="mt-2 space-y-1 pl-4">{g.items.map((v,i)=><li key={i}>{v.orderNumber?`${v.orderNumber}：`:''}{v.sourceRow?`第 ${v.sourceRow} 列：`:''}{v.message}</li>)}</ul></details>:<>{g.items[0].orderNumber?`${g.items[0].orderNumber}：`:''}{g.items[0].sourceRow?`第 ${g.items[0].sourceRow} 列：`:''}{g.title}</>}</li>)}</ul><p className="mt-3 text-xs text-amber-900">商品與設定問題可在下方展開核對；訂單資料有誤時，請修正來源檔再上傳。</p></div>:!catalogBlocked&&<p className="mt-4 text-sm text-emerald-700">檢查通過，可以下載。</p>}
     <p className="mt-3 text-xs text-slate-500">下載時會自動保存本批訂單，供理貨單回匯對應。請將下載的檔案上傳到 ECOUNT 完成銷貨。</p>
     {saved&&<Link className="mt-3 inline-block text-sm font-medium text-blue-700 underline" to={`/admin?intakeId=${saved.id}`}>ERP 銷貨完成後，匯入此批理貨單</Link>}
    </section>
-   <details className={sectionClass}><summary className="cursor-pointer font-semibold">商品對照（{products.length} 項）</summary><fieldset disabled={locked}><legend className="sr-only">商品對照</legend><p className="mt-2 text-sm text-slate-600">來源 SKU 先帶入供核對；確認 ECOUNT 品項後才匯出。國際條碼從實物／主檔核對，不自動以 SKU 代替。</p>
-    <div className="mt-4 space-y-3">{products.map(i=>{const m=settings.skuMappings[i.sku]||{};return <div key={i.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{i.productName} <span className="text-xs text-slate-500">{i.sku}</span></p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Field label="ECOUNT 品項編碼" value={m.erpSku||''} onChange={e=>mapping(i.sku,'erpSku',e.target.value)}/><Field label="ECOUNT 品項名稱" value={m.erpName||''} onChange={e=>mapping(i.sku,'erpName',e.target.value)}/><Field label="國際條碼" value={m.barcode||''} placeholder="待實物／主檔核對" onChange={e=>mapping(i.sku,'barcode',e.target.value)}/><Field label="商品分類" value={m.category||''} onChange={e=>mapping(i.sku,'category',e.target.value)}/></div><Check checked={m.confirmed} onChange={v=>mapping(i.sku,'confirmed',v)}>已核對此商品的 ECOUNT 品項編碼與名稱。</Check>{m.barcode&&<Check checked={m.barcodeConfirmed} onChange={v=>mapping(i.sku,'barcodeConfirmed',v)}>已核對實物商品條碼。</Check>}</div>;})}</div>
+   <details className={sectionClass}><summary className="cursor-pointer font-semibold">商品對照（{products.length} 項）</summary><fieldset disabled={locked}><legend className="sr-only">商品對照</legend><p className="mt-2 text-sm text-slate-600">商城原始貨號完整比對 ECOUNT 品項編碼與條碼；唯一匹配會自動帶入。NEW 前綴及尾碼保持不變，主檔條碼空白時再核對實物。</p>
+    <div className="mt-4 space-y-3">{products.map(i=>{const m=settings.skuMappings[i.sku]||{};return <div key={i.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{i.productName} <span className="text-xs text-slate-500">{i.sku}</span></p><p className="mt-2 text-xs text-slate-500">{catalog?.products?.[i.sku]?.status==='matched'?'已依 ECOUNT 主檔精確對應':catalog?.products?.[i.sku]?.status==='inactive'?'ECOUNT 已中止使用':catalog?.products?.[i.sku]?.status==='ambiguous'?'主檔有多筆對應，待釐清':'主檔未找到，請核對完整品項編碼'}</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Field label="ECOUNT 品項編碼" value={m.erpSku||''} onChange={e=>mapping(i.sku,'erpSku',e.target.value)}/><Field label="ECOUNT 品項名稱" value={m.erpName||''} onChange={e=>mapping(i.sku,'erpName',e.target.value)}/><Field label="國際條碼" value={m.barcode||''} placeholder="待實物／主檔核對" onChange={e=>mapping(i.sku,'barcode',e.target.value)}/><Field label="商品分類" value={m.category||''} onChange={e=>mapping(i.sku,'category',e.target.value)}/></div><Check checked={m.confirmed} onChange={v=>mapping(i.sku,'confirmed',v)}>已核對此商品的 ECOUNT 品項編碼與名稱。</Check>{m.barcode&&<Check checked={m.barcodeConfirmed} onChange={v=>mapping(i.sku,'barcodeConfirmed',v)}>已核對實物商品條碼。</Check>}</div>;})}</div>
    </fieldset></details>
    <details className={sectionClass}><summary className="cursor-pointer font-semibold">ECOUNT 設定</summary><fieldset disabled={locked}><legend className="sr-only">ECOUNT 設定</legend>
     <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Field label="商城店鋪" value={settings.store} onChange={e=>update('store',e.target.value)} help="回匯時需保留相同店鋪名稱。"/><Field label="ECOUNT 客戶／供應商編碼" value={settings.customerCode} onChange={e=>update('customerCode',e.target.value)} help="依本批應收帳款歸屬填入 ERP 客戶碼。"/><Field label="ECOUNT 客戶名稱" value={settings.customerName} onChange={e=>update('customerName',e.target.value)}/><Field label="發貨倉庫編碼" value={settings.warehouseCode} onChange={e=>update('warehouseCode',e.target.value)}/><Field label="銷貨日期" type="date" value={settings.date} onChange={e=>update('date',e.target.value)}/><Field label="銷貨追蹤單號（K 欄）" value={settings.batchNumber} maxLength={20} onChange={e=>update('batchNumber',e.target.value)}/><Field label="銷貨分組序號（B 欄）" value={settings.batchSequence} onChange={e=>update('batchSequence',e.target.value)}/><Field label="來源金額幣別" value={settings.currency} onChange={e=>update('currency',e.target.value)}/></div>

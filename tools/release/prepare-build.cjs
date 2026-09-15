@@ -17,6 +17,7 @@ const files = [];
 // Vite uses the same pure engine as the API. Materialize the two forwarding
 // modules for the isolated frontend Docker context; record the actual bytes.
 const sharedSources = {
+  'frontend/src/utils/marketplaceBatchFiles.mjs': 'backend/src/services/marketplaceBatchFiles.mjs',
   'frontend/src/utils/marketplaceIntake.mjs': 'backend/src/services/marketplaceIntake.mjs',
   'frontend/src/utils/unifiedMarketplace.mjs': 'backend/src/services/unifiedMarketplace.mjs',
 };

@@ -29,7 +29,9 @@ async function listBatches(pool,query){
  (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE o.intake_id=i.id) AS order_count,
  (SELECT COUNT(*)::int FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE o.intake_id=i.id) AS linked_count
  FROM marketplace_intakes i${f.where} ORDER BY ${dateExpr} DESC,i.id DESC LIMIT $${f.values.length+1} OFFSET $${f.values.length+2}`,[...f.values,f.pageSize,(f.page-1)*f.pageSize]);
- const facets=(await pool.query('SELECT DISTINCT source_platform,source_store FROM marketplace_intakes ORDER BY source_platform,source_store')).rows;
+ const status=query.status||'active';
+ const facetWhere=status==='all'?'':` WHERE archived_at IS ${status==='active'?'NULL':'NOT NULL'}`;
+ const facets=(await pool.query('SELECT DISTINCT source_platform,source_store FROM marketplace_intakes'+facetWhere+' ORDER BY source_platform,source_store')).rows;
  return {intakes:rows.rows,...totals,page:f.page,pageSize:f.pageSize,facets};
 }
 async function batchLinks(pool,id){

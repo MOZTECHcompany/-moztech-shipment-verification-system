@@ -100,7 +100,7 @@ function App() {
                             <Route path="/settings/logistics" element={['admin','superadmin'].includes(user?.role) ? <LogisticsSettings /> : <Navigate to="/tasks" />} />
                             <Route path="/settings" element={<SettingsPage user={user} />} />
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/marketplace-converter" element={import.meta.env?.VITE_DEPLOY_ENV === 'dev' && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? <MarketplaceConverter key={`${user?.id}:${user?.role}:${token}`} user={user} /> : <Navigate to="/tasks" replace />} />
+                            <Route path="/admin/marketplace-converter" element={['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? <MarketplaceConverter key={`${user?.id}:${user?.role}:${token}`} user={user} /> : <Navigate to="/tasks" replace />} />
                             <Route path="/admin/users" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <OperationLogs /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/analytics" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Analytics /> : <Navigate to="/tasks" />} />

@@ -69,6 +69,22 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   const changed=body();changed.settings.customerCode='DIFFERENT';assert.equal((await post(changed)).status,409);
   assert.equal((await state()).orders,1);
  });
+ await t.test('downloads require short-lived scoped cookies and preserve actual 27-column XLSX',async()=>{
+  const path='/api/marketplace-intakes/'+saved.id+'/download-link';
+  assert.equal((await api('picker','POST',path,{kind:'ecount'})).status,403);
+  const response=await fetch(base+path,{method:'POST',headers:{Authorization:'Bearer '+tokens.admin,'Content-Type':'application/json'},body:JSON.stringify({kind:'ecount'})});
+  assert.equal(response.status,200);const cookie=response.headers.get('set-cookie').split(';')[0],link=await response.json();
+  assert.match(response.headers.get('set-cookie'),/HttpOnly/);assert.match(response.headers.get('set-cookie'),/SameSite=Strict/);
+  assert.equal((await fetch(base+link.url)).status,403);
+  assert.equal((await fetch(base+link.url.replace('ecount','prepick'),{headers:{Cookie:cookie}})).status,403);
+  const download=await fetch(base+link.url,{headers:{Cookie:cookie}});assert.equal(download.status,200);assert.match(download.headers.get('content-disposition'),/^attachment;/);
+  const book=xlsx.read(Buffer.from(await download.arrayBuffer()));const rows=xlsx.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,defval:''});
+  assert.equal(rows[0].length,27);assert.equal(rows[1][23],'SYN-MKT-A');assert.equal(rows[1][15],1);assert.equal(rows[1][17],100);
+  assert.equal((await fetch(base+'/api/marketplace-intakes',{headers:{Authorization:'Bearer '+cookie.split('=')[1]}})).status,403);
+  await pool.query("UPDATE users SET role='picker' WHERE id=$1",[users.admin]);
+  assert.equal((await fetch(base+link.url,{headers:{Cookie:cookie}})).status,403);
+  await pool.query("UPDATE users SET role='admin' WHERE id=$1",[users.admin]);
+ });
  await t.test('mismatched SKU, quantity, barcode, store, missing child and freight anomalies leave no work orders',async()=>{
   const original=await state();
   const edits=[

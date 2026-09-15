@@ -24,7 +24,7 @@ function file(rows = fixtureRows, name = 'synthetic.csv') {
 
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
-async function converter({ flag = 'dev', role = 'admin', denied = false } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -38,8 +38,8 @@ async function converter({ flag = 'dev', role = 'admin', denied = false } = {}) 
         useMemo(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { deps, value: callback() }; return hooks[i].value; },
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
-    const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [] } }; }, post: async (url, body) => { requests.push({url,body}); if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
-    const imports = { '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
+    const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [] } }; }, post: async (url, body) => { requests.push({url,body}); if(url==='/api/marketplace-products/resolve')return {data:resolved||{sync:null,products:{}}}; if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}}; if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
+    const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -47,6 +47,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false } = {}) 
         localStorage: { getItem: key => storage.get(key) ?? null, setItem: (...args) => writes.push(args), removeItem: (...args) => writes.push(args) },
         window: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) },
         fetch: (...args) => { requests.push(args); throw new Error('Converter must not issue requests'); },
+        document:{body:{appendChild(){}},createElement:()=>({href:'',download:'',click(){downloads.push({url:this.href});},remove(){}})},
         console, crypto: webcrypto, TextDecoder,
     });
     const expand = node => {
@@ -73,19 +74,19 @@ async function converter({ flag = 'dev', role = 'admin', denied = false } = {}) 
     return { render, find, text, all, button, change, select, downloads, requests, writes, storage, listeners, unmount: () => { mounted = false; hooks.forEach(h => h?.cleanup?.()); }, lateUpdates: () => lateUpdates };
 }
 
-test('converter route guard requires explicit DEV and an existing authorized role', async () => {
-    for (const flag of ['production', '']) for (const role of ['admin', 'superadmin', 'dispatcher']) assert.equal((await converter({ flag, role })).render().type, 'Navigate');
+test('converter route guard preserves authorized roles across deployment environments', async () => {
+    for (const flag of ['production', '']) for (const role of ['admin', 'superadmin', 'dispatcher']) assert.equal((await converter({ flag, role })).render().type, 'main');
     for (const role of ['picker', 'packer', 'unknown']) assert.equal((await converter({ role })).render().type, 'Navigate');
     for (const role of ['admin', 'superadmin', 'dispatcher']) assert.equal((await converter({ role })).render().type, 'main');
 });
 
-test('file selection automatically detects 1Shop and excludes fulfilled orders from selected products and preserves CSV identifiers without requests or persistence', async () => {
+test('file selection automatically detects 1Shop and excludes fulfilled orders from selected products and preserves CSV identifiers while resolving products without saving orders', async () => {
     const view = await converter(); await view.select(file());
     assert.match(view.text(view.render()), /本批納入\s+2\s+筆、\s*2\s+商品列、\s*3\s+件/);
     assert.match(view.text(view.render()), /00123/); assert.match(view.text(view.render()), /已付款/);
     assert.doesNotMatch(view.text(view.render()), /PRIVATE-EXCLUDED|EXCLUDED ITEM/);
     assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
-    assert.equal(view.requests.length, 0); assert.equal(view.writes.length, 0); assert.equal(view.downloads.length, 0);
+    assert.equal(view.requests.length, 1); assert.equal(view.requests[0].url,'/api/marketplace-products/resolve'); assert.equal(view.writes.length, 0); assert.equal(view.downloads.length, 0);
 });
 
 test('invalid file inputs are rejected before parsing or download', async () => {
@@ -109,16 +110,10 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
     assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, false, view.text(view.find(view.render(), node => node.props?.['aria-label'] === '轉檔檢查結果')));
     await view.button('ECOUNT 銷貨檔').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
-    const bytes = XLSX.write(view.downloads[0].book, { type: 'buffer', bookType: 'xlsx' });
-    const read = XLSX.read(bytes); const rows = XLSX.utils.sheet_to_json(read.Sheets[read.SheetNames[0]], { header: 1, defval: '' });
-    assert.equal(rows[0].length, 27); assert.equal(rows[1][7], '11'); assert.equal(rows[1][17], 10);
-    assert.equal(rows[0][15], '數量'); assert.equal(rows[1][15], 1);
-    assert.deepEqual(rows[0].slice(23), ['商城訂單編號','平台','店鋪','來源明細號']);
-    assert.equal(rows[1][23], 'TST6091550133'); assert.equal(rows[1][24], '1Shop'); assert.equal(rows[1][25], '合成店鋪'); assert.ok(rows[1][26]);
-    for (const index of [8, 9, 16, 18, 19, 20]) assert.equal(rows[1][index], '');
-    assert.match(rows[1][10], /^TEST-\d{8}-[A-F0-9]{4}$/);
+    assert.equal(view.downloads[0].url,'/api/marketplace-files/1/ecount');
+    assert.match(view.text(view.render()),/檔案已準備好/);
     view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
-    assert.equal(view.requests.length, 1); assert.equal(view.requests[0].url, '/api/marketplace-intakes'); assert.equal(view.writes.length, 0);
+    assert.equal(view.requests.length, 3); assert.equal(view.requests[1].url, '/api/marketplace-intakes'); assert.equal(view.requests[2].url,'/api/marketplace-intakes/1/download-link'); assert.equal(view.writes.length, 0);
 });
 
 test('draft audit downloads without customer, tax, payment release or barcode confirmation and preserves numeric money', async () => {
@@ -133,7 +128,7 @@ test('draft audit downloads without customer, tax, payment release or barcode co
     assert.match(JSON.stringify(summary), /待核對/); assert.match(JSON.stringify(summary), /00123/);
     const items = XLSX.utils.sheet_to_json(book.Sheets['來源商品對照'], { header: 1 });
     assert.equal(items[1][3], '00123'); assert.equal(items[1][6], 10);
-    assert.equal(view.requests.length, 0); assert.equal(view.writes.length, 0);
+    assert.equal(view.requests.length, 1); assert.equal(view.requests[0].url,'/api/marketplace-products/resolve'); assert.equal(view.writes.length, 0);
 });
 
 test('non-UTF-8 CSV rejects undecodable text instead of silently replacing identifiers', async () => {
@@ -177,5 +172,14 @@ test('compact converter keeps one primary download before collapsed details and 
     assert.doesNotMatch(view.text(problems), /條碼待確認/);
     assert.match(view.text(problems), /00123/); assert.match(view.text(problems), /00124/);
     assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
-    assert.equal(view.requests.length, 0);
+    assert.equal(view.requests.length, 1);
+});
+
+
+test('unique ECOUNT reference automatically resolves source SKU while stopped suffix is never rewritten', async()=>{
+ const resolved={sync:{product_count:3,created_at:'2026-09-16T00:00:00Z'},products:{'00123':{status:'matched',matches:[{erp_sku:'NEW00123',product_name:'ERP product',spec:'',barcode:'00123'}]},'00124':{status:'inactive',matches:[{erp_sku:'00124',product_name:'Retired'}]}}};
+ const view=await converter({resolved});await view.select(file());
+ assert.match(view.text(view.render()),/00124：ECOUNT 已中止使用/);
+ const codes=view.all(n=>n.type==='input').map(n=>n.props.value);assert.ok(codes.includes('NEW00123'));assert.ok(codes.includes('00124'));
+ assert.equal(view.button('ECOUNT 銷貨檔').props.disabled,true);assert.equal(view.requests.length,1);
 });
