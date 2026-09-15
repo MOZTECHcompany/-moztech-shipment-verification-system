@@ -1,6 +1,16 @@
 // Local-only conversion. Amounts are integer hundredths; no payment or inventory writes.
 export const ECOUNT_HEADERS = ['日期', '序號', '客戶/供應商編碼', '客戶/供應商名稱', '承辦人', '專案', '發貨倉庫', '交易類型', '貨幣', '匯率', '銷貨單單號', '品項編碼', '商城訂單編號', '平台', '店鋪', '來源明細號', '品項名稱', '序號/批號', '規格', '數量', '單價', '單價(含稅)', '外幣金額', '稅前價格', '營業稅', '摘要', '產生生產入庫'];
 
+// Online uploader verified on 2026-09-15: standard columns first, custom
+// marketplace columns in X:AA. Stored snapshots retain the canonical layout.
+export const ECOUNT_UPLOAD_HEADERS = [...ECOUNT_HEADERS.slice(0,12),...ECOUNT_HEADERS.slice(16),...ECOUNT_HEADERS.slice(12,16)];
+export function buildEcountUploadTable(record){
+  if(!Array.isArray(record?.headers)||record.headers.length!==27||new Set(record.headers).size!==27||!Array.isArray(record.rows))throw Error('ECOUNT 保存批次欄位格式無效');
+  const indexes=ECOUNT_UPLOAD_HEADERS.map(h=>record.headers.indexOf(h));
+  if(indexes.some(i=>i<0)||record.rows.some(r=>!Array.isArray(r)||r.length!==27))throw Error('ECOUNT 保存批次欄位不完整，未產生下載檔');
+  return {headers:[...ECOUNT_UPLOAD_HEADERS],rows:record.rows.map(r=>indexes.map(i=>r[i]))};
+}
+
 const text = (value) => value == null ? '' : String(value).trim();
 const blank = (value) => text(value) === '';
 const sum = (values) => values.reduce((a, b) => Number.isSafeInteger(a + b) ? a + b : NaN, 0);
@@ -243,13 +253,13 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   return { ok: !issues.some((i) => i.severity === 'error'), issues };
 }
 
-const REPORT_HEADERS = ['平台', '店鋪', '商城訂單編號', '付款狀態', '付款方式', '付款期限提示', '履行狀態', '商品列數', '商品件數', '商品金額', '運費', '金流手續費', '稅額（來源）', '折扣（來源）', '訂單總額（非實收）', '退款（來源）', '未收餘額（來源）', '來源銷售頁', '來源銷售頁前綴'];
+const REPORT_HEADERS = ['平台', '店鋪', '商城訂單編號', '付款狀態', '付款方式', '付款期限提示', '履行狀態', '商品列數', '商品件數', '商品金額', '運費', '金流手續費', '稅額（來源）', '折扣（來源）', '訂單總額（非實收）', '退款（來源）', '未收餘額（來源）', '來源銷售頁', '來源銷售頁前綴', '購物金折抵（來源）', '點數折現（來源）', '自訂折扣（來源）', '附加費（來源）'];
 
 function financialReportRow(parsed, order, settings) {
   const items = parsed.items.filter((item) => item.sourceOrderNumber === order.sourceOrderNumber);
   const f = order.financial;
   const moneyCell = (value) => value == null ? '' : value / 100;
-  return [order.sourcePlatform, text(settings.store), order.sourceOrderNumber, order.rawPaymentStatus, order.paymentMethod, order.paymentNote, order.rawFulfillmentStatus, items.length, sum(items.map((i) => i.quantity)), moneyCell(f.subtotalMinor), moneyCell(f.shippingMinor), moneyCell(f.feeMinor), moneyCell(f.taxMinor), moneyCell(f.discountMinor), moneyCell(f.totalMinor), moneyCell(f.refundedMinor), moneyCell(f.outstandingMinor), order.salesPageName, order.salesPagePrefix];
+  return [order.sourcePlatform, text(settings.store), order.sourceOrderNumber, order.rawPaymentStatus, order.paymentMethod, order.paymentNote, order.rawFulfillmentStatus, items.length, sum(items.map((i) => i.quantity)), moneyCell(f.subtotalMinor), moneyCell(f.shippingMinor), moneyCell(f.feeMinor), moneyCell(f.taxMinor), moneyCell(f.discountMinor), moneyCell(f.totalMinor), moneyCell(f.refundedMinor), moneyCell(f.outstandingMinor), order.salesPageName, order.salesPagePrefix, moneyCell(f.creditMinor), moneyCell(f.pointsMinor), moneyCell(f.customDiscountMinor), moneyCell(f.surchargeMinor)];
 }
 
 export function buildMarketplaceAuditRows(parsed, settings = {}) {

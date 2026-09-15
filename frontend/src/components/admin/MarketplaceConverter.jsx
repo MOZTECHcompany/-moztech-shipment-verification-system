@@ -4,7 +4,7 @@ import { ArrowLeft, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { Button, PageHeader } from '../../ui';
 import apiClient from '@/api/api.js';
 import { batchSessionMatches } from '../../utils/importBatches';
-import { formatMinor } from '../../utils/marketplaceIntake.mjs';
+import { formatMinor, buildEcountUploadTable } from '../../utils/marketplaceIntake.mjs';
 import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, parseUnifiedMarketplace, prepareUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
 
 const knownMappings = {
@@ -72,13 +72,13 @@ function ConverterPage({user}){
   const XLSX=await import('xlsx');if(!mounted.current||!currentSession())throw Error('登入已變更，未下載資料。');
   const book=XLSX.utils.book_new();
   const add=(title,rows)=>{const sheet=XLSX.utils.aoa_to_sheet(rows);sheet['!cols']=(rows[0]||[]).map(()=>({wch:24}));XLSX.utils.book_append_sheet(book,sheet,title);};
-  if(kind==='ecount')add('銷貨匯入',[record.headers,...record.rows]);
+  if(kind==='ecount'){const upload=buildEcountUploadTable(record);add('銷貨匯入',[upload.headers,...upload.rows]);}
   else{
    add('預揀總表',[prepared.prepick.headers,...prepared.prepick.rows]);
    add('訂單金額核對',[prepared.audit.headers,...prepared.audit.rows]);
-   add('來源商品對照',[['平台','商城訂單','來源明細號','來源SKU','商品名稱','原始數量','原始單價','原始商品小計','來源組合名稱'],...input.parsed.items.map(i=>[input.parsed.platform,i.sourceOrderNumber,i.sourceLineId,i.sku,i.productName,i.quantity,i.unitPriceMinor==null?'原檔未分價':i.unitPriceMinor/100,i.lineSubtotalMinor==null?'原檔未分價':i.lineSubtotalMinor/100,i.groupName])]);
+   add('來源商品對照',[['平台','商城訂單','來源明細號','來源SKU','商品名稱','原始數量','原始單價','原始商品小計','來源組合名稱'],...input.parsed.items.map(i=>[input.parsed.platform,i.sourceOrderNumber,i.sourceLineId,i.sku,i.productName,i.quantity,i.unitPriceMinor==null?'原檔未分價':i.unitPriceMinor/100,(i.sourceLineSubtotalMinor??i.lineSubtotalMinor)==null?'原檔未分價':(i.sourceLineSubtotalMinor??i.lineSubtotalMinor)/100,i.groupName])]);
    add('本批納入與排除',[['商城訂單','納入本批','原因'],...prepared.choices.map(c=>[c.number,c.eligible?'是':'否',c.reason])]);
-   add('ECOUNT成交核對',[['商城訂單','來源明細號','SKU','數量','商品淨額','另分攤訂單折扣'],...prepared.parsed.items.map(i=>[i.sourceOrderNumber,i.sourceLineId,i.sku,i.quantity,i.lineSubtotalMinor==null?'待確認':i.lineSubtotalMinor/100,(i.allocatedDiscountMinor||0)/100])]);
+   add('ECOUNT成交核對',[['商城訂單','來源明細號','SKU','數量','商品淨額','另分攤訂單折扣','平台商品折扣','平台全單折扣','平台購物金分攤','平台點數分攤'],...prepared.parsed.items.map(i=>[i.sourceOrderNumber,i.sourceLineId,i.sku,i.quantity,i.lineSubtotalMinor==null?'待確認':i.lineSubtotalMinor/100,(i.allocatedDiscountMinor||0)/100,...['product','order','credit','points'].map(k=>(i.sourceDiscounts?.[k]??0)/100)])]);
   }
   XLSX.writeFile(book,`${kind==='ecount'?'ECOUNT銷貨匯入':'預揀與金額核對'}_${record?.batchNumber||settings.batchNumber}.xlsx`);
  };
@@ -127,11 +127,12 @@ function ConverterPage({user}){
     <div className="mt-4 space-y-3">{products.map(i=>{const m=settings.skuMappings[i.sku]||{};return <div key={i.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{i.productName} <span className="text-xs text-slate-500">{i.sku}</span></p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Field label="ECOUNT 品項編碼" value={m.erpSku||''} onChange={e=>mapping(i.sku,'erpSku',e.target.value)}/><Field label="ECOUNT 品項名稱" value={m.erpName||''} onChange={e=>mapping(i.sku,'erpName',e.target.value)}/><Field label="國際條碼" value={m.barcode||''} placeholder="待實物／主檔核對" onChange={e=>mapping(i.sku,'barcode',e.target.value)}/><Field label="商品分類" value={m.category||''} onChange={e=>mapping(i.sku,'category',e.target.value)}/></div><Check checked={m.confirmed} onChange={v=>mapping(i.sku,'confirmed',v)}>已核對此商品的 ECOUNT 品項編碼與名稱。</Check>{m.barcode&&<Check checked={m.barcodeConfirmed} onChange={v=>mapping(i.sku,'barcodeConfirmed',v)}>已核對實物商品條碼。</Check>}</div>;})}</div>
     <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Field label="商城店鋪" value={settings.store} onChange={e=>update('store',e.target.value)} help="回匯時需保留相同店鋪名稱。"/><Field label="ECOUNT 客戶／供應商編碼" value={settings.customerCode} onChange={e=>update('customerCode',e.target.value)} help="依本批應收帳款歸屬填入 ERP 客戶碼。"/><Field label="ECOUNT 客戶名稱" value={settings.customerName} onChange={e=>update('customerName',e.target.value)}/><Field label="發貨倉庫編碼" value={settings.warehouseCode} onChange={e=>update('warehouseCode',e.target.value)}/><Field label="銷貨日期" type="date" value={settings.date} onChange={e=>update('date',e.target.value)}/><Field label="銷貨追蹤單號（K 欄）" value={settings.batchNumber} maxLength={20} onChange={e=>update('batchNumber',e.target.value)}/><Field label="銷貨分組序號（B 欄）" value={settings.batchSequence} onChange={e=>update('batchSequence',e.target.value)}/><Field label="來源金額幣別" value={settings.currency} onChange={e=>update('currency',e.target.value)}/></div>
     <Check checked={settings.taxConfirmed} onChange={v=>update('taxConfirmed',v)}>已確認本次金額為 TWD，使用 ECOUNT 營業稅 11 及含稅單價，由 ERP 依設定計稅。</Check>
-    {input.parsed.platform!=='1Shop'&&<Check checked={settings.discountAllocationConfirmed} onChange={v=>update('discountAllocationConfirmed',v)}>訂單剩餘折扣按商品折後金額比例分攤，尾差按最小貨幣單位分配；運費折抵依訂單總額核對。這是 ECOUNT 計價分攤，原始金額另行保留。</Check>}
+    {input.parsed.platform==='SHOPLINE'&&input.source.rows[0].includes('商品結帳價')?<p className="mt-4 text-sm text-slate-600">已使用 SHOPLINE 原報表逐商品提供的折扣、購物金與點數分攤，自動核對訂單總額；原始金額另行保留。</p>:input.parsed.platform!=='1Shop'&&<Check checked={settings.discountAllocationConfirmed} onChange={v=>update('discountAllocationConfirmed',v)}>訂單剩餘折扣按商品折後金額比例分攤，尾差按最小貨幣單位分配；運費折抵依訂單總額核對。這是 ECOUNT 計價分攤，原始金額另行保留。</Check>}
     {prepared.parsed.summary.bundleComponentCount>0&&<Check checked={settings.bundleZeroConfirmed} onChange={v=>update('bundleZeroConfirmed',v)}>確認本檔組合商品由主商品保留原組合價，其餘原檔未分價元件以 0 元入帳，仍依數量出貨。</Check>}
     {prepared.parsed.summary.shippingMinor>0&&<div className="mt-4 rounded-lg bg-slate-50 p-4"><div className="grid gap-3 sm:grid-cols-2"><Field label="ECOUNT 運費品項編碼" value={settings.shippingSku.erpSku} onChange={e=>update('shippingSku',{...settings.shippingSku,erpSku:e.target.value,confirmed:false,nonStock:false})}/><Field label="運費品項名稱" value={settings.shippingSku.name} onChange={e=>update('shippingSku',{...settings.shippingSku,name:e.target.value,confirmed:false,nonStock:false})}/></div><Check checked={settings.shippingSku.confirmed&&settings.shippingSku.nonStock} onChange={v=>update('shippingSku',{...settings.shippingSku,confirmed:v,nonStock:v})}>已確認運費品項為無形商品／數量管理除外，運費不納入預揀。</Check></div>}
    </fieldset>
    <section className={sectionClass}><h2 className="font-semibold">4. 保存批次並下載統一格式</h2><p className="mt-2 text-sm text-slate-600">保存後保留來源單號、商品、金額與 ECOUNT 對照，供理貨單回匯核對。此步不會送出 ERP 銷貨或扣庫存。</p>
+    <p className="mt-2 text-sm text-slate-600">下載使用 ECOUNT 線上上傳 27 欄：P 欄數量、R 欄含稅單價，X～AA 欄為商城訂單編號、平台、店鋪、來源明細號。上傳時請核對 ECOUNT 畫面表頭相同。</p>
     {!!prepared.output.issues.length&&<ul className="mt-3 space-y-1 text-sm" aria-label="轉檔檢查結果">{prepared.output.issues.map((v,i)=><li key={i} className={v.severity==='warning'?'text-slate-500':'text-amber-900'}>{v.orderNumber?`${v.orderNumber}：`:''}{v.message}</li>)}</ul>}
     <div className="mt-4 flex flex-wrap gap-3"><Button disabled={locked||!prepared.output.ok} onClick={()=>download('ecount')}><Download size={16} className="mr-2"/>保存並下載 ECOUNT 銷貨檔（27 欄）</Button><Button variant="secondary" disabled={locked||!prepared.audit.ok||!prepared.prepick.ok} onClick={()=>download('audit')}>下載預揀與金額核對表</Button></div>
     {saved&&<Link className="mt-4 inline-block font-medium text-blue-700 underline" to={`/admin?intakeId=${saved.id}`}>ERP 銷貨完成後，匯入此批理貨單</Link>}

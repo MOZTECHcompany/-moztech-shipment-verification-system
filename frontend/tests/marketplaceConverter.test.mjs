@@ -111,8 +111,11 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
     assert.equal(view.downloads.length, 1);
     const bytes = XLSX.write(view.downloads[0].book, { type: 'buffer', bookType: 'xlsx' });
     const read = XLSX.read(bytes); const rows = XLSX.utils.sheet_to_json(read.Sheets[read.SheetNames[0]], { header: 1, defval: '' });
-    assert.equal(rows[0].length, 27); assert.equal(rows[1][7], '11'); assert.equal(rows[1][21], 10);
-    for (const index of [8, 9, 20, 22, 23, 24]) assert.equal(rows[1][index], '');
+    assert.equal(rows[0].length, 27); assert.equal(rows[1][7], '11'); assert.equal(rows[1][17], 10);
+    assert.equal(rows[0][15], '數量'); assert.equal(rows[1][15], 1);
+    assert.deepEqual(rows[0].slice(23), ['商城訂單編號','平台','店鋪','來源明細號']);
+    assert.equal(rows[1][23], 'TST6091550133'); assert.equal(rows[1][24], '1Shop'); assert.equal(rows[1][25], '合成店鋪'); assert.ok(rows[1][26]);
+    for (const index of [8, 9, 16, 18, 19, 20]) assert.equal(rows[1][index], '');
     assert.match(rows[1][10], /^TEST-\d{8}-[A-F0-9]{4}$/);
     view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
     assert.equal(view.requests.length, 1); assert.equal(view.requests[0].url, '/api/marketplace-intakes'); assert.equal(view.writes.length, 0);

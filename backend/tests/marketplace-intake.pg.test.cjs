@@ -120,4 +120,19 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   assert.equal((await pool.query("SELECT count(*)::int n FROM marketplace_intakes WHERE batch_number='TEST-ROLL'")).rows[0].n,0);
   assert.equal((await pool.query("SELECT count(*)::int n FROM marketplace_intake_orders WHERE source_order_number='SYN-ROLL-A'")).rows[0].n,0);
  });
+ await t.test('native SHOPLINE allocations persist source money and link the unchanged canonical detail identifiers',async()=>{
+  const b=body();b.settings.batchNumber='TEST-NATIVE-SL';
+  b.rows=table([{'訂單號碼':'#SYN-NATIVE-SL','商品貨號':'0001','商品名稱':'合成商品','商品類型':'商品','數量':1,'商品結帳價':100,'付款狀態':'已付款','送貨狀態':'備貨中','付款方式':'信用卡','訂單狀態':'處理中','訂單小計':100,'運費':0,'優惠折扣':10,'訂單合計':85,'稅費':0,'貨幣':'TWD','已退款金額':0,'附加費':0,'自訂折扣合計':0,'折抵購物金':5,'點數折現':0,'商品折扣金額':10,'全單折扣金額':'','折抵購物金分攤':5,'點數折現分攤':''}]);
+  const native=ok(await post(b),201);assert.equal(native.summary.ecountTotalMinor,8500);
+  assert.equal(native.orders[0].sourceFinancial.subtotalMinor,10000);assert.equal(native.orders[0].financial.subtotalMinor,8500);
+  assert.equal(native.items[0].sourceDiscounts.credit,500);
+  assert.equal(ok(await post(b)).id,native.id);
+  const {buildEcountUploadTable}=await import('../src/services/marketplaceIntake.mjs');
+  const downloaded=buildEcountUploadTable(ok(await api('dispatcher','GET','/api/marketplace-intakes/'+native.id)));
+  assert.equal(downloaded.rows[0][17],85);assert.equal(downloaded.rows[0][23],'#SYN-NATIVE-SL');
+  const original=saved;saved=native;const rows=erpRows('SYN-NATIVE-PICK');saved=original;
+  const result=ok(await upload(rows,native.id),201);assert.equal(result.workOrderCount,1);
+  const snapshot=ok(await api('picker','GET','/api/orders/'+result.orders[0].orderId+'/work-snapshot'));
+  assert.equal(snapshot.items[0].source_order_number,'#SYN-NATIVE-SL');assert.ok(result.orders[0].workBarcode.startsWith('WT'));
+ });
 });
