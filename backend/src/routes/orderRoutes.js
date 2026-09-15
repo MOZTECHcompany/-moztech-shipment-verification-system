@@ -105,7 +105,7 @@ async function hasOpenOrderChange(db, orderId) {
 
 const importUpload = multer({
     storage: multer.memoryStorage(),
-    limits: { files: 1, fileSize: IMPORT_LIMITS.fileBytes, fields: 0 },
+    limits: { files: 1, fileSize: IMPORT_LIMITS.fileBytes, fields: 1, fieldSize: 16 },
     fileFilter: (req, file, cb) => {
         if (/\.(xlsx|xls|csv)$/i.test(file.originalname || '')) return cb(null, true);
         cb(new Error('不支援的檔案格式，請上傳 .xlsx / .xls / .csv'));
@@ -114,7 +114,13 @@ const importUpload = multer({
 
 function uploadImport(req, res, next) {
     importUpload(req, res, error => {
-        if (!error) return next();
+        if (!error) {
+            const entries = Object.entries(req.body || {});
+            if (entries.some(([key, value]) => key !== 'marketplaceIntakeId' || typeof value !== 'string' || !/^[1-9]\d{0,9}$/.test(value) || Number(value) > 2147483647)) {
+                return res.status(400).json({ code: 'IMPORT_NOT_APPLIED', message: '只允許有效的來源轉檔批次編號，未建立訂單' });
+            }
+            return next();
+        }
         const tooLarge = error.code === 'LIMIT_FILE_SIZE';
         return res.status(tooLarge ? 413 : 400).json({
             code: 'IMPORT_NOT_APPLIED',
@@ -440,10 +446,11 @@ router.delete('/orders/:orderId', authorizeRoles('admin', 'dispatcher'), async (
 });
 
 // POST /api/orders/import
+const { parseMarketplaceLinkedImport, matchMarketplaceWorkOrders, marketplaceSourceKey } = require('../services/marketplaceImportLink');
 router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimiter, uploadImport, async (req, res) => {
     let parsed;
     try {
-        parsed = parseOrderImport(req.file?.buffer);
+        parsed = await parseMarketplaceLinkedImport(req.file?.buffer, pool, req.body?.marketplaceIntakeId);
     } catch (error) {
         return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message });
     }
@@ -485,6 +492,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             batchId = (await client.query('INSERT INTO warehouse_import_batches (voucher_number, created_by) VALUES ($1, $2) RETURNING id', [voucherNumber, req.user.id])).rows[0].id;
         }
         const groups = batchId ? parsed.workOrders : [{ items, customerName, totalQuantity, serialCount }];
+        const marketplaceMatches = await matchMarketplaceWorkOrders(client, groups, req.body?.marketplaceIntakeId);
         const importedOrders = [];
         const instanceItemIds = [];
         const serialValues = [];
@@ -494,6 +502,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             const workVoucher = batchId ? workBarcode : voucherNumber;
             orderId = (await client.query('INSERT INTO orders (voucher_number, customer_name, status, import_batch_id, source_order_number, source_platform, source_store, work_barcode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
                 [workVoucher, group.customerName, 'pending', batchId, group.sourceOrderNumber || null, group.sourcePlatform || null, group.sourceStore || null, workBarcode])).rows[0].id;
+            const marketplaceSource = marketplaceMatches.get(marketplaceSourceKey(group));
+            if (marketplaceSource) await client.query('INSERT INTO marketplace_work_order_links(intake_order_id,order_id) VALUES($1,$2)', [marketplaceSource.id,orderId]);
             for (const item of group.items) {
                 checkDeadline();
                 const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
@@ -505,6 +515,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             }
             // Attribution and every child audit belong to the batch transaction.
             const details = { voucherNumber: workVoucher, batchId, batchNumber: batchId ? voucherNumber : null,
+                marketplaceIntakeId: marketplaceSource?.intake_id || null, omittedNonStock: parsed.omittedNonStock || [],
                 sourceOrderNumber: group.sourceOrderNumber || null, sourcePlatform: group.sourcePlatform || null, sourceStore: group.sourceStore || null,
                 workBarcode, itemCount: group.items.length, totalQuantity: group.totalQuantity, serialCount: group.serialCount };
             const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
@@ -517,6 +528,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                 source_order_number: group.sourceOrderNumber || null, source_platform: group.sourcePlatform || null, source_store: group.sourceStore || null,
                 customer_name: group.customerName, status: 'pending', task_type: 'pick', imported_by_user_id: req.user.id });
             importedOrders.push({ orderId, voucherNumber: workVoucher, workBarcode,
+                marketplaceIntakeId: marketplaceSource?.intake_id || null,
                 sourceOrderNumber: group.sourceOrderNumber || null, sourcePlatform: group.sourcePlatform || null, sourceStore: group.sourceStore || null });
         }
         if (serialValues.length) {
@@ -543,6 +555,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             return res.status(503).json({ code: 'IMPORT_RESULT_UNKNOWN', message: '匯入結果尚未確認，請先到作業看板核對訂單號碼，請勿直接重送', voucherNumber });
         }
         logger.error('匯入訂單失敗:', { code: error.code, message: error.message });
+        if (error.code === 'MARKETPLACE_IMPORT_MISMATCH') return res.status(error.status || 409).json({ code: 'IMPORT_NOT_APPLIED', voucherNumber, message: error.message });
         const busy = error.code === '55P03' || error.code === '57014';
         return res.status(busy ? 409 : 500).json({
             code: 'IMPORT_NOT_APPLIED', voucherNumber,

@@ -266,6 +266,7 @@ function database({ existing = false, failLog = false, failCommit = false, failR
             if (sql === 'ROLLBACK') { if (failRollback) throw new Error('rollback lost'); pending = undefined; return result([]); }
             if (sql === 'COMMIT') { if (failCommit) throw new Error('commit lost'); state = pending; pending = undefined; return result([]); }
             if (sql.startsWith('SELECT id FROM warehouse_import_batches')) return result([]);
+            if (sql.startsWith('SELECT * FROM marketplace_intake_orders')) return result([]);
             if (sql.startsWith('INSERT INTO warehouse_import_batches')) return result([{ id: 20 }]);
             if (sql.startsWith('SELECT id FROM orders')) return result(existing ? [{ id: 42 }] : []);
             if (sql.startsWith('INSERT INTO orders')) { pending.orders.push(values); return result([{ id: 11 + pending.orders.length }]); }

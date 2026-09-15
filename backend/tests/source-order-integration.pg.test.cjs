@@ -26,13 +26,13 @@ test('ERP batch split, explicit barcode claims and isolated warehouse workflows'
     const { assertSchemaReady } = require('../src/config/schemaReadiness');
     const { loadMigrationManifest } = require('../src/config/migrationManifest');
     const manifest = loadMigrationManifest();
-    assert.equal(manifest.at(-1).name, '029_warehouse_batches_and_claim_receipts.sql');
+    assert.equal(manifest.at(-1).name, '030_marketplace_intakes.sql');
     // Exercise an upgrade from the previous schema, preserving existing rows.
-    await runMigrations({ pool, targetDatabase: database, manifest: manifest.slice(0, -2) });
+    await runMigrations({ pool, targetDatabase: database, manifest: manifest.filter(m => m.name < '028') });
     const oldOrder = (await pool.query("INSERT INTO orders(voucher_number) VALUES('SOURCE-LEGACY') RETURNING id")).rows[0].id;
     await pool.query("INSERT INTO order_items(order_id,product_code,product_name,barcode,quantity) VALUES($1,'OLD','Legacy item','OLD-BAR',1)", [oldOrder]);
     const migration = await runMigrations({ pool, targetDatabase: database });
-    assert.deepEqual(migration.applied, ['028_order_item_source_identity.sql', '029_warehouse_batches_and_claim_receipts.sql']);
+    assert.deepEqual(migration.applied, ['028_order_item_source_identity.sql', '029_warehouse_batches_and_claim_receipts.sql', '030_marketplace_intakes.sql']);
     await assertSchemaReady(pool);
     assert.equal((await pool.query('SELECT source_order_number FROM order_items WHERE order_id=$1', [oldOrder])).rows[0].source_order_number, null);
     assert.equal((await runMigrations({ pool, targetDatabase: database })).applied.length, 0);

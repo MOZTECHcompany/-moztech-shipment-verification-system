@@ -63,8 +63,8 @@ test('identifiers remain strings and generated source IDs are compact and stable
   for (const item of original.items) { assert.match(item.sourceLineId, /^L[0-9a-f]{32}$/); assert.equal(reordered.items.find((other) => other.sourceOrderNumber === item.sourceOrderNumber && other.sku === item.sku).sourceLineId, item.sourceLineId); }
   assert.notEqual(original.items[0].sourceLineId, original.items[3].sourceLineId);
 });
-test('same source product duplicated without platform line ID fails rather than merging', () => {
-  const rows = oneRows(); rows.push({ ...rows[0], '單價': '1', '小計': '1' });
+test('identical source product rows without platform line ID fail rather than merging', () => {
+  const rows = oneRows(); rows.push({ ...rows[0] });
   const p = parse(rows); assert.equal(p.items.length, 5); assert.ok(codes(p).includes('AMBIGUOUS_SOURCE_LINE'));
 });
 test('distinct explicit platform line IDs preserve repeated SKU rows', () => {

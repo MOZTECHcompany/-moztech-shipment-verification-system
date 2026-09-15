@@ -14,14 +14,20 @@ const tracked = git(['ls-files']).split('\n').filter(file => /^(backend|frontend
   && !/(^|\/)(node_modules|tests|__tests__|coverage|dist|uploads|\.env[^/]*)\//.test(file)
   && !/(^|\/)\.env/.test(file) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.log'));
 const files = [];
+// Vite uses the same pure engine as the API. Materialize the two forwarding
+// modules for the isolated frontend Docker context; record the actual bytes.
+const sharedSources = {
+  'frontend/src/utils/marketplaceIntake.mjs': 'backend/src/services/marketplaceIntake.mjs',
+  'frontend/src/utils/unifiedMarketplace.mjs': 'backend/src/services/unifiedMarketplace.mjs',
+};
 for (const file of tracked) {
-  const origin = path.join(root, file);
+  const origin = path.join(root, sharedSources[file] || file);
   if (!fs.lstatSync(origin).isFile()) throw Error('Only regular tracked files may be packaged');
   const content = fs.readFileSync(origin);
   const destination = path.join(out, 'build-source', file);
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, content);
-  files.push({ path: file, sha256: crypto.createHash('sha256').update(content).digest('hex') });
+  files.push({ path: file, ...(sharedSources[file] ? { source: sharedSources[file] } : {}), sha256: crypto.createHash('sha256').update(content).digest('hex') });
 }
 const digest = crypto.createHash('sha256').update(JSON.stringify(files)).digest('hex');
 const images = ['backend', 'frontend'].map(type => `asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-${type}:${type === 'frontend' && environment === 'dev' ? 'dev' : 'workstation'}-${digest.slice(0, 12)}`);

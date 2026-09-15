@@ -6,14 +6,15 @@ import { webcrypto } from 'node:crypto';
 import { transform } from 'esbuild';
 import * as XLSX from 'xlsx';
 import * as intake from '../src/utils/marketplaceIntake.mjs';
+import * as unified from '../src/utils/unifiedMarketplace.mjs';
 import * as sessions from '../src/utils/importBatches.js';
 
 const source = await readFile(new URL('../src/components/admin/MarketplaceConverter.jsx', import.meta.url), 'utf8');
 const headers = ['訂單編號', '名稱', '產品SKU', '產品', '產品數量', '單價', '小計', '訂單金額(不含金/物流手續費)', '訂單金流手續費', '訂單運費', '總計金額', '金流狀態', '物流狀態'];
 const fixtureRows = [headers,
-    ['TST6091550133', '一般品', '00123', 'TEST product A', '1', '10', '10', '10', '0', '0', '10', '未付款', '未出貨'],
-    ['TST6091550109', '一般品', '00124', 'TEST product B', '2', '20', '40', '40', '0', '0', '40', '未付款', '未出貨'],
-    ['NOT-AUTHORIZED', '一般品', 'PRIVATE-EXCLUDED', 'EXCLUDED ITEM', '1', '10', '10', '10', '0', '0', '10', '未付款', '未出貨'],
+    ['TST6091550133', '一般品', '00123', 'TEST product A', '1', '10', '10', '10', '0', '0', '10', '已付款', '未出貨'],
+    ['TST6091550109', '一般品', '00124', 'TEST product B', '2', '20', '40', '40', '0', '0', '40', '已付款', '未出貨'],
+    ['NOT-AUTHORIZED', '一般品', 'PRIVATE-EXCLUDED', 'EXCLUDED ITEM', '1', '10', '10', '10', '0', '0', '10', '已付款', '已出貨'],
 ];
 function file(rows = fixtureRows, name = 'synthetic.csv') {
     const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), 'Source');
@@ -23,7 +24,7 @@ function file(rows = fixtureRows, name = 'synthetic.csv') {
 
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
-async function converter({ flag = 'dev', role = 'admin' } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -37,7 +38,8 @@ async function converter({ flag = 'dev', role = 'admin' } = {}) {
         useMemo(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { deps, value: callback() }; return hooks[i].value; },
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
-    const imports = { react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {} };
+    const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [] } }; }, post: async (url, body) => { requests.push({url,body}); if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
+    const imports = { '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {} };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -66,6 +68,8 @@ async function converter({ flag = 'dev', role = 'admin' } = {}) {
     const change = (name, value) => { const control = find(label(name), node => ['input', 'select'].includes(node.type)); assert.ok(control, `Control ${name}`); control.props.onChange({ target: { value, checked: value } }); render(); };
     const select = async (...files) => { await find(render(), node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files, value: 'selected' } }); render(); };
     render();
+    for (let i=0;i<5;i++) await Promise.resolve();
+    render();
     return { render, find, text, all, button, change, select, downloads, requests, writes, storage, listeners, unmount: () => { mounted = false; hooks.forEach(h => h?.cleanup?.()); }, lateUpdates: () => lateUpdates };
 }
 
@@ -75,10 +79,10 @@ test('converter route guard requires explicit DEV and an existing authorized rol
     for (const role of ['admin', 'superadmin', 'dispatcher']) assert.equal((await converter({ role })).render().type, 'main');
 });
 
-test('file selection previews only the two allowed orders and preserves CSV identifiers without requests or persistence', async () => {
+test('file selection automatically detects 1Shop and excludes fulfilled orders from selected products and preserves CSV identifiers without requests or persistence', async () => {
     const view = await converter(); await view.select(file());
-    assert.match(view.text(view.render()), /2\s+筆訂單、\s*2\s+個商品列、\s*3\s+件/);
-    assert.match(view.text(view.render()), /00123/); assert.match(view.text(view.render()), /未付款/);
+    assert.match(view.text(view.render()), /本批納入\s+2\s+筆、\s*2\s+商品列、\s*3\s+件/);
+    assert.match(view.text(view.render()), /00123/); assert.match(view.text(view.render()), /已付款/);
     assert.doesNotMatch(view.text(view.render()), /PRIVATE-EXCLUDED|EXCLUDED ITEM/);
     assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
     assert.equal(view.requests.length, 0); assert.equal(view.writes.length, 0); assert.equal(view.downloads.length, 0);
@@ -101,7 +105,7 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
         cards = view.all(node => node.type === 'div' && node.props.className === 'rounded-lg border border-slate-200 p-4');
         view.find(cards[index], node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } }); view.render();
     }
-    view.change('ECOUNT 客戶／供應商編碼', '00027'); view.change('已確認本次金額為 TWD', true); view.change('已確認這兩筆未付款訂單', true);
+    view.change('商城店鋪', '合成店鋪'); view.change('ECOUNT 客戶／供應商編碼', '00027'); view.change('已確認本次金額為 TWD', true);
     assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, false, view.text(view.find(view.render(), node => node.props?.['aria-label'] === '轉檔檢查結果')));
     await view.button('ECOUNT 銷貨檔').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
@@ -111,7 +115,7 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
     for (const index of [8, 9, 20, 22, 23, 24]) assert.equal(rows[1][index], '');
     assert.match(rows[1][10], /^TEST-\d{8}-[A-F0-9]{4}$/);
     view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
-    assert.equal(view.requests.length, 0); assert.equal(view.writes.length, 0);
+    assert.equal(view.requests.length, 1); assert.equal(view.requests[0].url, '/api/marketplace-intakes'); assert.equal(view.writes.length, 0);
 });
 
 test('draft audit downloads without customer, tax, payment release or barcode confirmation and preserves numeric money', async () => {
@@ -121,11 +125,11 @@ test('draft audit downloads without customer, tax, payment release or barcode co
     await view.button('預揀與金額核對表').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
     const book = view.downloads[0].book;
-    assert.deepEqual(book.SheetNames, ['預揀總表', '訂單金額核對', '來源商品對照', '本次轉檔設定']);
+    assert.deepEqual(book.SheetNames, ['預揀總表', '訂單金額核對', '來源商品對照', '本批納入與排除', 'ECOUNT成交核對']);
     const summary = XLSX.utils.sheet_to_json(book.Sheets['預揀總表'], { header: 1 });
     assert.match(JSON.stringify(summary), /待核對/); assert.match(JSON.stringify(summary), /00123/);
     const items = XLSX.utils.sheet_to_json(book.Sheets['來源商品對照'], { header: 1 });
-    assert.equal(items[1][6], '00123'); assert.equal(items[1][12], 10);
+    assert.equal(items[1][3], '00123'); assert.equal(items[1][6], 10);
     assert.equal(view.requests.length, 0); assert.equal(view.writes.length, 0);
 });
 
@@ -150,3 +154,5 @@ test('unmounted asynchronous file reads do not reveal or store the completed res
     view.unmount(); resolve(bytes); await pending;
     assert.equal(view.lateUpdates(), 0); assert.equal(view.downloads.length, 0); assert.equal(view.writes.length, 0);
 });
+
+test('server permission denial disables file conversion before any input', async()=>{ const view=await converter({denied:true}); assert.equal(view.button('選擇原始訂單檔').props.disabled,true); assert.match(view.text(view.render()),/無法確認轉檔權限/); });

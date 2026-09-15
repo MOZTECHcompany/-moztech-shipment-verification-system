@@ -35,6 +35,8 @@ function saveRecovery(key, value) {
 
 export function AdminDashboard({ user }) {
     const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
+    const requestedIntakeId = typeof window !== 'undefined' && window.location?.search ? new URLSearchParams(window.location.search).get('intakeId') : '';
+    const intakeId = /^[1-9]\d{0,9}$/.test(requestedIntakeId || '') ? requestedIntakeId : '';
     const recoveryKey = `wms_import_recovery:${user?.id ?? 'current'}`;
     const [dateRange, setDateRange] = useState([null, null]);
     const [startDate, endDate] = dateRange;
@@ -80,6 +82,7 @@ export function AdminDashboard({ user }) {
         try {
             const body = new FormData();
             body.append('orderFile', file);
+            if (intakeId) body.append('marketplaceIntakeId', intakeId);
             const response = await apiClient.post('/api/orders/import', body, {
                 headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000,
             });
@@ -187,11 +190,12 @@ export function AdminDashboard({ user }) {
                 } />
 
                 {import.meta.env?.VITE_DEPLOY_ENV === 'dev' && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <section className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-5" aria-label="商城原始訂單轉檔">
-                    <div><h2 className="font-semibold text-slate-900">1Shop 測試訂單轉檔</h2><p className="mt-1 text-sm text-slate-600">先預覽原始訂單與金額，再下載 ECOUNT 銷貨檔及預揀核對表。</p></div>
+                    <div><h2 className="font-semibold text-slate-900">商城訂單轉檔</h2><p className="mt-1 text-sm text-slate-600">1Shop、Shopify、SHOPLINE 統一轉成 ECOUNT 格式，保存批次後核對理貨回匯。</p></div>
                     <Button as={Link} to="/admin/marketplace-converter" variant="secondary">開啟轉檔<ArrowRight size={16} className="ml-2" /></Button>
                 </section>}
 
                 <div className="grid gap-5 lg:grid-cols-3">
+                    {intakeId && <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 lg:col-span-3">本次將核對轉檔批次 #{intakeId} 的全部訂單。請上傳 ECOUNT 理貨明細，保留平台、店鋪、商城單號、來源明細號、品項、國際條碼及數量。<Link to="/admin/marketplace-converter" className="ml-2 underline">返回轉檔批次</Link></p>}
                     <section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
                         <div className="flex items-start gap-3">
                             <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><UploadCloud size={22} /></div>

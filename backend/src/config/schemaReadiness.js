@@ -1,6 +1,9 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    marketplace_intakes: ['id', 'batch_number', 'source_platform', 'source_store', 'fingerprint', 'created_by', 'created_at', 'snapshot'],
+    marketplace_intake_orders: ['id', 'intake_id', 'source_platform', 'source_store', 'source_order_number', 'expected_items', 'nonstock_items', 'financial'],
+    marketplace_work_order_links: ['intake_order_id', 'order_id', 'linked_at'],
     warehouse_import_batches: ['id', 'voucher_number', 'created_by', 'created_at'],
     wms_claim_commands: ['user_id', 'command_id', 'request_hash', 'order_id', 'stage', 'response', 'created_at'],
     wms_scan_commands: ['user_id', 'command_id', 'order_id', 'request_hash', 'response', 'created_at'],

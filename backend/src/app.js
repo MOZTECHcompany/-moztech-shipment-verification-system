@@ -133,6 +133,7 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
+app.use('/api/marketplace-intakes', express.json({ limit: '10mb' }));
 app.use(express.json());
 app.use(require('./middleware/requestPerformance').requestPerformance(pool));
 app.use(require('./middleware/queryAdmission').createQueryAdmission());
@@ -172,6 +173,7 @@ app.use('/api/auth', authRoutes);
 
 // 以下路由需要認證
 app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));
+app.use('/api/marketplace-intakes', authenticateToken, require('./routes/marketplaceRoutes').createMarketplaceRouter({pool}));
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);

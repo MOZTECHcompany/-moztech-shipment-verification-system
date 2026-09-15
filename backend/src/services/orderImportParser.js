@@ -262,7 +262,7 @@ function parseOrderRows(data) {
     return { voucherNumber, customerName, items, totalQuantity, serialCount: seenSerials.size };
 }
 
-function parseOrderImport(buffer) {
+function readOrderImportRows(buffer) {
     if (!Buffer.isBuffer(buffer) || !buffer.length) throw invalid('沒有可讀取的檔案內容');
     if (buffer.length > IMPORT_LIMITS.fileBytes) throw invalid('檔案不可超過 10 MiB', 413);
     let worksheet, sheetCount;
@@ -280,7 +280,8 @@ function parseOrderImport(buffer) {
     }
     const data = xlsx.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '', range: 0 });
     if (sheetCount > 1 && sourceHeaderIndex(data) >= 0) throw invalid('逐筆理貨明細請使用單一工作表，避免漏讀其他理貨單');
-    return parseOrderRows(data);
+    return data;
 }
 
-module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows };
+function parseOrderImport(buffer) { return parseOrderRows(readOrderImportRows(buffer)); }
+module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows, readOrderImportRows, SOURCE_HEADERS, sourceHeaderIndex, matchesSourceHeader };
