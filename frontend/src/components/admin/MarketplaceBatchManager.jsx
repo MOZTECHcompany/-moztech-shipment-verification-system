@@ -56,7 +56,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   }catch(e){if(valid())setNotice(e.response?.data?.message||e.message||'下載失敗，請重試。');}
   finally{pending.current=false;if(valid())setBusy(false);}
  };
- const stores=[...new Set(data.facets.filter(f=>!filters.platform||f.source_platform===filters.platform).map(f=>f.source_store))];
+ const stores=[...new Set([...(filters.store?[filters.store]:[]),...data.facets.filter(f=>!filters.platform||f.source_platform===filters.platform).map(f=>f.source_store)])];
  const groups=Object.groupBy(data.intakes,r=>r.sales_date);
  const pages=Math.max(1,Math.ceil(data.total/data.pageSize));
  return <section id="saved-batches" className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6" aria-label="批次管理">
@@ -75,7 +75,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    <h3 className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold">{date} <span className="ml-2 font-normal text-slate-500">本頁 {rows.length} 批</span></h3>
    <div className="divide-y divide-slate-100">{rows.map(r=><article key={r.id} className="grid gap-3 px-1 py-4 xl:grid-cols-[1fr_auto]">
     <div className="min-w-0"><Link className="break-all font-semibold text-blue-700 hover:underline" to={`?batch=${r.id}#batch-detail`}>#{r.id} · {r.batch_number}</Link>{r.archived_at&&<span className="ml-2 rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">已封存</span>}<p className="mt-1 text-sm">{r.source_platform} · {r.source_store}</p><p className="mt-1 text-sm text-slate-500">{r.order_count} 筆訂單 · {r.summary?.physicalQuantity??r.summary?.totalQuantity??0} 件 · 已回匯 {r.linked_count} 筆</p></div>
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1"><button className={textButton} disabled={busy||!enabled} onClick={()=>download(r.id,'ecount')}><Download size={15}/>銷貨檔</button><button className={textButton} disabled={busy||!enabled} onClick={()=>download(r.id,'prepick')}>預揀與明細</button><Link className={textButton} to={`/admin?intakeId=${r.id}`}>匯入理貨單</Link><button className={textButton} disabled={busy||!enabled} onClick={()=>operate(r,r.archived_at?'restore':'archive')}><Archive size={15}/>{r.archived_at?'取消封存':'封存'}</button><button className="inline-flex min-h-10 items-center gap-1 text-sm text-red-700 disabled:text-slate-400" disabled={busy||!enabled||r.linked_count>0} title={r.linked_count>0?'已連結理貨工作單，請改用封存':'永久刪除批次'} onClick={()=>setDeleting(r)}><Trash2 size={15}/>刪除</button></div>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1"><button className={textButton} disabled={busy||!enabled} onClick={()=>download(r.id,'ecount')}><Download size={15}/>銷貨檔</button><button className={textButton} disabled={busy||!enabled} onClick={()=>download(r.id,'prepick')}>預揀與明細</button><Link className={textButton} to={`/admin?intakeId=${r.id}`}>匯入理貨單</Link><button className={textButton} disabled={busy||!enabled} onClick={()=>operate(r,r.archived_at?'restore':'archive')}><Archive size={15}/>{r.archived_at?'取消封存':'封存'}</button><button className="inline-flex min-h-10 items-center gap-1 text-sm text-red-700 disabled:text-slate-400" disabled={busy||!enabled||r.linked_count>0} title={r.linked_count>0?'已連結理貨工作單，請改用封存':'永久刪除批次'} onClick={()=>{setNotice('');setDeleting(r);}}><Trash2 size={15}/>刪除</button></div>
    </article>)}</div>
   </section>)}
   {!loading&&!data.intakes.length&&<div className="py-10 text-center text-sm text-slate-500"><Search className="mx-auto mb-2"/>沒有符合條件的批次。</div>}
