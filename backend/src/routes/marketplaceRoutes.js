@@ -38,7 +38,10 @@ function createMarketplaceRouter({pool}){
   if(!validId(req.params.id))return res.status(400).json({message:'轉檔批次編號無效'});
   const rows=await pool.query('SELECT * FROM marketplace_intakes WHERE id=$1',[req.params.id]);
   if(!rows.rows.length)return res.status(404).json({message:'找不到轉檔批次'});
-  res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),links:await batchLinks(pool,req.params.id)});
+  let reviewWarning='';
+  const snapshot=rows.rows[0].snapshot;
+  try{await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))]);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
+  res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  router.post('/:id/download-link',async(req,res,next)=>{try{
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});

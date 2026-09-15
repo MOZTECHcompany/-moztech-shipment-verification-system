@@ -21,8 +21,9 @@ function downloadFile({pool}){return async(req,res,next)=>{
   if(!user||!['admin','superadmin','dispatcher'].includes(user.role))return res.status(403).send('帳號已無下載權限');
   const r=(await pool.query('SELECT * FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!r)return res.status(404).send('批次已刪除或不存在');
-  if(req.params.kind==='ecount')await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))]);
-  const record={...r.snapshot,id:r.id,batchNumber:r.batch_number,platform:r.source_platform,store:r.source_store,links:await batchLinks(pool,r.id)};
+  let reviewWarning='';
+  try{await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))]);}catch(e){if(req.params.kind==='prepick'&&e.status===400)reviewWarning=e.message;else throw e;}
+  const record={reviewWarning,...r.snapshot,id:r.id,batchNumber:r.batch_number,platform:r.source_platform,store:r.source_store,links:await batchLinks(pool,r.id)};
   const {savedBatchTables}=await import('./marketplaceBatchFiles.mjs'),XLSX=require('xlsx');
   const book=XLSX.utils.book_new();for(const t of savedBatchTables(record,req.params.kind)){const sheet=XLSX.utils.aoa_to_sheet(t.rows);sheet['!cols']=(t.rows[0]||[]).map(()=>({wch:24}));XLSX.utils.book_append_sheet(book,sheet,t.name);}
   const filename=`${req.params.kind==='ecount'?'ECOUNT銷貨匯入':'WMS預揀與訂單明細'}_${r.batch_number}.xlsx`;

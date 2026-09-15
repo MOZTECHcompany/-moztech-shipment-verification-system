@@ -10,3 +10,8 @@ test('saved downloads preserve exact source identifier, amounts and work barcode
  const confirmed=structuredClone(r);confirmed.settings.skuMappings.NEW0012.barcodeConfirmed=true;confirmed.settings.skuMappings.NEW0012.barcode='0012';
  assert.equal(savedBatchTables(confirmed,'prepick')[2].rows[1][5],'0012');
 });
+
+test('historical mapping warnings are visible in prepick and item sheets',()=>{
+ const sheets=savedBatchTables({...r,reviewWarning:'來源尾碼品項已停用'},'prepick');
+ for(const name of ['預揀總表','訂單商品明細'])assert.match(sheets.find(s=>s.name===name).rows[0][0],/不可作為出貨依據.*已停用/);
+});
