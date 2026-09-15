@@ -159,3 +159,23 @@ test('unmounted asynchronous file reads do not reveal or store the completed res
 });
 
 test('server permission denial disables file conversion before any input', async()=>{ const view=await converter({denied:true}); assert.equal(view.button('選擇原始訂單檔').props.disabled,true); assert.match(view.text(view.render()),/無法確認轉檔權限/); });
+
+
+test('compact converter keeps one primary download before collapsed details and groups blocking errors without warnings', async () => {
+    const view = await converter(); await view.select(file());
+    const nodes = view.all(() => true);
+    const download = nodes.findIndex(n => n.type === 'Button' && view.text(n).includes('ECOUNT 銷貨檔'));
+    const table = nodes.findIndex(n => n.type === 'table');
+    assert.ok(download >= 0 && download < table);
+    assert.equal(view.all(n => n.type === 'Button' && view.text(n).includes('ECOUNT 銷貨檔')).length, 1);
+    for (const title of ['商品對照（', 'ECOUNT 設定', '訂單明細與納入／排除', '其他下載與轉檔說明', '已保存的轉檔批次']) {
+        const details = view.all(n => n.type === 'details').find(n => view.text(n.props.children[0]).includes(title));
+        assert.ok(details, title); assert.ok(!details.props.open, title);
+    }
+    const problems = view.all(n => n.props['aria-label'] === '待處理問題')[0];
+    assert.match(view.text(problems), /2 項商品需確認 ECOUNT 對照/);
+    assert.doesNotMatch(view.text(problems), /條碼待確認/);
+    assert.match(view.text(problems), /00123/); assert.match(view.text(problems), /00124/);
+    assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
+    assert.equal(view.requests.length, 0);
+});
