@@ -18,6 +18,7 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_VOICE_PRONUNCIATION_2026-09-16.md`：台灣中文原聲、問題音色排除及揀貨同音播報修正；取代前版的中文音色清單與同聲變調行為，部署狀態見該文件。
 - `docs/WMS_VOICE_IMPORT_2026-09-16.md`：簡短揀貨／裝箱語音、完成播報與科學記號條碼匯入攔截；正式 revision `corely-wms-voice-import-20260916`，程式 `6674427`；優先於下列舊發布快照。
 - `docs/WMS_COMMENT_TIMESTAMPS_2026-09-16.md`：每則對話完整台灣日期時間，正式 revision `corely-wms-chat-time-20260916`，程式 `00f24db`；優先於下列舊發布快照。
 - `docs/WMS_SCAN_RECOVERY_2026-09-14.md`：最新掃碼錯誤恢復、個人音效及 2026-09-14 正式發布記錄（程式 407c572）。

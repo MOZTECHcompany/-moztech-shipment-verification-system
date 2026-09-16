@@ -1,9 +1,13 @@
 // Web Speech voices belong to the workstation; the API does not expose gender.
 const STORAGE_KEY = 'wms_stage_voices_v1';
 const stageLabel = type => type === 'pick' ? '揀貨' : type === 'pack' ? '裝箱' : '掃描';
+// Keep the UI's warehouse term 揀貨; use its common homophone for speech.
+const spokenStageLabel = type => type === 'pick' ? '撿貨' : stageLabel(type);
 const voiceId = voice => voice.voiceURI || `${voice.lang}:${voice.name}`;
-const knownFemale = /HsiaoChen|HsiaoYu|Xiaoxiao|Xiaoyi|Mei[- ]?Jia|Hanhan|Yating/i;
-const knownMale = /YunJhe|Yunxi|Yunjian|Yunyang|Zhiwei/i;
+const knownFemale = /HsiaoChen|HsiaoYu|Mei[- ]?Jia|美佳|Hanhan|Yating|曉臻|曉雨|涵涵|雅婷/i;
+const knownMale = /YunJhe|Zhiwei|雲哲|云哲|志偉|志伟/i;
+const incompatibleVoice = /\b(?:Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley)\b/i;
+const taiwanMandarin = voice => /^(?:zh|cmn)[-_]TW$/i.test(voice.lang) && !incompatibleVoice.test(voice.name);
 
 class VoiceNotification {
     constructor() {
@@ -25,17 +29,18 @@ class VoiceNotification {
     notify() { this.listeners.forEach(callback => callback()); }
     getVoices() { return this.synth?.getVoices() || []; }
     getChineseVoices() {
-        return this.getVoices().filter(voice => /^zh[-_]/i.test(voice.lang))
-            .sort((a, b) => Number(!/^zh[-_]TW$/i.test(a.lang)) - Number(!/^zh[-_]TW$/i.test(b.lang)));
+        // A zh tag alone did not guarantee intelligible warehouse Mandarin.
+        // Do not offer the reported character voices, mainland or Cantonese voices.
+        return this.getVoices().filter(taiwanMandarin);
     }
     getStageSettings() {
         const voices = this.getChineseVoices();
         const manual = type => voices.find(voice => voiceId(voice) === this.selected[type]);
         const pick = manual('pick') || voices.find(voice => knownFemale.test(voice.name)) || voices[0];
-        const pack = manual('pack') || voices.find(voice => knownMale.test(voice.name)) || voices.find(voice => voice !== pick) || voices[0];
+        const pack = manual('pack') || voices.find(voice => knownMale.test(voice.name)) || pick;
         const sameVoice = !pick || !pack || voiceId(pick) === voiceId(pack);
         return { enabled: this.enabled, supported: this.isSupported(), voices, selected: { ...this.selected }, sameVoice,
-            pick: { voice: pick, pitch: sameVoice ? 1.15 : 1 }, pack: { voice: pack, pitch: sameVoice ? 0.8 : 1 } };
+            pick: { voice: pick, pitch: 1 }, pack: { voice: pack, pitch: 1 } };
     }
     setStageVoice(type, id) {
         if (!['pick', 'pack'].includes(type)) return;
@@ -57,10 +62,12 @@ class VoiceNotification {
             const utterance = new SpeechSynthesisUtterance(text);
             const settings = this.getStageSettings();
             const stage = settings[options.type];
-            const chosen = stage?.voice || this.voice || settings.pick.voice;
-            if (chosen) utterance.voice = chosen;
+            const chosen = stage?.voice || (this.voice && taiwanMandarin(this.voice) ? this.voice : settings.pick.voice);
+            // Never silently fall back to an unknown system/default voice.
+            if (!chosen || !taiwanMandarin(chosen)) return false;
+            utterance.voice = chosen;
             utterance.lang = chosen?.lang || 'zh-TW';
-            utterance.rate = options.rate ?? 1.2;
+            utterance.rate = options.rate ?? 1;
             utterance.pitch = stage?.pitch ?? options.pitch ?? 1;
             utterance.volume = options.volume ?? 1;
             this.current = null;
@@ -88,14 +95,14 @@ class VoiceNotification {
     }
     speakScanSuccess(scannedCount, remainingCount, { type } = {}) {
         // Zero remaining alone is not proof of a completed workflow (exceptions).
-        return this.speak(`${stageLabel(type)} ${scannedCount}，剩 ${remainingCount}`, { type });
+        return this.speak(`${spokenStageLabel(type)}，${scannedCount}，剩 ${remainingCount}`, { type });
     }
-    speakScanError({ type } = {}) { return this.speak(`${stageLabel(type)}未完成，請確認`, { type }); }
-    speakTaskComplete(type) { return this.speak(`${type ? stageLabel(type) : ''}任務完成`, { type, rate: 1.1, critical: true }); }
+    speakScanError({ type } = {}) { return this.speak(`${spokenStageLabel(type)}未完成，請確認`, { type }); }
+    speakTaskComplete(type) { return this.speak(`${type ? spokenStageLabel(type) : ''}任務完成`, { type, critical: true }); }
     speakNewTask(count = 1) { return this.speak(count === 1 ? '新任務到達' : `有 ${count} 個新任務`, { background: true }); }
     speakBatchClaim(count) { return this.speak(`已認領 ${count} 個任務`); }
     speakOperationError(message) { return this.speak(message || '操作錯誤'); }
-    preview(type) { return this.speak(`${stageLabel(type)} 3，剩 2。${stageLabel(type)}任務完成`, { type, preview: true }); }
+    preview(type) { return this.speak(`${spokenStageLabel(type)}，3，剩 2。${spokenStageLabel(type)}任務完成`, { type, preview: true }); }
     stop() { this.current = null; this.pending = null; try { this.synth?.cancel(); } catch { /* optional device audio */ } }
     pause() { if (this.synth?.speaking) this.synth.pause(); }
     resume() { if (this.synth?.paused) this.synth.resume(); }
