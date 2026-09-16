@@ -441,7 +441,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
     try {
         parsed = parseOrderImport(req.file?.buffer);
     } catch (error) {
-        return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message });
+        return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message,
+            ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 
     const { voucherNumber, customerName, items, totalQuantity, serialCount } = parsed;

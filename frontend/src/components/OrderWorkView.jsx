@@ -28,6 +28,7 @@ import FloatingChatPanel from './FloatingChatPanel';
 import { WarehouseOrderHeader } from './WarehouseOrderHeader';
 import { WorkstationBar } from './WorkstationBar';
 import { PersonalSoundControls } from './PersonalSoundControls';
+import { VoiceControls } from './VoiceControls';
 import ErrorBoundary from './ErrorBoundary';
 import DefectReportModal from './DefectReportModal';
 
@@ -342,6 +343,13 @@ function AuthenticatedOrderWorkView({ user }) {
     const [pendingScan, setPendingScan] = useState('');
     const [loadError, setLoadError] = useState('');
     const mountedRef = useRef(true);
+    const completedStagesRef = useRef(new Set());
+    const announceStageComplete = useCallback(type => {
+        if (!mountedRef.current || completedStagesRef.current.has(type)) return false;
+        completedStagesRef.current.add(type);
+        voiceNotification.speakTaskComplete(type);
+        return true;
+    }, []);
     useEffect(() => {
         mountedRef.current = true;
         return () => { mountedRef.current = false; };
@@ -531,11 +539,12 @@ function AuthenticatedOrderWorkView({ user }) {
 
         // 監聽任務狀態變更 (自動跳轉或更新 UI)
         const handleTaskStatusChanged = (data) => {
-            if (data.orderId === parseInt(orderId)) {
+            if (mountedRef.current && data.orderId === parseInt(orderId)) {
                 // The scan response handles our own in-flight operation and completion exactly once.
                 if (scanSubmissionRef.current.isBusy()) return;
                 // 如果狀態變為 completed，顯示完成動畫並跳轉
                 if (data.newStatus === 'completed') {
+                    if (!announceStageComplete('pack')) return;
                     soundNotification.play('taskCompleted');
                     MySwal.fire({
                         title: '裝箱核對完成',
@@ -549,6 +558,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 } 
                 // 如果狀態變為 picked (揀貨完成)，且當前用戶是 picker，提示完成
                 else if (data.newStatus === 'picked' && user.role === 'picker') {
+                    if (!announceStageComplete('pick')) return;
                     soundNotification.play('taskCompleted');
                     MySwal.fire({
                         title: '✅ 揀貨完成！',
@@ -586,7 +596,7 @@ function AuthenticatedOrderWorkView({ user }) {
             socket.off('task_status_changed', handleTaskStatusChanged);
             socket.off('order_exception_changed', handleExceptionChanged);
         };
-    }, [orderId, user.id, user.role, navigate, fetchOrderDetails, fetchOrderExceptions]);
+    }, [orderId, user.id, user.role, navigate, fetchOrderDetails, fetchOrderExceptions, announceStageComplete]);
 
     useEffect(() => {
         fetchOrderDetails(orderId);
@@ -1321,7 +1331,11 @@ function AuthenticatedOrderWorkView({ user }) {
                 soundNotification.play(type === 'pick' ? 'pickSuccess' : 'packSuccess');
 
                 // 不只依賴 socket：若回應已更新狀態，直接提示並導回任務列表
-                const newStatus = response.data?.order?.status;
+                const newStatus = updatedSnapshot.order.status;
+                const stageCompleted = (type === 'pick' && newStatus === 'picked') || (type === 'pack' && newStatus === 'completed');
+                // A new accepted scan after a legitimate reopen can complete again.
+                completedStagesRef.current.delete(type);
+                if (stageCompleted) announceStageComplete(type);
                 if (newStatus === 'completed') {
                     MySwal.fire({
                         title: '裝箱核對完成',
@@ -1352,7 +1366,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 const remaining = scanRows.reduce((sum, row) => sum + row.remaining, 0);
 
                 // 語音播報
-                voiceNotification.speakScanSuccess(totalScanned, remaining, { name: user.name, type });
+                if (!stageCompleted) voiceNotification.speakScanSuccess(totalScanned, remaining, { type });
 
                 toast.success(`掃描成功: ${scanValue}`, { id: `scan-success-${orderId}`, duration: 1300 });
             } catch (err) {
@@ -1389,7 +1403,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 soundNotification.play('error');
 
                 // 語音播報
-                voiceNotification.speakScanError({ name: user.name, type });
+                voiceNotification.speakScanError({ type });
 
                 // 桌面通知
                 desktopNotification.notifyScanError(errorMsg);
@@ -1696,6 +1710,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                 </h3>
                                 <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品條碼或 SN，按 Enter 送出</p>
                                 <PersonalSoundControls user={user} compact />
+                                <VoiceControls compact />
                                 <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
                                     <span>{stageLabel}尚餘 <strong className="text-lg">{remainingQty}</strong> 件</span>
                                     <button type="button" className="underline underline-offset-4 text-blue-700" onClick={() => barcodeInputRef.current?.focus()}>回到掃碼</button>

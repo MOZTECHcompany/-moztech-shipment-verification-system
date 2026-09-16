@@ -168,6 +168,43 @@ test('parse failure does not acquire a database connection', async () => {
     expect(pool.connect).not.toHaveBeenCalled();
 });
 
+test.each(['4.7113E+12', '4.7113e12', '4.7113E+012', '4.7113 E + 12', '4711299273766.0', '4,711,299,273,766'])('rejects malformed barcode %s before a transaction and returns actionable location', async barcode => {
+    const db = database();
+    const result = await invoke(db, workbook(makeRows([['4711299273766', 'Valid item', 1, ''], [barcode, 'Bad item', 1, '']])));
+    expect(result).toMatchObject({ status: 400, body: { code: 'IMPORT_NOT_APPLIED', reason: 'INVALID_BARCODE_FORMAT', issue: { sheet: '出貨', row: 6, cell: 'A6', value: barcode } } });
+    expect(result.body.message).toMatch(/文字/);
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(db.io.emit).not.toHaveBeenCalled();
+    expect(db.state()).toEqual({ orders: [], items: [], instances: [], logs: [] });
+});
+
+test.each(['xlsx', 'biff8'])('numeric General barcode in %s is blocked even when underlying digits survive', bookType => {
+    const input = workbook(makeRows([[4711299273766, 'Item', 1, '']]), bookType);
+    try { parseOrderImport(input); throw Error('expected rejection'); }
+    catch (error) {
+        expect(error.reason).toBe('INVALID_BARCODE_FORMAT');
+        expect(error.issue).toMatchObject({ cell: 'A5', storedValue: '4711299273766' });
+        expect(error.message).toMatch(/科學記號/);
+    }
+});
+
+test('explicit text keeps leading zeros and never expands a truncated CSV exponent', () => {
+    const parsed = parseOrderImport(workbook(makeRows([['004711299273766', 'Item', 1, '']]), 'csv'));
+    expect(parsed.items[0].barcode).toBe('004711299273766');
+    expect(() => parseOrderImport(workbook(makeRows([['4.7113E+12', 'Item', 1, '']]), 'csv'))).toThrow(/科學記號/);
+    expect(parseOrderRows(makeRows([['SKU-ALPHA', 'Item', 1, '']])).items[0].barcode).toBe('SKU-ALPHA');
+});
+
+test('rejects numeric precision loss and stale formula cells even with a digits-only display', () => {
+    for (const cell of [{ t: 'n', v: 1234567890123456, z: '0' }, { t: 'n', v: 4711299273766, z: '0', f: 'B99' }]) {
+        const wb = xlsx.utils.book_new();
+        const sheet = xlsx.utils.aoa_to_sheet(makeRows([['placeholder', 'Item', 1, '']]));
+        sheet.A5 = cell;
+        xlsx.utils.book_append_sheet(wb, sheet, '出貨');
+        expect(() => parseOrderImport(xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' }))).toThrow(/條碼/);
+    }
+});
+
 test('duplicate voucher returns existing order without modifying it', async () => {
     const db = database({ existing: true });
     const result = await invoke(db);

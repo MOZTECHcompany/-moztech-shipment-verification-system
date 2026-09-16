@@ -21,6 +21,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
     let stateCursor = 0;
     let refCursor = 0;
     const sounds = [];
+    const spoken = [];
     const warnings = [];
     const posts = [];
     const reads = [];
@@ -69,7 +70,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         '@/utils/orderWorkProgress': orderWorkProgress,
         '@/utils/scanDelta': scanDelta,
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
-        '@/utils/voiceNotification': { speakScanSuccess: noop, speakScanError: noop, speakOperationError: noop },
+        '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, speakTaskComplete: type => spoken.push(['complete', type]) },
         '@/utils/desktopNotification': { notifyScanError: noop },
         'sweetalert2-react-content': () => ({ fire: () => Promise.resolve({}) })
     };
@@ -97,10 +98,39 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
     const type = text => input().props.onChange({ target: { value: text } });
     const enter = () => input().props.onKeyDown({ key: 'Enter', preventDefault: noop });
     const camera = () => find(render(), node => node.type === 'CameraScanner');
-    return { find, fixture, posts, reads, sounds, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[0] };
+    return { find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[0] };
 }
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+for (const [role, type, status] of [['picker', 'pick', 'picked'], ['packer', 'pack', 'completed']]) {
+    test(`${role} final accepted scan announces completion before return and ignores late duplicate socket`, async () => {
+        const view = workView({ role });
+        view.render();
+        view.effects.find(callback => callback.toString().includes('active_sessions_update'))();
+        view.type('ITEM'); view.enter();
+        await settle();
+        view.listeners.get('task_status_changed')({ orderId: 1, newStatus: status });
+        assert.equal(view.spoken.length, 0);
+        const accepted = structuredClone(view.fixture);
+        accepted.order.status = status;
+        accepted.items[0][type === 'pick' ? 'picked_quantity' : 'packed_quantity'] = 100;
+        view.posts[0].resolve({ data: accepted });
+        await settle();
+        assert.deepEqual(view.spoken, [['complete', type]]);
+        view.listeners.get('task_status_changed')({ orderId: 1, newStatus: status });
+        assert.deepEqual(view.spoken, [['complete', type]]);
+    });
+    test(`${role} unfinished workflow reports server quantities, not a false completion`, async () => {
+        const view = workView({ role });
+        view.type('ITEM'); view.enter(); await settle();
+        const accepted = structuredClone(view.fixture);
+        accepted.items[0][type === 'pick' ? 'picked_quantity' : 'packed_quantity'] = 3;
+        if (type === 'pack') accepted.items[0].picked_quantity = 100;
+        view.posts[0].resolve({ data: accepted }); await settle();
+        assert.equal(JSON.stringify(view.spoken), JSON.stringify([['progress', 3, 97, { type }]]));
+    });
+}
 
 test('busy scanner Enter clears its buffer and keeps an explicit retry outside the input', async () => {
     const view = workView();

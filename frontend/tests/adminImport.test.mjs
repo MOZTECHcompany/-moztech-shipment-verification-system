@@ -138,6 +138,21 @@ test('known parser failure remains visible and permits corrected file selection'
     assert.equal(view.posts.length, 2);
 });
 
+test('barcode format rejection alerts the importer, preserves row details and permits a corrected file', async () => {
+    const view = dashboard();
+    view.select(file());
+    view.posts[0].reject({ response: { status: 400, data: { code: 'IMPORT_NOT_APPLIED', reason: 'INVALID_BARCODE_FORMAT', message: '工作表「出貨」 A13，第 13 列：4.7113E+12 請改為文字並填入完整條碼' } } });
+    await view.settle();
+    assert.match(view.text(view.control('import-result')), /條碼格式異常，未建立訂單/);
+    assert.match(view.text(view.control('import-result')), /A13.*第 13 列/);
+    assert.ok(view.find(view.render(), node => node.props?.role === 'alert'));
+    assert.deepEqual(view.failures, ['條碼格式異常，未建立訂單，請修正檔案。']);
+    assert.equal(view.posts.length, 1);
+    assert.equal(view.storage.size, 0);
+    view.select(file('corrected.xlsx'));
+    assert.equal(view.posts.length, 2);
+});
+
 test('existing voucher opens the existing order without an automatic retry', async () => {
     const view = dashboard();
     view.select(file());

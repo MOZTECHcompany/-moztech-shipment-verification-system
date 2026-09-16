@@ -89,6 +89,22 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         await new Promise((resolve, reject) => { anonymous.once('connect_error', resolve); anonymous.once('connect', () => reject(Error('Anonymous socket accepted'))); });
     });
     let bulkOrder, snOrder;
+    await t.test('scientific barcode import returns its cell and leaves all order tables unchanged', async () => {
+        const tables = ['orders', 'order_items', 'order_item_instances', 'operation_logs'];
+        const counts = async () => Promise.all(tables.map(async table => (await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count));
+        const before = await counts();
+        const book = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([
+            ['憑證號碼', 'PARITY-BAD-BARCODE'], ['國際條碼', '品項名稱', '數量'],
+            ['4711299273766', 'Valid text item', 1], [4711299273766, 'Numeric General item', 1]
+        ]), '出貨');
+        const form = new FormData(); form.set('orderFile', new Blob([xlsx.write(book, { type: 'buffer', bookType: 'xlsx' })]), 'fixture.xlsx');
+        const result = ok(await api('dispatcher', 'POST', '/api/orders/import', form), 400);
+        assert.equal(result.reason, 'INVALID_BARCODE_FORMAT');
+        assert.equal(result.issue.cell, 'A4');
+        assert.equal(result.issue.storedValue, '4711299273766');
+        assert.deepEqual(await counts(), before);
+    });
     await t.test('XLSX import, duplicate protection, role restriction and competing claim', async () => {
         const imported = ok(await importOrder('PARITY-BULK', 500), 201); bulkOrder = imported.orderId;
         assert.equal((await importOrder('PARITY-BULK', 500)).status, 409);

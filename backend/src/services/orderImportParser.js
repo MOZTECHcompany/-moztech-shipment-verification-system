@@ -14,6 +14,20 @@ function invalid(message, status = 400) {
     return Object.assign(new Error(message), { status, code: 'IMPORT_NOT_APPLIED' });
 }
 
+function validateBarcode(value, cell, location) {
+    const scientific = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*[eE]\s*[+-]?\s*\d+$/;
+    let reason;
+    if (scientific.test(value)) reason = '條碼顯示為科學記號，無法作為掃碼核對依據';
+    else if (cell?.f) reason = '條碼為公式，請核對後貼上完整條碼值';
+    else if (cell?.t === 'n' && (!Number.isSafeInteger(cell.v) || cell.v < 0 || String(cell.v).length > 15)) reason = '條碼數值可能已失去精度或包含小數';
+    else if (cell?.t === 'n' && !/^\d+$/.test(value)) reason = '條碼套用了數字、日期或其他非條碼格式';
+    else if (/^[+-]?\d+[.,]\d+$/.test(value) || /^\d{1,3}(?:,\d{3})+$/.test(value)) reason = '條碼包含小數點或千分位格式';
+    if (!reason) return;
+    const storedValue = cell?.t === 'n' && Number.isSafeInteger(cell.v) && cell.v >= 0 && String(cell.v).length <= 15 ? String(cell.v) : undefined;
+    const message = `${reason}（${value.slice(0, 80)}）。請將 Excel 條碼欄設為「文字」，依商品標籤或原始品項資料重新填入完整條碼後再匯入。${storedValue ? `檔案目前儲存值：${storedValue}，請核對；系統未自動套用。` : '請勿直接補零或推算缺少的數字。'}`;
+    throw Object.assign(invalid(message), { reason: 'INVALID_BARCODE_FORMAT', issue: { ...location, value: value.slice(0, 80), ...(storedValue ? { storedValue } : {}) } });
+}
+
 function labelValue(data, labels) {
     for (const row of data.slice(0, 50)) for (let c = 0; c < Math.min(row.length, 50); c++) {
         const text = String(row[c] ?? '').trim();
@@ -61,7 +75,7 @@ function parseSerials(raw, barcode, expectedQuantity, dedicatedColumn) {
     return serials;
 }
 
-function parseOrderRows(data) {
+function parseOrderRows(data, { worksheet, sheetName } = {}) {
     if (!Array.isArray(data) || data.length > IMPORT_LIMITS.sheetRows) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetRows} 列`, 413);
     for (const row of data) {
         if (row.length > IMPORT_LIMITS.sheetColumns) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetColumns} 欄`, 413);
@@ -95,6 +109,8 @@ function parseOrderRows(data) {
         if (isBarcodeHeader(barcode) && rawName.includes('品項名稱') && rawQuantity.includes('數量')) continue;
         try {
             if (!barcode || !rawName || !rawQuantity) throw invalid('品項編碼、名稱與數量皆必填');
+            const cellAddress = xlsx.utils.encode_cell({ r: index, c: barcodeIndex });
+            validateBarcode(barcode, worksheet?.[cellAddress] || (typeof row[barcodeIndex] === 'number' ? { t: 'n', v: row[barcodeIndex] } : undefined), { sheet: sheetName, row: index + 1, cell: cellAddress });
             const normalizedQuantity = /^\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(rawQuantity) ? rawQuantity.replace(/,/g, '') : rawQuantity;
             const quantity = Number(normalizedQuantity);
             if (!Number.isSafeInteger(quantity) || quantity <= 0) throw invalid('數量必須為正整數');
@@ -129,10 +145,13 @@ function parseOrderRows(data) {
 function parseOrderImport(buffer) {
     if (!Buffer.isBuffer(buffer) || !buffer.length) throw invalid('沒有可讀取的檔案內容');
     if (buffer.length > IMPORT_LIMITS.fileBytes) throw invalid('檔案不可超過 10 MiB', 413);
-    let worksheet;
+    let worksheet, sheetName;
     try {
-        const workbook = xlsx.read(buffer, { type: 'buffer', sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
-        worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        // raw preserves CSV text identifiers (including leading zeros and literal
+        // exponent strings). XLS/XLSX retain typed cells for precision checks.
+        const workbook = xlsx.read(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
+        sheetName = workbook.SheetNames[0];
+        worksheet = workbook.Sheets[sheetName];
     } catch { throw invalid('無法讀取檔案，請確認是未加密的 .xlsx、.xls 或 .csv'); }
     if (!worksheet?.['!ref']) throw invalid('第一個工作表沒有資料');
     const range = xlsx.utils.decode_range(worksheet['!fullref'] || worksheet['!ref']);
@@ -140,7 +159,11 @@ function parseOrderImport(buffer) {
         throw invalid(`工作表範圍超限，最多 ${IMPORT_LIMITS.sheetRows} 列、${IMPORT_LIMITS.sheetColumns} 欄；請縮小後匯入`, 413);
     }
     const data = xlsx.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '', range: 0 });
-    return parseOrderRows(data);
+    try { return parseOrderRows(data, { worksheet, sheetName }); }
+    catch (error) {
+        if (error.code === 'IMPORT_NOT_APPLIED') error.message = `工作表「${sheetName}」${error.issue?.cell ? ` ${error.issue.cell}` : ''}，${error.message}`;
+        throw error;
+    }
 }
 
 module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows };

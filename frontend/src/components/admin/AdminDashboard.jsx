@@ -98,14 +98,17 @@ export function AdminDashboard({ user }) {
                 result = { phase: 'duplicate', fileName, voucherNumber: data.voucherNumber, orderId: data.orderId };
                 saveRecovery(recoveryKey, null);
             } else if (data.code === 'IMPORT_NOT_APPLIED' || [401, 403, 413, 429].includes(status)) {
-                result = { phase: 'error', fileName, message: data.message || '未建立訂單，請確認檔案或登入狀態後再試。' };
+                result = { phase: 'error', fileName, reason: data.reason, message: data.message || '未建立訂單，請確認檔案或登入狀態後再試。' };
                 saveRecovery(recoveryKey, null);
             } else {
                 unknownImport.current = true;
                 result = { phase: 'unknown', fileName, voucherNumber: data.voucherNumber };
                 saveRecovery(recoveryKey, result);
             }
-            if (mounted.current) setImportState(result);
+            if (mounted.current) {
+                setImportState(result);
+                if (result.reason === 'INVALID_BARCODE_FORMAT') toast.error('條碼格式異常，未建立訂單，請修正檔案。');
+            }
         } finally {
             importInFlight.current = false;
         }
@@ -207,7 +210,7 @@ export function AdminDashboard({ user }) {
                             {importState.phase === 'uploading' && <><p className="flex items-center gap-2 font-semibold"><Loader2 size={17} className="animate-spin" />正在驗證檔案並建立訂單</p><p className="mt-2 leading-6">請保持此頁開啟，完成前請勿重複上傳。</p></>}
                             {importState.phase === 'success' && <><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={17} />訂單 {importState.voucherNumber} 已成功匯入</p><p className="mt-2">{importState.itemCount} 個品項 · 總數量 {importState.totalQuantity} · {importState.serialCount} 筆 SN</p></>}
                             {importState.phase === 'duplicate' && <><p className="font-semibold">訂單 {importState.voucherNumber} 已存在，未重複建立</p><p className="mt-2 leading-6">請開啟既有訂單核對內容。若需修正訂單，請依現有管理流程處理。</p></>}
-                            {importState.phase === 'error' && <><p className="font-semibold">匯入未完成，未建立訂單</p><p className="mt-2 whitespace-pre-wrap leading-6">{importState.message}</p><p className="mt-2">修正後可重新選擇檔案。</p></>}
+                            {importState.phase === 'error' && <div role="alert"><p className="font-semibold">{importState.reason === 'INVALID_BARCODE_FORMAT' ? '條碼格式異常，未建立訂單' : '匯入未完成，未建立訂單'}</p><p className="mt-2 whitespace-pre-wrap leading-6">{importState.message}</p><p className="mt-2">修正後可重新選擇檔案。</p></div>}
                             {importState.phase === 'unknown' && <><p className="flex items-center gap-2 font-semibold"><AlertTriangle size={17} />尚未確認匯入結果</p><p className="mt-2 leading-6">{importState.voucherNumber && `訂單 ${importState.voucherNumber}：`}請先到作業看板核對訂單是否已建立。連線中斷或等候逾時不代表匯入失敗，請勿直接重送。</p><p className="mt-2 leading-6">若訂單已存在，請繼續使用該訂單；確認沒有建立後，才重新選擇檔案。</p></>}
                             <div className="mt-3 flex flex-wrap items-center gap-3">
                                 {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.orderId) && importState.orderId > 0 && <Link to={`/order/${importState.orderId}`} className="font-semibold underline underline-offset-4">開啟訂單</Link>}
