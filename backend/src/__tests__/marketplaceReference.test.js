@@ -22,6 +22,17 @@ test('conversion validates only included SKUs and never silently rewrites an exa
 test('only requested matching product data and reference date are returned',async()=>{
  const r=await lookupProducts(['0012'],reader);expect(Object.keys(r.products)).toEqual(['0012']);expect(r.sync.product_count).toBe(3);expect(JSON.stringify(r)).not.toContain('一般款');
 });
+test('unknown source SKU cannot bypass ERP target existence or active status through a manual mapping',async()=>{
+ const verify=erpSku=>verifyCatalogMappings(null,{skuMappings:{'website-code':{erpSku,confirmed:true}}},['website-code'],reader);
+ await expect(verify('47112992713422')).rejects.toThrow('已中止使用');
+ await expect(verify('typo')).rejects.toThrow('不在目前主檔');
+ await expect(verify('0012')).rejects.toThrow('不在目前主檔');
+ await expect(verify('NEW0012')).resolves.toBeUndefined();
+});
+test('missing mapping is a clear validation error and excluded invalid targets do not block the selected batch',async()=>{
+ await expect(verifyCatalogMappings(null,{skuMappings:{}},['website-code'],reader)).rejects.toMatchObject({status:400});
+ await expect(verifyCatalogMappings(null,{skuMappings:{'0012':{erpSku:'NEW0012'},excluded:{erpSku:'typo'}}},['0012'],reader)).resolves.toBeUndefined();
+});
 test('reference reader is read-only, cached and requires unique exact codes',async()=>{
  const download=jest.fn().mockResolvedValue([Buffer.from(JSON.stringify(await reader()))]);const file=jest.fn(()=>({download})),bucket=jest.fn(()=>({file}));
  const read=createReferenceReader({env:{GCS_BUCKET:'private-dev',ECOUNT_REFERENCE_OBJECT:'reference.json'},storage:{bucket}});
