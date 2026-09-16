@@ -4,10 +4,14 @@ const stageLabel = type => type === 'pick' ? '揀貨' : type === 'pack' ? '裝�
 // Keep the UI's warehouse term 揀貨; use its common homophone for speech.
 const spokenStageLabel = type => type === 'pick' ? '撿貨' : stageLabel(type);
 const voiceId = voice => voice.voiceURI || `${voice.lang}:${voice.name}`;
-const knownFemale = /HsiaoChen|HsiaoYu|Mei[- ]?Jia|美佳|Hanhan|Yating|曉臻|曉雨|涵涵|雅婷/i;
-const knownMale = /YunJhe|Zhiwei|雲哲|云哲|志偉|志伟/i;
-const incompatibleVoice = /\b(?:Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley)\b/i;
-const taiwanMandarin = voice => /^(?:zh|cmn)[-_]TW$/i.test(voice.lang) && !incompatibleVoice.test(voice.name);
+const knownFemale = /HsiaoChen|HsiaoYu|Mei[- ]?Jia|美佳|Hanhan|Yating|Xiaoxiao|Xiaoyi|曉臻|曉雨|涵涵|雅婷/i;
+const knownMale = /YunJhe|Zhiwei|Yunxi|Yunjian|Yunyang|雲哲|云哲|志偉|志伟/i;
+const chineseVoice = voice => /^(?:zh|cmn)[-_]/i.test(voice.lang);
+const taiwanMandarin = voice => /^(?:zh|cmn)[-_]TW$/i.test(voice.lang);
+// The report identifies these CN variants, not their similarly named TW voices.
+// Keep them selectable for preview/manual use; only automatic choice avoids them.
+const reportedVoice = voice => !!voice && /^(?:zh|cmn)[-_]CN$/i.test(voice.lang)
+    && /\b(?:Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Ting[- ]?Ting)\b|婷婷/i.test(voice.name);
 
 class VoiceNotification {
     constructor() {
@@ -29,15 +33,16 @@ class VoiceNotification {
     notify() { this.listeners.forEach(callback => callback()); }
     getVoices() { return this.synth?.getVoices() || []; }
     getChineseVoices() {
-        // A zh tag alone did not guarantee intelligible warehouse Mandarin.
-        // Do not offer the reported character voices, mainland or Cantonese voices.
-        return this.getVoices().filter(taiwanMandarin);
+        return this.getVoices().filter(chineseVoice)
+            .sort((a, b) => Number(!taiwanMandarin(a)) - Number(!taiwanMandarin(b)));
     }
     getStageSettings() {
         const voices = this.getChineseVoices();
         const manual = type => voices.find(voice => voiceId(voice) === this.selected[type]);
-        const pick = manual('pick') || voices.find(voice => knownFemale.test(voice.name)) || voices[0];
-        const pack = manual('pack') || voices.find(voice => knownMale.test(voice.name)) || pick;
+        const automatic = voices.filter(voice => !reportedVoice(voice));
+        const pick = manual('pick') || automatic.find(voice => knownFemale.test(voice.name)) || automatic[0];
+        const pack = manual('pack') || automatic.find(voice => knownMale.test(voice.name))
+            || automatic.find(voice => !pick || voiceId(voice) !== voiceId(pick)) || automatic[0];
         const sameVoice = !pick || !pack || voiceId(pick) === voiceId(pack);
         return { enabled: this.enabled, supported: this.isSupported(), voices, selected: { ...this.selected }, sameVoice,
             pick: { voice: pick, pitch: 1 }, pack: { voice: pack, pitch: 1 } };
@@ -62,9 +67,9 @@ class VoiceNotification {
             const utterance = new SpeechSynthesisUtterance(text);
             const settings = this.getStageSettings();
             const stage = settings[options.type];
-            const chosen = stage?.voice || (this.voice && taiwanMandarin(this.voice) ? this.voice : settings.pick.voice);
+            const chosen = stage ? stage.voice : (this.voice && chineseVoice(this.voice) ? this.voice : settings.pick.voice);
             // Never silently fall back to an unknown system/default voice.
-            if (!chosen || !taiwanMandarin(chosen)) return false;
+            if (!chosen || !chineseVoice(chosen)) return false;
             utterance.voice = chosen;
             utterance.lang = chosen?.lang || 'zh-TW';
             utterance.rate = options.rate ?? 1;
@@ -117,5 +122,5 @@ class VoiceNotification {
     setVoice(voice) { this.voice = voice; }
 }
 const voiceNotification = new VoiceNotification();
-export { voiceNotification, voiceId };
+export { voiceNotification, voiceId, reportedVoice };
 export default voiceNotification;
