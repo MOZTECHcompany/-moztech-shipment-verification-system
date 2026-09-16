@@ -37,7 +37,7 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
  const table=rows=>{const h=[...new Set(rows.flatMap(Object.keys))];return [h,...rows.map(r=>h.map(k=>r[k]??''))];};
  const item=(Name,more={})=>({Name,'Financial Status':'paid','Fulfillment Status':'unfulfilled',Currency:'TWD',Subtotal:'100',Shipping:'10',Taxes:'0',Total:'110','Discount Amount':'0','Refunded Amount':'0','Payment Method':'card','Lineitem quantity':'1','Lineitem name':'合成商品','Lineitem price':'100','Lineitem sku':'0001','Lineitem discount':'0',...more});
  const source=table([item('SYN-MKT-A',{Email:'PRIVATE-NOT-PERSISTED'}),item('SYN-MKT-B',{'Financial Status':'pending','Payment Method':'custom'})]);
- const settings={store:'合成商店',customerCode:'CUST',customerName:'合成客戶',warehouseCode:'003',date:'2026-09-15',batchSequence:'1',batchNumber:'TEST-SYN-MKT',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'合成商品',barcode:'SYN-BAR-001',confirmed:true,barcodeConfirmed:true}},shippingSku:{erpSku:'FREIGHT',name:'運費',confirmed:true,nonStock:true}};
+ const settings={projectOwner:'Project staff',salesOwner:'Sales staff',erpStaffCode:'007',erpResponsibilityConfirmed:true,store:'合成商店',customerCode:'CUST',customerName:'合成客戶',warehouseCode:'003',date:'2026-09-15',batchSequence:'1',batchNumber:'TEST-SYN-MKT',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'合成商品',barcode:'SYN-BAR-001',confirmed:true,barcodeConfirmed:true}},shippingSku:{erpSku:'FREIGHT',name:'運費',confirmed:true,nonStock:true}};
  const body=()=>({rows:structuredClone(source),settings:structuredClone(settings),rowsPreview:[['IGNORED']]});
  const post=(b=body(),role='dispatcher')=>api(role,'POST','/api/marketplace-intakes',b);
  let saved,imported;
@@ -107,11 +107,22 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   assert.equal((await fetch(base+link.url.replace('ecount','prepick'),{headers:{Cookie:cookie}})).status,403);
   const download=await fetch(base+link.url,{headers:{Cookie:cookie}});assert.equal(download.status,200);assert.match(download.headers.get('content-disposition'),/^attachment;/);
   const book=xlsx.read(Buffer.from(await download.arrayBuffer()));const rows=xlsx.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,defval:''});
-  assert.equal(rows[0].length,27);assert.equal(rows[1][23],'SYN-MKT-A');assert.equal(rows[1][15],1);assert.equal(rows[1][17],100);
+  assert.equal(rows[0].length,27);assert.equal(rows[1][23],'SYN-MKT-A');assert.equal(rows[1][15],1);assert.equal(rows[1][17],100);assert.equal(rows[1][19],95);assert.equal(rows[1][20],5);assert.equal(rows[1][4],'007');assert.equal(rows[1][21],'');assert.deepEqual(book.SheetNames,['銷貨匯入']);
   assert.equal((await fetch(base+'/api/marketplace-intakes',{headers:{Authorization:'Bearer '+cookie.split('=')[1]}})).status,403);
   await pool.query("UPDATE users SET role='picker' WHERE id=$1",[users.admin]);
   assert.equal((await fetch(base+link.url,{headers:{Cookie:cookie}})).status,403);
   await pool.query("UPDATE users SET role='admin' WHERE id=$1",[users.admin]);
+ });
+ await t.test('historical download recalculates missing tax without changing snapshot or creating a second intake',async()=>{
+  const path='/api/marketplace-intakes/'+saved.id;
+  const pristine=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[saved.id])).rows[0].snapshot;const old=structuredClone(pristine);delete old.summary.financialVersion;for(const row of old.rows)for(const i of [20,23,24])row[i]='';
+  await pool.query('UPDATE marketplace_intakes SET snapshot=$1 WHERE id=$2',[JSON.stringify(old),saved.id]);
+  const view=ok(await api('dispatcher','GET',path));assert.equal(view.financials.recalculatedLegacy,true);assert.equal(view.financials.grossMinor,22000);assert.deepEqual(view.rows,old.rows);
+  ok(await api('dispatcher','POST',path+'/download-link',{kind:'ecount'}));
+  const mismatch=structuredClone(old);mismatch.orders[0].financial.totalMinor++;
+  await pool.query('UPDATE marketplace_intakes SET snapshot=$1 WHERE id=$2',[JSON.stringify(mismatch),saved.id]);
+  assert.equal((await api('dispatcher','POST',path+'/download-link',{kind:'ecount'})).status,400);
+  await pool.query('UPDATE marketplace_intakes SET snapshot=$1 WHERE id=$2',[JSON.stringify(pristine),saved.id]);
  });
  await t.test('mismatched SKU, quantity, barcode, store, missing child and freight anomalies leave no work orders',async()=>{
   const original=await state();
@@ -190,6 +201,15 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
   const result=ok(await upload(rows,native.id),201);assert.equal(result.workOrderCount,1);
   const snapshot=ok(await api('picker','GET','/api/orders/'+result.orders[0].orderId+'/work-snapshot'));
   assert.equal(snapshot.items[0].source_order_number,'#SYN-NATIVE-SL');assert.ok(result.orders[0].workBarcode.startsWith('WT'));
+ });
+ await t.test('summary SN survives linked import with actor attribution and original summary audit',async()=>{
+  const b=body();b.rows=table([item('SYN-SN-SUMMARY',{Shipping:'0',Total:'100'})]);b.settings.batchNumber='TEST-SN-SUMMARY';
+  const original=saved;saved=ok(await post(b),201);const id=saved.id,rows=erpRows('SYN-SN-PICK');saved=original;
+  rows[2][14]='SN:TESTSN000001';const result=ok(await upload(rows,id),201);
+  const orderId=result.orders[0].orderId;
+  const log=(await pool.query("SELECT user_id,details FROM operation_logs WHERE order_id=$1 AND action_type='import'",[orderId])).rows[0];
+  log.details=JSON.parse(log.details);assert.equal(log.user_id,users.dispatcher);assert.equal(log.details.marketplaceIntakeId,id);assert.equal(log.details.sourceDetails[0].summary,'SN:TESTSN000001');assert.equal(log.details.sourceDetails[0].serialSource,'摘要');
+  assert.equal((await pool.query('SELECT serial_number FROM order_item_instances WHERE order_item_id IN (SELECT id FROM order_items WHERE order_id=$1)',[orderId])).rows[0].serial_number,'TESTSN000001');
  });
  await t.test('permanent delete requires exact confirmation, retains audit, and releases only unlinked source orders',async()=>{
   const b=body();b.rows=table([item('SYN-DELETE')]);b.settings.batchNumber='TEST-DELETE';

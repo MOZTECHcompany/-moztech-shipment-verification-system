@@ -101,11 +101,13 @@ test('bundle requires explicit financial confirmation even when known amounts re
 test('a bundle title with multiple anchors fails instead of guessing an allocation', () => {
   const rows = oneRows(); rows.push({ ...rows[2], '產品SKU': 'SAMPLE-D', '產品': '另一合成主商品' }); assert.ok(codes(parse(rows)).includes('AMBIGUOUS_BUNDLE'));
 });
-test('ECOUNT five detailed rows use H11 and V inclusive prices; ERP owns tax calculation', () => {
+test('ECOUNT five detailed rows use H11 and V inclusive prices; explicit net and VAT amounts reconcile with source totals', () => {
   const result = buildEcountRows(parse(), settings()); assert.equal(result.ok, true); assert.equal(result.headers.length, 27); assert.deepEqual(result.headers, ECOUNT_HEADERS);
   assert.equal(result.rows.length, 5); assert.ok(result.rows.every((row) => row.length === 27 && row[0] === '20260102' && row[1] === 1 && row[7] === '11'));
   assert.deepEqual(result.rows.map((row) => row[21]), [129, 299, 100, 899, 0]);
-  for (const row of result.rows) for (const col of [8, 9, 17, 20, 22, 23, 24, 26]) assert.equal(row[col], '');
+  for (const row of result.rows) for (const col of [8, 9, 17, 22, 25, 26]) assert.equal(row[col], '');
+  assert.deepEqual(result.rows.map(r=>r[24]),[6,14,5,43,0]);
+  assert.ok(result.rows.every(r=>Math.round((r[23]+r[24])*100)===Math.round(r[19]*r[21]*100)));
   assert.equal(result.summary.ecountTotalMinor, 142700); assert.equal(result.summary.physicalQuantity, 4); assert.equal(result.summary.ecountRowCount, 5);
   assert.deepEqual(result.rows.map((row) => row[12]), ['TEST-A', 'TEST-A', 'TEST-A', 'TEST-B', 'TEST-B']);
   assert.ok(result.rows.every((row) => row[13] === '1Shop' && row[14] === '合成店鋪'));

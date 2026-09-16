@@ -515,6 +515,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             }
             // Attribution and every child audit belong to the batch transaction.
             const details = { voucherNumber: workVoucher, batchId, batchNumber: batchId ? voucherNumber : null,
+                sourceDetails:group.items.map(i=>({sourceLineId:i.sourceLineId||null,sourceRow:i.sourceRow,summary:i.sourceSummary||'',serialField:i.sourceSerials||'',serialSource:i.serialSource||'legacy',serials:i.serials})),
                 marketplaceIntakeId: marketplaceSource?.intake_id || null, omittedNonStock: parsed.omittedNonStock || [],
                 sourceOrderNumber: group.sourceOrderNumber || null, sourcePlatform: group.sourcePlatform || null, sourceStore: group.sourceStore || null,
                 workBarcode, itemCount: group.items.length, totalQuantity: group.totalQuantity, serialCount: group.serialCount };

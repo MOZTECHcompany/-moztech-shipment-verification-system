@@ -167,20 +167,20 @@ test('source detail refuses multiple worksheets rather than silently losing anot
     expect(() => parseOrderImport(xlsx.write(book, {type: 'buffer', bookType: 'xlsx'}))).toThrow(/單一工作表/);
 });
 
-test.each([
-    ['TESTSN000001ㆍTESTSN000002', 2],
-    ['TESTSN000001ㆍTESTSN000002', 1],
-    ['SN:TESTSN000001ㆍSN:TESTSN000002', 2],
-    ['SN：待補', 1],
-    ['TESTSN000001TESTSN000002', 2]
-])('source detail rejects serial-bearing summary %s when explicit SN is empty', (summary, quantity) => {
-    const rows = sourceRows();
-    rows[0] = [...sourceHeader, '摘要'];
-    rows[2][9] = quantity;
-    rows[2][10] = '';
-    rows[2][11] = summary;
-    expect(() => parseOrderImport(workbook(rows))).toThrow(/第 3 列.*摘要.*序號\/批號/);
-    expect(pool.connect).not.toHaveBeenCalled();
+test.each(['TESTSN000001ㆍTESTSN000002','SN:TESTSN000001ㆍSN:TESTSN000002','TESTSN000001TESTSN000002'])('source detail preserves legacy summary SN %s', summary => {
+    const rows=sourceRows();rows[0]=[...sourceHeader,'摘要'];rows[2][10]='';rows[2][11]=summary;
+    const item=parseOrderImport(workbook(rows)).items[1];
+    expect(item.serials).toEqual(['TESTSN000001','TESTSN000002']);
+    expect(item.sourceSummary).toBe(summary);expect(item.serialSource).toBe('摘要');
+});
+test.each([['TESTSN000001ㆍTESTSN000002',1],['SN：待補',2]])('source summary invalid SN fails closed %s', (summary,quantity)=>{
+    const rows=sourceRows();rows[0]=[...sourceHeader,'摘要'];rows[2][9]=quantity;rows[2][10]='';rows[2][11]=summary;
+    expect(()=>parseOrderImport(workbook(rows))).toThrow(/第 3 列.*SN/);
+});
+test('both serial fields must identify the same physical items',()=>{
+    const rows=sourceRows();rows[0]=[...sourceHeader,'摘要'];rows[2][10]='TESTSN000001 TESTSN000002';rows[2][11]='SN:TESTSN000002 SN:TESTSN000001';
+    expect(parseOrderImport(workbook(rows)).items[1].serialSource).toBe('序號/批號');
+    rows[2][11]='TESTSN000003 TESTSN000004';expect(()=>parseOrderImport(workbook(rows))).toThrow(/SN 不一致/);
 });
 
 test.each(['', '促銷品，請輕放', '請下午配送；訂單備註待確認', '4710000000013'])('source detail permits ordinary summary %s without treating it as SN', summary => {
@@ -328,13 +328,13 @@ test('parse failure does not acquire a database connection', async () => {
     expect(pool.connect).not.toHaveBeenCalled();
 });
 
-test('source summary SN guard rejects before persistence even when the explicit SN column is absent', async () => {
+test('malformed summary SN rejects before persistence even when explicit SN column is absent', async () => {
     const db = database();
     const rows = sourceRows().map(row => row.slice(0, -1));
-    rows[0].push('summary'); rows[2].push('TESTSN000001ㆍTESTSN000002');
+    rows[0].push('summary'); rows[2].push('SN:bad');
     const result = await invoke(db, workbook(rows));
     expect(result).toMatchObject({ status: 400, body: { code: 'IMPORT_NOT_APPLIED' } });
-    expect(result.body.message).toMatch(/第 3 列.*序號\/批號/);
+    expect(result.body.message).toMatch(/第 3 列.*SN/);
     expect(pool.connect).not.toHaveBeenCalled();
     expect(db.state()).toEqual({ orders: [], items: [], instances: [], logs: [] });
 });

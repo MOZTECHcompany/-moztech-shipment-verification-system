@@ -47,12 +47,12 @@ test('native order-level conflict and ambiguous repeated item block; source attr
  assert.equal(a.raw.orders[0].attribution.orderTags,'團購甲');assert.doesNotMatch(JSON.stringify(a.source),/PRIVATE/);
 });
 test('ECOUNT online uploader maps all 27 columns by name and leaves canonical snapshots intact',()=>{
- const record={headers:[...ECOUNT_HEADERS],rows:[ECOUNT_HEADERS.map((_,i)=>`value-${i}`)]};const before=JSON.stringify(record);
+ const record=run([row()]).output;const before=JSON.stringify(record);
  const upload=buildEcountUploadTable(record);assert.equal(upload.headers.length,27);
  assert.deepEqual(upload.headers.slice(23),['商城訂單編號','平台','店鋪','來源明細號']);
  assert.equal(upload.headers[15],'數量');assert.equal(upload.headers[17],'單價(含稅)');
  for(let i=0;i<27;i++)assert.equal(upload.rows[0][i],record.rows[0][record.headers.indexOf(ECOUNT_UPLOAD_HEADERS[i])]);
- assert.equal(JSON.stringify(record),before);assert.deepEqual(buildEcountUploadTable(upload),upload);
+ assert.equal(JSON.stringify(record),before);assert.deepEqual(buildEcountUploadTable({...record,...upload}),upload);
  assert.throws(()=>buildEcountUploadTable({headers:record.headers,rows:[[]]}),/不完整/);
  assert.throws(()=>buildEcountUploadTable({headers:record.headers.map(()=>''),rows:[]}),/格式無效/);
 });

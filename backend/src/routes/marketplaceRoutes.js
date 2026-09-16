@@ -8,8 +8,8 @@ const clean=value=>String(value??'').trim();
 const pick=(value,keys)=>Object.fromEntries(keys.filter(k=>Object.hasOwn(value||{},k)).map(k=>[k,value[k]]));
 function safeSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))throw Object.assign(new Error('轉檔設定格式無效'),{status:400});
- const value=pick(input,['store','customerCode','customerName','warehouseCode','date','batchSequence','batchNumber','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed']);
- const booleans=new Set(['taxConfirmed','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','barcodeConfirmed','confirmed','erpConfirmed','nonStock']);
+ const value=pick(input,['projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','date','batchSequence','batchNumber','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','summaryNote']);
+ const booleans=new Set(['erpResponsibilityConfirmed','taxConfirmed','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','barcodeConfirmed','confirmed','erpConfirmed','nonStock']);
  function validate(record){
   for(const [name,v] of Object.entries(record)){
    if(booleans.has(name)?typeof v!=='boolean':typeof v!=='string'||v.length>255||/[\u0000-\u001f\u007f]/.test(v))throw Object.assign(new Error('轉檔設定欄位格式或長度無效：'+name),{status:400});
@@ -43,13 +43,16 @@ function createMarketplaceRouter({pool}){
   let reviewWarning='';
   const snapshot=rows.rows[0].snapshot;
   try{await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))]);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
-  res.set('Cache-Control','private, no-store').json({...publicRecord(rows.rows[0]),handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
+  let financials=null,financialWarning='';
+  try{financials=(await import('../services/marketplaceIntake.mjs')).prepareEcountFinancials(snapshot).financials;}catch(e){financialWarning=e.message;}
+  res.set('Cache-Control','private, no-store').json({financials,financialWarning,...publicRecord(rows.rows[0]),handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  router.post('/:id/download-link',async(req,res,next)=>{try{
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
   const record=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!record)return res.status(404).json({message:'找不到轉檔批次'});
   if(req.body?.kind==='ecount')await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))]);
+  if(req.body?.kind==='ecount'){try{(await import('../services/marketplaceIntake.mjs')).buildEcountUploadTable(record.snapshot);}catch(e){throw Object.assign(e,{status:400});}}
   require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id);
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  for(const [method,path,action] of [['patch','/:id/archive','archive'],['patch','/:id/restore','restore'],['delete','/:id','delete']]){

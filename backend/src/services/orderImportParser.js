@@ -67,8 +67,7 @@ function summaryRequiresExplicitSerials(raw, barcode, quantity) {
     const input = String(raw ?? '').trim();
     if (!input) return false;
     if (/SN\s*[:：]/i.test(input)) return true;
-    // Recognize legacy serial-bearing summaries only to prevent losing them.
-    // Never silently turn a free-form note into the new contract's SN field.
+    // Preserve the established summary SN grammar; ordinary notes are not SN.
     try { return parseSerials(input, barcode, Number(quantity), false).length > 0; }
     catch (error) {
         if (error.code === 'IMPORT_NOT_APPLIED') return true;
@@ -161,9 +160,13 @@ function parseSourceOrderRows(data, headerIndex) {
             if (!cell('productCode')) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
             if (!cell('barcode')) throw invalid('國際條碼必填，不能用品項編碼代替');
             if (!cell('productName') || !cell('quantity')) throw invalid('品項名稱與數量必填');
-            if (!cell('serials') && summaryRequiresExplicitSerials(cell('summary'), cell('barcode'), cell('quantity'))) {
-                throw invalid('摘要含有可辨識的 SN 或 SN: 標記，請將序號移至「序號/批號」欄後再匯入，避免以無 SN 商品核對');
+            const explicit = parseSerials(cell('serials'), cell('barcode'), Number(cell('quantity')), true);
+            const legacySummary = summaryRequiresExplicitSerials(cell('summary'), cell('barcode'), cell('quantity'));
+            const fromSummary = legacySummary ? parseSerials(cell('summary'), cell('barcode'), Number(cell('quantity')), false) : [];
+            if (explicit.length && fromSummary.length && JSON.stringify([...explicit].sort()) !== JSON.stringify([...fromSummary].sort())) {
+                throw invalid('摘要與序號/批號欄的 SN 不一致，請核對後再匯入');
             }
+            const serials = explicit.length ? explicit : fromSummary;
             if (source.sourceLineId) {
                 const key = JSON.stringify(sourceIdentityValues(source));
                 if (seenLines.has(key)) throw invalid('同一商城訂單的來源明細號重複，請核對後再匯入');
@@ -174,8 +177,8 @@ function parseSourceOrderRows(data, headerIndex) {
             // Per-order customers may differ inside one warehouse document.
             // Only expose a document-level customer if every supplied value agrees.
             if (customer) customerName = customerName === null ? customer : customerName === customer ? customerName : '';
-            normalizedRows.push([cell('barcode'), cell('productCode'), cell('productName'), cell('quantity'), cell('serials')]);
-            identities.push({ ...source, sourceRow, customerName: customer || null });
+            normalizedRows.push([cell('barcode'), cell('productCode'), cell('productName'), cell('quantity'), serials.join(' ')]);
+            identities.push({ ...source, sourceRow, sourceSummary:cell('summary'), sourceSerials:cell('serials'), serialSource:explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null });
         } catch (error) {
             throw invalid(`第 ${sourceRow} 列：${error.message}`);
         }

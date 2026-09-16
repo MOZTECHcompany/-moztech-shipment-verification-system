@@ -8,7 +8,58 @@ export function buildEcountUploadTable(record){
   if(!Array.isArray(record?.headers)||record.headers.length!==27||new Set(record.headers).size!==27||!Array.isArray(record.rows))throw Error('ECOUNT 保存批次欄位格式無效');
   const indexes=ECOUNT_UPLOAD_HEADERS.map(h=>record.headers.indexOf(h));
   if(indexes.some(i=>i<0)||record.rows.some(r=>!Array.isArray(r)||r.length!==27))throw Error('ECOUNT 保存批次欄位不完整，未產生下載檔');
-  return {headers:[...ECOUNT_UPLOAD_HEADERS],rows:record.rows.map(r=>indexes.map(i=>r[i]))};
+  const corrected = prepareEcountFinancials(record);
+  return {headers:[...ECOUNT_UPLOAD_HEADERS],rows:corrected.rows.map(r=>indexes.map(i=>r[i])), financials:corrected.financials};
+}
+
+export const ECOUNT_FINANCIAL_VERSION = 'twd-vat5-line-v1';
+export const ECOUNT_TAX_DESCRIPTION = 'TWD 含稅 5%；每列營業稅四捨五入至元，稅前金額＝含稅金額－稅額；單價顯示至小數兩位，以明細金額核對。';
+const safeInteger = n => {if(!Number.isSafeInteger(n)||n<0)throw Error('銷貨金額或數量超出安全範圍');return n;};
+const roundRatio = (n,d) => Number((BigInt(n)*2n+BigInt(d))/(BigInt(d)*2n));
+export function calculateInclusiveTax(grossMinor, quantity){
+  safeInteger(grossMinor);safeInteger(quantity);
+  if(!quantity)throw Error('銷貨數量必須大於零');
+  // VAT included in gross is 5/105. Round the line tax to whole TWD,
+  // never round a unit tax first or derive the line amount from rounded units.
+  const taxMinor = roundRatio(grossMinor,2100)*100;
+  const netMinor = grossMinor-taxMinor;
+  return {grossMinor,netMinor,taxMinor,netUnitMinor:roundRatio(netMinor,quantity)};
+}
+export function prepareEcountFinancials(record){
+  const headers=record.headers||[], col=h=>headers.indexOf(h);
+  const required=['交易類型','數量','單價(含稅)','單價','稅前價格','營業稅','商城訂單編號','平台','店鋪','來源明細號'];
+  if(required.some(h=>col(h)<0)||!record.rows?.length)throw Error('銷貨金額核對欄位不完整');
+  if(record.summary?.financialVersion&&record.summary.financialVersion!==ECOUNT_FINANCIAL_VERSION)throw Error('未知的銷貨計稅版本，請核對原批次');
+  const legacy=!record.summary?.financialVersion;
+  if(legacy&&(!record.orders?.length||record.settings?.currency!=='TWD'||record.settings?.taxType!=='11'||record.settings?.taxConfirmed!==true))throw Error('舊批次缺少原始訂單或稅制，無法安全重建稅額');
+  const byOrder=new Map(), seen=new Set();
+  let netTotal=0,taxTotal=0,grossTotal=0;
+  const rows=record.rows.map(original=>{
+    const row=[...original], get=h=>row[col(h)];
+    if(String(get('交易類型'))!=='11')throw Error('目前僅支援營業稅 11 的 TWD 含稅 5% 計算');
+    const identity=['平台','店鋪','商城訂單編號','來源明細號'].map(get);
+    if(identity.some(v=>!String(v??'').trim())||seen.has(JSON.stringify(identity)))throw Error('銷貨來源編號缺漏或重複');
+    seen.add(JSON.stringify(identity));
+    const quantity=Number(get('數量')), unit=parseMoneyMinor(get('單價(含稅)'));
+    if(unit===null)throw Error('含稅單價不可空白');
+    const f=calculateInclusiveTax(safeInteger(unit*quantity),quantity);
+    if(!legacy&&(['單價','稅前價格','營業稅'].some(h=>parseMoneyMinor(get(h))!==({'單價':f.netUnitMinor,'稅前價格':f.netMinor,'營業稅':f.taxMinor}[h]))))throw Error('保存銷貨的稅前金額／營業稅不一致，請核對原批次');
+    if(legacy){
+      // Only repair the known blank/zero export defect. Never overwrite a
+      // different historical tax result or alter source references/summary/SN.
+      for(const h of ['單價','稅前價格','營業稅'])if(![null,0].includes(parseMoneyMinor(get(h))))throw Error('舊批次已有金額，須人工核對計稅方式');
+      row[col('單價')]=f.netUnitMinor/100;row[col('稅前價格')]=f.netMinor/100;row[col('營業稅')]=f.taxMinor/100;
+    }
+    grossTotal=safeInteger(grossTotal+f.grossMinor);netTotal=safeInteger(netTotal+f.netMinor);taxTotal=safeInteger(taxTotal+f.taxMinor);
+    const key=JSON.stringify(identity.slice(0,3));byOrder.set(key,safeInteger((byOrder.get(key)||0)+f.grossMinor));
+    return row;
+  });
+  if(record.orders){
+    if(byOrder.size!==record.orders.length)throw Error('銷貨訂單筆數與原批次不一致');
+    for(const o of record.orders){const key=JSON.stringify([o.sourcePlatform,record.settings.store,o.sourceOrderNumber]);if(byOrder.get(key)!==o.financial.totalMinor)throw Error(`銷貨金額與來源訂單 ${o.sourceOrderNumber} 不符`);}
+  }
+  if(record.summary?.ecountTotalMinor!==grossTotal||netTotal+taxTotal!==grossTotal)throw Error('銷貨稅前／稅額／含稅總額與批次不符');
+  return {rows,financials:{version:ECOUNT_FINANCIAL_VERSION,description:ECOUNT_TAX_DESCRIPTION,netMinor:netTotal,taxMinor:taxTotal,grossMinor:grossTotal,recalculatedLegacy:legacy}};
 }
 
 const text = (value) => value == null ? '' : String(value).trim();
@@ -228,7 +279,8 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text(settings.date)) || Number.isNaN(Date.parse(`${settings.date}T00:00:00Z`)) || new Date(`${settings.date}T00:00:00Z`).toISOString().slice(0, 10) !== settings.date) issues.push(issue('DATE_REQUIRED', '請指定有效的銷貨日期'));
   if (settings.currency !== 'TWD') issues.push(issue('CURRENCY_REQUIRED', '本次 ECOUNT 轉檔僅支援明確確認的 TWD'));
   if ((!/^(?:WMS|TEST)-[A-Za-z0-9-]+$/.test(text(settings.batchNumber)) || text(settings.batchNumber).length>20)) issues.push(issue('BATCH_NUMBER_REQUIRED', '請填寫 WMS- 或 TEST- 開頭、最長 20 字的唯一銷貨追蹤號；仍須在 ERP 確認未重複使用'));
-  if (!settings.taxConfirmed || settings.taxMode !== 'erp_inclusive' || text(settings.taxType) !== '11') issues.push(issue('TAX_SETTING_REQUIRED', '請確認 ECOUNT 營業稅交易類型 11，以含稅單價交由 ERP 依既有設定計稅'));
+  if (!settings.taxConfirmed || settings.taxMode !== 'erp_inclusive' || text(settings.taxType) !== '11') issues.push(issue('TAX_SETTING_REQUIRED', '請確認 ECOUNT 營業稅交易類型 11，含稅 5%，轉檔明確列出稅前金額及營業稅'));
+  for (const [key,label] of [['erpStaffCode','承辦人'],['erpProjectCode','專案']]) if(text(settings[key])&&settings.erpResponsibilityConfirmed!==true) issues.push(issue('ERP_RESPONSIBILITY_REQUIRED', `請確認 ECOUNT ${label}編碼；不能直接使用 WMS 登入帳號`,{field:key}));
   if (text(settings.erpCurrencyCode) && settings.erpCurrencyConfirmed !== true) issues.push(issue('ERP_CURRENCY_REQUIRED', 'ECOUNT 貨幣代碼須另行確認；來源 TWD 不代表 ERP 主檔代碼'));
   for (const i of (parsed.issues || []).filter((i) => i.severity === 'confirmation')) {
     if (i.code !== 'BUNDLE_ALLOCATION_REQUIRED' || settings.bundleZeroConfirmed !== true) issues.push({ ...i, severity: 'error' });
@@ -275,7 +327,8 @@ export function buildEcountRows(parsed, settings = {}) {
   const rowFor = (order, item, mapping, amount, shipping = false) => {
     emitted.set(order.sourceOrderNumber, (emitted.get(order.sourceOrderNumber) || 0) + amount);
     const row = Array(27).fill('');
-    const put = { 0: settings.date.replaceAll('-', ''), 1: Number(settings.batchSequence), 2: text(settings.customerCode), 3: text(settings.customerName), 6: text(settings.warehouseCode), 7: text(settings.taxType), 8: text(settings.erpCurrencyCode), 10: text(settings.batchNumber), 11: text(mapping.erpSku), 12: order.sourceOrderNumber, 13: order.sourcePlatform, 14: text(settings.store), 15: item.sourceLineId, 16: text(mapping.erpName || mapping.name || item.productName), 18: text(mapping.spec), 19: item.quantity, 21: (amount / item.quantity) / 100, 25: shipping ? '運費；非實體商品，預揀表不計件' : `來源商品：${item.sku}；付款：${order.rawPaymentStatus}${item.kind === 'bundle_component' ? '；已確認組合元件零元，仍出貨' : ''}` };
+    const tax=calculateInclusiveTax(amount,item.quantity);
+    const put = { 0: settings.date.replaceAll('-', ''), 1: Number(settings.batchSequence), 2: text(settings.customerCode), 3: text(settings.customerName), 4:text(settings.erpStaffCode), 5:text(settings.erpProjectCode), 6: text(settings.warehouseCode), 7: text(settings.taxType), 8: text(settings.erpCurrencyCode), 10: text(settings.batchNumber), 11: text(mapping.erpSku), 12: order.sourceOrderNumber, 13: order.sourcePlatform, 14: text(settings.store), 15: item.sourceLineId, 16: text(mapping.erpName || mapping.name || item.productName), 18: text(mapping.spec), 19: item.quantity, 20:tax.netUnitMinor/100, 21:(amount/item.quantity)/100, 23:tax.netMinor/100, 24:tax.taxMinor/100, 25:text(settings.summaryNote) };
     for (const [index, value] of Object.entries(put)) row[Number(index)] = value;
     return row;
   };
@@ -289,7 +342,7 @@ export function buildEcountRows(parsed, settings = {}) {
   }
   result.ok = !result.issues.some((i) => i.severity === 'error');
   if (!result.ok) { result.rows = []; result.reportRows = []; }
-  else result.summary = { ...result.summary, ecountRowCount: result.rows.length, ecountTotalMinor: sum([...emitted.values()]), physicalItemCount: parsed.items.length, physicalQuantity: sum(parsed.items.map((i) => i.quantity)) };
+  else result.summary = { ...result.summary, financialVersion:ECOUNT_FINANCIAL_VERSION,ecountNetMinor:sum(result.rows.map(r=>parseMoneyMinor(r[23]))),ecountTaxMinor:sum(result.rows.map(r=>parseMoneyMinor(r[24]))),ecountRowCount: result.rows.length, ecountTotalMinor: sum([...emitted.values()]), physicalItemCount: parsed.items.length, physicalQuantity: sum(parsed.items.map((i) => i.quantity)) };
   return result;
 }
 

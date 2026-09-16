@@ -1,4 +1,4 @@
-const FIELDS=['store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
+const FIELDS=['projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
 const fail=message=>{throw Object.assign(new Error(message),{status:400});};
 function profileSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))fail('店鋪設定格式無效');
@@ -11,6 +11,7 @@ function profileSettings(input){
  }
  if(!result.store||!result.customerCode||!result.warehouseCode)fail('請填寫店鋪、銷貨客戶編碼及倉庫');
  if(result.currency!=='TWD'||result.taxMode!=='erp_inclusive'||result.taxType!=='11'||result.taxConfirmed!==true)fail('請確認 TWD 及 ECOUNT 含稅計價設定');
+ if((result.erpStaffCode||result.erpProjectCode)&&result.erpResponsibilityConfirmed!==true)fail('請確認 ECOUNT 承辦人及專案編碼');
  if(result.erpCurrencyCode&&result.erpCurrencyConfirmed!==true)fail('請確認 ECOUNT 貨幣代碼');
  const shipping=input.shippingSku;
  if(shipping){
