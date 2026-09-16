@@ -12,6 +12,7 @@ import soundNotification from '@/utils/soundNotification.js';
 import voiceNotification from '@/utils/voiceNotification.js';
 import desktopNotification from '@/utils/desktopNotification.js';
 import FloatingChatPanel from './FloatingChatPanel';
+import { MessageTimestamp } from './MessageTimestamp';
 import NotificationCenter from './NotificationCenter';
 import DefectReportModal from './DefectReportModal';
 import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
@@ -224,6 +225,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                                 {latestComment?.user_name}
                                             </span>
                                             <span className="text-xs text-gray-500 font-medium">• 最新留言</span>
+                                            <MessageTimestamp value={latestComment?.created_at} className="text-[11px] text-gray-500" />
                                         </span>
                                         {/* 緊急標籤 */}
                                         {hasUrgentComments && (
