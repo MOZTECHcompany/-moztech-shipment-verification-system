@@ -18,6 +18,7 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_COMMENT_TIMESTAMPS_2026-09-16.md`：每則對話完整台灣日期時間，正式 revision `corely-wms-chat-time-20260916`，程式 `00f24db`；優先於下列舊發布快照。
 - `docs/WMS_SCAN_RECOVERY_2026-09-14.md`：最新掃碼錯誤恢復、個人音效及 2026-09-14 正式發布記錄（程式 407c572）。
 
 - `docs/WMS_FULL_PARITY_2026-09-14.md`：58 項功能、239 個舊介面控制點、63 個業務 API 與瀏覽器流程的驗證記錄。
