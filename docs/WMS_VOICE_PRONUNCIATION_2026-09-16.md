@@ -22,4 +22,16 @@
 
 ## 部署
 
-待候選驗證與正式切換後補上 image digest、revision、CI 及回退紀錄。只重建前端；後端保留原 digest。共用 `corely-wms-migration-validation` 屬另一工作分支，本次不覆蓋，改以隔離本機與正式 0% 候選的合成 UI 驗證。
+- 程式提交：`aa82ab30cba9181371f5e677174b51053089817e`。
+- GitHub 程式 CI：`35093518749` 成功（包含後端 165 項、前端 120 項及 production build）。
+- Cloud Build：`e3d13eb9-7bd3-41ad-bce5-7da82948fee7` 成功，只重建前端。
+- 前端 image：`asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-frontend@sha256:90d518ed2749d6419f390f8eaa99e0e94c6c883ab91f24d71f248c2ab137480a`。
+- 後端保留 `sha256:9396397d5be2ffe27999921880b9232f2f9c6a0ff6d4eaad7facd8393f665bbd`。
+- 新 revision：`corely-wms-voice-clear-20260916`，先以 `voice-clear-candidate` 0% 標籤確認健康、就緒、未登入 API 拒絕及候選前端 16 個合成資料瀏覽器檢查，再切換 100% 並讀回確認。
+- 正式 https://wms.corely.cc 及 https://corely-wms-249593319772.asia-east1.run.app 的健康、就緒、登入、未登入 API 邊界通過；entry、VoiceControls、OrderWorkView 資源雜湊與候選一致。
+- 使用者已登入的正式設定頁重新載入後，兩階段均顯示舊語音不可用、改用「美佳」，候選清單僅有台灣中文原聲；既有語音關閉偏好保留。實體聽音驗收仍待使用者試聽，不能把畫面／合成參數檢查當作發音已被人工確認。
+- 程式回退 revision：`corely-wms-voice-import-20260916`；需要時將 `moztech-main-db / asia-east1 / corely-wms` 的流量切回此版本，不還原資料庫。前一版本會恢復問題音色選項與變調行為。
+
+正式服務僅前端 image 改變，後端、IAM、資料庫／附件連線及設定保持相同。共用 `corely-wms-migration-validation` 屬另一工作分支，spec 與 traffic 均未變；本次使用隔離本機與正式 0% 候選的合成 UI 驗證，未覆蓋共用驗收服務。
+
+本機完整驗證與發布證據位於協作目錄 `artifacts/wms-voice-pronunciation-20260916/`（不含正式憑證／資料庫資料，不是 Git 原始碼的一部分）。此文件的發布結果將另以純文件提交同步 GitHub main，程式碼與上述已建置提交一致。
