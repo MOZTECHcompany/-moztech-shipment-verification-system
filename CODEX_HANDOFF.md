@@ -18,6 +18,7 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_ORDER_COMPLETION_FIX_2026-09-17.md`：異動核可後重新判定揀貨完成、歷史訂單的條件式修復及驗證。正式 revision `corely-wms-order-complete-20260917`，後端程式 `385e056`；前端沿用下列 voice-options 映像，優先於舊發布快照。
 - `docs/WMS_VOICE_OPTIONS_2026-09-16.md`：修正上一版過度篩選，恢復完整中文音色及兩階段獨立選擇；僅對指定 CN 音色加註提醒。正式 revision `corely-wms-voice-options-20260916`，程式 `5a8a06f`，優先於下列語音發布快照。
 - `docs/WMS_VOICE_PRONUNCIATION_2026-09-16.md`：台灣中文原聲、問題音色排除及揀貨同音播報修正；正式 revision `corely-wms-voice-clear-20260916`，程式 `aa82ab3`，取代前版的中文音色清單與同聲變調行為。
 - `docs/WMS_VOICE_IMPORT_2026-09-16.md`：簡短揀貨／裝箱語音、完成播報與科學記號條碼匯入攔截；正式 revision `corely-wms-voice-import-20260916`，程式 `6674427`；優先於下列舊發布快照。

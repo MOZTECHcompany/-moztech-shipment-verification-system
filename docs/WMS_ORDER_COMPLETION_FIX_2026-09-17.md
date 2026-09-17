@@ -28,4 +28,12 @@
 - 此次無 schema migration、前端或語音修改。發布僅替換正式服務的 backend image，保留 frontend、IAM、Cloud SQL、附件及其他服務設定。
 - 程式回復：將流量轉回前版 `corely-wms-voice-options-20260916`。已確認完成揀貨的訂單不應因程式回復而被退回揀貨中；不要還原整庫覆蓋新作業紀錄。
 
-正式部署與單筆修復結果於執行後補記。
+## 正式結果
+
+- Cloud Run `moztech-main-db / asia-east1 / corely-wms` 已切至 `corely-wms-order-complete-20260917`，100% 流量；`https://wms.corely.cc` 及直接 run.app 入口的 health、ready、登入頁與未授權 API 拒絕均通過。
+- 後端發布程式 `385e0568f851245cfd9b3f5a97d5b1adb1e073d5`；Cloud Build `2e60fcd5-34f0-4fb5-8977-b8f7b63d6a9f`，backend digest `sha256:617233c79b221eb9fa1f4603dc6e93cc19448f8f2f8bce675ba5e01177cd5ff3`。
+- 前端 digest 維持 `sha256:b813fd92e667c99798f336e06c0d1981e1ce034410398d8ab4861299a906235d`。IAM、環境設定、SQL 掛載與共用 migration-validation 服務讀回均未改動。
+- GitHub 程式 CI `35187422229` 成功，含後端、前端測試及前端建置；候選版本以正式單筆唯讀查詢確認，沒有在正式資料庫建立驗收訂單。
+- 使用者指定訂單 4882（`2026/09/15 -25`）已透過新指令由 `picking` 修復至 `picked`。修復前再次確認 8 個品項、1040 件、1040 筆 SN 全為 picked、例外 331 已 resolved；修復前後完整品項及 SN 資料雜湊一致，人員指派不變。
+- 操作日誌 ID `238321`；正式 Socket 實際收到 `new_operation_log` 及 `task_status_changed`。正式工作台 API 驗證裝箱分類包含此單、揀貨分類不再包含。未認領裝箱或代操作掃碼，後續由現場裝箱員執行。
+- 本機原始驗證收據：協調目錄 `artifacts/wms-order-completion-20260917/`。資料庫查核採 READ ONLY；單筆寫入僅使用已授權、附狀態 token 的維護指令。
