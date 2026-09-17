@@ -19,7 +19,7 @@ module.exports=async function({base,id,user,token,picker,receipt,output}){
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false);await page.screenshot({path:output+'/warehouse-upload-mobile.png',fullPage:true});await page.setViewportSize({width:1280,height:900});
   let salesRequests=0;page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/confirm-sales'))salesRequests++;});
   await page.locator('input[type=file]').setInputFiles({name:'wrong-wms-sales.csv',mimeType:'text/csv',buffer:Buffer.from('日期,序號,品項編碼\n2026/09/17,1,ERP-0001')});
-  await page.getByRole('alert').filter({hasText:'WMS 下載的銷貨檔不能匯回核對'}).waitFor();
+  await page.getByRole('alert').filter({hasText:'此報表缺少可核對的銷貨單號或來源明細號欄位'}).waitFor();
   assert.equal(await page.getByRole('button',{name:'核對並建立預揀單',exact:true}).isEnabled(),false);
   assert.equal(salesRequests,0);
   const book=xlsx.utils.book_new();xlsx.utils.book_append_sheet(book,xlsx.utils.aoa_to_sheet(receipt),'銷貨回傳');

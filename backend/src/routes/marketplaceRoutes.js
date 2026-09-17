@@ -8,7 +8,7 @@ const clean=value=>String(value??'').trim();
 const pick=(value,keys)=>Object.fromEntries(keys.filter(k=>Object.hasOwn(value||{},k)).map(k=>[k,value[k]]));
 function safeSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))throw Object.assign(new Error('轉檔設定格式無效'),{status:400});
- const value=pick(input,['projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','date','batchSequence','batchNumber','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','summaryNote']);
+ const value=pick(input,['salesExportMode','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','date','batchSequence','batchNumber','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','summaryNote']);
  const booleans=new Set(['erpResponsibilityConfirmed','taxConfirmed','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','barcodeConfirmed','confirmed','erpConfirmed','nonStock']);
  function validate(record){
   for(const [name,v] of Object.entries(record)){
@@ -70,7 +70,7 @@ function createMarketplaceRouter({pool}){
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))]);
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows});
-   const snapshot={handler:captureHandler(req.user),settings,summary:output.summary,headers:output.headers,rows:output.rows,reportHeaders:output.reportHeaders,reportRows:output.reportRows,
+   const snapshot={handler:captureHandler(req.user),settings,summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
     orders:parsed.orders.map(o=>({...o,sourceFinancial:raw.orders.find(r=>r.sourceOrderNumber===o.sourceOrderNumber)?.financial})),items:parsed.items,
     prepick:{headers:conversion.prepick.headers,rows:conversion.prepick.rows}};
    db=await pool.connect();await db.query('BEGIN');open=true;

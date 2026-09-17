@@ -63,7 +63,7 @@ function ReleaseDetail({id,user}){
    if(range.e.r>=10000||range.e.c>=100)throw Error('資料範圍超限');
    const parsed=XLSX.utils.sheet_to_json(sheet,{header:1,raw:false,defval:''});
    const header=parsed.findIndex(r=>r.some(c=>String(c).trim()==='ECOUNT實際銷貨單號')&&r.some(c=>String(c).trim()==='來源明細號'));
-   if(header<0)throw Error('缺少 ECOUNT 實際銷貨單號或來源明細號。請選擇 ECOUNT 匯出的銷貨明細；WMS 下載的銷貨檔不能匯回核對。');
+   if(header<0)throw Error('此報表缺少可核對的銷貨單號或來源明細號欄位。請在 ECOUNT 匯出格式加入這些欄位後重新匯出。');
    if(!parsed.slice(header+1).some(r=>r.some(c=>String(c).trim())))throw Error('檔案沒有銷貨明細，請勿上傳空白欄位範本。');
    if(valid())setRows(parsed);
   }catch(e){if(valid())setFileError(e.message||'檔案讀取失敗');}

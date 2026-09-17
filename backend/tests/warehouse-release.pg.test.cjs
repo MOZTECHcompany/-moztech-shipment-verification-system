@@ -93,4 +93,29 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
    const end=(await pool.query('SELECT status,picker_id,packer_id FROM orders WHERE id=$1',[o.order_id])).rows[0];assert.deepEqual(end,{status:'completed',picker_id:users.picker,packer_id:users.packer});
   }
  });
+ await t.test('grouped 450-unit sale persists source orders, downloads three segments, and restores SN work orders once',async()=>{
+  const groupSettings={...settings,salesExportMode:'product-200-v1',batchNumber:'TEST-GROUP-0917'};
+  const groupRows=[headers,...Array.from({length:10},(_,n)=>[`GROUP-${n}`,'paid','unfulfilled','TWD','4725','0','0','4725','0','0','45','品項 A','105','0001','0','card'])];
+  const batch=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows:groupRows,settings:groupSettings}),201);
+  assert.equal(batch.orders.length,10);assert.equal(batch.rows.length,10);assert.equal(batch.salesLayout.lines.length,3);
+  assert.deepEqual(batch.salesLayout.lines.map(l=>l.quantity),[200,200,50]);
+  if(process.env.WMS_RELEASE_BROWSER==='1')await require('./grouped-sales-browser.cjs')({base:'http://127.0.0.1:'+server.address().port,id:batch.id,user:{id:users.admin,username:'admin',name:'admin',role:'admin'},token:tokens.admin,output:require('node:path').resolve(__dirname,'../../../artifacts/warehouse-grouped-20260917')});
+  const duplicate=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows:groupRows,settings:groupSettings}));assert.equal(duplicate.id,batch.id);assert.equal(duplicate.reused,true);
+  const dl=await fetch(`http://127.0.0.1:${server.address().port}/api/marketplace-intakes/${batch.id}/download-link`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens.dispatcher},body:JSON.stringify({kind:'ecount'})});
+  assert.equal(dl.status,200);const link=await dl.json();const cookie=dl.headers.getSetCookie().map(c=>c.split(';')[0]).join(';');
+  const file=await fetch(`http://127.0.0.1:${server.address().port}`+link.url,{headers:{Cookie:cookie}});assert.equal(file.status,200);
+  const XLSX=require('xlsx'),book=XLSX.read(Buffer.from(await file.arrayBuffer())),table=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1});
+  assert.equal(book.SheetNames.length,1);assert.equal(table[0].length,27);assert.deepEqual(table.slice(1).map(r=>r[table[0].indexOf('數量')]),[200,200,50]);
+  const {prepareEcountFinancials}=await import('../src/services/marketplaceIntake.mjs');let serial=0;
+  const groupedReceipt=[H,...prepareEcountFinancials(batch).rows.map(r=>['20260917-101',batch.batchNumber,r[2],r[6],r[7],r[13],r[14],r[12],r[15],r[11],r[19],r[23],r[24],Math.round((r[23]+r[24])*100)/100,'4711299273087',Array.from({length:r[19]},()=>`GP${String(++serial).padStart(10,'0')}`).join(' '),''])];
+  const groupPath='/api/warehouse-intakes/'+batch.id;
+  const extra={rows:groupedReceipt,savedSalesConfirmed:true};
+  const results=await Promise.all([api('dispatcher','POST',groupPath+'/confirm-sales',command('dispatcher',extra)),api('dispatcher','POST',groupPath+'/confirm-sales',command('dispatcher',extra))]);results.forEach(r=>ok(r));
+  const flow=ok(await api('admin','GET',groupPath));assert.equal(flow.orders.length,10);assert.equal(flow.flow.erp_receipt.salesLayout.lines.length,3);
+  for(const o of flow.orders){assert.ok(o.order_id);assert.equal(o.expected_items[0].quantity,45);assert.equal(o.expected_items[0].snCount,45);}
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM order_item_instances s JOIN order_items i ON i.id=s.order_item_id WHERE i.order_id=ANY($1::int[])',[flow.orders.map(o=>o.order_id)])).rows[0].n,450);
+  ok(await api('admin','POST',groupPath+'/print',command('admin',{kind:'orders'})));
+  const changed=structuredClone(groupedReceipt);changed[1][10]++;
+  assert.equal((await api('admin','POST',groupPath+'/confirm-sales',command('admin',{rows:changed,savedSalesConfirmed:true}))).status,400);
+ });
 });

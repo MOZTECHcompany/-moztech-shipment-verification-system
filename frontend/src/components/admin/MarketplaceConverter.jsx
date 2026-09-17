@@ -6,7 +6,7 @@ import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
 import { batchSessionMatches } from '../../utils/importBatches';
-import { formatMinor, buildEcountUploadTable } from '../../utils/marketplaceIntake.mjs';
+import { formatMinor, buildEcountUploadTable, ECOUNT_GROUPED_MODE } from '../../utils/marketplaceIntake.mjs';
 import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, parseUnifiedMarketplace, prepareUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
 
 const knownMappings = {
@@ -20,7 +20,7 @@ const cell='px-3 py-3 text-left align-top';
 const money=n=>n==null?'未提供':formatMinor(n);
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const batchNumber=()=>`WMS-${today().replaceAll('-','')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)),v=>v.toString(16).padStart(2,'0')).join('').toUpperCase()}`;
-const initialSettings=()=>({store:'',customerCode:'',customerName:'',warehouseCode:'003',date:today(),batchSequence:'1',batchNumber:batchNumber(),projectOwner:'',salesOwner:'',erpStaffCode:'',erpProjectCode:'',erpResponsibilityConfirmed:false,summaryNote:'',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:false,includeTestOrders:false,bundleZeroConfirmed:false,discountAllocationConfirmed:false,skuMappings:{},shippingSku:{erpSku:'00001',name:'運費',confirmed:false,nonStock:false}});
+const initialSettings=()=>({salesExportMode:ECOUNT_GROUPED_MODE,store:'',customerCode:'',customerName:'',warehouseCode:'003',date:today(),batchSequence:'1',batchNumber:batchNumber(),projectOwner:'',salesOwner:'',erpStaffCode:'',erpProjectCode:'',erpResponsibilityConfirmed:false,summaryNote:'',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:false,includeTestOrders:false,bundleZeroConfirmed:false,discountAllocationConfirmed:false,skuMappings:{},shippingSku:{erpSku:'00001',name:'運費',confirmed:false,nonStock:false}});
 function Field({label,help,children,...props}){return <label className="block min-w-0 text-sm font-medium text-slate-800">{label}{children||<input className={inputClass} {...props}/>} {help&&<span className="mt-1 block text-xs font-normal leading-5 text-slate-500">{help}</span>}</label>;}
 function Check({children,checked,onChange}){return <label className="flex min-h-11 cursor-pointer items-start gap-3 py-2 text-sm leading-6 text-slate-800"><input type="checkbox" checked={!!checked} onChange={e=>onChange(e.target.checked)} className="mt-1 h-4 w-4 shrink-0"/><span>{children}</span></label>;}
 export function MarketplaceConverter({user}){
@@ -166,7 +166,7 @@ function ConverterPage({user}){
    <section className={`${sectionClass} border-blue-200`} aria-label="轉檔與下載">
     <div className="mb-5 rounded-xl bg-blue-50 p-4"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={e=>useProfile(e.target.value)}><option value="">選擇店鋪</option>{profiles.filter(p=>p.platform===input.parsed.platform).map(p=><option key={p.id} value={p.id}>{p.store} · {p.settings.customerCode}</option>)}</select></Field>{profileId&&<p className="mt-2 text-sm">銷貨客戶：{settings.customerCode} · {settings.customerName}</p>}</div>
     <div className="flex flex-wrap items-start justify-between gap-4">
-     <div><h2 className="font-semibold">2. 下載銷貨檔 → 上傳 ECOUNT</h2><p className="mt-2 text-sm text-slate-600">{prepared.parsed.summary.orderCount} 筆訂單 · {prepared.parsed.summary.totalQuantity} 件商品 · 訂單總額 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>{input.parsed.orders.length>prepared.parsed.summary.orderCount&&<p className="mt-1 text-sm text-amber-800">已排除 {input.parsed.orders.length-prepared.parsed.summary.orderCount} 筆訂單</p>}</div>
+     <div><h2 className="font-semibold">2. 下載銷貨檔 → 上傳 ECOUNT</h2><p className="mt-2 text-sm text-slate-600">{prepared.parsed.summary.orderCount} 筆訂單 · {prepared.parsed.summary.totalQuantity} 件商品 · 訂單總額 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>{prepared.output.ok&&<p className="mt-1 text-sm text-slate-600">彙總銷貨 {prepared.output.summary.ecountRowCount} 列 · 每列最多 200 件</p>}{input.parsed.orders.length>prepared.parsed.summary.orderCount&&<p className="mt-1 text-sm text-amber-800">已排除 {input.parsed.orders.length-prepared.parsed.summary.orderCount} 筆訂單</p>}</div>
      <Button disabled={locked||!prepared.output.ok||catalogBlocked} onClick={()=>download('ecount')}><Download size={16} className="mr-2"/>下載銷貨檔 → 上傳 ECOUNT</Button>
     </div>
     {prepared.output.ok&&<div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm"><p>稅前 {money(prepared.output.summary.ecountNetMinor)} ＋ 營業稅 {money(prepared.output.summary.ecountTaxMinor)} ＝ 含稅 {money(prepared.output.summary.ecountTotalMinor)}</p></div>}

@@ -13,8 +13,16 @@ export function savedBatchTables(record,kind){
    return [i.sourceOrderNumber,i.sourceLineId,i.sku,m.erpSku,m.erpName||i.productName,m.barcodeConfirmed===true?m.barcode:'',i.quantity,i.lineSubtotalMinor==null?'':i.lineSubtotalMinor/100,links.get(i.sourceOrderNumber)?.work_barcode||'',handler];
   })]},
   {name:'訂單金額核對',rows:[record.reportHeaders||[],...(record.reportRows||[])]},
-  {name:'金額與追溯',rows:traceRows(record,financials)}
+  {name:'金額與追溯',rows:traceRows(record,financials)},
+  ...groupedTrace(record)
  ];
+}
+
+function groupedTrace(record){
+ if(!record.salesLayout)return [];
+ const view=prepareEcountFinancials(record);
+ if(!view.salesLayout)return [];
+ return [{name:'彙總銷貨對照',rows:[['彙總明細號','ERP 品項編碼','彙總列數量','彙總列含稅金額','平台','店鋪','商城訂單','來源明細號','分配數量','原訂單成交金額'],...view.salesLayout.lines.flatMap(l=>l.allocations.map(a=>[l.lineId,l.productCode,l.quantity,l.grossMinor/100,...a.identity,a.quantity,a.sourceGrossMinor/100]))]}];
 }
 
 function traceRows(record,financials){

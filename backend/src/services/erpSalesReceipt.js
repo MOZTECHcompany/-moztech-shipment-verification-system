@@ -11,12 +11,13 @@ async function reconcileSales(rows,record){
  const names=rows[h].map(clean),required=HEADERS.slice(0,14);
  for(const label of required)if(names.filter(n=>n===label).length!==1)throw fail(`回傳欄位缺漏或重複：${label}`);
  for(const label of HEADERS.slice(14))if(names.filter(n=>n===label).length>1)throw fail(`回傳欄位重複：${label}`);
- const {rows:expected,financials}=prepareEcountFinancials(record.snapshot);
+ const {rows:expected,financials,salesLayout}=prepareEcountFinancials(record.snapshot);
  const identity=r=>JSON.stringify([r[13],r[14],r[12],r[15]].map(clean));
  const byKey=new Map(expected.map(r=>[identity(r),r]));
  const seen=new Set(),vouchers=new Set(),actual=[];
  const physical=new Map(record.orders.flatMap(o=>o.expected_items.map(i=>[JSON.stringify([o.source_platform,o.source_store,o.source_order_number,i.sourceLineId]),i])));
  const picking=[['理貨單號','品項編碼','品項名稱','商城訂單編號','平台','店鋪','來源明細號','國際條碼','數量','序號/批號','摘要']];
+ const grouped=new Map((salesLayout?.lines||[]).map(l=>[l.lineId,l]));
  for(let n=h+1;n<rows.length;n++){
   const row=rows[n];if(!Array.isArray(row))throw fail('回傳列格式無效');
   if(row.every(v=>!clean(v)))continue;
@@ -34,7 +35,10 @@ async function reconcileSales(rows,record){
   if(!/^\d+(?:\.0+)?$/.test(get('數量'))||Number(get('數量'))!==Number(e[19]))throw fail(`第 ${n+1} 列：商品數量不符`);
   const net=parseMoneyMinor(get('稅前價格')),tax=parseMoneyMinor(get('營業稅')),gross=parseMoneyMinor(get('含稅金額'));
   if(net===null||tax===null||gross===null||net!==parseMoneyMinor(e[23])||tax!==parseMoneyMinor(e[24])||net+tax!==gross)throw fail(`第 ${n+1} 列：稅前／營業稅／含稅金額不符，請核對 ECOUNT 原銷貨單，勿重複匯入`);
-  const item=physical.get(key);
+  const segment=grouped.get(get('來源明細號'));
+  const sourceItems=segment?.physical?segment.allocations.map(a=>physical.get(JSON.stringify(a.identity))):[];
+  if(segment?.physical&&sourceItems.some(i=>!i||i.productCode!==segment.productCode||!i.barcode||i.barcode!==sourceItems[0].barcode))throw fail(`第 ${n+1} 列：彙總來源商品或已確認條碼不一致`);
+  const item=segment?(segment.physical?{...sourceItems[0],quantity:segment.quantity}:null):physical.get(key);
   if(item){
    if(!item.barcode)throw fail(`商品 ${item.productCode} 缺少已確認商品條碼，請先核對原商品對照`);
    if(get('國際條碼')&&get('國際條碼')!==item.barcode)throw fail(`第 ${n+1} 列：國際條碼不符`);
@@ -43,9 +47,38 @@ async function reconcileSales(rows,record){
   vouchers.add(voucher);actual.push({identity:JSON.parse(key),voucher,productCode:get('品項編碼'),quantity:Number(get('數量')),netMinor:net,taxMinor:tax,grossMinor:gross,serials:get('序號/批號'),summary:get('摘要')});
  }
  if(seen.size!==byKey.size)throw fail('回傳未包含整批全部商品與運費明細，未建立／放行任務');
- const parsed=parseOrderRows(picking);
+ let parsed=parseOrderRows(picking);
+ if(salesLayout){
+  // Parse SN with the same strict legacy/native grammar first, including global
+  // duplicate checks. Then allocate the selected units back to original orders.
+  const selected=new Map(parsed.workOrders.flatMap(o=>o.items.map(i=>[i.sourceLineId,i])));
+  const assigned=new Map();
+  for(const segment of salesLayout.lines.filter(l=>l.physical)){
+   const item=selected.get(segment.lineId);let offset=0;
+   if(!item)throw fail('回傳缺少彙總商品');
+   for(const a of segment.allocations){
+    const key=JSON.stringify(a.identity),source=physical.get(key);
+    if(!assigned.has(key))assigned.set(key,{identity:a.identity,item:source,quantity:0,serials:[],segments:[],summaries:[]});
+    const target=assigned.get(key);
+    target.quantity+=a.quantity;target.serials.push(...item.serials.slice(offset,offset+a.quantity));
+    target.segments.push(segment.lineId);target.summaries.push(item.sourceSummary);offset+=a.quantity;
+   }
+  }
+  const expanded=[picking[0]];
+  for(const a of assigned.values()){
+   if(a.quantity!==a.item.quantity||a.serials.length&&a.serials.length!==a.quantity)throw fail('原訂單商品的數量或 SN 未完整分配，請核對全部彙總列');
+   expanded.push([record.batch_number,a.item.productCode,a.item.productName,a.identity[2],a.identity[0],a.identity[1],a.identity[3],a.item.barcode,a.quantity,a.serials.join(' '),'']);
+  }
+  if(assigned.size!==physical.size)throw fail('彙總回傳未涵蓋全部原訂單商品');
+  parsed=parseOrderRows(expanded);
+  for(const o of parsed.workOrders)for(const i of o.items){
+   const a=assigned.get(JSON.stringify([o.sourcePlatform,o.sourceStore,o.sourceOrderNumber,i.sourceLineId]));
+   i.sourceSummary=[...new Set(a.summaries.filter(Boolean))].join(' / ');
+   i.serialSource=i.serials.length?'彙總銷貨 SN 分配':'無 SN';
+  }
+ }
  actual.sort((a,b)=>JSON.stringify(a.identity).localeCompare(JSON.stringify(b.identity)));
  const fingerprint=createHash('sha256').update(JSON.stringify(actual)).digest('hex');
- return {receipt:{fingerprint,vouchers:[...vouchers].sort(),financials,lines:actual},parsed};
+ return {receipt:{fingerprint,vouchers:[...vouchers].sort(),financials,lines:actual,...(salesLayout?{salesLayout}: {})},parsed};
 }
 module.exports={HEADERS,reconcileSales};
