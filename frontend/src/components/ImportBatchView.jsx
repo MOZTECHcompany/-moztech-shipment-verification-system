@@ -7,7 +7,7 @@ import { BatchPrintLabels } from './LabelPrinter';
 import { sourceOrderLabel } from '../utils/sourceOrders';
 import { batchSessionMatches, createBatchReader, importBatchId } from '../utils/importBatches';
 
-const statuses = { pending: '待揀貨', picking: '揀貨中', picked: '待裝箱', packing: '裝箱中', completed: '核對完成', voided: '已作廢' };
+const statuses = { pending: '待揀貨', picking: '揀貨中', picked: '二次查核要裝箱', packing: '裝箱中', completed: '核對完成', voided: '已作廢' };
 const number = value => Number(value ?? 0).toLocaleString('zh-TW');
 const timestamp = value => {
     const date = new Date(value);
@@ -65,7 +65,7 @@ function BatchDetail({ user, batchId }) {
             </div>
             <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" data-testid="batch-refresh" disabled={!batchId || busy || state.phase === 'sessionChanged'} onClick={() => reader.current?.load(state.cursor)}><RefreshCw size={16} className={`mr-2 ${busy ? 'animate-spin' : ''}`} />更新批次進度</Button>
-                {state.phase === 'ready' && <BatchPrintLabels orders={printable} isCurrentSession={session.current} expectedBatchId={batchId} />}
+                {state.phase === 'ready' && (data.batch.marketplace_intake_id ? <Link className="inline-flex min-h-11 items-center rounded-lg bg-blue-600 px-4 text-white" to={`/warehouse-intakes/${data.batch.marketplace_intake_id}`}>領單列印與預揀查核</Link> : <BatchPrintLabels orders={printable} isCurrentSession={session.current} expectedBatchId={batchId} />)}
             </div>
         </div>
         {!batchId && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">請從匯入結果或商城工作單開啟有效的理貨批次。</p>}

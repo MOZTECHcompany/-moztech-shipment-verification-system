@@ -40,7 +40,7 @@ const statusConfig = {
         dot: 'bg-apple-blue animate-pulse'
     },
     picked: { 
-        text: '待裝箱', 
+        text: '二次查核要裝箱', 
         color: 'bg-gradient-to-r from-apple-purple/10 to-purple-50/80 text-apple-purple border border-apple-purple/30',
         icon: Box,
         dot: 'bg-apple-purple'
@@ -317,10 +317,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 size="lg"
                                 className="flex-1 justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                                 onClick={() => onClaim(task.id, isMyTask)}
-                                disabled={claimDisabled}
+                                disabled={claimDisabled || task.warehouse_hold}
                             >
                                 <span className="flex items-center gap-2">
-                                    {isClaiming ? '認領中…' : isMyTask ? '開啟作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
+                                    {task.warehouse_hold ? '待整批預揀完成' : isClaiming ? '認領中…' : isMyTask ? '開啟作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                                 </span>
                             </Button>
                         </div>
@@ -330,7 +330,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             size="lg"
                             className="w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                             onClick={() => onClaim(task.id, true)}
-                            disabled={claimDisabled}
+                            disabled={claimDisabled || task.warehouse_hold}
                         >
                             <span className="flex items-center gap-2">
                                 繼續作業 <ArrowRight size={20} />
@@ -346,10 +346,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                     : 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20'
                             }`}
                             onClick={() => onClaim(task.id, false)}
-                            disabled={claimDisabled}
+                            disabled={claimDisabled || task.warehouse_hold}
                         >
                             <span className="flex items-center gap-2">
-                                {isClaiming ? '認領中…' : task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
+                                {task.warehouse_hold ? '待整批預揀完成' : isClaiming ? '認領中…' : task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                             </span>
                         </Button>
                     )}
@@ -877,6 +877,7 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
+                <Link to="/warehouse-intakes" className="mb-4 flex min-h-14 items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-5 font-semibold text-blue-800">整批預揀作業 · 領單列印與條碼查核 <ArrowRight size={20}/></Link>
                 {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
                     key={user.id} user={user} active={currentView === 'active'}
                     disabled={claimingId !== null || isBatchClaiming}

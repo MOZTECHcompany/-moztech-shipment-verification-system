@@ -93,7 +93,7 @@ async function getTaskPage(pool, user, query, view) {
     const limit = param(page.limit + 1);
     const result = await pool.query(`
         WITH eligible AS (
-            SELECT o.id, o.voucher_number, o.customer_name, o.status, o.picker_id, o.packer_id,
+            SELECT o.id, o.warehouse_hold, o.voucher_number, o.customer_name, o.status, o.picker_id, o.packer_id,
                 o.import_batch_id, o.source_order_number, o.source_platform, o.source_store, o.work_barcode, b.voucher_number AS batch_number,
                 COALESCE(o.is_urgent, FALSE) AS is_urgent, o.updated_at AS completed_at,
                 import_log.user_id AS imported_by_user_id,

@@ -145,7 +145,7 @@ function ConverterPage({user}){
     if(!mounted.current||!currentSession())return;
     const url=`${API_ORIGIN}${link.data.url}`;setFileLink(url);
     const anchor=document.createElement('a');anchor.href=url;anchor.download='';document.body.appendChild(anchor);anchor.click();anchor.remove();
-    await loadRecords();setMessage(`轉檔批次 #${response.data.id} 已保存，檔案已準備好。若未開始下載，請點下方下載連結。`);
+    await loadRecords();setMessage(`轉檔批次 #${response.data.id} 已保存，請下載後上傳 ECOUNT 並儲存，再從批次卡片開啟銷貨回傳核對。`);
    }else{if(!await loadRecords())throw Error('登入已失效');await writeBook(null,'audit');setMessage('預揀與金額核對表已下載；商品彙總只計本批納入的訂單。');}
   }catch(e){if(mounted.current)setMessage(e.response?.data?.message||'保存或下載未完成，請先查看已保存批次；結果不明時不要改單號重送。');}
   finally{inFlight.current=false;if(mounted.current)setBusy(false);}
@@ -167,14 +167,14 @@ function ConverterPage({user}){
    <section className={`${sectionClass} border-blue-200`} aria-label="轉檔與下載">
     <div className="mb-5 rounded-xl bg-blue-50 p-4"><Field label="選擇本批店鋪" help="店鋪設定只需保存一次；系統會帶入銷貨客戶、倉庫與已確認的計價設定。"><select className={inputClass} disabled={locked} value={profileId} onChange={e=>useProfile(e.target.value)}><option value="">請選擇店鋪，或展開下方設定新增</option>{profiles.filter(p=>p.platform===input.parsed.platform).map(p=><option key={p.id} value={p.id}>{p.store} · {p.settings.customerCode}</option>)}</select></Field>{profileId&&<p className="mt-2 text-sm">銷貨客戶：{settings.customerCode} · {settings.customerName}</p>}<p className="mt-2 text-sm text-slate-600">轉檔建立者：{user.name||user.username||'目前登入人員'}（保存批次時自動綁定）</p></div>
     <div className="flex flex-wrap items-start justify-between gap-4">
-     <div><h2 className="font-semibold">2. 下載 ECOUNT 銷貨檔</h2><p className="mt-2 text-sm text-slate-600">{prepared.parsed.summary.orderCount} 筆訂單 · {prepared.parsed.summary.totalQuantity} 件商品 · 訂單總額 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p><p className="mt-1 text-xs text-slate-500">已排除 {input.parsed.orders.length-prepared.parsed.summary.orderCount} 筆不符合出貨條件的訂單</p></div>
-     <Button disabled={locked||!prepared.output.ok||catalogBlocked} onClick={()=>download('ecount')}><Download size={16} className="mr-2"/>下載 ECOUNT 銷貨檔</Button>
+     <div><h2 className="font-semibold">2. 下載銷貨檔 → 上傳 ECOUNT</h2><p className="mt-2 text-sm text-slate-600">{prepared.parsed.summary.orderCount} 筆訂單 · {prepared.parsed.summary.totalQuantity} 件商品 · 訂單總額 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p><p className="mt-1 text-xs text-slate-500">已排除 {input.parsed.orders.length-prepared.parsed.summary.orderCount} 筆不符合出貨條件的訂單</p></div>
+     <Button disabled={locked||!prepared.output.ok||catalogBlocked} onClick={()=>download('ecount')}><Download size={16} className="mr-2"/>下載銷貨檔 → 上傳 ECOUNT</Button>
     </div>
     {prepared.output.ok&&<div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm"><p>稅前 {money(prepared.output.summary.ecountNetMinor)} ＋ 營業稅 {money(prepared.output.summary.ecountTaxMinor)} ＝ 含稅 {money(prepared.output.summary.ecountTotalMinor)}</p><p className="mt-1 text-xs text-slate-500">{ECOUNT_TAX_DESCRIPTION}</p></div>}
     {catalog?.sync&&<p className="mt-3 text-xs text-slate-500">ECOUNT 唯讀對照來源 · 資料日期 {new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
     {catalogBlocked&&<ul role="alert" className="mt-3 rounded-lg bg-amber-50 p-4 text-sm text-amber-950">{[catalogError,...catalogIssues].filter(Boolean).map(x=><li key={x}>{x}</li>)}</ul>}
     {issueGroups.length>0?<div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">請先處理以下問題，即可下載</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">{issueGroups.map(g=><li key={g.key}>{g.items.length>1?<details><summary className="cursor-pointer">{g.title}{g.items[0].code!=='PRODUCT_MAPPING_REQUIRED'?`（${g.items.length} 筆）`:''}</summary><ul className="mt-2 space-y-1 pl-4">{g.items.map((v,i)=><li key={i}>{v.orderNumber?`${v.orderNumber}：`:''}{v.sourceRow?`第 ${v.sourceRow} 列：`:''}{v.message}</li>)}</ul></details>:<>{g.items[0].orderNumber?`${g.items[0].orderNumber}：`:''}{g.items[0].sourceRow?`第 ${g.items[0].sourceRow} 列：`:''}{g.title}</>}</li>)}</ul><p className="mt-3 text-xs text-amber-900">商品與設定問題可在下方展開核對；訂單資料有誤時，請修正來源檔再上傳。</p></div>:!catalogBlocked&&<p className="mt-4 text-sm text-emerald-700">檢查通過，可以下載。</p>}
-    <p className="mt-3 text-xs text-slate-500">下載時會自動保存本批訂單，供理貨單回匯對應。請將下載的檔案上傳到 ECOUNT 完成銷貨。</p>
+    <p className="mt-3 text-xs text-slate-500">下載時會自動保存本批訂單，供銷貨回傳核對及倉庫作業。請將下載檔上傳 ECOUNT 並儲存，再回此批核對銷貨結果。</p>
     {saved&&<Link className="mt-3 inline-block text-sm font-medium text-blue-700 underline" to={`/admin?intakeId=${saved.id}`}>ERP 銷貨完成後，匯入此批理貨單</Link>}
    </section>
    <details className={sectionClass}><summary className="cursor-pointer font-semibold">商品對照（{products.length} 項）</summary><fieldset disabled={locked}><legend className="sr-only">商品對照</legend><p className="mt-2 text-sm text-slate-600">商城原始貨號完整比對 ECOUNT 品項編碼與條碼；唯一匹配會自動帶入。NEW 前綴及尾碼保持不變，主檔條碼空白時再核對實物。</p>

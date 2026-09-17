@@ -18,7 +18,7 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
  const {loadMigrationManifest}=require('../src/config/migrationManifest');
  await runMigrations({pool,targetDatabase:database,manifest:loadMigrationManifest().filter(m=>m.name<'030')});
  const legacy=(await pool.query("INSERT INTO orders(voucher_number) VALUES('MKT-LEGACY') RETURNING id")).rows[0].id;
- assert.deepEqual((await runMigrations({pool,targetDatabase:database})).applied,['030_marketplace_intakes.sql','031_marketplace_batch_management.sql','032_marketplace_store_profiles.sql']);
+ assert.deepEqual((await runMigrations({pool,targetDatabase:database})).applied,['030_marketplace_intakes.sql','031_marketplace_batch_management.sql','032_marketplace_store_profiles.sql','033_warehouse_release.sql']);
  assert.equal((await pool.query('SELECT id FROM orders WHERE id=$1',[legacy])).rows.length,1);
  await require('../src/config/schemaReadiness').assertSchemaReady(pool);
  const {server,io:socket}=require('../src/app');io=socket;
@@ -39,7 +39,9 @@ test('saved conversion links exact ERP details to barcode work orders', {skip:pr
  const source=table([item('SYN-MKT-A',{Email:'PRIVATE-NOT-PERSISTED'}),item('SYN-MKT-B',{'Financial Status':'pending','Payment Method':'custom'})]);
  const settings={projectOwner:'Project staff',salesOwner:'Sales staff',erpStaffCode:'007',erpResponsibilityConfirmed:true,store:'合成商店',customerCode:'CUST',customerName:'合成客戶',warehouseCode:'003',date:'2026-09-15',batchSequence:'1',batchNumber:'TEST-SYN-MKT',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'合成商品',barcode:'SYN-BAR-001',confirmed:true,barcodeConfirmed:true}},shippingSku:{erpSku:'FREIGHT',name:'運費',confirmed:true,nonStock:true}};
  const body=()=>({rows:structuredClone(source),settings:structuredClone(settings),rowsPreview:[['IGNORED']]});
- const post=(b=body(),role='dispatcher')=>api(role,'POST','/api/marketplace-intakes',b);
+ // This suite preserves the pre-033 intake / legacy picking-return contract.
+ // New-flow behavior is exercised by warehouse-release.pg.test.cjs.
+ const post=async(b=body(),role='dispatcher')=>{const r=await api(role,'POST','/api/marketplace-intakes',b);if(r.status===201)await pool.query('DELETE FROM marketplace_warehouse_flows WHERE intake_id=$1',[r.data.id]);return r;};
  let saved,imported;
  const erpHeader=['理貨單號','品項編碼','品項名稱','序號/批號','商城訂單編號','平台','店鋪','來源明細號','國際條碼','品項名稱(規格)','數量','倉庫/工廠名稱','客戶/供應商名稱','聯繫方式','摘要'];
  function erpRows(voucher='MKT-PICK-1'){

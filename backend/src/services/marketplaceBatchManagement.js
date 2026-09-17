@@ -26,6 +26,7 @@ async function listBatches(pool,query){
  const totals=(await pool.query(`SELECT COUNT(*)::int AS total,COALESCE(SUM((i.snapshot->'summary'->>'orderCount')::int),0)::int AS orders FROM marketplace_intakes i${f.where}`,f.values)).rows[0];
  const rows=await pool.query(`SELECT i.id,i.batch_number,i.source_platform,i.source_store,i.created_at,i.archived_at,${dateExpr} AS sales_date,
  i.snapshot->'summary' AS summary,
+ (SELECT json_build_object('erpConfirmedAt',f.erp_confirmed_at,'prepickCompletedAt',f.prepick_completed_at) FROM marketplace_warehouse_flows f WHERE f.intake_id=i.id) AS warehouse_flow,
  (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE o.intake_id=i.id) AS order_count,
  (SELECT COUNT(*)::int FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE o.intake_id=i.id) AS linked_count
  FROM marketplace_intakes i${f.where} ORDER BY ${dateExpr} DESC,i.id DESC LIMIT $${f.values.length+1} OFFSET $${f.values.length+2}`,[...f.values,f.pageSize,(f.page-1)*f.pageSize]);
@@ -55,10 +56,13 @@ async function changeBatch(pool,id,action,actor,body){
   if(!record)throw error('找不到轉檔批次',404);
   if(action==='delete'){
    if(body?.confirmed!==true||body?.batchNumber!==record.batch_number)throw error('請確認要永久刪除的批次');
+   if((await db.query('SELECT 1 FROM marketplace_warehouse_flows WHERE intake_id=$1 AND erp_confirmed_at IS NOT NULL',[id])).rowCount)throw error('此批已核對 ERP 並建立倉庫任務，請使用封存保留紀錄。',409);
    const linked=(await db.query(`SELECT 1 FROM marketplace_intake_orders o WHERE o.intake_id=$1 AND
     (EXISTS(SELECT 1 FROM marketplace_work_order_links l WHERE l.intake_order_id=o.id)
     OR EXISTS(SELECT 1 FROM orders w WHERE w.source_platform=o.source_platform AND w.source_store=o.source_store AND w.source_order_number=o.source_order_number)) LIMIT 1`,[id])).rowCount;
    if(linked)throw error('此批次已連結理貨工作單，無法刪除；請使用封存保留訂單對應。',409);
+   await db.query('DELETE FROM marketplace_warehouse_events WHERE intake_id=$1',[id]);
+   await db.query('DELETE FROM marketplace_warehouse_flows WHERE intake_id=$1',[id]);
    await db.query('DELETE FROM marketplace_intake_orders WHERE intake_id=$1',[id]);
    await db.query('DELETE FROM marketplace_intakes WHERE id=$1',[id]);
   }else{

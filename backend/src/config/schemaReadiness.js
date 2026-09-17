@@ -1,6 +1,9 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    marketplace_warehouse_flows: ['intake_id','erp_receipt','prepick_counts','prepick_completed_at'],
+    marketplace_warehouse_events: ['intake_id','action','actor_id'],
+    marketplace_warehouse_commands: ['actor_id','command_id','request_hash','response'],
     marketplace_store_profiles: ['id','platform','store','settings','updated_by','updated_at'],
     marketplace_intakes: ['id', 'batch_number', 'source_platform', 'source_store', 'fingerprint', 'created_by', 'created_at', 'snapshot', 'archived_at', 'archived_by'],
     marketplace_intake_events: ['id', 'intake_id', 'batch_number', 'action', 'actor_id', 'created_at'],
@@ -13,7 +16,7 @@ const requiredColumns = {
     wms_logistics_events: ['id', 'dedupe_key', 'shipment_id', 'evidence'],
     wms_logistics_expected_returns: ['id', 'shipment_id', 'status'],
     users: ['id', 'username', 'password', 'name', 'role', 'created_at'],
-    orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'import_batch_id', 'source_order_number', 'source_platform', 'source_store', 'work_barcode'],
+    orders: ['warehouse_hold', 'id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'import_batch_id', 'source_order_number', 'source_platform', 'source_store', 'work_barcode'],
     order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'source_order_number', 'source_platform', 'source_store', 'source_line_id'],
     order_item_instances: ['id', 'order_item_id', 'serial_number', 'status', 'created_at', 'updated_at'],
     operation_logs: ['id', 'user_id', 'order_id', 'item_id', 'action_type', 'operation_type', 'details', 'created_at'],

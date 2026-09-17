@@ -84,7 +84,7 @@ function createImportBatchSnapshot(pool) {
             db=await pool.connect();
             await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');open=true;
             await db.query("SET LOCAL statement_timeout='5000ms'");
-            const batch=(await db.query(`SELECT b.id,b.voucher_number AS batch_number,b.created_at,b.created_by,u.name AS created_by_name
+            const batch=(await db.query(`SELECT b.id,b.voucher_number AS batch_number,b.created_at,b.created_by,(SELECT intake_id FROM marketplace_warehouse_flows f WHERE f.import_batch_id=b.id) AS marketplace_intake_id,u.name AS created_by_name
                 FROM warehouse_import_batches b LEFT JOIN users u ON u.id=b.created_by WHERE b.id=$1`,[page.batchId])).rows[0];
             if (!batch) { await db.query('ROLLBACK');open=false;return res.status(404).json({code:'BATCH_NOT_FOUND',message:'找不到匯入批次'}); }
             const allChildren=(await db.query(childSQL,[page.batchId,IMPORT_LIMITS.items+1])).rows;

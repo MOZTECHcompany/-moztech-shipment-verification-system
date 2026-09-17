@@ -54,6 +54,7 @@ async function matchMarketplaceWorkOrders(db,groups,requiredIntakeId){
   const record=await getRecord(db,group);
   if(!record){if(requiredIntakeId)throw fail(`商城訂單 ${group.sourceOrderNumber} 找不到對應轉檔資料，請核對平台、店鋪與訂單號`);continue;}
   if(requiredIntakeId&&Number(record.intake_id)!==Number(requiredIntakeId))throw fail(`商城訂單 ${group.sourceOrderNumber} 不屬於指定轉檔批次`);
+  if ((await db.query('SELECT 1 FROM marketplace_warehouse_flows WHERE intake_id=$1',[record.intake_id])).rowCount)throw fail('本批使用銷貨核對流程，請由批次頁回傳 ECOUNT 銷貨結果；不可用舊理貨入口繞過核對');
   await db.query('SELECT id FROM marketplace_intake_orders WHERE id=$1 FOR UPDATE',[record.id]);
   const linked=(await db.query('SELECT order_id FROM marketplace_work_order_links WHERE intake_order_id=$1',[record.id])).rows[0];
   if(linked)throw fail(`商城訂單 ${group.sourceOrderNumber} 已建立過 WMS 工作單，未重複匯入`);

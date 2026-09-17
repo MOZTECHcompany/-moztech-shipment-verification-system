@@ -20,6 +20,7 @@ const DefectStats = lazy(() => import('./components/admin/DefectStats').then(mod
 const Exceptions = lazy(() => import('./components/admin/Exceptions').then(module => ({ default: module.Exceptions })));
 const TaskDashboard = lazy(() => import('./components/TaskDashboard').then(module => ({ default: module.TaskDashboard })));
 const OrderWorkView = lazy(() => import('./components/OrderWorkView').then(module => ({ default: module.OrderWorkView })));
+const WarehouseRelease = lazy(() => import('./components/WarehouseRelease'));
 const ImportBatchView = lazy(() => import('./components/ImportBatchView').then(module => ({ default: module.ImportBatchView })));
 const TeamBoard = lazy(() => import('./components/TeamBoard').then(module => ({ default: module.TeamBoard })));
 const TeamPostView = lazy(() => import('./components/TeamPostView').then(module => ({ default: module.TeamPostView })));
@@ -111,6 +112,8 @@ function App() {
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
+                            <Route path="/warehouse-intakes" element={<WarehouseRelease user={user} />} />
+                            <Route path="/warehouse-intakes/:intakeId" element={<WarehouseRelease user={user} />} />
                             <Route path="/batches/:batchId" element={<ImportBatchView key={`${user?.id}:${user?.role}:${token}`} user={user} />} />
                         </Route>
                     </Route>

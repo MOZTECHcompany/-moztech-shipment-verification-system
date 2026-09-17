@@ -19,7 +19,7 @@ router.get('/tasks', async (req, res) => {
 
         const query = `
             SELECT 
-                o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                o.id, o.warehouse_hold, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
                 o.picker_id, o.packer_id, o.import_batch_id, o.source_order_number, o.source_platform, o.source_store, o.work_barcode,
                 (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number,
                 packer_u.name AS packer_name,

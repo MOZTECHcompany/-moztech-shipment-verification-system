@@ -85,7 +85,7 @@ test('file selection automatically detects 1Shop and excludes fulfilled orders f
     assert.match(view.text(view.render()), /本批納入\s+2\s+筆、\s*2\s+商品列、\s*3\s+件/);
     assert.match(view.text(view.render()), /00123/); assert.match(view.text(view.render()), /已付款/);
     assert.doesNotMatch(view.text(view.render()), /PRIVATE-EXCLUDED|EXCLUDED ITEM/);
-    assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true);
     assert.equal(view.requests.length, 1); assert.equal(view.requests[0].url,'/api/marketplace-products/resolve'); assert.equal(view.writes.length, 0); assert.equal(view.downloads.length, 0);
 });
 
@@ -107,18 +107,18 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
         view.find(cards[index], node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } }); view.render();
     }
     view.change('商城店鋪', '合成店鋪'); view.change('ECOUNT 銷貨客戶編碼', '00027'); view.change('已確認本次金額為 TWD', true);
-    assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, false, view.text(view.find(view.render(), node => node.props?.['aria-label'] === '轉檔檢查結果')));
-    await view.button('ECOUNT 銷貨檔').props.onClick(); view.render();
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, false, view.text(view.find(view.render(), node => node.props?.['aria-label'] === '轉檔檢查結果')));
+    await view.button('銷貨檔 → 上傳 ECOUNT').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
     assert.equal(view.downloads[0].url,'/api/marketplace-files/1/ecount');
     assert.match(view.text(view.render()),/檔案已準備好/);
-    view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
+    view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true);
     assert.equal(view.requests.length, 3); assert.equal(view.requests[1].url, '/api/marketplace-intakes'); assert.equal(view.requests[2].url,'/api/marketplace-intakes/1/download-link'); assert.equal(view.writes.length, 0);
 });
 
 test('draft audit downloads without customer, tax, payment release or barcode confirmation and preserves numeric money', async () => {
     const view = await converter(); await view.select(file());
-    assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true);
     assert.equal(view.button('預揀與金額核對表').props.disabled, false);
     await view.button('預揀與金額核對表').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
@@ -135,7 +135,7 @@ test('non-UTF-8 CSV rejects undecodable text instead of silently replacing ident
     const view = await converter();
     await view.select({ name: 'invalid-encoding.csv', size: 2, arrayBuffer: async () => Uint8Array.from([0xff, 0xfe]) });
     assert.match(view.text(view.render()), /CSV 請使用 UTF-8/);
-    assert.equal(view.button('ECOUNT 銷貨檔'), undefined); assert.equal(view.downloads.length, 0);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT'), undefined); assert.equal(view.downloads.length, 0);
 });
 
 test('account changes remove the preview and cannot export the previous account draft', async () => {
@@ -159,10 +159,10 @@ test('server permission denial disables file conversion before any input', async
 test('compact converter keeps one primary download before collapsed details and groups blocking errors without warnings', async () => {
     const view = await converter(); await view.select(file());
     const nodes = view.all(() => true);
-    const download = nodes.findIndex(n => n.type === 'Button' && view.text(n).includes('ECOUNT 銷貨檔'));
+    const download = nodes.findIndex(n => n.type === 'Button' && view.text(n).includes('銷貨檔 → 上傳 ECOUNT'));
     const table = nodes.findIndex(n => n.type === 'table');
     assert.ok(download >= 0 && download < table);
-    assert.equal(view.all(n => n.type === 'Button' && view.text(n).includes('ECOUNT 銷貨檔')).length, 1);
+    assert.equal(view.all(n => n.type === 'Button' && view.text(n).includes('銷貨檔 → 上傳 ECOUNT')).length, 1);
     for (const title of ['商品對照（', 'ECOUNT 設定', '訂單明細與納入／排除', '其他下載與轉檔說明']) {
         const details = view.all(n => n.type === 'details').find(n => view.text(n.props.children[0]).includes(title));
         assert.ok(details, title); assert.ok(!details.props.open, title);
@@ -171,7 +171,7 @@ test('compact converter keeps one primary download before collapsed details and 
     assert.match(view.text(problems), /2 項商品需確認 ECOUNT 對照/);
     assert.doesNotMatch(view.text(problems), /條碼待確認/);
     assert.match(view.text(problems), /00123/); assert.match(view.text(problems), /00124/);
-    assert.equal(view.button('ECOUNT 銷貨檔').props.disabled, true);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true);
     assert.equal(view.requests.length, 1);
 });
 
@@ -181,7 +181,7 @@ test('unique ECOUNT reference automatically resolves source SKU while stopped su
  const view=await converter({resolved});await view.select(file());
  assert.match(view.text(view.render()),/00124：ECOUNT 已中止使用/);
  const codes=view.all(n=>n.type==='input').map(n=>n.props.value);assert.ok(codes.includes('NEW00123'));assert.ok(codes.includes('00124'));
- assert.equal(view.button('ECOUNT 銷貨檔').props.disabled,true);assert.equal(view.requests.length,1);
+ assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled,true);assert.equal(view.requests.length,1);
 });
 
 

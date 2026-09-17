@@ -14,6 +14,7 @@ async function transitionClaim({ client, order, user, stage, events, allowContin
     if (!['pick', 'pack'].includes(stage) || (!admin && user.role !== (stage === 'pick' ? 'picker' : 'packer'))) {
         throw fail(403, 'FORBIDDEN', '此角色不可認領該作業');
     }
+    if (order.warehouse_hold) throw fail(409, 'BLOCKED', '本批尚未完成預揀核對，請先至預揀作業完成整批查核。');
     const blocked = await client.query("SELECT EXISTS(SELECT 1 FROM order_exceptions WHERE order_id=$1 AND status='open' AND (type='order_change' OR $2='pack')) AS blocked", [order.id, stage]);
     if (blocked.rows[0]?.blocked) throw fail(409, 'BLOCKED', '此訂單存在未核可例外或異動，請先主管核可後再作業。');
     const activeStatus = stage === 'pick' ? 'picking' : 'packing';

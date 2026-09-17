@@ -91,6 +91,7 @@ function createMarketplaceRouter({pool}){
     const nonstock=output.rows.filter(r=>r[12]===order.sourceOrderNumber&&!physicalIds.has(r[15])).map(r=>({sourceLineId:r[15],productCode:r[11],quantity:r[19]}));
     await db.query('INSERT INTO marketplace_intake_orders(intake_id,source_platform,source_store,source_order_number,expected_items,nonstock_items,financial) VALUES($1,$2,$3,$4,$5,$6,$7)',[record.id,order.sourcePlatform,clean(settings.store),order.sourceOrderNumber,JSON.stringify(items),JSON.stringify(nonstock),JSON.stringify({source:raw.orders.find(r=>r.sourceOrderNumber===order.sourceOrderNumber).financial,ecount:order.financial})]);
    }
+   await require('../services/warehouseRelease').enableFlow(db,record.id,req.user.id);
    commitAttempted=true;await db.query('COMMIT');open=false;
    res.status(201).json(publicRecord(record));
   }catch(e){
