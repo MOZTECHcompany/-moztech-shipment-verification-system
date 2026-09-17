@@ -71,7 +71,7 @@ function ReleaseDetail({id,user}){
  };
  const downloadSales=async()=>{
   if(busy||!valid())return;setBusy(true);setError('');setNotice('');
-  try{const r=await api.post(`/api/marketplace-intakes/${id}/download-link`,{kind:'ecount'},{withCredentials:true});if(!valid())return;const a=document.createElement('a');a.href=API_ORIGIN+r.data.url;a.download='';document.body.appendChild(a);a.click();a.remove();setNotice('已開始下載銷貨檔，請上傳至 ECOUNT。');}
+  try{const r=await api.post(`/api/marketplace-intakes/${id}/download-link`,{kind:'ecount-grouped'},{withCredentials:true});if(!valid())return;const a=document.createElement('a');a.href=API_ORIGIN+r.data.url;a.download='';document.body.appendChild(a);a.click();a.remove();setNotice('彙總銷貨檔已下載。已在 ECOUNT 儲存的批次，請勿重複匯入。');}
   catch(e){if(valid())setError(e.response?.data?.message||'銷貨檔下載失敗');}finally{if(valid())setBusy(false);}
  };
  if(!data)return <main><p role="status">{error||'載入批次…'}</p></main>;
@@ -98,7 +98,7 @@ function ReleaseDetail({id,user}){
     {rows&&<label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} disabled={busy}/>此檔案由 ECOUNT 已儲存的銷貨單匯出</label>}
     <div className="mt-4 flex flex-wrap items-center gap-3"><Button disabled={busy||!rows||!confirmed||missingBarcodes.length>0} onClick={()=>run('confirm-sales',{rows,savedSalesConfirmed:confirmed})}>核對並建立預揀單</Button>{rows&&missingBarcodes.length>0&&<button className="min-h-11 text-sm font-medium text-amber-900 underline" onClick={showBarcodeIssues}>先確認 {missingBarcodes.length} 項商品條碼</button>}</div>
     <details className="mt-4 border-t border-slate-100 pt-4 text-sm text-slate-600"><summary className="cursor-pointer">檔案格式</summary><p className="mt-2">使用含實際銷貨單號、來源明細與金額的 ECOUNT 匯出檔。商城原始訂單與 WMS 銷貨檔不能用於此步驟。</p><button type="button" className="mt-2 min-h-10 text-blue-700 underline" onClick={downloadFormat}>下載欄位設定參考（空白）</button><p className="mt-1">空白參考檔僅供設定 ECOUNT 匯出欄位。</p></details>
-    <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">尚未上傳 ECOUNT</summary><div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="secondary" disabled={busy} onClick={downloadSales}><Download size={16} className="mr-2"/>下載本批銷貨檔</Button><span>下載後，到 ECOUNT 匯入並儲存。</span></div></details>
+    <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">尚未上傳 ECOUNT</summary><div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="secondary" disabled={busy} onClick={downloadSales}><Download size={16} className="mr-2"/>下載本批彙總銷貨檔</Button><span>下載後，到 ECOUNT 匯入並儲存。</span></div></details>
    </>}
    </section>}
    {manager&&!flow.erp_confirmed_at&&<details ref={barcodeDetailsRef} className={box+' scroll-mt-4'}><summary className={`cursor-pointer font-semibold ${missingBarcodes.length?'text-amber-900':'text-slate-700'}`}>{missingBarcodes.length?`商品條碼待確認（${missingBarcodes.length} 項）`:'商品條碼已確認'}</summary>{missingBarcodes.map(p=><BarcodeConfirmation key={p.key} product={p} disabled={busy} onConfirm={barcode=>run('confirm-barcode',{productCode:p.productCode,barcode,confirmed:true})}/>)}{products.some(p=>p.barcode)&&<details className="mt-3 text-sm"><summary className="cursor-pointer">已確認商品（{products.filter(p=>p.barcode).length} 項）</summary>{products.filter(p=>p.barcode).map(p=><BarcodeConfirmation key={p.key} product={p} disabled={busy} onConfirm={barcode=>run('confirm-barcode',{productCode:p.productCode,barcode,confirmed:true})}/>)}</details>}</details>}

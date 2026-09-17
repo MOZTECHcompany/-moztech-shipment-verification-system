@@ -2,7 +2,7 @@ const jwt=require('jsonwebtoken');
 const {validId,batchLinks}=require('./marketplaceBatchManagement');
 const COOKIE='wms_marketplace_download';
 const path=(id,kind)=>`/api/marketplace-files/${id}/${kind}`;
-const allowed=kind=>['ecount','prepick'].includes(kind);
+const allowed=kind=>['ecount','ecount-grouped','prepick'].includes(kind);
 function issueDownload(res,id,kind,actor){
  if(!validId(id)||!allowed(kind))throw Object.assign(new Error('下載類型或批次無效'),{status:400});
  const url=path(id,kind);
@@ -27,7 +27,7 @@ function downloadFile({pool}){return async(req,res,next)=>{
   const {savedBatchTables}=await import('./marketplaceBatchFiles.mjs'),XLSX=require('xlsx');
   let tables;try{tables=savedBatchTables(record,req.params.kind);}catch(e){throw Object.assign(e,{status:400});}
   const book=XLSX.utils.book_new();for(const t of tables){const sheet=XLSX.utils.aoa_to_sheet(t.rows);sheet['!cols']=(t.rows[0]||[]).map(()=>({wch:24}));XLSX.utils.book_append_sheet(book,sheet,t.name);}
-  const filename=`${req.params.kind==='ecount'?'ECOUNT銷貨匯入':'WMS預揀與訂單明細'}_${r.batch_number}.xlsx`;
+  const filename=`${req.params.kind==='ecount-grouped'?'ECOUNT彙總銷貨匯入':req.params.kind==='ecount'?'ECOUNT銷貨匯入':'WMS預揀與訂單明細'}_${r.batch_number}.xlsx`;
   res.set({'Cache-Control':'private, no-store','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="WMS-${r.id}-${req.params.kind}.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`,'X-Content-Type-Options':'nosniff'});
   res.send(XLSX.write(book,{type:'buffer',bookType:'xlsx'}));
  }catch(e){if(e.status)return res.status(e.status).send(e.message);next(e);}

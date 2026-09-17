@@ -1,5 +1,6 @@
-import { buildEcountUploadTable, prepareEcountFinancials } from './marketplaceIntake.mjs';
+import { buildEcountUploadTable, prepareEcountFinancials, groupedSalesRecord } from './marketplaceIntake.mjs';
 export function savedBatchTables(record,kind){
+ if(kind==='ecount-grouped'){const t=buildEcountUploadTable(groupedSalesRecord(record));return [{name:'銷貨匯入',rows:[t.headers,...t.rows]}];}
  if(kind==='ecount'){const t=buildEcountUploadTable(record);return [{name:'銷貨匯入',rows:[t.headers,...t.rows]}];}
  if(!record?.prepick||!Array.isArray(record.items))throw Error('此批次缺少預揀資料');
  const handler=record.handler?.name||record.handler?.username||'未記錄';

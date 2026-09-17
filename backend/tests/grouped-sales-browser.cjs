@@ -15,7 +15,7 @@ module.exports=async function({base,id,user,token,output}){
   const table=page.locator('details').filter({has:page.locator('summary',{hasText:'彙總銷貨（3 列'})}).locator('table');
   assert.deepEqual(await table.locator('tbody tr td:nth-child(3)').allTextContents(),['200','200','50']);
   await page.getByText('其他下載',{exact:true}).click();
-  const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#batch-detail').getByRole('button',{name:'下載銷貨檔',exact:true}).click()]);
+  const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#batch-detail').getByRole('button',{name:'下載彙總銷貨檔',exact:true}).click()]);
   const book=xlsx.readFile(await download.path());const rows=xlsx.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1});
   assert.equal(rows[0].length,27);assert.deepEqual(rows.slice(1).map(r=>r[rows[0].indexOf('數量')]),[200,200,50]);
   fs.mkdirSync(output,{recursive:true});await page.screenshot({path:output+'/grouped-sales-desktop.png',fullPage:true});

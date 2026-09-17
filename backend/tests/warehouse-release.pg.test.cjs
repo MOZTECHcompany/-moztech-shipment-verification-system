@@ -19,6 +19,23 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
  const rows=[headers,['TEST-A','paid','unfulfilled','TWD','105','0','0','105','0','0','1','品項 A','105','0001','0','card'],['TEST-B','paid','unfulfilled','TWD','210','0','0','210','0','0','2','品項 A','105','0001','0','card']];
  const settings={store:'本機隔離',customerCode:'CUST',customerName:'客戶',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-RELEASE-0917',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'品項 A',barcode:'4711299273087',confirmed:true,barcodeConfirmed:true}},shippingSku:{}};
  const saved=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows,settings}),201);
+ await t.test('old batch grouped download uses real file endpoint, preserves source and accepts its grouped receipt',async()=>{
+  const before=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[saved.id])).rows[0].snapshot;
+  assert.equal((await api('picker','POST',`/api/marketplace-intakes/${saved.id}/download-link`,{kind:'ecount-grouped'})).status,403);
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const dl=await fetch(`${base}/api/marketplace-intakes/${saved.id}/download-link`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens.dispatcher},body:JSON.stringify({kind:'ecount-grouped'})});
+  assert.equal(dl.status,200);const link=await dl.json(),cookie=dl.headers.getSetCookie().map(c=>c.split(';')[0]).join(';');
+  const file=await fetch(base+link.url,{headers:{Cookie:cookie}});assert.equal(file.status,200);
+  const XLSX=require('xlsx'),book=XLSX.read(Buffer.from(await file.arrayBuffer())),table=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1});
+  assert.equal(table.length,2);assert.equal(table[0].length,27);assert.equal(table[1][table[0].indexOf('數量')],3);
+  const {groupedSalesRecord,prepareEcountFinancials}=await import('../src/services/marketplaceIntake.mjs');
+  const {HEADERS,reconcileSales}=require('../src/services/erpSalesReceipt');
+  const view=prepareEcountFinancials(groupedSalesRecord(before));
+  const receipt=[HEADERS,...view.rows.map(r=>['20260917-199',saved.batchNumber,r[2],r[6],r[7],r[13],r[14],r[12],r[15],r[11],r[19],r[23],r[24],r[23]+r[24],'4711299273087','',''])];
+  const orders=(await pool.query('SELECT * FROM marketplace_intake_orders WHERE intake_id=$1',[saved.id])).rows;
+  assert.equal((await reconcileSales(receipt,{snapshot:before,batch_number:saved.batchNumber,orders})).parsed.workOrders.length,2);
+  assert.deepEqual((await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[saved.id])).rows[0].snapshot,before);
+ });
  const path='/api/warehouse-intakes/'+saved.id;
  assert.equal(ok(await api('picker','GET','/api/warehouse-intakes')).batches.length,0);
  assert.equal(ok(await api('admin','GET','/api/warehouse-intakes')).batches.length,1);

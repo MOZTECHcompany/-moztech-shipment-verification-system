@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {buildEcountRows,buildEcountUploadTable,prepareEcountFinancials,ECOUNT_GROUPED_MODE} from '../src/utils/marketplaceIntake.mjs';
+import {buildEcountRows,buildEcountUploadTable,prepareEcountFinancials,groupedSalesRecord,ECOUNT_GROUPED_MODE} from '../src/utils/marketplaceIntake.mjs';
 import {savedBatchTables} from '../src/utils/marketplaceBatchFiles.mjs';
 const require=createRequire(import.meta.url);
 const {reconcileSales,HEADERS}=require('../../backend/src/services/erpSalesReceipt.js');
@@ -14,6 +14,20 @@ function fixture(quantities=[45,45,45,45,45,45,45,45,45,45],platform='Shopify'){
  return {...out,settings,items,orders,batchNumber:settings.batchNumber,prepick:{headers:[],rows:[]}};
 }
 function stored(record){return {snapshot:record,batch_number:record.batchNumber,orders:record.orders.map(o=>({source_platform:o.sourcePlatform,source_store:record.settings.store,source_order_number:o.sourceOrderNumber,expected_items:record.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).map(i=>({sourceLineId:i.sourceLineId,productCode:record.settings.skuMappings[i.sku].erpSku,productName:i.productName,barcode:record.settings.skuMappings[i.sku].barcode,quantity:i.quantity}))}))};}
+test('old saved batch explicitly downloads weighted groups without changing its source; both receipt layouts remain valid',async()=>{
+ const old=fixture(Array(8).fill(1),'SHOPLINE');
+ delete old.settings.salesExportMode;delete old.salesLayout;
+ old.items.forEach((i,n)=>{i.lineSubtotalMinor=[1350,1350,1300,1350,1310,1350,1350,1350][n]*100;old.orders[n].financial.totalMinor=i.lineSubtotalMinor;});
+ Object.assign(old,buildEcountRows({items:old.items,orders:old.orders,issues:[],summary:{}},old.settings));
+ const before=JSON.stringify(old),grouped=groupedSalesRecord(old),view=prepareEcountFinancials(grouped);
+ assert.equal(view.rows.length,1);assert.equal(view.rows[0][19],8);assert.equal(view.rows[0][21],1338.75);assert.equal(view.financials.grossMinor,1071000);
+ const table=savedBatchTables(old,'ecount-grouped')[0].rows;assert.equal(table.length,2);assert.equal(table[0].length,27);
+ assert.equal(savedBatchTables(old,'ecount')[0].rows.length,9);
+ assert.equal((await reconcileSales(receipt(grouped,true),stored(old))).parsed.workOrders.length,8);
+ assert.equal((await reconcileSales(receipt(old,true),stored(old))).parsed.workOrders.length,8);
+ const mixed=receipt(old);mixed[1]=receipt(grouped)[1];await assert.rejects(()=>reconcileSales(mixed,stored(old)),/不屬於本批|重複/);
+ assert.equal(JSON.stringify(old),before);
+});
 function receipt(record,sn=false){
  let count=0;
  return [HEADERS,...prepareEcountFinancials(record).rows.map(r=>['20260917-99',record.batchNumber,r[2],r[6],r[7],r[13],r[14],r[12],r[15],r[11],r[19],r[23],r[24],Math.round((r[23]+r[24])*100)/100,r[11]==='SHIP'?'':'0123456789012',sn?Array.from({length:r[19]},()=>`SN${String(++count).padStart(10,'0')}`).join(' '):'',''])];

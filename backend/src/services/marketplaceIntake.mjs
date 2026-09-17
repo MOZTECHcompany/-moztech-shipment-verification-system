@@ -15,6 +15,17 @@ export function buildEcountUploadTable(record){
 export const ECOUNT_FINANCIAL_VERSION = 'twd-vat5-line-v1';
 export const ECOUNT_GROUPED_MODE = 'product-200-v1';
 export const ECOUNT_GROUPED_FINANCIAL_VERSION = 'twd-vat5-product-200-v1';
+// An explicit grouped download can be rebuilt from an immutable older batch.
+// Its original rows remain available for already-posted ERP receipts.
+export function groupedSalesRecord(record){
+  if(record.settings?.salesExportMode===ECOUNT_GROUPED_MODE)return record;
+  if(record.settings?.salesExportMode&&!['order-lines-v1'].includes(record.settings.salesExportMode))throw Error('未知的銷貨彙總版本');
+  const source=prepareEcountSourceFinancials(record);
+  const grouped={...record,rows:source.rows,settings:{...record.settings,salesExportMode:ECOUNT_GROUPED_MODE},summary:{...record.summary,financialVersion:ECOUNT_FINANCIAL_VERSION}};
+  delete grouped.salesLayout;
+  const view=prepareEcountFinancials(grouped);
+  return {...grouped,salesLayout:view.salesLayout};
+}
 export const ECOUNT_TAX_DESCRIPTION = 'TWD 含稅 5%；每列營業稅四捨五入至元，稅前金額＝含稅金額－稅額；單價顯示至小數兩位，以明細金額核對。';
 const safeInteger = n => {if(!Number.isSafeInteger(n)||n<0)throw Error('銷貨金額或數量超出安全範圍');return n;};
 const roundRatio = (n,d) => Number((BigInt(n)*2n+BigInt(d))/(BigInt(d)*2n));

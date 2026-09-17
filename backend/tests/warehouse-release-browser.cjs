@@ -37,6 +37,7 @@ module.exports=async function({base,id,user,token,picker,receipt,output}){
   const staffPage=await staffContext.newPage();
   await staffPage.goto('http://127.0.0.1:'+vite.httpServer.address().port+'/warehouse-intakes');
   await staffPage.getByRole('heading',{name:'我的預揀批次'}).waitFor();
+  await staffPage.getByRole('link',{name:/TEST-RELEASE-0917/}).waitFor();
   assert.equal(await staffPage.getByRole('link',{name:/TEST-RELEASE-0917/}).count(),1);
   await staffPage.goto('http://127.0.0.1:'+vite.httpServer.address().port+'/warehouse-intakes/'+id);
   await staffPage.getByRole('heading',{name:'預揀商品查核'}).waitFor();

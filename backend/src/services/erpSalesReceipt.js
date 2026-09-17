@@ -4,14 +4,17 @@ const HEADERS=['ECOUNT實際銷貨單號','WMS批次號','客戶/供應商編碼
 const clean=v=>String(v??'').trim();
 const fail=message=>Object.assign(new Error(message),{status:400});
 async function reconcileSales(rows,record){
- const {prepareEcountFinancials,parseMoneyMinor}=await import('./marketplaceIntake.mjs');
+ const {prepareEcountFinancials,parseMoneyMinor,groupedSalesRecord}=await import('./marketplaceIntake.mjs');
  if(!Array.isArray(rows)||rows.length>10000)throw fail('銷貨回傳資料格式或列數無效');
  const h=rows.findIndex(r=>Array.isArray(r)&&r.some(c=>clean(c)==='來源明細號')&&r.some(c=>clean(c)==='ECOUNT實際銷貨單號'));
  if(h<0)throw fail('請使用 ECOUNT 已儲存銷貨明細的回傳格式，需有「ECOUNT實際銷貨單號」；銷貨上傳檔不能當作成功回執');
  const names=rows[h].map(clean),required=HEADERS.slice(0,14);
  for(const label of required)if(names.filter(n=>n===label).length!==1)throw fail(`回傳欄位缺漏或重複：${label}`);
  for(const label of HEADERS.slice(14))if(names.filter(n=>n===label).length>1)throw fail(`回傳欄位重複：${label}`);
- const {rows:expected,financials,salesLayout}=prepareEcountFinancials(record.snapshot);
+ // Identify the explicitly downloaded layout by its stable segment IDs. The
+ // complete set is still checked below; mixing old/new layouts fails closed.
+ const usesGrouped=rows.slice(h+1).some(r=>Array.isArray(r)&&clean(r[names.indexOf('來源明細號')]).startsWith('AG-'));
+ const {rows:expected,financials,salesLayout}=prepareEcountFinancials(usesGrouped?groupedSalesRecord(record.snapshot):record.snapshot);
  const identity=r=>JSON.stringify([r[13],r[14],r[12],r[15]].map(clean));
  const byKey=new Map(expected.map(r=>[identity(r),r]));
  const seen=new Set(),vouchers=new Set(),actual=[];

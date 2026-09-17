@@ -51,8 +51,10 @@ function createMarketplaceRouter({pool}){
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
   const record=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!record)return res.status(404).json({message:'找不到轉檔批次'});
-  if(req.body?.kind==='ecount')await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))]);
-  if(req.body?.kind==='ecount'){try{(await import('../services/marketplaceIntake.mjs')).buildEcountUploadTable(record.snapshot);}catch(e){throw Object.assign(e,{status:400});}}
+  if(['ecount','ecount-grouped'].includes(req.body?.kind)){
+   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))]);
+   try{(await import('../services/marketplaceBatchFiles.mjs')).savedBatchTables(record.snapshot,req.body.kind);}catch(e){throw Object.assign(e,{status:400});}
+  }
   require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id);
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  for(const [method,path,action] of [['patch','/:id/archive','archive'],['patch','/:id/restore','restore'],['delete','/:id','delete']]){
