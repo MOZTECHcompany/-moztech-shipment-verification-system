@@ -18,6 +18,7 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_IMPORT_FOOTER_2026-09-17.md`：忽略理貨單最後一行的單獨列印日期時間，保留商品檢查；正式 revision `corely-wms-import-footer-20260917`，程式 `7548074`。
 - `docs/WMS_BATCH_STAGES_2026-09-17.md`：恢復揀貨員批次揀貨、裝箱員批次裝箱，保留階段與審核限制；正式 revision `corely-wms-batch-stages-20260917`，程式 `4e05daf`。
 - `docs/WMS_RENDER_RETIREMENT_2026-09-17.md`：舊 Render API／DB 已暫停、停止新增服務費用；涵蓋備份、依賴、缺檔查核及其他系統仍有費用的範圍。取代較早文件中的「尚未停止 Render」狀態。
 - `docs/WMS_ORDER_COMPLETION_FIX_2026-09-17.md`：異動核可後重新判定揀貨完成、歷史訂單的條件式修復及驗證。正式 revision `corely-wms-order-complete-20260917`，後端程式 `385e056`；前端沿用下列 voice-options 映像，優先於舊發布快照。
