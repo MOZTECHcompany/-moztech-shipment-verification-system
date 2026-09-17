@@ -40,7 +40,7 @@ const statusConfig = {
         dot: 'bg-apple-blue animate-pulse'
     },
     picked: { 
-        text: '二次查核要裝箱', 
+        text: '二次查核要裝箱',
         color: 'bg-gradient-to-r from-apple-purple/10 to-purple-50/80 text-apple-purple border border-apple-purple/30',
         icon: Box,
         dot: 'bg-apple-purple'
