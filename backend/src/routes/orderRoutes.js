@@ -137,7 +137,7 @@ const importLimiter = rateLimit({
 
 // POST /api/orders/batch-claim
 // All claim entry points share the same locked state transition and audit path.
-async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false }) {
+async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false, stage }) {
     const { id: userId, role } = user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
     const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -156,10 +156,10 @@ async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false }) {
         const order = orderResult.rows[0];
         if (await hasOpenOrderChange(client, orderId)) throw fail(409, '此訂單異動審核中，請先主管核可後再作業。');
         let newStatus, task_type;
-        if ((role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
+        if (stage !== 'pack' && (role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
             newStatus = 'picking'; task_type = 'pick';
             await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-        } else if (!pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
+        } else if (stage !== 'pick' && !pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
             if (await hasOpenExceptions(client, orderId)) throw fail(409, '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。');
             newStatus = 'packing'; task_type = 'pack';
             await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
@@ -197,11 +197,15 @@ function parseClaimIds(value) {
 async function claimBatch(req, res, next, pickingOnly) {
     try {
         if (!['picker', 'packer', 'admin', 'superadmin'].includes(req.user.role) || (pickingOnly && req.user.role === 'packer')) return res.status(403).json({ message: '權限不足' });
+        const stage = req.body.stage;
+        if (stage !== undefined && !['pick', 'pack'].includes(stage)) return res.status(400).json({ message: '批次作業階段無效' });
+        if ((stage === 'pack' && (pickingOnly || req.user.role === 'picker')) ||
+            (stage === 'pick' && req.user.role === 'packer')) return res.status(403).json({ message: '不可認領其他作業階段的任務' });
         const ids = parseClaimIds(req.body.orderIds);
         const orders = [], failed = [];
         for (let i = 0; i < ids.length; i++) {
             const orderId = ids[i];
-            try { orders.push(await claimWarehouseOrder({ orderId, user: req.user, io: req.app.get('io'), pickingOnly })); }
+            try { orders.push(await claimWarehouseOrder({ orderId, user: req.user, io: req.app.get('io'), pickingOnly, stage })); }
             catch (error) {
                 if (!error.status || error.status >= 500) {
                     // A partial batch may already have committed; never advertise an automatic retry.

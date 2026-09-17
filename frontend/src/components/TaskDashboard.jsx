@@ -17,7 +17,7 @@ import NotificationCenter from './NotificationCenter';
 import DefectReportModal from './DefectReportModal';
 import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
 import TaskListFilters from './TaskListFilters';
-import { filterTasks, canBatchPick, isActiveTaskForRole } from '@/utils/taskFilters';
+import { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole } from '@/utils/taskFilters';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
 
 // Counts should stay readable while tasks refresh.
@@ -125,11 +125,12 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                 {/* Header Section */}
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between mb-4 relative z-10">
                     <div className="flex items-start gap-4 flex-1 min-w-0">
-                        {batchMode && canBatchPick(task) && (
+                        {batchMode && canBatchClaim(task, user, batchMode) && (
                             <div className="pt-1">
                                 <input
                                     type="checkbox"
-                                    aria-label={`選取揀貨任務 ${task.voucher_number}`}
+                                    aria-label={`選取${batchMode === 'pack' ? '裝箱' : '揀貨'}任務 ${task.voucher_number}`}
+                                    disabled={claimDisabled}
                                     checked={selectedTasks.includes(task.id)}
                                     onChange={() => toggleTaskSelection(task.id)}
                                     className="w-6 h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 cursor-pointer transition-all"
@@ -410,6 +411,7 @@ export function TaskDashboard({ user }) {
 
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
+    const batchLabel = batchMode === 'pack' ? '裝箱' : '揀貨';
     const [search, setSearch] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
     useEffect(() => {
@@ -526,13 +528,17 @@ export function TaskDashboard({ user }) {
         setOpenChats(prev => prev.filter(chat => chat.orderId !== orderId));
     };
 
-    const toggleBatchMode = () => {
-        setBatchMode(!batchMode);
+    const toggleBatchMode = (stage) => {
+        if (batchClaimPending.current || activeClaimId.current !== null || !batchStagesForRole(user).includes(stage)) return;
+        const next = batchMode === stage ? false : stage;
+        setBatchMode(next);
         setSelectedTasks([]);
-        toast.info(batchMode ? '退出批次模式' : '進入批次模式');
+        if (next) { setTaskGroup(next); setStatusFilter('all'); }
     };
 
     const toggleTaskSelection = (taskId) => {
+        if (batchClaimPending.current || loading || searchPending ||
+            !tasks.some(task => task.id === taskId && canBatchClaim(task, user, batchMode))) return;
         setSelectedTasks(prev => 
             prev.includes(taskId) 
                 ? prev.filter(id => id !== taskId)
@@ -583,26 +589,36 @@ export function TaskDashboard({ user }) {
     };
 
     const handleBatchClaim = async () => {
-        if (batchClaimPending.current || activeClaimId.current !== null) return;
-        const claimableIds = selectedTasks.filter(id => tasks.some(task => task.id === id && canBatchPick(task)));
+        if (!mountedRef.current || currentViewRef.current !== 'active' || loading || searchPending || batchClaimPending.current || activeClaimId.current !== null) return;
+        const claimableIds = selectedTasks.filter(id => tasks.some(task => task.id === id && canBatchClaim(task, user, batchMode)));
         if (claimableIds.length === 0) {
-            toast.error('請選擇尚未認領的揀貨任務');
+            toast.error(`請選擇尚未認領的${batchLabel}任務`);
             return;
         }
+        const claimContext = claimContextRef.current;
+        const canFollowUp = () => mountedRef.current && currentViewRef.current === 'active' && claimContextRef.current === claimContext;
         batchClaimPending.current = true;
         setIsBatchClaiming(true);
         try {
-            const response = await apiClient.post('/api/orders/batch-claim', { orderIds: claimableIds }, { timeout: 15000 });
-            if (response.data.failed?.length) toast.error(response.data.message, { description: '部分任務未認領，清單已重新整理，請確認狀態。' });
+            const endpoint = batchMode === 'pack' ? '/api/orders/batch/claim' : '/api/orders/batch-claim';
+            const response = await apiClient.post(endpoint, { orderIds: claimableIds, stage: batchMode }, { timeout: 15000 });
+            if (!canFollowUp()) return;
+            const failed = response.data.results?.failed || response.data.failed || [];
+            if (failed.length) toast.error(response.data.message, { description: failed.slice(0, 3).map(item =>
+                `${tasks.find(task => task.id === item.orderId)?.voucher_number || item.orderId}：${item.reason}`).join('；') });
             else toast.success(response.data.message);
             setSelectedTasks([]);
             setBatchMode(false);
             await fetchTasks();
         } catch (error) {
+            if (!canFollowUp()) return;
+            setSelectedTasks([]);
+            setBatchMode(false);
             toast.error(error.response ? '批次認領失敗' : '認領結果尚未確認', { description: error.response?.data?.message || '請重新整理任務清單核對，避免重複認領。' });
+            await fetchTasks();
         } finally {
             batchClaimPending.current = false;
-            setIsBatchClaiming(false);
+            if (mountedRef.current) setIsBatchClaiming(false);
         }
     };
 
@@ -666,8 +682,8 @@ export function TaskDashboard({ user }) {
 
     // Pins are shared across dates/views: a filtered list must not delete them.
     useEffect(() => {
-        setSelectedTasks(prev => prev.filter(id => tasks.some(task => task.id === id && canBatchPick(task))));
-    }, [tasks]);
+        setSelectedTasks(prev => prev.filter(id => tasks.some(task => task.id === id && canBatchClaim(task, user, batchMode))));
+    }, [tasks, user, batchMode]);
 
     const handleViewOrder = (orderId) => {
         claimContextRef.current += 1;
@@ -845,22 +861,23 @@ export function TaskDashboard({ user }) {
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
-                      {currentView === 'active' && user && (user.role === 'admin' || user.role === 'superadmin') && (
-                        <Button 
-                            variant={batchMode ? 'primary' : 'secondary'} 
-                            size="sm" 
-                            onClick={toggleBatchMode}
+                      {currentView === 'active' && batchStagesForRole(user).map(stage => (
+                        <Button
+                            key={stage}
+                            variant={batchMode === stage ? 'primary' : 'secondary'}
+                            size="sm"
+                            onClick={() => toggleBatchMode(stage)}
                             disabled={isBatchClaiming || claimingId !== null}
                             leadingIcon={ListChecks}
-                            className={batchMode ? 'shadow-lg shadow-primary/30' : ''}
+                            aria-pressed={batchMode === stage}
                         >
-                          {batchMode ? '退出批次揀貨' : '批次揀貨'}
+                          {`${batchMode === stage ? '退出' : ''}批次${stage === 'pack' ? '裝箱' : '揀貨'}`}
                         </Button>
-                      )}
-                      
+                      ))}
+
                       {batchMode && selectedTasks.length > 0 && (
-                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
-                          {isBatchClaiming ? '認領中…' : `認領 ${selectedTasks.length} 個揀貨任務`}
+                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null || loading || searchPending} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
+                          {isBatchClaiming ? '認領中…' : `認領 ${selectedTasks.length} 個${batchLabel}任務`}
                         </Button>
                       )}
 
@@ -881,7 +898,7 @@ export function TaskDashboard({ user }) {
                     onReset={resetFilters} onRefresh={refreshTasks} loading={loading || searchPending}
                     serverSearch pageIndex={pageIndex} pageSize={TASK_PAGE_SIZE} hasMore={pageInfo.hasMore}
                 />
-                {batchMode && <p className="text-sm text-slate-700 mb-4">請勾選尚未認領的揀貨任務。切換搜尋或篩選會清除已選項目。</p>}
+                {batchMode && <p className="text-sm text-slate-700 mb-4">請勾選待{batchLabel}任務。認領後逐筆開啟作業。</p>}
                 {currentView === 'completed' && <p className="text-xs text-slate-600 mb-4">依台灣時間的訂單更新日期查詢；包含已完成揀貨與裝箱的階段，搜尋涵蓋所有符合條件的訂單。</p>}
                 {listChanged && !loading && (
                     <div role="status" className="flex flex-wrap items-center justify-between gap-2 mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">

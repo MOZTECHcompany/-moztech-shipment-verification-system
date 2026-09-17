@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
-import { filterTasks, canBatchPick, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
+import { filterTasks, canBatchPick, canBatchClaim, batchStagesForRole, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
 
 const source = await readFile(new URL('../src/components/TaskDashboard.jsx', import.meta.url), 'utf8');
@@ -70,7 +70,7 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
             post: (url, body, options) => deferred(posts, { url, body, options })
         },
         '@/api/socket.js': { socket: { on: (name, callback) => listeners.set(name, callback), off: noop } },
-        '@/utils/taskFilters': { filterTasks, canBatchPick, isActiveTaskForRole },
+        '@/utils/taskFilters': { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole },
         '@/utils/taskPage': { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage },
         '@/utils/soundNotification.js': notifications,
         '@/utils/voiceNotification.js': notifications,
@@ -247,7 +247,7 @@ test('batch selection is limited to pickable tasks and filtered-away selections 
     assert.equal(canBatchPick(fixtures[1]), false);
     assert.equal(canBatchPick(fixtures[2]), false);
     const view = await loaded();
-    view.button('批次揀貨').props.onClick();
+    await enterBatch(view, '揀貨');
     view.card(1).props.toggleTaskSelection(1);
     assert.ok(view.button('認領 1 個揀貨任務'));
     view.filters().props.onSearch('南區');
@@ -566,4 +566,98 @@ test('status events remove tasks that no longer belong to the selected group and
     view.listeners.get('task_status_changed')({ orderId: 3, newStatus: 'picked' }); view.render();
     assert.equal(view.card(3), undefined);
     assert.match(view.text(view.render()), /統計與清單可能已變動/);
+});
+
+async function enterBatch(view, label) {
+    view.button('批次' + label).props.onClick();
+    view.render();
+    view.reads.at(-1).resolve({ data: fixtures });
+    await view.settle();
+}
+
+for (const [role, label, stage, id, endpoint] of [
+    ['picker', '揀貨', 'pick', 1, '/api/orders/batch-claim'],
+    ['packer', '裝箱', 'pack', 2, '/api/orders/batch/claim']
+]) {
+    test(`${role} can select only their stage, claim once and see per-order failures`, async () => {
+        const view = await loaded({ role });
+        assert.ok(view.button('批次' + label));
+        assert.equal(view.button('批次' + (stage === 'pick' ? '裝箱' : '揀貨')), undefined);
+        await enterBatch(view, label);
+        const card = view.card(id), node = card.type(card.props);
+        const checkbox = view.find(node, child => child.type === 'input' && child.props.type === 'checkbox');
+        assert.match(checkbox.props['aria-label'], new RegExp('選取' + label + '任務'));
+        checkbox.props.onChange();
+        const submit = view.button('認領 1 個' + label + '任務');
+        const pending = submit.props.onClick();
+        await submit.props.onClick();
+        assert.equal(view.posts.length, 1);
+        assert.equal(view.posts[0].url, endpoint);
+        assert.deepEqual(JSON.parse(JSON.stringify(view.posts[0].body)), { orderIds: [id], stage });
+        assert.equal(view.button('認領中…').props.disabled, true);
+        const failed = [{ orderId: id, reason: '此訂單異動審核中' }];
+        view.posts[0].resolve({ data: { message: '成功 0 筆', ...(stage === 'pick' ? { failed } : { results: { success: [], failed } }) } });
+        await view.settle();
+        view.reads.at(-1).resolve({ data: fixtures });
+        await pending;
+        assert.equal(view.successes.length, 0);
+        assert.match(view.failures[0][1].description, /此訂單異動審核中/);
+        assert.match(view.failures[0][1].description, new RegExp(fixtures[id - 1].voucher_number));
+    });
+}
+
+test('batch modes stay separate for managers and unavailable to dispatchers/completed views', async () => {
+    const view = await loaded();
+    await enterBatch(view, '揀貨');
+    view.card(1).props.toggleTaskSelection(1);
+    assert.ok(view.button('認領 1 個揀貨任務'));
+    await enterBatch(view, '裝箱');
+    assert.equal(view.button('認領 1 個揀貨任務'), undefined);
+    assert.equal(view.card(1), undefined);
+    assert.equal(canBatchClaim(fixtures[0], {role:'admin'}, 'pack'), false);
+    assert.equal(canBatchClaim(fixtures[1], {role:'admin'}, 'pick'), false);
+    assert.equal(canBatchClaim({...fixtures[0], status:'picking', picker_id:99}, {role:'picker'}, 'pick'), false);
+    assert.equal(canBatchClaim({...fixtures[1], status:'packing'}, {role:'packer'}, 'pack'), false);
+    for (const options of [{role:'dispatcher'}, {role:'picker',initialView:'completed'}, {role:'packer',initialView:'completed'}]) {
+        const other = await loaded(options);
+        assert.equal(other.button('批次揀貨'), undefined);
+        assert.equal(other.button('批次裝箱'), undefined);
+    }
+});
+
+test('a claimed packing task is removed from the batch selection after socket update', async () => {
+    const view = await loaded({role:'packer'});
+    await enterBatch(view, '裝箱');
+    view.card(2).props.toggleTaskSelection(2);
+    assert.ok(view.button('認領 1 個裝箱任務'));
+    view.listeners.get('task_claimed')({...fixtures[1],status:'packing',packer_id:99,current_user:'Other'});
+    assert.equal(view.button('認領 1 個裝箱任務'), undefined);
+});
+
+test('batch network uncertainty refreshes without retry and clears the old selection', async () => {
+    const view = await loaded({role:'packer'});
+    await enterBatch(view, '裝箱');
+    view.card(2).props.toggleTaskSelection(2);
+    const pending = view.button('認領 1 個裝箱任務').props.onClick();
+    view.posts[0].reject(new Error('offline'));
+    await view.settle();
+    view.reads.at(-1).resolve({data:[]});
+    await pending;
+    assert.equal(view.posts.length,1);
+    assert.equal(view.button('認領 1 個裝箱任務'),undefined);
+    assert.equal(view.failures[0][0],'認領結果尚未確認');
+});
+
+test('batch completion after unmount does not fetch or update the next screen', async () => {
+    const view = await loaded({role:'picker'});
+    await enterBatch(view, '揀貨');
+    view.card(1).props.toggleTaskSelection(1);
+    const pending = view.button('認領 1 個揀貨任務').props.onClick();
+    const readCount = view.reads.length;
+    view.unmount();
+    view.posts[0].resolve({data:{message:'ok',failed:[]}});
+    await pending;
+    assert.equal(view.reads.length,readCount);
+    assert.equal(view.updatesAfterUnmount(),0);
+    assert.deepEqual(view.successes,[]);
 });

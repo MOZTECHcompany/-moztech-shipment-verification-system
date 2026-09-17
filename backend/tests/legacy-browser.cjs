@@ -154,6 +154,45 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
                 await page.close();
             }
         });
+        await step('browser: picker and packer batch-claim two orders in their own phase then scan normally', async () => {
+            const orders = [];
+            for (const suffix of ['A','B']) {
+                const voucher = prefix + '-BATCH-' + suffix;
+                const book = xlsx.utils.book_new();
+                xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([['憑證號碼',voucher],['客戶名稱','Batch UI fixture'],['品項編碼','品項名稱','數量','SN'],['UI-BATCH-BARCODE','Batch UI item',1,'']]),'出貨單');
+                const form = new FormData();
+                form.set('orderFile',new Blob([xlsx.write(book,{type:'buffer',bookType:'xlsx'})]),'batch-ui.xlsx');
+                const id = ok(await api('dispatcher','POST','/api/orders/import',form),201).orderId;
+                orders.push({id,voucher}); cleanupOrders.push(id);
+            }
+            for (const [role,label,stage] of [['picker','揀貨','pick'],['packer','裝箱','pack']]) {
+                const page = await pageFor(role);
+                await page.goto(webBase + '/tasks');
+                assert.equal(await page.getByRole('button',{name:'批次' + (role === 'picker' ? '裝箱' : '揀貨'),exact:true}).count(),0);
+                await Promise.all([page.waitForResponse(r => new URL(r.url()).searchParams.get('q') === prefix + '-BATCH'),page.getByLabel('查找任務',{exact:true}).fill(prefix + '-BATCH')]);
+                await Promise.all([page.waitForResponse(r => new URL(r.url()).pathname === '/api/tasks' && new URL(r.url()).searchParams.get('group') === stage),page.getByRole('button',{name:'批次'+label,exact:true}).click()]);
+                for (const order of orders) await page.getByRole('checkbox',{name:'選取'+label+'任務 '+order.voucher,exact:true}).check();
+                await page.screenshot({path:output+'/batch-'+role+'.png',fullPage:true});
+                const route = stage === 'pick' ? '/api/orders/batch-claim' : '/api/orders/batch/claim';
+                const claimed = await response(page,route,'POST',() => page.getByRole('button',{name:'認領 2 個'+label+'任務',exact:true}).click());
+                assert.equal(claimed.status(),200);
+                assert.equal(claimed.request().postDataJSON().stage,stage);
+                const result = await claimed.json();
+                assert.equal((result.failed || result.results.failed).length,0);
+                await page.getByRole('button',{name:'批次'+label,exact:true}).waitFor();
+                for (const order of orders) {
+                    assert.deepEqual((await pool.query('SELECT status,picker_id,packer_id FROM orders WHERE id=$1',[order.id])).rows[0],{
+                        status:stage === 'pick' ? 'picking' : 'packing',picker_id:users.picker,packer_id:stage === 'pack' ? users.packer : null
+                    });
+                    await page.goto(webBase + '/order/' + order.id);
+                    const input = page.locator('#order-scan-input'); await input.waitFor();
+                    await input.fill('UI-BATCH-BARCODE');
+                    assert.equal((await response(page,'/api/orders/update_item','POST',() => input.press('Enter'))).status(),200);
+                    assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[order.id])).rows[0].status,stage === 'pick' ? 'picked' : 'completed');
+                }
+                await page.close();
+            }
+        });
         const admin = await pageFor('superadmin');
         await step('browser: personal sound selection, mute, role previews and reload persistence', async () => {
             for (const [role, profile, frequency] of [['picker','wood',780], ['packer','digital',1020]]) {
@@ -270,7 +309,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 12 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 13 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

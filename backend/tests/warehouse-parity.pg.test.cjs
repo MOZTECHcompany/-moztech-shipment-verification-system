@@ -263,6 +263,40 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         ok(await api('dispatcher', 'DELETE', `/api/orders/${orderId}`));
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE id=$1', [orderId])).rows[0].n, 0);
     });
+    await t.test('explicit batch stages cannot cross phases, retain partial results and require normal scans', async () => {
+        const first = ok(await importOrder('BATCH-STAGES-A', 1), 201).orderId;
+        const second = ok(await importOrder('BATCH-STAGES-B', 1), 201).orderId;
+        for (const [role, stage] of [['picker','pack'], ['packer','pick'], ['dispatcher','pick']]) {
+            assert.equal((await api(role, 'POST', '/api/orders/batch/claim', {orderIds:[first,second],stage})).status,403);
+        }
+        assert.equal((await api('admin', 'POST', '/api/orders/batch/claim', {orderIds:[first],stage:'invalid'})).status,400);
+        const wrongPhase = ok(await api('admin', 'POST', '/api/orders/batch/claim', {orderIds:[first,second],stage:'pack'}));
+        assert.deepEqual(wrongPhase.results.success, []);
+        assert.equal(wrongPhase.results.failed.length, 2);
+        const pickedClaim = ok(await api('picker', 'POST', '/api/orders/batch-claim', {orderIds:[first,second],stage:'pick'}));
+        assert.equal(pickedClaim.orders.length, 2);
+        for (const id of [first,second]) {
+            const before = (await pool.query('SELECT status,picker_id FROM orders WHERE id=$1',[id])).rows[0];
+            assert.deepEqual(before,{status:'picking',picker_id:users.picker});
+            ok(await scan('picker',id,'FIXTURE-BARCODE','pick'));
+        }
+        const exception = ok(await api('picker','POST',`/api/orders/${second}/exceptions`,{type:'other',reasonText:'Batch packing review fixture'}),201);
+        const wrongPicking = ok(await api('admin','POST','/api/orders/batch/claim',{orderIds:[first],stage:'pick'}));
+        assert.deepEqual(wrongPicking.results.success,[]);
+        const packedClaim = ok(await api('packer','POST','/api/orders/batch/claim',{orderIds:[first,second],stage:'pack'}));
+        assert.deepEqual(packedClaim.results.success,[first]);
+        assert.equal(packedClaim.results.failed[0].orderId,second);
+        assert.match(packedClaim.results.failed[0].reason,/未核可例外/);
+        ok(await api('admin','PATCH',`/api/orders/${second}/exceptions/${exception.id}/ack`,{note:'Reviewed batch fixture'}));
+        const resumed = ok(await api('packer','POST','/api/orders/batch/claim',{orderIds:[second],stage:'pack'}));
+        assert.deepEqual(resumed.results.success,[second]);
+        for (const id of [first,second]) {
+            assert.deepEqual((await pool.query('SELECT status,packer_id FROM orders WHERE id=$1',[id])).rows[0],{status:'packing',packer_id:users.packer});
+            ok(await scan('packer',id,'FIXTURE-BARCODE','pack'));
+            assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status,'completed');
+            assert.equal((await pool.query("SELECT count(*)::int n FROM operation_logs WHERE order_id=$1 AND action_type='claim'",[id])).rows[0].n,2);
+        }
+    });
     await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
     await require('./order-completion-flows.cjs')({ t, api, ok, pool, users, observedEvents });
     if (process.env.WMS_PARITY_BROWSER === '1') await require('./legacy-browser.cjs')({ t, api, ok, pool, users, tokens, base, output: process.env.WMS_PARITY_BROWSER_OUTPUT });
