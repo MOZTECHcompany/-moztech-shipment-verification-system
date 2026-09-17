@@ -111,7 +111,8 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
     await view.button('銷貨檔 → 上傳 ECOUNT').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
     assert.equal(view.downloads[0].url,'/api/marketplace-files/1/ecount');
-    assert.match(view.text(view.render()),/檔案已準備好/);
+    assert.match(view.text(view.render()),/請下載後上傳 ECOUNT 並儲存/);
+    assert.ok(view.find(view.render(), node => node.props?.to === "/warehouse-intakes/1"));
     view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true);
     assert.equal(view.requests.length, 3); assert.equal(view.requests[1].url, '/api/marketplace-intakes'); assert.equal(view.requests[2].url,'/api/marketplace-intakes/1/download-link'); assert.equal(view.writes.length, 0);
 });

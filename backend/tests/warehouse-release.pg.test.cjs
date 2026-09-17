@@ -48,6 +48,11 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   assert.equal(data.orders[0].expected_items[0].snCount,1);
   assert.equal((await api('picker','POST','/api/orders/'+data.orders[0].order_id+'/claim')).status,409);
   const claim={commandId:randomUUID(),expectedActorId:users.picker,barcode:data.orders[0].work_barcode,stage:'pick'};assert.equal((await api('picker','POST','/api/orders/claim-by-barcode',claim)).status,409);
+  const heldId=data.orders[0].order_id;
+  await pool.query("UPDATE orders SET status='picking',picker_id=$2 WHERE id=$1",[heldId,users.picker]);
+  const heldScan=await api('picker','POST','/api/orders/update_item',{orderId:heldId,scanValue:'ABCD12345678',type:'pick'});
+  assert.equal(heldScan.status,409);assert.match(heldScan.data.message,/預揀/);
+  await pool.query("UPDATE orders SET status='pending',picker_id=NULL WHERE id=$1",[heldId]);
  });
  await t.test('print ownership, assignment and scan receipt are persistent',async()=>{
   await action('admin','print',{kind:'prepick'}).then(ok);await action('dispatcher','print',{kind:'orders'}).then(ok);

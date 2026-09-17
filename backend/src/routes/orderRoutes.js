@@ -280,7 +280,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
         let newStatus = order.status;
 
         // Empty orders, inconsistent SN counts and terminal statuses cannot auto-complete.
-        if (allPicked && allPacked && canAutoComplete(order.status)) {
+        if (!order.warehouse_hold && allPicked && allPacked && canAutoComplete(order.status)) {
             const hasOpen = await hasOpenExceptions(client, orderId);
             if (!hasOpen) {
                 updateAttempted = true;
@@ -291,7 +291,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
                 statusChanged = updated.rowCount > 0;
                 if (statusChanged) newStatus = 'completed';
             }
-        } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
+        } else if (!order.warehouse_hold && allPicked && (order.status === 'picking' || order.status === 'pending')) {
             updateAttempted = true;
             const updated = await client.query(
                 "UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = $2",
@@ -652,6 +652,9 @@ router.post('/orders/update_item', async (req, res, next) => {
                 throw Object.assign(new Error('訂單已更新，請重新載入核對後再掃描'), {status:409,scanReason:'STATE_CHANGED'});
             }
         }
+        if (order.warehouse_hold) {
+            throw Object.assign(new Error('整批預揀核對尚未完成，請先完成預揀再開始分單作業。'), { status: 409 });
+        }
         if (order.status === 'voided') {
             const error = new Error('此訂單已作廢，無法進行掃碼作業');
             error.status = 409;
@@ -885,7 +888,7 @@ router.post('/orders/update_item', async (req, res, next) => {
         let finalStatus = order.status;
 
         // 完成必須同時滿足揀貨完成 + 裝箱完成
-        if (allPicked && allPacked && canAutoComplete(order.status)) {
+        if (!order.warehouse_hold && allPicked && allPacked && canAutoComplete(order.status)) {
             const hasOpen = await hasOpenExceptions(client, orderId);
             if (!hasOpen) {
                 finalStatus = 'completed';
@@ -897,7 +900,7 @@ router.post('/orders/update_item', async (req, res, next) => {
                     [userId, orderId]
                 );
             }
-        } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
+        } else if (!order.warehouse_hold && allPicked && (order.status === 'picking' || order.status === 'pending')) {
             finalStatus = 'picked';
             statusChanged = true;
             await trackedQuery(client, 'update_order_picked', "UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
