@@ -75,6 +75,18 @@ function parseSerials(raw, barcode, expectedQuantity, dedicatedColumn) {
     return serials;
 }
 
+// ECOUNT print footer: one timestamp cell, never a product row with other values.
+function isPrintTimestampRow(row) {
+    const values = row.map(value => String(value ?? '').trim()).filter(Boolean);
+    if (values.length !== 1) return false;
+    const match = values[0].normalize('NFKC').match(/^(\d{4})([/-])(\d{1,2})\2(\d{1,2})\s*(?:\((?:(?:星期|週|周)?[一二三四五六日天])\)\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return false;
+    const [, year, , month, day, hour, minute, second = '0'] = match;
+    const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    return date.getUTCFullYear() === Number(year) && date.getUTCMonth() + 1 === Number(month) &&
+        date.getUTCDate() === Number(day) && Number(hour) < 24 && Number(minute) < 60 && Number(second) < 60;
+}
+
 function parseOrderRows(data, { worksheet, sheetName } = {}) {
     if (!Array.isArray(data) || data.length > IMPORT_LIMITS.sheetRows) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetRows} 列`, 413);
     for (const row of data) {
@@ -99,8 +111,10 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const items = [];
     const seenSerials = new Set();
     let totalQuantity = 0;
+    const lastContentIndex = data.findLastIndex(row => row.some(value => String(value ?? '').trim()));
     for (let index = headerIndex + 1; index < data.length; index++) {
         const row = data[index];
+        if (index === lastContentIndex && items.length > 0 && isPrintTimestampRow(row)) continue;
         const barcode = String(row[barcodeIndex] ?? '').trim();
         const rawName = String(row[nameIndex] ?? '').trim();
         const rawQuantity = String(row[quantityIndex] ?? '').trim();

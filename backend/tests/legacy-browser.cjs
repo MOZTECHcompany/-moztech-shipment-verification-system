@@ -61,10 +61,10 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     }
         report.webBase = webBase;
         const dispatcher = await pageFor('dispatcher');
-        await step('browser: dispatcher imports a real XLSX through the original upload flow', async () => {
+        await step('browser: dispatcher imports a real XLSX with a print timestamp footer through the original upload flow', async () => {
             await dispatcher.goto(webBase + '/admin');
             const book = xlsx.utils.book_new();
-            xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([['憑證號碼', voucher], ['客戶名稱', 'UI synthetic customer'], ['品項編碼','品項名稱','數量','SN'], ['UI-BARCODE','UI 驗收產品',3,serials.join('/')]]), '出貨單');
+            xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([['憑證號碼', voucher], ['客戶名稱', 'UI synthetic customer'], ['品項編碼','品項名稱','數量','SN'], ['UI-BARCODE','UI 驗收產品',3,serials.join('/')],['總計','',3],['2026/09/17 (四) 17:45:26']]), '出貨單');
             const uploaded = await response(dispatcher, '/api/orders/import', 'POST', () => dispatcher.locator('[data-testid="import-file"]').setInputFiles({ name: 'ui-fixture.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx.write(book,{type:'buffer',bookType:'xlsx'}) }));
             orderId = (await uploaded.json()).orderId; cleanupOrders.push(orderId);
             await dispatcher.getByText(`訂單 ${voucher} 已成功匯入`, { exact: true }).waitFor();

@@ -236,3 +236,66 @@ test('notification failure after commit still returns the confirmed order', asyn
     expect((await invoke(db)).status).toBe(201);
     expect(db.state().orders).toHaveLength(1);
 });
+
+function pickingSheetRows(footer = '2026/09/17 (四) 17:45:26') {
+    return [
+        ['理貨單'], ['憑證號碼：TEST-FOOTER-1'], ['接收-客戶/供應商：Footer fixture'], ['出庫倉庫：工業店'],
+        ['品項編碼', '品項名稱(規格)', '數量', '摘要'], ['4711299274671', 'Fixture product [SKU-1]', 1, ''],
+        ['總計', '', 1], [footer], [], ['', ' ', '', '']
+    ];
+}
+
+test.each(['xlsx', 'biff8', 'csv'])('ignores the standalone eighth-row print timestamp in a real %s picking sheet', bookType => {
+    const parsed = parseOrderImport(workbook(pickingSheetRows(), bookType));
+    expect(parsed).toMatchObject({ voucherNumber: 'TEST-FOOTER-1', customerName: 'Footer fixture', totalQuantity: 1, serialCount: 0 });
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]).toMatchObject({ barcode: '4711299274671', productName: 'Fixture product', quantity: 1, sourceRow: 6 });
+});
+
+test.each(['2026/09/17(四)17:45:26', '2026/9/17 （星期四） 17:45:26', '２０２６／０９／１７（四）１７：４５：２６', '2026-09-17 17:45', '2028/02/29 00:00:00'])('recognizes valid timestamp layout %s only at the end', footer => {
+    expect(parseOrderRows(pickingSheetRows(footer)).items).toHaveLength(1);
+});
+
+test.each(['xlsx', 'biff8'])('supports merged text and formatted Excel date footer cells in %s', bookType => {
+    for (const typed of [false, true]) {
+        const wb = xlsx.utils.book_new();
+        const sheet = xlsx.utils.aoa_to_sheet(pickingSheetRows());
+        sheet['!merges'] = [{s:{r:7,c:0},e:{r:7,c:3}}];
+        if (typed) sheet.A8 = {t:'n', v:46282.75, z:'yyyy/mm/dd hh:mm:ss'};
+        xlsx.utils.book_append_sheet(wb, sheet, '理貨單');
+        expect(parseOrderImport(xlsx.write(wb,{type:'buffer',bookType})).items).toHaveLength(1);
+    }
+});
+
+test.each(['2026/09/17', '2026/02/30 (四) 17:45:26', '2026/09/17 (四) 24:45:26', '2026/09/17 (四) 17:60:26', '2026/09/17 (四) 17:45:60', '4.7113E+12', 'INVALID'])('does not silently discard an unrecognized or invalid final row: %s', footer => {
+    expect(() => parseOrderRows(pickingSheetRows(footer))).toThrow(/第 8 列/);
+});
+
+test('timestamp-looking rows with product data and timestamps inside the item table still receive validation', () => {
+    const rows = pickingSheetRows();
+    rows[7].push('Product missing quantity');
+    expect(() => parseOrderRows(rows)).toThrow(/第 8 列.*皆必填/);
+    rows[7] = ['2026/09/17 (四) 17:45:26'];
+    rows.push(['4710000000002', 'Another product', 1]);
+    expect(() => parseOrderRows(rows)).toThrow(/第 8 列.*皆必填/);
+    const scientific = pickingSheetRows();
+    scientific[5][0] = '4.7113E+12';
+    expect(() => parseOrderRows(scientific)).toThrow(/第 6 列.*科學記號/);
+    const quantity = pickingSheetRows();
+    quantity[5][2] = '';
+    expect(() => parseOrderRows(quantity)).toThrow(/第 6 列.*皆必填/);
+});
+
+test('footer-only sheets cannot create an empty order', () => {
+    expect(() => parseOrderRows(makeRows([['2026/09/17 (四) 17:45:26']]))).toThrow(/皆必填/);
+});
+
+test('import endpoint saves only the product when the workbook ends with a print timestamp', async () => {
+    const db = database();
+    const result = await invoke(db, workbook(pickingSheetRows()));
+    expect(result).toMatchObject({status:201,body:{voucherNumber:'TEST-FOOTER-1',itemCount:1,totalQuantity:1,serialCount:0}});
+    expect(db.state().items).toHaveLength(1);
+    expect(db.state().orders).toHaveLength(1);
+    expect(db.state().logs).toHaveLength(1);
+    expect(db.earlyEvents()).toBe(0);
+});

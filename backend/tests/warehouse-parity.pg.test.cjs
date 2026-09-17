@@ -105,6 +105,23 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         assert.equal(result.issue.storedValue, '4711299273766');
         assert.deepEqual(await counts(), before);
     });
+    await t.test('picking-sheet timestamp footer is excluded from imported goods and normal warehouse scans', async () => {
+        const book = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(book,xlsx.utils.aoa_to_sheet([
+            ['理貨單'],['憑證號碼：PARITY-PRINT-FOOTER'],['接收-客戶/供應商：Synthetic footer customer'],['出庫倉庫：Fixture'],
+            ['品項編碼','品項名稱(規格)','數量','摘要'],['4711299274671','Footer fixture product',1,''],['總計','',1],['2026/09/17 (四) 17:45:26']
+        ]),'理貨單');
+        const form = new FormData();form.set('orderFile',new Blob([xlsx.write(book,{type:'buffer',bookType:'xlsx'})]),'print-footer.xlsx');
+        const imported = ok(await api('dispatcher','POST','/api/orders/import',form),201);
+        assert.equal(imported.itemCount,1);assert.equal(imported.totalQuantity,1);
+        const orderId=imported.orderId;
+        assert.deepEqual((await pool.query('SELECT barcode,quantity FROM order_items WHERE order_id=$1',[orderId])).rows,[{barcode:'4711299274671',quantity:1}]);
+        const log=(await pool.query("SELECT user_id,details::jsonb AS details FROM operation_logs WHERE order_id=$1 AND action_type='import'",[orderId])).rows[0];
+        assert.equal(log.user_id,users.dispatcher);assert.equal(log.details.itemCount,1);
+        ok(await claim('picker',orderId));ok(await scan('picker',orderId,'4711299274671','pick'));
+        ok(await claim('packer',orderId));ok(await scan('packer',orderId,'4711299274671','pack'));
+        assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[orderId])).rows[0].status,'completed');
+    });
     await t.test('XLSX import, duplicate protection, role restriction and competing claim', async () => {
         const imported = ok(await importOrder('PARITY-BULK', 500), 201); bulkOrder = imported.orderId;
         assert.equal((await importOrder('PARITY-BULK', 500)).status, 409);
