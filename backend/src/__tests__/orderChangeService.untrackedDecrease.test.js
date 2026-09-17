@@ -73,6 +73,10 @@ describe('orderChangeService - untracked SN quantity decrease', () => {
         result: { rowCount: existingInstances.length, rows: existingInstances }
       },
       {
+        match: 'SELECT * FROM order_items WHERE order_id = $1 ORDER BY id',
+        result: { rows: [{ ...existingItems[0], quantity: 7 }] }
+      },
+      {
         match: 'UPDATE order_items SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
         result: { rowCount: 1, rows: [] }
       },
@@ -89,7 +93,7 @@ describe('orderChangeService - untracked SN quantity decrease', () => {
     const client = makeFakeClient(script);
     const result = await applyOrderChangeProposal({ client, orderId, proposal, actorUserId: 99 });
 
-    expect(result.newStatus).toBe('picking');
+    expect(result.newStatus).toBe('picked');
 
     const deleteInstancesCalls = client.calls.filter((c) => c.text.includes('DELETE FROM order_item_instances'));
     expect(deleteInstancesCalls.length).toBe(0);

@@ -16,6 +16,8 @@ const { deferredEvents } = require('../utils/transactionEvents');
 const router = express.Router();
 const { stateToken, readLines, parseCommand, createWorkSnapshot } = require('../services/scanSnapshot');
 router.get('/orders/:orderId/work-snapshot', createWorkSnapshot(pool));
+const { createReconcilePicking } = require('../services/reconcilePicking');
+router.post('/orders/:orderId/reconcile-picking', authorizeAdmin, createReconcilePicking(pool));
 
 const scanPerfWindow = [];
 const SCAN_PERF_WINDOW_SIZE = 300;

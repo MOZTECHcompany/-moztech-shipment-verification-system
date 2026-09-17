@@ -264,6 +264,7 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE id=$1', [orderId])).rows[0].n, 0);
     });
     await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
+    await require('./order-completion-flows.cjs')({ t, api, ok, pool, users, observedEvents });
     if (process.env.WMS_PARITY_BROWSER === '1') await require('./legacy-browser.cjs')({ t, api, ok, pool, users, tokens, base, output: process.env.WMS_PARITY_BROWSER_OUTPUT });
     await t.test('current DB role applies immediately even with old admin token', async () => {
         await pool.query("UPDATE users SET role='picker' WHERE id=$1", [users.admin]);

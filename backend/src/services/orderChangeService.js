@@ -2,6 +2,8 @@
 // Apply order item change requests (add/remove/adjust) with rollback rules.
 
 const logger = require('../utils/logger');
+const { readLines } = require('./scanSnapshot');
+const { getOrderCompletion } = require('../utils/orderCompletion');
 
 function isNonEmptyString(value) {
     return typeof value === 'string' && value.trim().length > 0;
@@ -548,9 +550,11 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
         });
     }
 
-    // After an approved order change, return the order to the picking phase.
-    // Note: picker_id may be NULL (unassigned); claim flow must support claiming such orders.
-    const nextStatus = 'picking';
+    // The order row is locked by this transaction. Re-evaluate the final lines,
+    // including SN coverage: removing an unpicked line can finish picking without
+    // another scan. Approval alone must never declare a shipment completed.
+    const { items, instances } = await readLines(client, orderId);
+    const nextStatus = getOrderCompletion(items, instances).allPicked ? 'picked' : 'picking';
     await client.query('UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [nextStatus, orderId]);
 
     return {
