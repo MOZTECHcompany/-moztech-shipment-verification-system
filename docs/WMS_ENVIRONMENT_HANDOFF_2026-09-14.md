@@ -2,6 +2,8 @@
 
 本文件供另一台電腦／另一個 Codex 接手。連結提供資源位置，**不會自動授予權限**；使用公司已授權的身分登入。以下 runtime metadata 於 2026-09-14 重新查核；開始修改與發版前仍須讀回現況。
 
+**2026-09-17 更新：** 舊 Render WMS API／DB 已依使用者授權暫停，資料未刪除，暫停期間不計費。請以 [Render 停用紀錄](WMS_RENDER_RETIREMENT_2026-09-17.md) 及 `CODEX_HANDOFF.md` 最新發布條目為準；下文的未停止狀態是 9/14 歷史快照。
+
 ## 程式碼
 
 - 儲存庫：https://github.com/MOZTECHcompany/-moztech-shipment-verification-system
