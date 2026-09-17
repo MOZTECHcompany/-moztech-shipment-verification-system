@@ -3,6 +3,8 @@ import {Link,useParams} from 'react-router-dom';
 import {useReactToPrint} from 'react-to-print';
 import * as XLSX from 'xlsx';
 import api from '@/api/api.js';
+import {API_ORIGIN} from '@/api/origin';
+import {UploadCloud,FileSpreadsheet,Download,ChevronRight} from 'lucide-react';
 import {Button} from '@/ui';
 import {OrderBarcode} from './OrderBarcode';
 const box='rounded-2xl border border-slate-200 bg-white p-5';
@@ -22,6 +24,8 @@ function ReleaseList({user}){
 function ReleaseDetail({id,user}){
  const [data,setData]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[staff,setStaff]=useState([]),[assignee,setAssignee]=useState('');
  const [rows,setRows]=useState(null),[filename,setFilename]=useState(''),[confirmed,setConfirmed]=useState(false),[barcode,setBarcode]=useState(''),[product,setProduct]=useState(''),[quantity,setQuantity]=useState(1);
+ const [fileError,setFileError]=useState(''),[dragging,setDragging]=useState(false);
+ const receiptFileRef=useRef(null),barcodeDetailsRef=useRef(null);
  const [paper,setPaper]=useState('prepick'),[printData,setPrintData]=useState(null);
  const paperRef=useRef(null),printResolve=useRef(null),pending=useRef(null),alive=useRef(true),sessionToken=useRef(localStorage.getItem('wms_token'));
  const pendingKey=`wms-warehouse-command:${user.id}:${id}`;
@@ -46,17 +50,58 @@ function ReleaseDetail({id,user}){
   onPrintError:(_,e)=>{setError(e.response?.data?.message||e.message||'列印未開啟，請重試');setBusy(false);},onAfterPrint:()=>{setBusy(false);setNotice('列印視窗已關閉；缺紙可重印。');},
   pageStyle:'@page {size:A4;margin:10mm} @media print {body {color:#000;background:white} thead{display:table-header-group} tr{break-inside:avoid} .work-sheet{break-after:page}.work-sheet:last-child{break-after:auto}}'});
  const downloadFormat=async()=>{try{const r=await api.get('/api/warehouse-intakes/receipt-format',{responseType:'blob'});if(!valid())return;const url=URL.createObjectURL(r.data),a=document.createElement('a');a.href=url;a.download='ECOUNT銷貨回傳欄位.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch{setError('欄位範本下載失敗');}};
- const readFile=async e=>{setRows(null);setConfirmed(false);const file=e.target.files?.[0];if(!file)return;try{if(file.size>10*1024*1024)throw Error('檔案上限 10 MiB');const book=XLSX.read(await file.arrayBuffer(),{type:'array',raw:true,sheetRows:10001});if(book.SheetNames.length!==1)throw Error('請使用單一工作表，避免漏讀');const sheet=book.Sheets[book.SheetNames[0]];const range=XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']);if(range.e.r>=10000||range.e.c>=100)throw Error('資料範圍超限');if(valid()){setRows(XLSX.utils.sheet_to_json(sheet,{header:1,raw:false,defval:''}));setFilename(file.name);setError('');}}catch(e){setError(e.message);}e.target.value='';};
+ const readFiles=async files=>{
+  if(busy||!files?.length||!valid())return;
+  setRows(null);setConfirmed(false);setFileError('');setError('');setNotice('');setFilename(files[0].name);setBusy(true);
+  try{
+   const file=files[0];
+   if(files.length!==1||!file.size||! /\.(xlsx|xls|csv)$/i.test(file.name))throw Error('請選擇一份 ECOUNT 銷貨明細 Excel／CSV。');
+   if(file.size>10*1024*1024)throw Error('檔案上限 10 MiB');
+   const book=XLSX.read(await file.arrayBuffer(),{type:'array',raw:true,sheetRows:10001});
+   if(book.SheetNames.length!==1)throw Error('請使用單一工作表，避免漏讀');
+   const sheet=book.Sheets[book.SheetNames[0]],range=XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']||'A1');
+   if(range.e.r>=10000||range.e.c>=100)throw Error('資料範圍超限');
+   const parsed=XLSX.utils.sheet_to_json(sheet,{header:1,raw:false,defval:''});
+   const header=parsed.findIndex(r=>r.some(c=>String(c).trim()==='ECOUNT實際銷貨單號')&&r.some(c=>String(c).trim()==='來源明細號'));
+   if(header<0)throw Error('缺少 ECOUNT 實際銷貨單號或來源明細號。請選擇 ECOUNT 匯出的銷貨明細；WMS 下載的銷貨檔不能匯回核對。');
+   if(!parsed.slice(header+1).some(r=>r.some(c=>String(c).trim())))throw Error('檔案沒有銷貨明細，請勿上傳空白欄位範本。');
+   if(valid())setRows(parsed);
+  }catch(e){if(valid())setFileError(e.message||'檔案讀取失敗');}
+  finally{if(valid())setBusy(false);}
+ };
+ const downloadSales=async()=>{
+  if(busy||!valid())return;setBusy(true);setError('');setNotice('');
+  try{const r=await api.post(`/api/marketplace-intakes/${id}/download-link`,{kind:'ecount'},{withCredentials:true});if(!valid())return;const a=document.createElement('a');a.href=API_ORIGIN+r.data.url;a.download='';document.body.appendChild(a);a.click();a.remove();setNotice('已開始下載銷貨檔，請上傳至 ECOUNT。');}
+  catch(e){if(valid())setError(e.response?.data?.message||'銷貨檔下載失敗');}finally{if(valid())setBusy(false);}
+ };
  if(!data)return <main><p role="status">{error||'載入批次…'}</p></main>;
  const {batch,flow,orders,products,events}=data;
+ const missingBarcodes=products.filter(p=>!p.barcode);
+ const showBarcodeIssues=()=>{if(barcodeDetailsRef.current){barcodeDetailsRef.current.open=true;barcodeDetailsRef.current.scrollIntoView({behavior:'smooth',block:'start'});}};
  return <main className="mx-auto max-w-7xl space-y-5 pb-8"><div className="flex flex-wrap justify-between gap-3"><Link to="/warehouse-intakes" className="text-blue-700">← 整批預揀作業</Link><Button variant="secondary" disabled={busy} onClick={()=>refresh().catch(()=>setError('更新失敗'))}>更新進度</Button></div>
-  <header><p className="text-sm text-slate-500">{batch.source_platform} · {batch.source_store}</p><h1 className="mt-2 text-2xl font-semibold">{batch.batch_number}</h1><p className="mt-2">{orders.length} 筆獨立訂單 · {products.reduce((n,p)=>n+p.quantity,0)} 件商品</p></header>
+  <header><h1 className="text-2xl font-semibold">{manager&&!flow?.erp_confirmed_at?'匯回 ECOUNT 銷貨明細':flow?.prepick_completed_at?'訂單揀貨與裝箱':'列印與預揀'}</h1><p className="mt-3">{batch.source_platform} · {batch.source_store} · {orders.length} 筆訂單 · {products.reduce((n,p)=>n+p.quantity,0)} 件</p><p className="mt-1 break-all text-sm text-slate-500">批次 {batch.batch_number}</p></header>
+  {manager&&<ol aria-label="批次作業流程" className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 pb-4 text-sm"><li className="text-slate-500">1. 銷貨檔備妥</li><li aria-hidden="true"><ChevronRight size={16} className="text-slate-400"/></li><li aria-current={!flow?.erp_confirmed_at?'step':undefined} className={!flow?.erp_confirmed_at?'font-semibold text-blue-700':'text-slate-500'}>2. 匯回銷貨明細</li><li aria-hidden="true"><ChevronRight size={16} className="text-slate-400"/></li><li aria-current={flow?.erp_confirmed_at?'step':undefined} className={flow?.erp_confirmed_at?'font-semibold text-blue-700':'text-slate-500'}>3. 列印與預揀</li></ol>}
   {notice&&<p role="status" className="rounded-lg bg-slate-50 px-4 py-2 text-sm text-slate-700">{notice}</p>}
   {error&&<div role="alert" className="rounded-xl bg-amber-50 p-4 text-amber-950"><p>{error}</p>{pending.current&&<Button className="mt-3" disabled={busy} onClick={()=>{const [a,p]=JSON.parse(pending.current.content);run(a,p);}}>重試原操作</Button>}</div>}
   {!flow?<section className={box}><p>此批尚未建立預揀工作。</p>{manager&&<Button className="mt-3" disabled={busy} onClick={()=>run('enable')}>建立預揀工作</Button>}</section>:<>
-   {manager&&<section className={flow.erp_confirmed_at?'rounded-xl border border-slate-200 bg-white px-5 py-3':box}>{flow.erp_confirmed_at?<details className="text-sm"><summary className="cursor-pointer font-medium text-slate-700">銷貨已核對 · {flow.erp_receipt.vouchers.join('、')}</summary><p className="mt-3">稅前 {(flow.erp_receipt.financials.netMinor/100).toFixed(2)} ＋ 營業稅 {(flow.erp_receipt.financials.taxMinor/100).toFixed(2)} ＝ 含稅 {(flow.erp_receipt.financials.grossMinor/100).toFixed(2)}</p><p className="mt-1">核對人：{flow.erp_confirmed_name} · {time(flow.erp_confirmed_at)}</p></details>:<><h2 className="text-lg font-semibold">回傳 ECOUNT 銷貨結果</h2><Link className="mt-3 inline-block text-blue-700 underline" to={`/admin/marketplace-converter?batch=${id}#batch-detail`}>下載銷貨檔 → 上傳 ECOUNT</Link><div className="mt-4 space-y-3"><details className="text-sm text-slate-600"><summary className="cursor-pointer">首次設定：ECOUNT 回傳欄位</summary><div className="mt-2 flex flex-wrap items-center gap-3"><Button variant="secondary" onClick={downloadFormat}>下載空白欄位範本</Button><span>需匯出已儲存銷貨明細及實際銷貨單號。</span></div></details><label className="block rounded-xl border-2 border-dashed p-4">上傳已儲存的銷貨明細<input className="mt-3 block max-w-full" type="file" accept=".xlsx,.xls,.csv" disabled={busy} onChange={readFile}/>{filename&&<span className="text-sm">{filename}</span>}</label><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>已在 ECOUNT 儲存此銷貨單</label><Button disabled={busy||!rows||!confirmed} onClick={()=>run('confirm-sales',{rows,savedSalesConfirmed:confirmed})}>核對銷貨並建立預揀單</Button></div></>}
+   {manager&&<section className={flow.erp_confirmed_at?'rounded-xl border border-slate-200 bg-white px-5 py-3':box}>{flow.erp_confirmed_at?<details className="text-sm"><summary className="cursor-pointer font-medium text-slate-700">銷貨已核對 · {flow.erp_receipt.vouchers.join('、')}</summary><p className="mt-3">稅前 {(flow.erp_receipt.financials.netMinor/100).toFixed(2)} ＋ 營業稅 {(flow.erp_receipt.financials.taxMinor/100).toFixed(2)} ＝ 含稅 {(flow.erp_receipt.financials.grossMinor/100).toFixed(2)}</p><p className="mt-1">核對人：{flow.erp_confirmed_name} · {time(flow.erp_confirmed_at)}</p></details>:<>
+    <h2 className="text-lg font-semibold">ECOUNT → WMS</h2>
+    <p className="mt-2 text-slate-600">在 ECOUNT 儲存銷貨單後，匯出這批銷貨明細並上傳。</p>
+    <div role="region" aria-label="ECOUNT 銷貨明細上傳區" className={`mt-5 rounded-xl border-2 border-dashed p-5 text-center ${dragging?'border-blue-500 bg-blue-50':fileError?'border-amber-400 bg-amber-50/40':'border-slate-300 bg-slate-50/60'}`} onDragOver={e=>{e.preventDefault();if(!busy)setDragging(true);}} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget))setDragging(false);}} onDrop={e=>{e.preventDefault();setDragging(false);readFiles(Array.from(e.dataTransfer.files||[]));}}>
+     {rows?<FileSpreadsheet size={28} className="mx-auto text-blue-600"/>:<UploadCloud size={28} className="mx-auto text-blue-600"/>}
+     <p className="mt-3 font-medium break-all">{filename||'拖曳 ECOUNT 匯出的銷貨明細到這裡'}</p>
+     <p className="mt-1 text-sm text-slate-500">Excel／CSV · 每次一個檔案 · 上限 10 MiB</p>
+     <Button variant="secondary" className="mt-4" disabled={busy} onClick={()=>receiptFileRef.current?.click()}>{filename?'重新選擇檔案':'選擇 ECOUNT 匯出檔'}</Button>
+     <input ref={receiptFileRef} className="hidden" aria-label="ECOUNT 銷貨明細匯出檔" type="file" accept=".xlsx,.xls,.csv" disabled={busy} onChange={e=>{const files=Array.from(e.target.files||[]);e.target.value='';readFiles(files);}}/>
+     {fileError&&<p role="alert" className="mt-3 text-left text-sm text-amber-950">{fileError}</p>}
+    </div>
+    {rows&&<label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} disabled={busy}/>此檔案由 ECOUNT 已儲存的銷貨單匯出</label>}
+    <div className="mt-4 flex flex-wrap items-center gap-3"><Button disabled={busy||!rows||!confirmed||missingBarcodes.length>0} onClick={()=>run('confirm-sales',{rows,savedSalesConfirmed:confirmed})}>核對並建立預揀單</Button>{rows&&missingBarcodes.length>0&&<button className="min-h-11 text-sm font-medium text-amber-900 underline" onClick={showBarcodeIssues}>先確認 {missingBarcodes.length} 項商品條碼</button>}</div>
+    <details className="mt-4 border-t border-slate-100 pt-4 text-sm text-slate-600"><summary className="cursor-pointer">檔案格式</summary><p className="mt-2">使用含實際銷貨單號、來源明細與金額的 ECOUNT 匯出檔。商城原始訂單與 WMS 銷貨檔不能用於此步驟。</p><button type="button" className="mt-2 min-h-10 text-blue-700 underline" onClick={downloadFormat}>下載欄位設定參考（空白）</button><p className="mt-1">空白參考檔僅供設定 ECOUNT 匯出欄位。</p></details>
+    <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">尚未上傳 ECOUNT</summary><div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="secondary" disabled={busy} onClick={downloadSales}><Download size={16} className="mr-2"/>下載本批銷貨檔</Button><span>下載後，到 ECOUNT 匯入並儲存。</span></div></details>
+   </>}
    </section>}
-   {manager&&!flow.erp_confirmed_at&&<details className={box}><summary className="cursor-pointer font-semibold">{products.some(p=>!p.barcode)?`確認商品條碼（${products.filter(p=>!p.barcode).length} 項）`:'商品條碼'}</summary>{products.map(p=><BarcodeConfirmation key={p.key} product={p} disabled={busy} onConfirm={barcode=>run('confirm-barcode',{productCode:p.productCode,barcode,confirmed:true})}/>)}</details>}
+   {manager&&!flow.erp_confirmed_at&&<details ref={barcodeDetailsRef} className={box+' scroll-mt-4'}><summary className={`cursor-pointer font-semibold ${missingBarcodes.length?'text-amber-900':'text-slate-700'}`}>{missingBarcodes.length?`商品條碼待確認（${missingBarcodes.length} 項）`:'商品條碼已確認'}</summary>{missingBarcodes.map(p=><BarcodeConfirmation key={p.key} product={p} disabled={busy} onConfirm={barcode=>run('confirm-barcode',{productCode:p.productCode,barcode,confirmed:true})}/>)}{products.some(p=>p.barcode)&&<details className="mt-3 text-sm"><summary className="cursor-pointer">已確認商品（{products.filter(p=>p.barcode).length} 項）</summary>{products.filter(p=>p.barcode).map(p=><BarcodeConfirmation key={p.key} product={p} disabled={busy} onConfirm={barcode=>run('confirm-barcode',{productCode:p.productCode,barcode,confirmed:true})}/>)}</details>}</details>}
    {flow.erp_confirmed_at&&<section className={box}><h2 className="text-lg font-semibold">領單與指派預揀</h2><p className="mt-2 text-sm">領單人：{flow.print_owner_name||'尚未領單'} · {time(flow.printed_at)}</p><p className="mt-1 text-sm">預揀人員：{flow.prepick_owner_name||'尚未指派'} · {flow.prepick_completed_at?'已完成':'待核對'}</p>
     {manager&&<><div className="mt-4 flex flex-wrap gap-3"><select aria-label="列印內容" className={input} value={paper} onChange={e=>setPaper(e.target.value)} disabled={busy}><option value="prepick">預揀總表（全批）</option><option value="orders">所有訂單明細（每單分頁）</option></select><Button disabled={busy||products.some(p=>!p.barcode)} onClick={()=>{setBusy(true);setError('');print();}}>{flow.printed_at?'重印':'領單並列印'}</Button></div>{products.some(p=>!p.barcode)&&<p className="mt-2 text-sm text-amber-800">請先確認 {products.filter(p=>!p.barcode).length} 項商品條碼。</p>}<div className="mt-4 flex flex-wrap gap-3"><select aria-label="預揀人員" className={input} value={assignee} onChange={e=>setAssignee(e.target.value)}><option value="">選擇預揀人員</option>{staff.map(s=><option key={s.id} value={s.id}>{s.name}（{s.role}）</option>)}</select><Button variant="secondary" disabled={busy||!assignee||!flow.printed_at||!!flow.prepick_completed_at} onClick={()=>run('assign',{assigneeId:Number(assignee)})}>指派／轉交預揀</Button></div></>}
    </section>}
