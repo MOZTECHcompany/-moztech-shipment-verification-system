@@ -111,7 +111,7 @@ test('ECOUNT download requires ERP, customer, tax and unpaid-test confirmation b
     await view.button('銷貨檔 → 上傳 ECOUNT').props.onClick(); view.render();
     assert.equal(view.downloads.length, 1);
     assert.equal(view.downloads[0].url,'/api/marketplace-files/1/ecount');
-    assert.match(view.text(view.render()),/請下載後上傳 ECOUNT 並儲存/);
+    assert.match(view.text(view.render()),/銷貨檔已下載/);
     assert.ok(view.find(view.render(), node => node.props?.to === "/warehouse-intakes/1"));
     view.change('ECOUNT 品項編碼', 'CHANGED'); assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true);
     assert.equal(view.requests.length, 3); assert.equal(view.requests[1].url, '/api/marketplace-intakes'); assert.equal(view.requests[2].url,'/api/marketplace-intakes/1/download-link'); assert.equal(view.writes.length, 0);
@@ -143,7 +143,7 @@ test('account changes remove the preview and cannot export the previous account 
     const view = await converter(); await view.select(file());
     view.storage.set('wms_user', JSON.stringify({ id: 8, role: 'admin' })); view.listeners.get('storage')();
     assert.doesNotMatch(view.text(view.render()), /00123/); assert.match(view.text(view.render()), /登入人員已變更/);
-    assert.equal(view.button('選擇原始訂單檔').props.disabled, true); assert.equal(view.downloads.length, 0);
+    assert.equal(view.button('選擇訂單檔').props.disabled, true); assert.equal(view.downloads.length, 0);
 });
 
 test('unmounted asynchronous file reads do not reveal or store the completed result', async () => {
@@ -154,7 +154,7 @@ test('unmounted asynchronous file reads do not reveal or store the completed res
     assert.equal(view.lateUpdates(), 0); assert.equal(view.downloads.length, 0); assert.equal(view.writes.length, 0);
 });
 
-test('server permission denial disables file conversion before any input', async()=>{ const view=await converter({denied:true}); assert.equal(view.button('選擇原始訂單檔').props.disabled,true); assert.match(view.text(view.render()),/無法確認轉檔權限/); });
+test('server permission denial disables file conversion before any input', async()=>{ const view=await converter({denied:true}); assert.equal(view.button('選擇訂單檔').props.disabled,true); assert.match(view.text(view.render()),/無法確認轉檔權限/); });
 
 
 test('compact converter keeps one primary download before collapsed details and groups blocking errors without warnings', async () => {
@@ -189,9 +189,9 @@ test('unique ECOUNT reference automatically resolves source SKU while stopped su
 test('selecting a stored profile fills customer and tax settings only for the uploaded platform',async()=>{
  const profiles=[{id:1,platform:'1Shop',store:'Saved Store',settings:{store:'Saved Store',customerCode:'00020',customerName:'Saved Customer',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true}},{id:2,platform:'Shopify',store:'Other',settings:{store:'Other',customerCode:'WRONG'}}];
  const c=await converter({profiles});await c.select(file());
- c.change('選擇本批店鋪','1');assert.match(c.text(c.render()),/00020\s+·\s+Saved Customer/);
+ c.change('店鋪','1');assert.match(c.text(c.render()),/00020\s+·\s+Saved Customer/);
  const options=c.all(n=>n.type==='option').map(n=>c.text(n));assert.ok(!options.includes('Other · WRONG'));
  await c.select(file());
  const stores=c.all(n=>n.type==='input').filter(n=>n.props.value==='Saved Store');assert.equal(stores.length,0,'new file must select its store explicitly');
- c.change('選擇本批店鋪','2');assert.doesNotMatch(c.text(c.render()),/銷貨客戶： WRONG/);
+ c.change('店鋪','2');assert.doesNotMatch(c.text(c.render()),/銷貨客戶： WRONG/);
 });

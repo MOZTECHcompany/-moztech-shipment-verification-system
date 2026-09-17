@@ -2,6 +2,8 @@
 
 **2026-09-15 使用者指定的後續開發規則：** 一律先在 [DEV](https://corely-wms-dev-249593319772.asia-east1.run.app/login) 開發、測試與驗收，確認完成後再發布到 [正式站](https://wms.corely.cc)。接手先讀 [DEV 優先開發與發布規則](docs/WMS_DEV_FIRST_WORKFLOW_2026-09-15.md)。DEV 與正式資料分開；發布程式不等於複製 DEV 測試資料。本次記錄不切換正式流量。
 
+**所有操作畫面須遵守 [WMS 操作介面規則](docs/WMS_UI_DESIGN_RULES.md)：** 依角色與階段只呈現當前工作，減少注釋、重複輸入與跳頁，保留必要的防錯、權限和紀錄。
+
 本目錄是現行 WMS 的 Cloud Run 維護線。舊 repo 的 d4e2bff 是功能比對基準，不是目前正式程式；原先搬遷前的部署說明僅可作歷史參考。
 
 **GitHub 最新入口：** https://github.com/MOZTECHcompany/-moztech-shipment-verification-system

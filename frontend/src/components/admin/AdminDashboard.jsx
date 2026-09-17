@@ -190,16 +190,16 @@ export function AdminDashboard({ user }) {
                 } />
 
                 {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <section className="mb-6 overflow-hidden rounded-2xl border border-blue-200 bg-blue-50" aria-label="商城原始訂單轉檔">
-                    <div className="flex flex-wrap items-center justify-between gap-5 p-6"><div className="min-w-0"><span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">行政作業 · 第 1 步</span><h2 className="mt-3 text-2xl font-bold text-blue-950">商城訂單轉檔</h2><p className="mt-2 text-sm leading-6 text-blue-900">上傳 Shopify、1Shop、SHOPLINE 訂單 → 核對商品及金額 → 下載 ECOUNT 銷貨檔</p></div><Button as={Link} to="/admin/marketplace-converter" className="min-h-12 px-6">開始訂單轉檔<ArrowRight size={18} className="ml-2" /></Button></div>
-                    <div className="border-t border-blue-200 px-6 py-3 text-sm text-blue-900">已有轉檔批次？<Link to="/admin/marketplace-converter#saved-batches" className="ml-2 font-semibold underline">查看批次、下載與訂單明細</Link></div>
+                    <div className="flex flex-wrap items-center justify-between gap-5 p-6"><h2 className="text-2xl font-bold text-blue-950">商城訂單轉檔</h2><Button as={Link} to="/admin/marketplace-converter" className="min-h-12 px-6">上傳商城訂單<ArrowRight size={18} className="ml-2" /></Button></div>
+                    <div className="border-t border-blue-200 px-6 py-3 text-sm"><Link to="/admin/marketplace-converter#saved-batches" className="font-semibold text-blue-800 underline">已保存批次</Link></div>
                 </section>}
 
                 <div className="grid gap-5 lg:grid-cols-3">
-                    {intakeId && <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 lg:col-span-3">本次將核對轉檔批次 #{intakeId} 的全部訂單。請上傳 ECOUNT 理貨明細，保留平台、店鋪、商城單號、來源明細號、品項、國際條碼及數量。<Link to="/admin/marketplace-converter" className="ml-2 underline">返回轉檔批次</Link></p>}
+                    {intakeId && <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 lg:col-span-3">批次 #{intakeId} · 選擇 ECOUNT 理貨明細。<Link to="/admin/marketplace-converter" className="ml-2 underline">返回轉檔批次</Link></p>}
                     <section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
                         <div className="flex items-start gap-3">
                             <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><UploadCloud size={22} /></div>
-                            <div><h2 id="import-title" className="text-xl font-semibold text-slate-900">理貨單回匯／出貨單匯入</h2><p className="mt-1 text-sm text-slate-500">完成 ECOUNT 銷貨後，匯入理貨資料，建立揀貨與裝箱工作單。原有出貨單格式也可使用。</p></div>
+                            <h2 id="import-title" className="text-xl font-semibold text-slate-900">匯入理貨／出貨單</h2>
                         </div>
                         <div data-testid="import-dropzone" onDrop={handleDrop} onDragOver={event => { event.preventDefault(); event.stopPropagation(); }} aria-busy={importState.phase === 'uploading'}
                             className={`mt-5 rounded-xl border-2 border-dashed p-6 text-center ${importBlocked ? 'border-slate-200 bg-slate-50' : 'border-blue-200 bg-blue-50/40'}`}>

@@ -7,7 +7,8 @@ function createWarehouseReleaseRouter({pool}){
  router.get('/',handle(async(req,res)=>{
   const rows=(await pool.query(`SELECT i.id,i.batch_number,i.source_platform,i.source_store,f.erp_confirmed_at,f.printed_at,f.prepick_completed_at,u.name AS prepick_owner_name
    FROM marketplace_warehouse_flows f JOIN marketplace_intakes i ON i.id=f.intake_id LEFT JOIN users u ON u.id=f.prepick_owner_id
-   WHERE i.archived_at IS NULL ORDER BY i.id DESC LIMIT 100`)).rows;
+   WHERE i.archived_at IS NULL AND ($1::boolean OR (f.prepick_owner_id=$2 AND f.prepick_completed_at IS NULL))
+   ORDER BY i.id DESC LIMIT 100`,[manager(req.user),req.user.id])).rows;
   res.set('Cache-Control','private, no-store').json({batches:rows});
  }));
  router.get('/staff',handle(async(req,res)=>{

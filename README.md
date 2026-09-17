@@ -4,6 +4,7 @@
 
 - 正式入口：https://wms.corely.cc
 - **接手先讀：[CODEX_HANDOFF.md](CODEX_HANDOFF.md)**
+- [所有頁面的操作介面規則](docs/WMS_UI_DESIGN_RULES.md)
 - [雲端資源、登入與部署指引](docs/WMS_ENVIRONMENT_HANDOFF_2026-09-14.md)
 - [GitHub 同步與原始碼版本說明](docs/WMS_GITHUB_SYNC_2026-09-14.md)
 - [完整舊 WMS 功能比對](docs/WMS_FULL_PARITY_2026-09-14.md)

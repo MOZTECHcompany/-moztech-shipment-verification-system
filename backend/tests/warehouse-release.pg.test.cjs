@@ -20,6 +20,8 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
  const settings={store:'本機隔離',customerCode:'CUST',customerName:'客戶',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-RELEASE-0917',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'品項 A',barcode:'4711299273087',confirmed:true,barcodeConfirmed:true}},shippingSku:{}};
  const saved=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows,settings}),201);
  const path='/api/warehouse-intakes/'+saved.id;
+ assert.equal(ok(await api('picker','GET','/api/warehouse-intakes')).batches.length,0);
+ assert.equal(ok(await api('admin','GET','/api/warehouse-intakes')).batches.length,1);
  const command=(role,extra={})=>({commandId:randomUUID(),expectedActorId:users[role],...extra});
  const action=(role,a,extra={})=>api(role,'POST',path+'/'+a,command(role,extra));
  let data=ok(await api('picker','GET',path));assert.equal(data.orders.length,2);assert.ok(data.orders.every(o=>/^WT[0-9A-F]{18}$/.test(o.work_barcode)));assert.equal(data.flow.erp_confirmed_at,null);assert.equal(data.batch.snapshot,undefined);
@@ -40,7 +42,7 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   ok(await action('dispatcher','confirm-barcode',{productCode:'ERP-0001',barcode:'4711299273087',confirmed:true}));
  });
  if(process.env.WMS_RELEASE_BROWSER==='1')await t.test('browser upload, print ownership, complete barcode papers and mobile layout',async()=>{
-  await require('./warehouse-release-browser.cjs')({base:'http://127.0.0.1:'+server.address().port,id:saved.id,user:{id:users.admin,username:'admin',name:'admin',role:'admin'},token:tokens.admin,receipt,output:require('node:path').resolve(__dirname,'../../../artifacts/warehouse-release-20260917')});
+  await require('./warehouse-release-browser.cjs')({base:'http://127.0.0.1:'+server.address().port,id:saved.id,user:{id:users.admin,username:'admin',name:'admin',role:'admin'},token:tokens.admin,picker:{user:{id:users.picker,username:'picker',name:'picker',role:'picker'},token:tokens.picker},receipt,output:require('node:path').resolve(__dirname,'../../../artifacts/warehouse-release-20260917')});
  });
  await t.test('concurrent receipt retry creates one batch and fixed child work codes',async()=>{
   const results=await Promise.all([action('dispatcher','confirm-sales',{rows:receipt,savedSalesConfirmed:true}),action('dispatcher','confirm-sales',{rows:receipt,savedSalesConfirmed:true})]);results.forEach(r=>ok(r));
@@ -58,6 +60,8 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   await action('admin','print',{kind:'prepick'}).then(ok);await action('dispatcher','print',{kind:'orders'}).then(ok);
   data=ok(await api('admin','GET',path));assert.equal(data.flow.print_owner_id,users.admin);
   await action('admin','assign',{assigneeId:users.picker}).then(ok);
+  assert.equal(ok(await api('picker','GET','/api/warehouse-intakes')).batches.length,1);
+  assert.equal(ok(await api('packer','GET','/api/warehouse-intakes')).batches.length,0);
   const p=data.products[0];assert.equal(p.quantity,3);
   assert.equal((await action('packer','scan',{productKey:p.key,barcode:p.barcode,quantity:3})).status,403);
   assert.equal((await action('picker','scan',{productKey:p.key,barcode:'WRONG',quantity:3})).status,400);
@@ -70,6 +74,7 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   assert.equal((await action('picker','complete')).status,409);
   await action('picker','scan',{productKey:p.key,barcode:p.barcode,quantity:3}).then(ok);
   await action('picker','complete').then(ok);
+  assert.equal(ok(await api('picker','GET','/api/warehouse-intakes')).batches.length,0);
   assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders WHERE warehouse_hold')).rows[0].n,0);
  });
  await t.test('picker and packer claim separately; SN and quantity checked twice',async()=>{

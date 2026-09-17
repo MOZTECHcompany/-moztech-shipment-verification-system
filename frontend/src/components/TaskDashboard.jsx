@@ -877,7 +877,7 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
-                <Link to="/warehouse-intakes" className="mb-4 flex min-h-14 items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-5 font-semibold text-blue-800">整批預揀作業 · 領單列印與條碼查核 <ArrowRight size={20}/></Link>
+                <Link to="/warehouse-intakes" className="mb-4 flex min-h-14 items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-5 font-semibold text-blue-800">整批預揀作業 <ArrowRight size={20}/></Link>
                 {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
                     key={user.id} user={user} active={currentView === 'active'}
                     disabled={claimingId !== null || isBatchClaiming}
@@ -921,7 +921,7 @@ export function TaskDashboard({ user }) {
 
                 <p className="sr-only">統計涵蓋目前權限、搜尋、狀態與日期條件下的全部任務；點選卡片可篩選下方清單。</p>
                 {/* 本頁統計 */}
-                                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3 mb-5">
+                                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3 mb-5">
                                     {statCards.map((c)=>{
                     const Icon = c.icon;
                     return (
@@ -945,12 +945,12 @@ export function TaskDashboard({ user }) {
                       </button>
                     );
                   })}
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                </div>}
+                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                     <p role="status" className="text-sm font-semibold text-slate-700">目前清單：{selectedGroupLabel}</p>
                     {taskGroup !== 'all' && <button type="button" className="text-sm text-blue-700 underline min-h-9" onClick={() => setTaskGroup('all')}>查看全部分類</button>}
-                </div>
-                {!loading && !searchPending && !taskSummary && <p role="status" className="text-sm text-amber-700 mb-3">統計暫時無法取得，請重新整理；下方仍可查看已載入的任務。</p>}
+                </div>}
+                {!loading && !searchPending && !taskSummary && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <p role="status" className="text-sm text-amber-700 mb-3">統計暫時無法取得，請重新整理；下方仍可查看已載入的任務。</p>}
                 
 
                 {/* 任務列表 */}
