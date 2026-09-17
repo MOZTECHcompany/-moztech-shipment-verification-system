@@ -6,7 +6,7 @@ import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
 import { batchSessionMatches } from '../../utils/importBatches';
-import { formatMinor, buildEcountUploadTable, ECOUNT_GROUPED_MODE } from '../../utils/marketplaceIntake.mjs';
+import { formatMinor, buildEcountUploadTable, ECOUNT_GROUPED_MODE, formatEcountProductColumn } from '../../utils/marketplaceIntake.mjs';
 import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, parseUnifiedMarketplace, prepareUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
 
 const knownMappings = {
@@ -120,7 +120,7 @@ function ConverterPage({user}){
  const writeBook=async(record,kind)=>{
   const XLSX=await import('xlsx');if(!mounted.current||!currentSession())throw Error('登入已變更，未下載資料。');
   const book=XLSX.utils.book_new();
-  const add=(title,rows)=>{const sheet=XLSX.utils.aoa_to_sheet(rows);sheet['!cols']=(rows[0]||[]).map(()=>({wch:24}));XLSX.utils.book_append_sheet(book,sheet,title);};
+  const add=(title,rows)=>{const sheet=XLSX.utils.aoa_to_sheet(rows);sheet['!cols']=(rows[0]||[]).map(()=>({wch:24}));if(title==='銷貨匯入')formatEcountProductColumn(sheet,rows.length);XLSX.utils.book_append_sheet(book,sheet,title);};
   if(kind==='ecount'){const upload=buildEcountUploadTable(record);add('銷貨匯入',[upload.headers,...upload.rows]);}
   else{
    add('承辦人',[['狀態','未保存核對草稿'],['承辦人',user.name||user.username||''],['承辦人帳號',user.username||'']]);

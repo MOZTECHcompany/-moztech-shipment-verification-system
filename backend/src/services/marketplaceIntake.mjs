@@ -4,6 +4,13 @@ export const ECOUNT_HEADERS = ['日期', '序號', '客戶/供應商編碼', '�
 // Online uploader verified on 2026-09-15: standard columns first, custom
 // marketplace columns in X:AA. Stored snapshots retain the canonical layout.
 export const ECOUNT_UPLOAD_HEADERS = [...ECOUNT_HEADERS.slice(0,12),...ECOUNT_HEADERS.slice(16),...ECOUNT_HEADERS.slice(12,16)];
+export function formatEcountProductColumn(sheet,rowCount){
+  for(let row=1;row<=rowCount;row++){
+    const cell=sheet[`L${row}`];if(!cell)continue;
+    if(typeof cell.v==='number'&&!Number.isSafeInteger(cell.v))throw Error('品項編碼不是完整有效的識別碼');
+    cell.v=String(cell.v??'');cell.t='s';cell.z='@';delete cell.w;
+  }
+}
 export function buildEcountUploadTable(record){
   if(!Array.isArray(record?.headers)||record.headers.length!==27||new Set(record.headers).size!==27||!Array.isArray(record.rows))throw Error('ECOUNT 保存批次欄位格式無效');
   const indexes=ECOUNT_UPLOAD_HEADERS.map(h=>record.headers.indexOf(h));

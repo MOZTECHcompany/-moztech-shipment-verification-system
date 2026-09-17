@@ -25,8 +25,9 @@ function downloadFile({pool}){return async(req,res,next)=>{
   try{await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))]);}catch(e){if(req.params.kind==='prepick'&&e.status===400)reviewWarning=e.message;else throw e;}
   const record={reviewWarning,...r.snapshot,handler:await require('./marketplaceHandler').batchHandler(pool,r),id:r.id,batchNumber:r.batch_number,platform:r.source_platform,store:r.source_store,links:await batchLinks(pool,r.id)};
   const {savedBatchTables}=await import('./marketplaceBatchFiles.mjs'),XLSX=require('xlsx');
+  const {formatEcountProductColumn}=await import('./marketplaceIntake.mjs');
   let tables;try{tables=savedBatchTables(record,req.params.kind);}catch(e){throw Object.assign(e,{status:400});}
-  const book=XLSX.utils.book_new();for(const t of tables){const sheet=XLSX.utils.aoa_to_sheet(t.rows);sheet['!cols']=(t.rows[0]||[]).map(()=>({wch:24}));XLSX.utils.book_append_sheet(book,sheet,t.name);}
+  const book=XLSX.utils.book_new();for(const t of tables){const sheet=XLSX.utils.aoa_to_sheet(t.rows);sheet['!cols']=(t.rows[0]||[]).map(()=>({wch:24}));if(t.name==='銷貨匯入')formatEcountProductColumn(sheet,t.rows.length);XLSX.utils.book_append_sheet(book,sheet,t.name);}
   const filename=`${req.params.kind==='ecount-grouped'?'ECOUNT彙總銷貨匯入':req.params.kind==='ecount'?'ECOUNT銷貨匯入':'WMS預揀與訂單明細'}_${r.batch_number}.xlsx`;
   res.set({'Cache-Control':'private, no-store','Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="WMS-${r.id}-${req.params.kind}.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`,'X-Content-Type-Options':'nosniff'});
   res.send(XLSX.write(book,{type:'buffer',bookType:'xlsx'}));
