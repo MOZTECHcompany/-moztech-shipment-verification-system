@@ -58,11 +58,11 @@ router.get('/tasks', async (req, res) => {
                 ORDER BY ol.created_at DESC
                 LIMIT 1
             ) import_log ON TRUE
-            WHERE 
+            WHERE COALESCE(o.warehouse_hold, FALSE) = FALSE AND (
                 ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'dispatcher' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL)))) OR
-                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
+                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1))))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 
                 (CASE WHEN $2 = 'dispatcher' THEN MAX(CASE WHEN import_log.user_id = $1 THEN 1 ELSE 0 END) ELSE 0 END) DESC,

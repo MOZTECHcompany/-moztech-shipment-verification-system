@@ -271,3 +271,15 @@ test('batch import result exposes every independent work order and one bulk prin
     for (const order of orders) assert.ok(view.find(view.render(), node => node.type === 'Link' && node.props.to === `/order/${order.orderId}`));
     assert.equal(view.storage.size, 0);
 });
+
+test('verified marketplace return and identical retry open the same warehouse task without bypassing prepick print ownership', async () => {
+ for(const status of [201,200]){
+  const view=dashboard();const pending=view.select(file());
+  const data={batchId:51,batchNumber:'WMS-RETURN',warehouseIntakeId:9,workOrderCount:1,totalQuantity:2,itemCount:1,serialCount:0,reused:status===200,orders:[{orderId:123,voucherNumber:'WT000000000000000001',workBarcode:'WT000000000000000001'}]};
+  view.posts[0].resolve({status,data});await pending;await view.settle();
+  assert.equal(view.control('import-batch-link').props.to,'/warehouse-intakes/9');
+  assert.match(view.text(view.render()),/開啟預揀任務/);
+  assert.equal(view.find(view.render(),n=>n.type==='BatchPrintLabels'),undefined);
+  assert.equal(view.storage.size,0);
+ }
+});

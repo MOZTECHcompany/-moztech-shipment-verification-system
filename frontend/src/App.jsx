@@ -119,8 +119,8 @@ function App() {
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
-                            <Route path="/warehouse-intakes" element={<WarehouseRelease user={user} />} />
-                            <Route path="/warehouse-intakes/:intakeId" element={<WarehouseRelease user={user} />} />
+                            <Route path="/warehouse-intakes" element={<WarehouseRelease user={user} token={token} />} />
+                            <Route path="/warehouse-intakes/:intakeId" element={<WarehouseRelease user={user} token={token} />} />
                             <Route path="/batches/:batchId" element={<ImportBatchView key={`${user?.id}:${user?.role}:${token}`} user={user} />} />
                         </Route>
                     </Route>

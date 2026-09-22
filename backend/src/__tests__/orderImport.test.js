@@ -280,7 +280,7 @@ function database({ existing = false, failLog = false, failCommit = false, failR
         })
     };
     pool.connect.mockResolvedValue(client);
-    pool.query.mockImplementation(() => { throw new Error('second pool connection is forbidden'); });
+    pool.query.mockImplementation(sql => { if(sql.startsWith('WITH source_keys AS'))return {rows:[]};throw new Error('second pool connection is forbidden'); });
     const io = { emit: jest.fn(() => { if (pending) earlyEvents++; }) };
     return { client, io, state: () => state, earlyEvents: () => earlyEvents };
 }

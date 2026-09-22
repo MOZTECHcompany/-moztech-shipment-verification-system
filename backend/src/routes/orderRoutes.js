@@ -456,9 +456,15 @@ const { parseMarketplaceLinkedImport, matchMarketplaceWorkOrders, marketplaceSou
 router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimiter, uploadImport, async (req, res) => {
     let parsed;
     try {
+        const returned = await require('../services/marketplaceReturnImport').importMarketplaceReturn(req.file?.buffer, pool, req.body?.marketplaceIntakeId, req.user);
+        if (returned) {
+            req.app.get('io')?.emit('warehouse_tasks_changed', { intakeId: returned.warehouseIntakeId });
+            return res.status(returned.reused ? 200 : 201).json({ ...returned, message: `核對完成，已建立 ${returned.workOrderCount} 筆訂單的預揀任務` });
+        }
         parsed = await parseMarketplaceLinkedImport(req.file?.buffer, pool, req.body?.marketplaceIntakeId);
     } catch (error) {
-        return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message,
+        return res.status(error.status || 400).json({ code: error.status>=500?'IMPORT_RESULT_UNKNOWN':'IMPORT_NOT_APPLIED', message: error.message,
+            ...(error.warehouseIntakeId ? { warehouseIntakeId: error.warehouseIntakeId } : {}),
             ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 

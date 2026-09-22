@@ -19,6 +19,7 @@ import DefectReportModal from './DefectReportModal';
 import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
 import TaskListFilters from './TaskListFilters';
 import ScanToClaim from './ScanToClaim';
+import WarehouseTaskQueue from './WarehouseTaskQueue';
 import { sourceOrderLabel } from '../utils/sourceOrders';
 import { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole } from '@/utils/taskFilters';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
@@ -898,7 +899,7 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
-                <Link to="/warehouse-intakes" className="mb-4 flex min-h-14 items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-5 font-semibold text-blue-800">整批預揀作業 <ArrowRight size={20}/></Link>
+                <WarehouseTaskQueue user={user} active={currentView==='active'}/>
                 {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
                     key={user.id} user={user} active={currentView === 'active'}
                     disabled={claimingId !== null || isBatchClaiming}

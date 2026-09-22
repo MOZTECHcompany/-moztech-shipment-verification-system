@@ -40,7 +40,7 @@ async function getTaskPage(pool, user, query, view) {
     const page = parseTaskPage(user, query, view);
     const params = [page.userId, page.role];
     const param = value => { params.push(value); return `$${params.length}`; };
-    const conditions = [];
+    const conditions = view === 'active' ? ['COALESCE(o.warehouse_hold, FALSE) = FALSE'] : [];
     if (view === 'active') {
         conditions.push(`(($2 IN ('admin', 'dispatcher') AND o.status IN ('pending','picking','picked','packing'))
             OR ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL))))

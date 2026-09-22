@@ -135,4 +135,38 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   const changed=structuredClone(groupedReceipt);changed[1][10]++;
   assert.equal((await api('admin','POST',groupPath+'/confirm-sales',command('admin',{rows:changed,savedSalesConfirmed:true}))).status,400);
  });
+ await t.test('original import entrance reconciles grouped delivery file into one held batch, retries reuse and prints all',async()=>{
+  const batch=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows:[headers,...rows.slice(1).map((r,n)=>{const x=[...r];x[0]='RETURN-'+n;return x;})],settings:{...settings,batchNumber:'TEST-RETURN-0923',salesExportMode:'product-200-v1'}}),201);
+  const {prepareEcountFinancials,groupedSalesRecord}=await import('../src/services/marketplaceIntake.mjs');
+  const lines=prepareEcountFinancials(groupedSalesRecord(batch)).rows;
+  const returned=[['出貨單號','平台','店鋪','商城訂單編號','來源明細號','品項編碼','數量','國際條碼','序號/批號'],...lines.map(r=>['DELIVERY-0923',r[13],r[14],r[12],r[15],r[11],r[19],'4711299273087','SN0000000001 SN0000000002 SN0000000003'])];
+  async function upload(table,role='dispatcher'){
+   const XLSX=require('xlsx'),book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(table),'理貨單');
+   const form=new FormData();form.append('orderFile',new Blob([XLSX.write(book,{type:'buffer',bookType:'xlsx'})]),'return.xlsx');
+   const r=await fetch(`http://127.0.0.1:${server.address().port}/api/orders/import`,{method:'POST',headers:{Authorization:'Bearer '+tokens[role]},body:form});return {status:r.status,data:await r.json()};
+  }
+  const before=(await pool.query('SELECT COUNT(*)::int n FROM orders')).rows[0].n;
+  assert.equal((await upload(returned,'picker')).status,403);
+  const wrong=structuredClone(returned);wrong[1][6]=4;assert.equal((await upload(wrong)).status,400);
+  const doubled=[...returned,returned[1]];assert.equal((await upload(doubled)).status,400);
+  const wrongBarcode=structuredClone(returned);wrongBarcode[1][7]='WRONG';assert.equal((await upload(wrongBarcode)).status,400);
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders')).rows[0].n,before);
+  const results=await Promise.all([upload(returned),upload(returned)]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,201]);
+  for(const r of results){assert.equal(r.data.warehouseIntakeId,batch.id);assert.equal(r.data.workOrderCount,2);assert.equal(r.data.totalQuantity,3);assert.equal(r.data.serialCount,3);assert.equal(r.data.orders.length,2);}
+  const flow=ok(await api('admin','GET','/api/warehouse-intakes/'+batch.id));
+  const active=ok(await api('admin','GET','/api/tasks'));assert.ok(!active.some(t=>flow.orders.some(o=>o.order_id===t.id)));
+  const paged=ok(await api('admin','GET','/api/tasks?pagination=cursor'));assert.ok(!paged.items.some(t=>flow.orders.some(o=>o.order_id===t.id)));
+  assert.equal(flow.flow.erp_receipt.verificationKind,'warehouse-return');assert.equal(flow.flow.erp_receipt.financialVerified,false);assert.equal(flow.flow.erp_receipt.financials,null);
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders')).rows[0].n,before+2);
+  assert.deepEqual(flow.orders.map(o=>o.expected_items[0].snCount),[1,2]);
+  const pending=ok(await api('admin','GET','/api/warehouse-intakes?ready=1')).batches;const task=pending.find(b=>b.id===batch.id);assert.equal(task.order_count,2);assert.equal(task.total_quantity,3);
+  assert.equal(ok(await api('picker','GET','/api/warehouse-intakes?ready=1')).batches.length,0);
+  ok(await api('admin','POST',`/api/warehouse-intakes/${batch.id}/print`,command('admin',{kind:'all'})));
+  const event=(await pool.query("SELECT details FROM marketplace_warehouse_events WHERE intake_id=$1 AND action='print' ORDER BY id DESC LIMIT 1",[batch.id])).rows[0];assert.equal(event.details.kind,'all');
+  assert.equal((await api('picker','POST','/api/orders/'+flow.orders[0].order_id+'/claim')).status,409);
+  ok(await api('admin','POST',`/api/warehouse-intakes/${batch.id}/assign`,command('admin',{assigneeId:users.picker})));
+  assert.ok(ok(await api('picker','GET','/api/warehouse-intakes?ready=1')).batches.some(b=>b.id===batch.id));
+ });
+
 });
