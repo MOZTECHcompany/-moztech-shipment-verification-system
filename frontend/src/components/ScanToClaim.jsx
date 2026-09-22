@@ -45,17 +45,15 @@ export default function ScanToClaim({ user, active = true, disabled = false, onA
     };
     if (!active && !locked) return null;
     return <section aria-label="掃碼認領工作單" className="mb-4 rounded-xl border border-blue-200 bg-white p-4">
-        <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-            <div className="w-full"><h2 className="font-semibold text-slate-900">掃描工作單條碼即認領</h2><p className="mt-1 text-sm text-slate-600">操作人員：<strong>{user.name || user.username}</strong> · 掃碼後將{stage ? stageLabel : '所選階段'}綁定登入者，並開啟商品核對。</p></div>
-            {['admin', 'superadmin'].includes(user.role) ? <div><label htmlFor="claim-stage" className="mb-1 block text-xs text-slate-600">認領階段（必選）</label><select id="claim-stage" value={selectedStage} disabled={locked || disabled || !active} onChange={event => setSelectedStage(event.target.value)} className="min-h-11 rounded-lg border border-slate-300 px-3"><option value="">請選擇階段</option><option value="pick">揀貨</option><option value="pack">裝箱</option></select></div>
-                : <span className="rounded-lg bg-blue-50 px-3 py-3 text-sm font-semibold text-blue-800">{stageLabel}</span>}
-            <div className="min-w-0 flex-1 basis-60"><label htmlFor="claim-barcode" className="mb-1 block text-xs text-slate-600">工作單認領條碼</label><input ref={inputRef} id="claim-barcode" autoComplete="off" placeholder="掃描 WT… 工作碼後按 Enter 即認領" readOnly={locked || disabled || !active} className="min-h-11 w-full rounded-lg border border-slate-300 px-3 font-mono text-sm read-only:bg-slate-50" /></div>
-            <button type="submit" disabled={locked || disabled || !active || !stage} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">{busy ? '正在確認…' : `認領${stage ? stageLabel : '工作單'}`}</button>
+        <h2 className="mb-3 font-semibold text-slate-900">掃碼領單</h2>
+        <form onSubmit={submit} className={`grid grid-cols-1 gap-3 ${['admin', 'superadmin'].includes(user.role) ? 'sm:grid-cols-[8rem_minmax(0,1fr)_auto]' : 'sm:grid-cols-[minmax(0,1fr)_auto]'}`}>
+            {['admin', 'superadmin'].includes(user.role) && <><label htmlFor="claim-stage" className="sr-only">作業階段</label><select id="claim-stage" value={selectedStage} disabled={locked || disabled || !active} onChange={event => setSelectedStage(event.target.value)} className="min-h-11 min-w-0 rounded-lg border border-slate-300 px-3 text-sm"><option value="">選擇作業</option><option value="pick">揀貨</option><option value="pack">裝箱</option></select></>}
+            <div className="min-w-0"><label htmlFor="claim-barcode" className="sr-only">訂單條碼</label><input ref={inputRef} id="claim-barcode" autoComplete="off" placeholder="掃描訂單條碼" readOnly={locked || disabled || !active} className="min-h-11 w-full rounded-lg border border-slate-300 px-3 text-base read-only:bg-slate-50" /></div>
+            <button type="submit" disabled={locked || disabled || !active || !stage} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">{busy ? '確認中…' : stage ? `領取${stageLabel}` : '領取任務'}</button>
         </form>
-        <p className="mt-2 text-xs text-slate-500">使用 WMS 列印的工作單認領條碼。平台紙單沒有條碼時，可從出貨管理批量列印工作單後附在紙單上；也可使用下方人工領單。</p>
         {view.message && <p role="alert" className={`mt-3 text-sm ${view.phase === 'unknown' ? 'text-amber-800' : 'text-red-700'}`}>{view.message}</p>}
-        {view.command && <p className="mt-2 break-all font-mono text-xs text-slate-600">待確認：{view.command.barcode} · {view.command.stage === 'pick' ? '揀貨' : '裝箱'} · {view.command.commandId}</p>}
-        {view.phase === 'unknown' && <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => controller.recover()} className="min-h-11 rounded-lg border border-amber-300 px-3 text-sm">查詢原認領結果</button>{view.canRetry && <button type="button" onClick={() => controller.retrySame()} className="min-h-11 rounded-lg border border-amber-300 px-3 text-sm">以相同識別碼重送原認領</button>}</div>}
+        {view.command && <p className="mt-2 break-all text-sm text-slate-600">待確認：{view.command.barcode} · {view.command.stage === 'pick' ? '揀貨' : '裝箱'}</p>}
+        {view.phase === 'unknown' && <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => controller.recover()} className="min-h-11 rounded-lg border border-amber-300 px-3 text-sm">查詢原認領結果</button>{view.canRetry && <button type="button" onClick={() => controller.retrySame()} className="min-h-11 rounded-lg border border-amber-300 px-3 text-sm">重試領單</button>}</div>}
         {rejected && <p role="status" className="mt-2 break-all text-sm text-amber-800">尚未接受：{rejected}。完成目前認領後，請重新掃描。</p>}
     </section>;
 }
