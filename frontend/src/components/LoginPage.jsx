@@ -1,13 +1,16 @@
 import React, { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Box, CheckCheck, Eye, EyeOff, Loader2, LockKeyhole, ScanLine, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api';
 import { EnvironmentBanner } from './EnvironmentBanner';
 import './LoginPage.css';
+import { safeEntryDestination } from '../utils/entryDestination';
 
 export function LoginPage({ onLogin }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const destination = safeEntryDestination(new URLSearchParams(location.search).get('next'));
   const submittingRef = useRef(false);
   const usernameRef = useRef(null);
   const passwordRef = useRef(null);
@@ -35,7 +38,7 @@ export function LoginPage({ onLogin }) {
       const responseData = response.data;
       toast.success(`歡迎回來，${responseData.user.name || responseData.user.username}！`);
       onLogin(responseData);
-      navigate('/tasks');
+      navigate(destination, { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || '暫時無法登入，請稍後再試。');
     } finally {

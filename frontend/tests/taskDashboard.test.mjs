@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
+import { taskEntryFilters } from '../src/utils/entryDestination.js';
 import * as sourceOrders from '../src/utils/sourceOrders.js';
 import { filterTasks, canBatchPick, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
@@ -18,7 +19,7 @@ const fixtures = [
 
 // Exercise the component's real callbacks with controlled hooks and deferred API
 // responses. This isolates UI state transitions without a database or browser.
-function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {}) {
+function dashboard({ role = 'admin', initialView = 'active', entrySearch = '', pinned = [] } = {}) {
     const hooks = [];
     const timers = new Map();
     let timerId = 0;
@@ -65,7 +66,8 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
     const notifications = new Proxy({ isEnabled: () => false, play: value => sounds.push(value) }, { get: (target, key) => key === '__esModule' ? false : target[key] || noop });
     const imports = {
         react,
-        'react-router-dom': { useNavigate: () => value => navigation.push(value), useLocation: () => ({ state: { view: initialView } }), Link: 'Link' },
+        '../utils/entryDestination': { taskEntryFilters },
+        'react-router-dom': { useNavigate: () => value => navigation.push(value), useLocation: () => ({ state: { view: initialView }, search: entrySearch }), Link: 'Link' },
         '@/api/api.js': {
             get: (url, options) => url === '/api/tasks/pins' ? Promise.resolve({ data: { pinned } }) : deferred(reads, { url, options }),
             post: (url, body, options) => deferred(posts, { url, body, options })
@@ -599,4 +601,13 @@ test('late scan claim completion cannot redirect after the operator changed dash
     scanner.props.onLockChange(false);
     scanner.props.onSuccess({ orderId: 1, owner: { name: 'Test' }, stage: 'pick', outcome: 'claimed' });
     assert.equal(view.navigation.length, 0);
+});
+
+
+test('ERP picking, packing and completed entry links request the matching existing queue', () => {
+    for (const [search, expected] of [['?group=pick', 'group=pick'], ['?group=pack', 'group=pack'], ['?view=completed', '/api/tasks/completed']]) {
+        const view = dashboard({ entrySearch: search });
+        assert(view.reads[0].url.includes(expected), view.reads[0].url);
+        assert.equal(view.posts.length, 0);
+    }
 });

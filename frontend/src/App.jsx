@@ -1,7 +1,7 @@
 // frontend/src/App.jsx
 
 import { lazy, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
 import apiClient from './api/api';
 import { socket, setSocketSession } from './api/socket';
@@ -24,16 +24,23 @@ const WarehouseRelease = lazy(() => import('./components/WarehouseRelease'));
 const ImportBatchView = lazy(() => import('./components/ImportBatchView').then(module => ({ default: module.ImportBatchView })));
 const TeamBoard = lazy(() => import('./components/TeamBoard').then(module => ({ default: module.TeamBoard })));
 const TeamPostView = lazy(() => import('./components/TeamPostView').then(module => ({ default: module.TeamPostView })));
+import { loginEntryUrl } from './utils/entryDestination';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { AppLayout } from '@/ui';
 
 // AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
 
 function ProtectedRoute({ user, token }) {
+    const location = useLocation();
     if (!user || !token) {
-        return <Navigate to="/login" replace />;
+        return <Navigate to={loginEntryUrl(location.pathname + location.search)} replace />;
     }
     return <Outlet />;
+}
+
+function TasksEntry({ user }) {
+    const location = useLocation();
+    return <TaskDashboard key={`${user?.id}:${user?.role}:${location.search}`} user={user} />;
 }
 
 function App() {
@@ -108,7 +115,7 @@ function App() {
                             <Route path="/admin/scan-errors" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <ScanErrors /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/defects" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <DefectStats /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions /> : <Navigate to="/tasks" />} />
-                            <Route path="/tasks" element={<TaskDashboard key={`${user?.id}:${user?.role}`} user={user} />} />
+                            <Route path="/tasks" element={<TasksEntry key={`${user?.id}:${user?.role}`} user={user} />} />
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />

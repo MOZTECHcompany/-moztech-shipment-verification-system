@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import * as entryDestination from '../src/utils/entryDestination.js';
 import * as environment from '../src/utils/deploymentEnvironment.js';
 
 test('only the explicit dev deployment flag enables the marker', () => {
@@ -33,7 +34,7 @@ async function component(path, overrides, flag) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8');
     const { code } = await transform(source, { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': flag === undefined ? 'undefined' : JSON.stringify(flag) } });
     const module = { exports: {} };
-    vm.runInNewContext(code, { module, exports: module.exports, require: name => overrides[name] || require(name), localStorage: { getItem: () => null }, navigator: { onLine: true } });
+    vm.runInNewContext(code, { module, exports: module.exports, URLSearchParams, require: name => overrides[name] || require(name), localStorage: { getItem: () => null }, navigator: { onLine: true } });
     return module.exports;
 }
 const Link = ({ to, children, className, end: _end, ...props }) => React.createElement('a', { ...props, href: to, className: typeof className === 'function' ? className({ isActive: false }) : className }, children);
@@ -42,7 +43,7 @@ for (const flag of [undefined, 'production', 'dev']) {
     test(`login and authenticated layout show the same environment marker only for ${flag ?? 'default production'}`, async () => {
         const { EnvironmentBanner } = await component('../src/components/EnvironmentBanner.jsx', { '../utils/deploymentEnvironment': environment }, flag);
         const router = { useNavigate: () => () => {}, useLocation: () => ({ pathname: '/tasks' }), Link, NavLink: Link };
-        const { LoginPage } = await component('../src/components/LoginPage.jsx', { './EnvironmentBanner': { EnvironmentBanner }, 'react-router-dom': router, '../api/api': {}, './LoginPage.css': {} }, flag);
+        const { LoginPage } = await component('../src/components/LoginPage.jsx', { './EnvironmentBanner': { EnvironmentBanner }, 'react-router-dom': router, '../api/api': {}, './LoginPage.css': {}, '../utils/entryDestination': entryDestination }, flag);
         const { AppLayout } = await component('../src/ui/AppLayout.jsx', { '../components/EnvironmentBanner': { EnvironmentBanner }, 'react-router-dom': router, '../components/ErrorBoundary': ({ children }) => children }, flag);
         const pages = [React.createElement(LoginPage, { onLogin: () => {} }), React.createElement(AppLayout, { user: { id: 1, role: 'picker', name: 'Test Picker' }, onLogout: () => {} }, React.createElement('p', null, 'Warehouse tasks'))];
         for (const page of pages) {

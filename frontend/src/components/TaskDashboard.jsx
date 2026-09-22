@@ -1,3 +1,4 @@
+import { taskEntryFilters } from '../utils/entryDestination';
 // Corely AI task dashboard: bounded server search and role-aware work queues.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -380,7 +381,8 @@ export function TaskDashboard({ user }) {
     const batchClaimPending = useRef(false);
     const [isBatchClaiming, setIsBatchClaiming] = useState(false);
     const location = useLocation();
-    const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
+    const entryFilters = taskEntryFilters(location.search);
+    const initialView = location?.state?.view === 'completed' ? 'completed' : entryFilters.view;
     const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
     const prevViewRef = useRef(currentView);
@@ -422,7 +424,7 @@ export function TaskDashboard({ user }) {
         const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
         return () => clearTimeout(timer);
     }, [search]);
-    const [taskGroup, setTaskGroup] = useState('all');
+    const [taskGroup, setTaskGroup] = useState(entryFilters.group);
     const [taskSummary, setTaskSummary] = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
     const [urgentOnly, setUrgentOnly] = useState(false);
