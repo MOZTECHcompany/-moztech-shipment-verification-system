@@ -89,6 +89,39 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         await new Promise((resolve, reject) => { anonymous.once('connect_error', resolve); anonymous.once('connect', () => reject(Error('Anonymous socket accepted'))); });
     });
     let bulkOrder, snOrder;
+    await t.test('scientific barcode import returns its cell and leaves all order tables unchanged', async () => {
+        const tables = ['orders', 'order_items', 'order_item_instances', 'operation_logs'];
+        const counts = async () => Promise.all(tables.map(async table => (await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count));
+        const before = await counts();
+        const book = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([
+            ['憑證號碼', 'PARITY-BAD-BARCODE'], ['國際條碼', '品項名稱', '數量'],
+            ['4711299273766', 'Valid text item', 1], [4711299273766, 'Numeric General item', 1]
+        ]), '出貨');
+        const form = new FormData(); form.set('orderFile', new Blob([xlsx.write(book, { type: 'buffer', bookType: 'xlsx' })]), 'fixture.xlsx');
+        const result = ok(await api('dispatcher', 'POST', '/api/orders/import', form), 400);
+        assert.equal(result.reason, 'INVALID_BARCODE_FORMAT');
+        assert.equal(result.issue.cell, 'A4');
+        assert.equal(result.issue.storedValue, '4711299273766');
+        assert.deepEqual(await counts(), before);
+    });
+    await t.test('picking-sheet timestamp footer is excluded from imported goods and normal warehouse scans', async () => {
+        const book = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(book,xlsx.utils.aoa_to_sheet([
+            ['理貨單'],['憑證號碼：PARITY-PRINT-FOOTER'],['接收-客戶/供應商：Synthetic footer customer'],['出庫倉庫：Fixture'],
+            ['品項編碼','品項名稱(規格)','數量','摘要'],['4711299274671','Footer fixture product',1,''],['總計','',1],['2026/09/17 (四) 17:45:26']
+        ]),'理貨單');
+        const form = new FormData();form.set('orderFile',new Blob([xlsx.write(book,{type:'buffer',bookType:'xlsx'})]),'print-footer.xlsx');
+        const imported = ok(await api('dispatcher','POST','/api/orders/import',form),201);
+        assert.equal(imported.itemCount,1);assert.equal(imported.totalQuantity,1);
+        const orderId=imported.orderId;
+        assert.deepEqual((await pool.query('SELECT barcode,quantity FROM order_items WHERE order_id=$1',[orderId])).rows,[{barcode:'4711299274671',quantity:1}]);
+        const log=(await pool.query("SELECT user_id,details::jsonb AS details FROM operation_logs WHERE order_id=$1 AND action_type='import'",[orderId])).rows[0];
+        assert.equal(log.user_id,users.dispatcher);assert.equal(log.details.itemCount,1);
+        ok(await claim('picker',orderId));ok(await scan('picker',orderId,'4711299274671','pick'));
+        ok(await claim('packer',orderId));ok(await scan('packer',orderId,'4711299274671','pack'));
+        assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[orderId])).rows[0].status,'completed');
+    });
     await t.test('XLSX import, duplicate protection, role restriction and competing claim', async () => {
         const imported = ok(await importOrder('PARITY-BULK', 500), 201); bulkOrder = imported.orderId;
         assert.equal((await importOrder('PARITY-BULK', 500)).status, 409);
@@ -247,7 +280,42 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         ok(await api('dispatcher', 'DELETE', `/api/orders/${orderId}`));
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE id=$1', [orderId])).rows[0].n, 0);
     });
+    await t.test('explicit batch stages cannot cross phases, retain partial results and require normal scans', async () => {
+        const first = ok(await importOrder('BATCH-STAGES-A', 1), 201).orderId;
+        const second = ok(await importOrder('BATCH-STAGES-B', 1), 201).orderId;
+        for (const [role, stage] of [['picker','pack'], ['packer','pick'], ['dispatcher','pick']]) {
+            assert.equal((await api(role, 'POST', '/api/orders/batch/claim', {orderIds:[first,second],stage})).status,403);
+        }
+        assert.equal((await api('admin', 'POST', '/api/orders/batch/claim', {orderIds:[first],stage:'invalid'})).status,400);
+        const wrongPhase = ok(await api('admin', 'POST', '/api/orders/batch/claim', {orderIds:[first,second],stage:'pack'}));
+        assert.deepEqual(wrongPhase.results.success, []);
+        assert.equal(wrongPhase.results.failed.length, 2);
+        const pickedClaim = ok(await api('picker', 'POST', '/api/orders/batch-claim', {orderIds:[first,second],stage:'pick'}));
+        assert.equal(pickedClaim.orders.length, 2);
+        for (const id of [first,second]) {
+            const before = (await pool.query('SELECT status,picker_id FROM orders WHERE id=$1',[id])).rows[0];
+            assert.deepEqual(before,{status:'picking',picker_id:users.picker});
+            ok(await scan('picker',id,'FIXTURE-BARCODE','pick'));
+        }
+        const exception = ok(await api('picker','POST',`/api/orders/${second}/exceptions`,{type:'other',reasonText:'Batch packing review fixture'}),201);
+        const wrongPicking = ok(await api('admin','POST','/api/orders/batch/claim',{orderIds:[first],stage:'pick'}));
+        assert.deepEqual(wrongPicking.results.success,[]);
+        const packedClaim = ok(await api('packer','POST','/api/orders/batch/claim',{orderIds:[first,second],stage:'pack'}));
+        assert.deepEqual(packedClaim.results.success,[first]);
+        assert.equal(packedClaim.results.failed[0].orderId,second);
+        assert.match(packedClaim.results.failed[0].reason,/未核可例外/);
+        ok(await api('admin','PATCH',`/api/orders/${second}/exceptions/${exception.id}/ack`,{note:'Reviewed batch fixture'}));
+        const resumed = ok(await api('packer','POST','/api/orders/batch/claim',{orderIds:[second],stage:'pack'}));
+        assert.deepEqual(resumed.results.success,[second]);
+        for (const id of [first,second]) {
+            assert.deepEqual((await pool.query('SELECT status,packer_id FROM orders WHERE id=$1',[id])).rows[0],{status:'packing',packer_id:users.packer});
+            ok(await scan('packer',id,'FIXTURE-BARCODE','pack'));
+            assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status,'completed');
+            assert.equal((await pool.query("SELECT count(*)::int n FROM operation_logs WHERE order_id=$1 AND action_type='claim'",[id])).rows[0].n,2);
+        }
+    });
     await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
+    await require('./order-completion-flows.cjs')({ t, api, ok, pool, users, observedEvents });
     if (process.env.WMS_PARITY_BROWSER === '1') await require('./legacy-browser.cjs')({ t, api, ok, pool, users, tokens, base, output: process.env.WMS_PARITY_BROWSER_OUTPUT });
     await t.test('current DB role applies immediately even with old admin token', async () => {
         await pool.query("UPDATE users SET role='picker' WHERE id=$1", [users.admin]);

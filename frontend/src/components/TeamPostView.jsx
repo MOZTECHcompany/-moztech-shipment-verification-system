@@ -5,13 +5,8 @@ import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
 import { ArrowLeft, MessageSquare, Paperclip } from 'lucide-react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, EmptyState, PageHeader, Skeleton } from '@/ui';
-
-function formatTs(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString('zh-TW', { hour12: false });
-}
+import { MessageTimestamp } from './MessageTimestamp';
+import { formatMessageTimestamp as formatTs } from '@/utils/messageTimestamp';
 
 function postTypeLabel(t) {
   return t === 'task' ? '交辦' : '公告';
@@ -327,9 +322,9 @@ export function TeamPostView({ user }) {
             ) : (
               (item.comments || []).map((c) => (
                 <div key={c.id} className="bg-white/50 border border-gray-100 rounded-2xl px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     <div className="text-sm font-semibold text-gray-900">{c.user_name || `User #${c.user_id}`}</div>
-                    <div className="text-xs text-gray-500 font-medium">{formatTs(c.created_at)}</div>
+                    <MessageTimestamp value={c.created_at} className="text-xs text-gray-500 font-medium" />
                   </div>
                   <div className="text-sm text-gray-800 mt-2 whitespace-pre-wrap">{c.content}</div>
                 </div>

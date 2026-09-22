@@ -1,207 +1,126 @@
-// frontend/src/utils/voiceNotification.js
-// 語音播報工具 - 使用 Web Speech API
+// Web Speech voices belong to the workstation; the API does not expose gender.
+const STORAGE_KEY = 'wms_stage_voices_v1';
+const stageLabel = type => type === 'pick' ? '揀貨' : type === 'pack' ? '裝箱' : '掃描';
+// Keep the UI's warehouse term 揀貨; use its common homophone for speech.
+const spokenStageLabel = type => type === 'pick' ? '撿貨' : stageLabel(type);
+const voiceId = voice => voice.voiceURI || `${voice.lang}:${voice.name}`;
+const knownFemale = /HsiaoChen|HsiaoYu|Mei[- ]?Jia|美佳|Hanhan|Yating|Xiaoxiao|Xiaoyi|曉臻|曉雨|涵涵|雅婷/i;
+const knownMale = /YunJhe|Zhiwei|Yunxi|Yunjian|Yunyang|雲哲|云哲|志偉|志伟/i;
+const chineseVoice = voice => /^(?:zh|cmn)[-_]/i.test(voice.lang);
+const taiwanMandarin = voice => /^(?:zh|cmn)[-_]TW$/i.test(voice.lang);
+// The report identifies these CN variants, not their similarly named TW voices.
+// Keep them selectable for preview/manual use; only automatic choice avoids them.
+const reportedVoice = voice => !!voice && /^(?:zh|cmn)[-_]CN$/i.test(voice.lang)
+    && /\b(?:Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Ting[- ]?Ting)\b|婷婷/i.test(voice.name);
 
 class VoiceNotification {
     constructor() {
-        this.enabled = localStorage.getItem('voice_enabled') === 'true'; // 預設關閉
+        this.enabled = false;
+        this.selected = { pick: 'auto', pack: 'auto' };
+        try {
+            this.enabled = localStorage.getItem('voice_enabled') === 'true';
+            const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            for (const type of ['pick', 'pack']) if (typeof saved?.[type] === 'string') this.selected[type] = saved[type];
+        } catch { /* Unavailable storage must not prevent warehouse work. */ }
         this.synth = window.speechSynthesis;
+        this.listeners = new Set();
+        this.current = null;
+        this.pending = null;
         this.voice = null;
-        
-        // 初始化語音
-        this.initVoice();
+        this.synth?.addEventListener?.('voiceschanged', () => this.notify());
     }
-
-    initVoice() {
-        if (!this.synth) {
-            console.warn('[VoiceNotification] 瀏覽器不支援語音播報');
-            return;
-        }
-
-        // 等待語音列表載入
-        const loadVoices = () => {
-            const voices = this.synth.getVoices();
-            // 優先選擇繁體中文語音
-            this.voice = voices.find(v => v.lang === 'zh-TW') || 
-                         voices.find(v => v.lang.startsWith('zh')) ||
-                         voices[0];
-            
-            console.log('[VoiceNotification] 已選擇語音:', this.voice?.name, this.voice?.lang);
-        };
-
-        // 語音列表可能需要時間載入
-        if (this.synth.getVoices().length > 0) {
-            loadVoices();
-        } else {
-            this.synth.addEventListener('voiceschanged', loadVoices);
-        }
+    subscribe(callback) { this.listeners.add(callback); return () => this.listeners.delete(callback); }
+    notify() { this.listeners.forEach(callback => callback()); }
+    getVoices() { return this.synth?.getVoices() || []; }
+    getChineseVoices() {
+        return this.getVoices().filter(chineseVoice)
+            .sort((a, b) => Number(!taiwanMandarin(a)) - Number(!taiwanMandarin(b)));
     }
-
-    /**
-     * 播報文字
-     * @param {string} text - 要播報的文字
-     * @param {object} options - 播報選項 {rate, pitch, volume}
-     */
+    getStageSettings() {
+        const voices = this.getChineseVoices();
+        const manual = type => voices.find(voice => voiceId(voice) === this.selected[type]);
+        const automatic = voices.filter(voice => !reportedVoice(voice));
+        const pick = manual('pick') || automatic.find(voice => knownFemale.test(voice.name)) || automatic[0];
+        const pack = manual('pack') || automatic.find(voice => knownMale.test(voice.name))
+            || automatic.find(voice => !pick || voiceId(voice) !== voiceId(pick)) || automatic[0];
+        const sameVoice = !pick || !pack || voiceId(pick) === voiceId(pack);
+        return { enabled: this.enabled, supported: this.isSupported(), voices, selected: { ...this.selected }, sameVoice,
+            pick: { voice: pick, pitch: 1 }, pack: { voice: pack, pitch: 1 } };
+    }
+    setStageVoice(type, id) {
+        if (!['pick', 'pack'].includes(type)) return;
+        if (id !== 'auto' && !this.getChineseVoices().some(voice => voiceId(voice) === id)) return;
+        const selected = { ...this.selected, [type]: id };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+        this.selected = selected;
+        this.notify();
+    }
     speak(text, options = {}) {
-        if (!this.enabled || !this.synth) {
-            console.log('[VoiceNotification] 語音播報已關閉或不支援');
-            return;
+        if ((!this.enabled && !options.preview) || !this.synth) return false;
+        // Completion survives navigation/new-task notifications. Keep at most one
+        // subsequent scan announcement, so rapid scans never create a stale queue.
+        if (this.current?.critical && Date.now() < this.current.until && !options.critical) {
+            if (!options.background) this.pending = { text, options };
+            return true;
         }
-
-        // 停止當前播報
-        this.synth.cancel();
-
-        const utterance = new SpeechSynthesisUtterance(text);
-        
-        // 設定語音參數
-        if (this.voice) {
-            utterance.voice = this.voice;
-        }
-        utterance.lang = 'zh-TW';
-        utterance.rate = options.rate || 1.0;    // 語速 (0.1-10)
-        utterance.pitch = options.pitch || 1.0;  // 音調 (0-2)
-        utterance.volume = options.volume || 1.0; // 音量 (0-1)
-
-        console.log('[VoiceNotification] 播報:', text);
-        this.synth.speak(utterance);
-    }
-
-    // === 預設播報訊息 ===
-
-    /**
-     * 掃描成功
-     * @param {number} scannedCount - 已掃描數量
-     * @param {number} remainingCount - 剩餘數量
-     */
-    speakScanSuccess(scannedCount, remainingCount, operator = {}) {
-        const prefix = this.scanPrefix(operator);
-        if (remainingCount === 0) {
-            this.speak(prefix + '全部完成', { rate: 1.1 });
-        } else {
-            this.speak(prefix + `已掃描 ${scannedCount} 個，還剩 ${remainingCount} 個`, { rate: 1.2 });
-        }
-    }
-
-    /**
-     * 掃描錯誤
-     */
-    speakScanError(operator = {}) {
-        this.speak(this.scanPrefix(operator) + '掃描未完成，請確認', { rate: 1.3, pitch: 1.2 });
-    }
-
-    scanPrefix({ name, type } = {}) {
-        const parts = [name, type === 'pick' ? '揀貨' : type === 'pack' ? '裝箱' : null].filter(Boolean);
-        return parts.length ? parts.join('，') + '，' : '';
-    }
-
-    /**
-     * 新任務到達
-     * @param {number} taskCount - 新任務數量
-     */
-    speakNewTask(taskCount = 1) {
-        if (taskCount === 1) {
-            this.speak('新任務到達');
-        } else {
-            this.speak(`有 ${taskCount} 個新任務`);
-        }
-    }
-
-    /**
-     * 任務完成
-     */
-    speakTaskComplete() {
-        this.speak('任務完成', { rate: 1.1 });
-    }
-
-    /**
-     * 批次認領成功
-     * @param {number} count - 認領數量
-     */
-    speakBatchClaim(count) {
-        this.speak(`已認領 ${count} 個任務`, { rate: 1.2 });
-    }
-
-    /**
-     * 操作錯誤
-     * @param {string} message - 錯誤訊息(可選)
-     */
-    speakOperationError(message) {
-        this.speak(message || '操作錯誤', { rate: 1.2, pitch: 1.1 });
-    }
-
-    // === 控制方法 ===
-
-    /**
-     * 停止當前播報
-     */
-    stop() {
-        if (this.synth) {
+        try {
+            const utterance = new SpeechSynthesisUtterance(text);
+            const settings = this.getStageSettings();
+            const stage = settings[options.type];
+            const chosen = stage ? stage.voice : (this.voice && chineseVoice(this.voice) ? this.voice : settings.pick.voice);
+            // Never silently fall back to an unknown system/default voice.
+            if (!chosen || !chineseVoice(chosen)) return false;
+            utterance.voice = chosen;
+            utterance.lang = chosen?.lang || 'zh-TW';
+            utterance.rate = options.rate ?? 1;
+            utterance.pitch = stage?.pitch ?? options.pitch ?? 1;
+            utterance.volume = options.volume ?? 1;
+            this.current = null;
+            this.pending = null;
             this.synth.cancel();
+            const current = { utterance, critical: !!options.critical, until: Date.now() + 10000 };
+            this.current = current;
+            const finish = () => {
+                if (this.current !== current) return;
+                this.current = null;
+                const pending = this.pending;
+                this.pending = null;
+                if (pending) this.speak(pending.text, pending.options);
+            };
+            utterance.onend = finish;
+            utterance.onerror = finish;
+            this.synth.speak(utterance);
+            return true;
+        } catch {
+            // Audio failure must never turn an accepted server scan into a failure.
+            this.current = null;
+            this.pending = null;
+            return false;
         }
     }
-
-    /**
-     * 暫停播報
-     */
-    pause() {
-        if (this.synth && this.synth.speaking) {
-            this.synth.pause();
-        }
+    speakScanSuccess(scannedCount, remainingCount, { type } = {}) {
+        // Zero remaining alone is not proof of a completed workflow (exceptions).
+        return this.speak(`${spokenStageLabel(type)}，${scannedCount}，剩 ${remainingCount}`, { type });
     }
-
-    /**
-     * 恢復播報
-     */
-    resume() {
-        if (this.synth && this.synth.paused) {
-            this.synth.resume();
-        }
-    }
-
-    /**
-     * 開啟/關閉語音播報
-     */
+    speakScanError({ type } = {}) { return this.speak(`${spokenStageLabel(type)}未完成，請確認`, { type }); }
+    speakTaskComplete(type) { return this.speak(`${type ? spokenStageLabel(type) : ''}任務完成`, { type, critical: true }); }
+    speakNewTask(count = 1) { return this.speak(count === 1 ? '新任務到達' : `有 ${count} 個新任務`, { background: true }); }
+    speakBatchClaim(count) { return this.speak(`已認領 ${count} 個任務`); }
+    speakOperationError(message) { return this.speak(message || '操作錯誤'); }
+    preview(type) { return this.speak(`${spokenStageLabel(type)}，3，剩 2。${spokenStageLabel(type)}任務完成`, { type, preview: true }); }
+    stop() { this.current = null; this.pending = null; try { this.synth?.cancel(); } catch { /* optional device audio */ } }
+    pause() { if (this.synth?.speaking) this.synth.pause(); }
+    resume() { if (this.synth?.paused) this.synth.resume(); }
     setEnabled(enabled) {
-        console.log('[VoiceNotification] setEnabled:', enabled);
-        this.enabled = enabled;
-        localStorage.setItem('voice_enabled', enabled.toString());
-        
-        if (!enabled) {
-            this.stop();
-        }
+        localStorage.setItem('voice_enabled', String(!!enabled));
+        this.enabled = !!enabled;
+        if (!this.enabled) this.stop();
+        this.notify();
     }
-
-    /**
-     * 檢查是否啟用
-     */
-    isEnabled() {
-        return this.enabled;
-    }
-
-    /**
-     * 檢查瀏覽器是否支援
-     */
-    isSupported() {
-        return !!this.synth;
-    }
-
-    /**
-     * 獲取可用語音列表
-     */
-    getVoices() {
-        return this.synth ? this.synth.getVoices() : [];
-    }
-
-    /**
-     * 設定語音
-     * @param {SpeechSynthesisVoice} voice - 語音對象
-     */
-    setVoice(voice) {
-        this.voice = voice;
-        console.log('[VoiceNotification] 語音已切換:', voice.name);
-    }
+    isEnabled() { return this.enabled; }
+    isSupported() { return !!this.synth; }
+    setVoice(voice) { this.voice = voice; }
 }
-
-// 匯出單例
 const voiceNotification = new VoiceNotification();
-export { voiceNotification };
+export { voiceNotification, voiceId, reportedVoice };
 export default voiceNotification;

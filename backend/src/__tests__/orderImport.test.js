@@ -339,6 +339,43 @@ test('malformed summary SN rejects before persistence even when explicit SN colu
     expect(db.state()).toEqual({ orders: [], items: [], instances: [], logs: [] });
 });
 
+test.each(['4.7113E+12', '4.7113e12', '4.7113E+012', '4.7113 E + 12', '4711299273766.0', '4,711,299,273,766'])('rejects malformed barcode %s before a transaction and returns actionable location', async barcode => {
+    const db = database();
+    const result = await invoke(db, workbook(makeRows([['4711299273766', 'Valid item', 1, ''], [barcode, 'Bad item', 1, '']])));
+    expect(result).toMatchObject({ status: 400, body: { code: 'IMPORT_NOT_APPLIED', reason: 'INVALID_BARCODE_FORMAT', issue: { sheet: '出貨', row: 6, cell: 'A6', value: barcode } } });
+    expect(result.body.message).toMatch(/文字/);
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(db.io.emit).not.toHaveBeenCalled();
+    expect(db.state()).toEqual({ orders: [], items: [], instances: [], logs: [] });
+});
+
+test.each(['xlsx', 'biff8'])('numeric General barcode in %s is blocked even when underlying digits survive', bookType => {
+    const input = workbook(makeRows([[4711299273766, 'Item', 1, '']]), bookType);
+    try { parseOrderImport(input); throw Error('expected rejection'); }
+    catch (error) {
+        expect(error.reason).toBe('INVALID_BARCODE_FORMAT');
+        expect(error.issue).toMatchObject({ cell: 'A5', storedValue: '4711299273766' });
+        expect(error.message).toMatch(/科學記號/);
+    }
+});
+
+test('explicit text keeps leading zeros and never expands a truncated CSV exponent', () => {
+    const parsed = parseOrderImport(workbook(makeRows([['004711299273766', 'Item', 1, '']]), 'csv'));
+    expect(parsed.items[0].barcode).toBe('004711299273766');
+    expect(() => parseOrderImport(workbook(makeRows([['4.7113E+12', 'Item', 1, '']]), 'csv'))).toThrow(/科學記號/);
+    expect(parseOrderRows(makeRows([['SKU-ALPHA', 'Item', 1, '']])).items[0].barcode).toBe('SKU-ALPHA');
+});
+
+test('rejects numeric precision loss and stale formula cells even with a digits-only display', () => {
+    for (const cell of [{ t: 'n', v: 1234567890123456, z: '0' }, { t: 'n', v: 4711299273766, z: '0', f: 'B99' }]) {
+        const wb = xlsx.utils.book_new();
+        const sheet = xlsx.utils.aoa_to_sheet(makeRows([['placeholder', 'Item', 1, '']]));
+        sheet.A5 = cell;
+        xlsx.utils.book_append_sheet(wb, sheet, '出貨');
+        expect(() => parseOrderImport(xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' }))).toThrow(/條碼/);
+    }
+});
+
 test('duplicate voucher returns existing order without modifying it', async () => {
     const db = database({ existing: true });
     const result = await invoke(db);
@@ -369,4 +406,83 @@ test('notification failure after commit still returns the confirmed order', asyn
     db.io.emit.mockImplementation(() => { throw new Error('socket unavailable'); });
     expect((await invoke(db)).status).toBe(201);
     expect(db.state().orders).toHaveLength(1);
+});
+
+function pickingSheetRows(footer = '2026/09/17 (四) 17:45:26') {
+    return [
+        ['理貨單'], ['憑證號碼：TEST-FOOTER-1'], ['接收-客戶/供應商：Footer fixture'], ['出庫倉庫：工業店'],
+        ['品項編碼', '品項名稱(規格)', '數量', '摘要'], ['4711299274671', 'Fixture product [SKU-1]', 1, ''],
+        ['總計', '', 1], [footer], [], ['', ' ', '', '']
+    ];
+}
+
+test.each(['xlsx', 'biff8', 'csv'])('ignores the standalone eighth-row print timestamp in a real %s picking sheet', bookType => {
+    const parsed = parseOrderImport(workbook(pickingSheetRows(), bookType));
+    expect(parsed).toMatchObject({ voucherNumber: 'TEST-FOOTER-1', customerName: 'Footer fixture', totalQuantity: 1, serialCount: 0 });
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]).toMatchObject({ barcode: '4711299274671', productName: 'Fixture product', quantity: 1, sourceRow: 6 });
+});
+
+test.each(['2026/09/17(四)17:45:26', '2026/9/17 （星期四） 17:45:26', '２０２６／０９／１７（四）１７：４５：２６', '2026-09-17 17:45', '2028/02/29 00:00:00'])('recognizes valid timestamp layout %s only at the end', footer => {
+    expect(parseOrderRows(pickingSheetRows(footer)).items).toHaveLength(1);
+});
+
+test.each(['xlsx', 'biff8'])('supports merged text and formatted Excel date footer cells in %s', bookType => {
+    for (const typed of [false, true]) {
+        const wb = xlsx.utils.book_new();
+        const sheet = xlsx.utils.aoa_to_sheet(pickingSheetRows());
+        sheet['!merges'] = [{s:{r:7,c:0},e:{r:7,c:3}}];
+        if (typed) sheet.A8 = {t:'n', v:46282.75, z:'yyyy/mm/dd hh:mm:ss'};
+        xlsx.utils.book_append_sheet(wb, sheet, '理貨單');
+        expect(parseOrderImport(xlsx.write(wb,{type:'buffer',bookType})).items).toHaveLength(1);
+    }
+});
+
+test.each(['2026/09/17', '2026/02/30 (四) 17:45:26', '2026/09/17 (四) 24:45:26', '2026/09/17 (四) 17:60:26', '2026/09/17 (四) 17:45:60', '4.7113E+12', 'INVALID'])('does not silently discard an unrecognized or invalid final row: %s', footer => {
+    expect(() => parseOrderRows(pickingSheetRows(footer))).toThrow(/第 8 列/);
+});
+
+test('timestamp-looking rows with product data and timestamps inside the item table still receive validation', () => {
+    const rows = pickingSheetRows();
+    rows[7].push('Product missing quantity');
+    expect(() => parseOrderRows(rows)).toThrow(/第 8 列.*皆必填/);
+    rows[7] = ['2026/09/17 (四) 17:45:26'];
+    rows.push(['4710000000002', 'Another product', 1]);
+    expect(() => parseOrderRows(rows)).toThrow(/第 8 列.*皆必填/);
+    const scientific = pickingSheetRows();
+    scientific[5][0] = '4.7113E+12';
+    expect(() => parseOrderRows(scientific)).toThrow(/第 6 列.*科學記號/);
+    const quantity = pickingSheetRows();
+    quantity[5][2] = '';
+    expect(() => parseOrderRows(quantity)).toThrow(/第 6 列.*皆必填/);
+});
+
+test('footer-only sheets cannot create an empty order', () => {
+    expect(() => parseOrderRows(makeRows([['2026/09/17 (四) 17:45:26']]))).toThrow(/皆必填/);
+});
+
+test('import endpoint saves only the product when the workbook ends with a print timestamp', async () => {
+    const db = database();
+    const result = await invoke(db, workbook(pickingSheetRows()));
+    expect(result).toMatchObject({status:201,body:{voucherNumber:'TEST-FOOTER-1',itemCount:1,totalQuantity:1,serialCount:0}});
+    expect(db.state().items).toHaveLength(1);
+    expect(db.state().orders).toHaveLength(1);
+    expect(db.state().logs).toHaveLength(1);
+    expect(db.earlyEvents()).toBe(0);
+});
+
+test('source-order imports retain barcode cell validation and source row identity after merge', () => {
+    const rows = sourceRows();
+    const barcodeColumn = rows[0].findIndex(v => v === '國際條碼');
+    expect(barcodeColumn).toBeGreaterThanOrEqual(0);
+    const book = xlsx.utils.book_new();
+    const sheet = xlsx.utils.aoa_to_sheet(rows);
+    const address = xlsx.utils.encode_cell({ r: 1, c: barcodeColumn });
+    sheet[address] = { t: 'n', v: 1234567890123456, z: '0' };
+    xlsx.utils.book_append_sheet(book, sheet, '來源理貨');
+    try { parseOrderImport(xlsx.write(book, { type: 'buffer', bookType: 'xlsx' })); throw Error('expected rejection'); }
+    catch (error) {
+        expect(error.reason).toBe('INVALID_BARCODE_FORMAT');
+        expect(error.issue).toMatchObject({ sheet: '來源理貨', row: 2, cell: address });
+    }
 });

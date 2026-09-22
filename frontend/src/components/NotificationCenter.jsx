@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
 import { Button, EmptyState, Skeleton } from '../ui';
+import { MessageTimestamp } from './MessageTimestamp';
 
 const NotificationCenter = ({ onOpenChat }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -198,12 +199,12 @@ const NotificationCenter = ({ onOpenChat }) => {
                                             </div>
                                             
                                             <div className="flex-1 min-w-0">
-                                                <div className="flex items-center justify-between mb-1">
+                                                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 mb-1">
                                                     <span className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
                                                         {order.voucher_number}
                                                     </span>
                                                     <span className="text-[10px] text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
-                                                        {new Date(order.latest_comment_time).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
+                                                        <MessageTimestamp value={order.latest_comment_time} />
                                                     </span>
                                                 </div>
                                                 

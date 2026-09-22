@@ -3,8 +3,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { socket } from '@/api/socket';
-import { formatDistanceToNow } from 'date-fns';
-import { zhTW } from 'date-fns/locale';
+import { MessageTimestamp } from './MessageTimestamp';
 import { 
     MessageSquare, Send, User, AtSign, Reply, Loader2, 
     Pin, AlertCircle, Clock, CheckCircle2, Search, X,
@@ -364,11 +363,9 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
 
                 <div className={`flex flex-col max-w-[75%] ${isMine ? 'items-end' : 'items-start'}`}>
                     {/* Name & Time */}
-                    <div className={`flex items-center gap-2 mb-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
+                    <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 mb-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
                         <span className="text-[11px] font-bold text-gray-600">{comment.user_name}</span>
-                        <span className="text-[10px] text-gray-400">
-                            {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: zhTW })}
-                        </span>
+                        <MessageTimestamp value={comment.created_at} className="text-[11px] text-gray-500" />
                         {isPinned && <Pin size={10} className="text-blue-500 fill-blue-500" />}
                     </div>
 
@@ -555,7 +552,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                             const element = scrollContainerRef.current?.querySelector(`[id="comment-${mention.comment_id}"]`);
                             if (element) { setSearchTerm(''); element.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
                             else toast.info('這則留言位於較早對話，請載入更早留言後查看。');
-                        }}>{mention.content}</button>)}
+                        }}><MessageTimestamp value={mention.comment_created_at || mention.created_at} className="block mb-1 text-[11px] text-gray-500" />{mention.content}</button>)}
                 </div>}
             </div>
             {/* Pinned Section */}
@@ -569,6 +566,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
                             <div key={pin.id} className="bg-white/60 p-2.5 rounded-xl border border-white/50 shadow-sm text-sm text-gray-700 flex items-start gap-2 group/pin relative">
                                 <UserAvatar name={pin.user_name || '系統'} size="sm" />
                                 <div className="min-w-0 flex-1 pr-6">
+                                    <MessageTimestamp value={pin.created_at} className="block mb-1 text-[11px] text-gray-500" />
                                     <span className="font-bold text-gray-900 mr-1">{pin.user_name || '系統'}:</span>
                                     <span className="break-all">{pin.content}</span>
                                 </div>

@@ -1,4 +1,5 @@
 const xlsx = require('xlsx');
+const importSheetContext = new WeakMap();
 const { normalizeSourceIdentity, sourceIdentityValues } = require('./orderSourceIdentity');
 const { groupSourceWorkOrders } = require('./warehouseBatch');
 
@@ -14,6 +15,20 @@ const IMPORT_LIMITS = Object.freeze({
 
 function invalid(message, status = 400) {
     return Object.assign(new Error(message), { status, code: 'IMPORT_NOT_APPLIED' });
+}
+
+function validateBarcode(value, cell, location) {
+    const scientific = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*[eE]\s*[+-]?\s*\d+$/;
+    let reason;
+    if (scientific.test(value)) reason = '條碼顯示為科學記號，無法作為掃碼核對依據';
+    else if (cell?.f) reason = '條碼為公式，請核對後貼上完整條碼值';
+    else if (cell?.t === 'n' && (!Number.isSafeInteger(cell.v) || cell.v < 0 || String(cell.v).length > 15)) reason = '條碼數值可能已失去精度或包含小數';
+    else if (cell?.t === 'n' && !/^\d+$/.test(value)) reason = '條碼套用了數字、日期或其他非條碼格式';
+    else if (/^[+-]?\d+[.,]\d+$/.test(value) || /^\d{1,3}(?:,\d{3})+$/.test(value)) reason = '條碼包含小數點或千分位格式';
+    if (!reason) return;
+    const storedValue = cell?.t === 'n' && Number.isSafeInteger(cell.v) && cell.v >= 0 && String(cell.v).length <= 15 ? String(cell.v) : undefined;
+    const message = `${reason}（${value.slice(0, 80)}）。請將 Excel 條碼欄設為「文字」，依商品標籤或原始品項資料重新填入完整條碼後再匯入。${storedValue ? `檔案目前儲存值：${storedValue}，請核對；系統未自動套用。` : '請勿直接補零或推算缺少的數字。'}`;
+    throw Object.assign(invalid(message), { reason: 'INVALID_BARCODE_FORMAT', issue: { ...location, value: value.slice(0, 80), ...(storedValue ? { storedValue } : {}) } });
 }
 
 function labelValue(data, labels) {
@@ -159,6 +174,9 @@ function parseSourceOrderRows(data, headerIndex) {
             if (!source.sourceOrderNumber) throw invalid('商城訂單編號必填');
             if (!cell('productCode')) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
             if (!cell('barcode')) throw invalid('國際條碼必填，不能用品項編碼代替');
+            const context = importSheetContext.get(data) || {};
+            const address = xlsx.utils.encode_cell({ r: index, c: columns.barcode });
+            validateBarcode(cell('barcode'), context.worksheet?.[address], { sheet: context.sheetName, row: sourceRow, cell: address });
             if (!cell('productName') || !cell('quantity')) throw invalid('品項名稱與數量必填');
             const explicit = parseSerials(cell('serials'), cell('barcode'), Number(cell('quantity')), true);
             const legacySummary = summaryRequiresExplicitSerials(cell('summary'), cell('barcode'), cell('quantity'));
@@ -180,7 +198,8 @@ function parseSourceOrderRows(data, headerIndex) {
             normalizedRows.push([cell('barcode'), cell('productCode'), cell('productName'), cell('quantity'), serials.join(' ')]);
             identities.push({ ...source, sourceRow, sourceSummary:cell('summary'), sourceSerials:cell('serials'), serialSource:explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null });
         } catch (error) {
-            throw invalid(`第 ${sourceRow} 列：${error.message}`);
+            if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${sourceRow} 列：${error.message}`;
+            throw error;
         }
     }
     if (!identities.length) throw invalid('沒有可匯入的品項，未建立訂單');
@@ -197,7 +216,19 @@ function parseSourceOrderRows(data, headerIndex) {
     return result;
 }
 
-function parseOrderRows(data) {
+// ECOUNT print footer: one timestamp cell, never a product row with other values.
+function isPrintTimestampRow(row) {
+    const values = row.map(value => String(value ?? '').trim()).filter(Boolean);
+    if (values.length !== 1) return false;
+    const match = values[0].normalize('NFKC').match(/^(\d{4})([/-])(\d{1,2})\2(\d{1,2})\s*(?:\((?:(?:星期|週|周)?[一二三四五六日天])\)\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return false;
+    const [, year, , month, day, hour, minute, second = '0'] = match;
+    const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    return date.getUTCFullYear() === Number(year) && date.getUTCMonth() + 1 === Number(month) &&
+        date.getUTCDate() === Number(day) && Number(hour) < 24 && Number(minute) < 60 && Number(second) < 60;
+}
+
+function parseOrderRows(data, { worksheet, sheetName } = importSheetContext.get(data) || {}) {
     if (!Array.isArray(data) || data.length > IMPORT_LIMITS.sheetRows) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetRows} 列`, 413);
     for (const row of data) {
         if (!Array.isArray(row)) throw invalid('工作表列格式錯誤');
@@ -224,8 +255,10 @@ function parseOrderRows(data) {
     const items = [];
     const seenSerials = new Set();
     let totalQuantity = 0;
+    const lastContentIndex = data.findLastIndex(row => row.some(value => String(value ?? '').trim()));
     for (let index = headerIndex + 1; index < data.length; index++) {
         const row = data[index];
+        if (index === lastContentIndex && items.length > 0 && isPrintTimestampRow(row)) continue;
         const barcode = String(row[barcodeIndex] ?? '').trim();
         const rawName = String(row[nameIndex] ?? '').trim();
         const rawQuantity = String(row[quantityIndex] ?? '').trim();
@@ -234,6 +267,8 @@ function parseOrderRows(data) {
         if (isBarcodeHeader(barcode) && rawName.includes('品項名稱') && rawQuantity.includes('數量')) continue;
         try {
             if (!barcode || !rawName || !rawQuantity) throw invalid('品項編碼、名稱與數量皆必填');
+            const cellAddress = xlsx.utils.encode_cell({ r: index, c: barcodeIndex });
+            validateBarcode(barcode, worksheet?.[cellAddress] || (typeof row[barcodeIndex] === 'number' ? { t: 'n', v: row[barcodeIndex] } : undefined), { sheet: sheetName, row: index + 1, cell: cellAddress });
             const normalizedQuantity = /^\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(rawQuantity) ? rawQuantity.replace(/,/g, '') : rawQuantity;
             const quantity = Number(normalizedQuantity);
             if (!Number.isSafeInteger(quantity) || quantity <= 0) throw invalid('數量必須為正整數');
@@ -268,13 +303,14 @@ function parseOrderRows(data) {
 function readOrderImportRows(buffer) {
     if (!Buffer.isBuffer(buffer) || !buffer.length) throw invalid('沒有可讀取的檔案內容');
     if (buffer.length > IMPORT_LIMITS.fileBytes) throw invalid('檔案不可超過 10 MiB', 413);
-    let worksheet, sheetCount;
+    let worksheet, sheetName, sheetCount;
     try {
-        // Keep CSV identifiers and export timestamps as text; quantities are
-        // validated explicitly below. This does not change XLS/XLSX cell types.
+        // raw preserves CSV text identifiers (including leading zeros and literal
+        // exponent strings). XLS/XLSX retain typed cells for precision checks.
         const workbook = xlsx.read(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
-        worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        sheetName = workbook.SheetNames[0];
         sheetCount = workbook.SheetNames.length;
+        worksheet = workbook.Sheets[sheetName];
     } catch { throw invalid('無法讀取檔案，請確認是未加密的 .xlsx、.xls 或 .csv'); }
     if (!worksheet?.['!ref']) throw invalid('第一個工作表沒有資料');
     const range = xlsx.utils.decode_range(worksheet['!fullref'] || worksheet['!ref']);
@@ -283,8 +319,17 @@ function readOrderImportRows(buffer) {
     }
     const data = xlsx.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '', range: 0 });
     if (sheetCount > 1 && sourceHeaderIndex(data) >= 0) throw invalid('逐筆理貨明細請使用單一工作表，避免漏讀其他理貨單');
+    importSheetContext.set(data, { worksheet, sheetName });
     return data;
 }
 
-function parseOrderImport(buffer) { return parseOrderRows(readOrderImportRows(buffer)); }
+function parseOrderImport(buffer) {
+    const data = readOrderImportRows(buffer);
+    try { return parseOrderRows(data); }
+    catch (error) {
+        const { sheetName } = importSheetContext.get(data) || {};
+        if (error.code === 'IMPORT_NOT_APPLIED') error.message = `工作表「${sheetName}」${error.issue?.cell ? ` ${error.issue.cell}` : ''}，${error.message}`;
+        throw error;
+    }
+}
 module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows, readOrderImportRows, SOURCE_HEADERS, sourceHeaderIndex, matchesSourceHeader };

@@ -17,11 +17,19 @@
 - Cloud SQL 共用 instance：moztech-main-db；WMS 專用 database：corely_wms。不要修改同 instance 的 ERP 等其他資料庫。
 - 附件：私有 Cloud Storage `moztech-main-db-corely-wms-attachments`；秘密使用 Secret Manager，不存 Git。
 - 日常新功能開發與驗收：`corely-wms-dev`，獨立 `corely_wms_dev_20260915` database、JWT 與附件 bucket；不能將正式 database 指給測試。原私有 `corely-wms-migration-validation` 另行保留，與新 DEV 不同。
-- Render 舊 DB 在切換時已關閉新連線；不能解除鎖定、重跑切換腳本或把舊 dump 蓋回正式資料庫。
+- Render 舊 API 與 DB 已於 2026-09-17 依使用者授權暫停，兩個資源頁確認暫停期間不計費，資料未刪除。舊 DB 的新連線封鎖仍保留；不能自行 Resume、解除鎖定、重跑切換腳本或把舊 dump 蓋回正式資料庫。
 - 庫存維持記錄用途，尚未啟用自動扣庫存。物流實際建單、退款、ERP 入帳不得當作驗收資料操作。
 
 ## 從哪裡確認進度
 
+- `docs/WMS_IMPORT_FOOTER_2026-09-17.md`：忽略理貨單最後一行的單獨列印日期時間，保留商品檢查；正式 revision `corely-wms-import-footer-20260917`，程式 `7548074`。
+- `docs/WMS_BATCH_STAGES_2026-09-17.md`：恢復揀貨員批次揀貨、裝箱員批次裝箱，保留階段與審核限制；正式 revision `corely-wms-batch-stages-20260917`，程式 `4e05daf`。
+- `docs/WMS_RENDER_RETIREMENT_2026-09-17.md`：舊 Render API／DB 已暫停、停止新增服務費用；涵蓋備份、依賴、缺檔查核及其他系統仍有費用的範圍。取代較早文件中的「尚未停止 Render」狀態。
+- `docs/WMS_ORDER_COMPLETION_FIX_2026-09-17.md`：異動核可後重新判定揀貨完成、歷史訂單的條件式修復及驗證。正式 revision `corely-wms-order-complete-20260917`，後端程式 `385e056`；前端沿用下列 voice-options 映像，優先於舊發布快照。
+- `docs/WMS_VOICE_OPTIONS_2026-09-16.md`：修正上一版過度篩選，恢復完整中文音色及兩階段獨立選擇；僅對指定 CN 音色加註提醒。正式 revision `corely-wms-voice-options-20260916`，程式 `5a8a06f`，優先於下列語音發布快照。
+- `docs/WMS_VOICE_PRONUNCIATION_2026-09-16.md`：台灣中文原聲、問題音色排除及揀貨同音播報修正；正式 revision `corely-wms-voice-clear-20260916`，程式 `aa82ab3`，取代前版的中文音色清單與同聲變調行為。
+- `docs/WMS_VOICE_IMPORT_2026-09-16.md`：簡短揀貨／裝箱語音、完成播報與科學記號條碼匯入攔截；正式 revision `corely-wms-voice-import-20260916`，程式 `6674427`；優先於下列舊發布快照。
+- `docs/WMS_COMMENT_TIMESTAMPS_2026-09-16.md`：每則對話完整台灣日期時間，正式 revision `corely-wms-chat-time-20260916`，程式 `00f24db`；優先於下列舊發布快照。
 - `docs/WMS_SCAN_RECOVERY_2026-09-14.md`：最新掃碼錯誤恢復、個人音效及 2026-09-14 正式發布記錄（程式 407c572）。
 
 - `docs/WMS_FULL_PARITY_2026-09-14.md`：58 項功能、239 個舊介面控制點、63 個業務 API 與瀏覽器流程的驗證記錄。

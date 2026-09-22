@@ -8,6 +8,7 @@ import { useComments } from '@/api/useComments.js';
 import { useVisibleCommentReads } from '@/api/useVisibleCommentReads';
 import { useCommentScroll } from '@/api/useCommentScroll';
 import { CommentsLoadState } from './CommentsLoadState';
+import { MessageTimestamp } from './MessageTimestamp';
 import { Button, Badge, EmptyState, Skeleton } from '../ui';
 
 const PANEL_WIDTH = 380;
@@ -387,19 +388,14 @@ const FloatingChatPanel = ({ orderId, voucherNumber, onClose, position = 0, alig
 
                                 <div className={`flex flex-col max-w-[75%] ${isMine ? 'items-end' : 'items-start'}`}>
                                     {/* Name & Time */}
-                                    {showAvatar && (
-                                        <div className={`flex items-center gap-2 mb-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
+                                        <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 mb-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
+                                            {showAvatar && (
                                             <span className="text-[11px] font-bold text-gray-500">
                                                 {comment.user_name}
                                             </span>
-                                            <span className="text-[10px] text-gray-400">
-                                                {new Date(comment.created_at).toLocaleTimeString('zh-TW', {
-                                                    hour: '2-digit',
-                                                    minute: '2-digit'
-                                                })}
-                                            </span>
+                                            )}
+                                            <MessageTimestamp value={comment.created_at} className="text-[11px] text-gray-500 dark:text-gray-400" />
                                         </div>
-                                    )}
 
                                     {/* Message Bubble */}
                                     <div

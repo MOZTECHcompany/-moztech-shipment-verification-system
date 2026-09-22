@@ -33,7 +33,20 @@ export function filterTasks(tasks, { search = '', status = 'all', urgentOnly = f
 // /api/orders/batch-claim accepts picking work only.
 export function canBatchPick(task) {
     return task.task_type === 'pick' &&
-        (task.status === 'pending' || (task.status === 'picking' && !task.current_user));
+        (task.status === 'pending' || (task.status === 'picking' && !task.picker_id && !task.current_user));
+}
+
+export function batchStagesForRole(user) {
+    if (['admin', 'superadmin'].includes(user?.role)) return ['pick', 'pack'];
+    if (user?.role === 'picker') return ['pick'];
+    if (user?.role === 'packer') return ['pack'];
+    return [];
+}
+
+export function canBatchClaim(task, user, stage) {
+    if (!batchStagesForRole(user).includes(stage)) return false;
+    return stage === 'pick' ? canBatchPick(task)
+        : task.task_type === 'pack' && task.status === 'picked';
 }
 
 export function isActiveTaskForRole(task, user) {

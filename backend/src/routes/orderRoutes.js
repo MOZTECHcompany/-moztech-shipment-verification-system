@@ -23,6 +23,8 @@ router.get('/order-import-batches/:batchId', require('../services/importBatchSna
 const barcodeClaims = createBarcodeClaimHandlers(pool);
 router.post('/orders/claim-by-barcode', barcodeClaims.claim);
 router.get('/orders/claim-commands/:commandId', barcodeClaims.receipt);
+const { createReconcilePicking } = require('../services/reconcilePicking');
+router.post('/orders/:orderId/reconcile-picking', authorizeAdmin, createReconcilePicking(pool));
 
 const scanPerfWindow = [];
 const SCAN_PERF_WINDOW_SIZE = 300;
@@ -148,7 +150,7 @@ const importLimiter = rateLimit({
 
 // POST /api/orders/batch-claim
 // All claim entry points share the same locked state transition and audit path.
-async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false }) {
+async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false, stage }) {
     const { id: userId, role } = user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
     const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -168,9 +170,9 @@ async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false }) {
         if (!orderResult.rows.length) throw fail(404, '找不到該訂單');
         const order = orderResult.rows[0];
         let task_type;
-        if ((role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
+        if (stage !== 'pack' && (role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
             task_type = 'pick';
-        } else if (!pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
+        } else if (stage !== 'pick' && !pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
             task_type = 'pack';
         } else {
             throw fail(400, `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。`);
@@ -205,11 +207,15 @@ function parseClaimIds(value) {
 async function claimBatch(req, res, next, pickingOnly) {
     try {
         if (!['picker', 'packer', 'admin', 'superadmin'].includes(req.user.role) || (pickingOnly && req.user.role === 'packer')) return res.status(403).json({ message: '權限不足' });
+        const stage = req.body.stage;
+        if (stage !== undefined && !['pick', 'pack'].includes(stage)) return res.status(400).json({ message: '批次作業階段無效' });
+        if ((stage === 'pack' && (pickingOnly || req.user.role === 'picker')) ||
+            (stage === 'pick' && req.user.role === 'packer')) return res.status(403).json({ message: '不可認領其他作業階段的任務' });
         const ids = parseClaimIds(req.body.orderIds);
         const orders = [], failed = [];
         for (let i = 0; i < ids.length; i++) {
             const orderId = ids[i];
-            try { orders.push(await claimWarehouseOrder({ orderId, user: req.user, io: req.app.get('io'), pickingOnly })); }
+            try { orders.push(await claimWarehouseOrder({ orderId, user: req.user, io: req.app.get('io'), pickingOnly, stage })); }
             catch (error) {
                 if (!error.status || error.status >= 500) {
                     // A partial batch may already have committed; never advertise an automatic retry.
@@ -452,7 +458,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
     try {
         parsed = await parseMarketplaceLinkedImport(req.file?.buffer, pool, req.body?.marketplaceIntakeId);
     } catch (error) {
-        return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message });
+        return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message,
+            ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 
     const { voucherNumber, customerName, items, totalQuantity, serialCount } = parsed;

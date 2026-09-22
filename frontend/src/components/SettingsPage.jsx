@@ -1,22 +1,17 @@
 import React, { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, ChevronRight, History, Truck, MessageSquare, Users } from 'lucide-react';
+import { Bell, ChevronRight, History, Truck, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../ui';
 import { PersonalSoundControls } from './PersonalSoundControls';
-import voiceNotification from '../utils/voiceNotification';
+import { VoiceControls } from './VoiceControls';
 import desktopNotification from '../utils/desktopNotification';
 
 export function SettingsPage({ user }) {
-  const [voice, setVoice] = useState(() => voiceNotification.isEnabled());
   const [desktop, setDesktop] = useState(() => desktopNotification.isEnabled());
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const admin = ['admin', 'superadmin'].includes(user?.role);
-  const toggle = (service, enabled, update) => {
-    try { service.setEnabled(!enabled); update(service.isEnabled()); }
-    catch { update(service.isEnabled()); toast.error('無法儲存提示偏好，請檢查瀏覽器設定。'); }
-  };
   const toggleDesktop = async () => {
     if (pending.current) return;
     pending.current = true;
@@ -29,13 +24,13 @@ export function SettingsPage({ user }) {
     finally { pending.current = false; setBusy(false); }
   };
   const preferences = [
-    { label: '語音播報', icon: MessageSquare, checked: voice, action: () => toggle(voiceNotification, voice, setVoice) },
     { label: '桌面通知', icon: Bell, checked: desktop, action: toggleDesktop, disabled: busy || !desktopNotification.isSupported() },
   ];
   return <div className="pb-8">
     <PageHeader title="設定" />
     <div className="grid items-start gap-6 xl:grid-cols-2">
       <PersonalSoundControls user={user} />
+      <VoiceControls />
       {admin && <section aria-labelledby="system-settings-title" className="rounded-xl border border-slate-200 bg-white p-5">
         <h2 id="system-settings-title" className="mb-4 font-semibold">系統管理</h2>
         {[{to:'/settings/logistics', label:'物流串接', icon:Truck}, {to:'/admin/users', label:'成員與角色', icon:Users}, {to:'/admin/operation-logs', label:'操作日誌', icon:History}].map(({to,label,icon:Icon}) => <Link key={to} to={to} className="flex min-h-14 items-center gap-3 rounded-lg px-3 py-4 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700"><Icon size={19} /><span className="flex-1">{label}</span><ChevronRight size={17} /></Link>)}
