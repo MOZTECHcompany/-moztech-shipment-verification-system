@@ -41,7 +41,8 @@ for(const action of ['staff','bind']) router.post('/erp/'+action, loginLimiter, 
 });
 // The browser handoff uses postMessage with exact origin/source checks, never URL tokens.
 router.get('/erp/config', (_req,res) => {
-    try { res.set('Cache-Control','no-store').json({ origin: require('../services/erpSession').config().origin }); }
+    if (process.env.ERP_PORTAL_SSO_ENABLED !== 'true' && process.env.ERP_PORTAL_ONLY !== 'true') return res.json({erpOnly:false});
+    try { res.set('Cache-Control','no-store').json({ origin: require('../services/erpSession').config().origin, erpOnly:process.env.ERP_PORTAL_ONLY === 'true' }); }
     catch { res.status(503).json({ message: '儲運統一登入尚未啟用' }); }
 });
 router.post('/erp/exchange', loginLimiter, async (req,res) => {

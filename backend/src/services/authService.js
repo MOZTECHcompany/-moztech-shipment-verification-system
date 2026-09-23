@@ -14,6 +14,7 @@ class AuthService {
      * @returns {Object} - { token, user }
      */
     async login(username, password) {
+        if (process.env.ERP_PORTAL_ONLY === 'true') throw Object.assign(new Error('用戶名或密碼登入已停用，請從營運管理系統進入'), {status:401});
         try {
             logger.debug(`登入嘗試: ${username}`);
 
@@ -101,6 +102,7 @@ class AuthService {
                 // ERP sessions have an absolute expiry. Refresh never extends it.
                 return erp.signSession(user, decoded.erpSession, new Date(decoded.exp * 1000));
             }
+            if (process.env.ERP_PORTAL_ONLY === 'true') throw Object.assign(new Error('請從營運管理系統進入'), {status:401});
             const userId = decoded.id ?? decoded.userId;
             if (!userId) {
                 const invalidToken = new Error('Token 無效或已過期');

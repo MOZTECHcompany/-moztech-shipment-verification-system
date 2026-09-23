@@ -301,7 +301,7 @@ test('valid import writes required log using one client before commit and return
     expect(pool.connect).toHaveBeenCalledTimes(1);
     expect(pool.query).not.toHaveBeenCalled();
     expect(db.earlyEvents()).toBe(0);
-    expect(db.io.emit.mock.calls.map(([event]) => event)).toEqual(['new_operation_log', 'new_task']);
+    expect(db.io.emit.mock.calls.map(([event]) => event)).toEqual(['operation_logs_changed', 'new_task']);
     expect(db.io.emit.mock.calls[1][1]).toMatchObject({ imported_by_user_id: 7 });
     expect(db.client.release).toHaveBeenCalledTimes(1);
 });

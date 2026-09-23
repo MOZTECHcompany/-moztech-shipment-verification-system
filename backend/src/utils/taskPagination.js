@@ -6,7 +6,7 @@ const like = value => `%${value.replace(/[\\%_]/g, '\\$&')}%`;
 const roles = new Set(['admin', 'dispatcher', 'picker', 'packer']);
 
 function parseTaskPage(user, query, view) {
-    const role = user.role === 'superadmin' ? 'admin' : user.role;
+    const role = user.role === 'superadmin' ? 'admin' : user.role === 'viewer' ? 'dispatcher' : user.role;
     if (!roles.has(role)) throw Object.assign(new Error('使用者角色無效'), { status: 403 });
     for (const key of ['q', 'status', 'date', 'urgent', 'limit', 'cursor', 'group']) {
         if (query[key] !== undefined && typeof query[key] !== 'string') throw badRequest('查詢參數格式不正確');

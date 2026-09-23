@@ -1,10 +1,10 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
+import { ArrowLeft, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { EnvironmentBanner } from '../components/EnvironmentBanner';
 
-const roleLabels = { picker: '揀貨員', packer: '裝箱員', dispatcher: '出貨調度', admin: '管理員', superadmin: '系統管理員' };
+const roleLabels = { viewer: '查詢人員', picker: '揀貨員', packer: '裝箱員', dispatcher: '出貨調度', admin: '管理員', superadmin: '系統管理員' };
 
 export function AppLayout({ user, onLogout, children }) {
   const location = useLocation();
@@ -62,9 +62,7 @@ export function AppLayout({ user, onLogout, children }) {
         </Link>
         <nav id="workspace-nav" aria-label="主要導覽" className="corely-nav">
           {links.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/admin' && inSettings} title={label} aria-label={label} className={({ isActive }) => `corely-nav-link ${(isActive && !inSettings) || (to === '/tasks' && location.pathname.startsWith('/order/')) ? 'corely-nav-link--active' : ''}`}><Icon size={19} aria-hidden="true" /><span className="corely-sidebar-label">{label}</span></NavLink>)}
-          {user?.erpOrigin && <div className="mt-5 border-t border-slate-200 pt-3">{[
-            ['/warehouse','切換作業'], ['/attendance/dashboard','我的出勤'], ['/attendance/leaves','請假申請'], ['/ap/expenses','費用申請'], ['/profile','個人資料'],
-          ].filter(([path])=>path==='/warehouse' || user.personalPaths?.includes(path)).map(([path,label]) => <a key={path} href={user.erpOrigin+path} className="corely-nav-link" title={label}><ClipboardList size={19} aria-hidden="true"/><span className="corely-sidebar-label">{label}</span></a>)}</div>}
+          {user?.erpOrigin && <a href={user.erpOrigin+'/warehouse'} className="corely-nav-link corely-return-link" title="返回營運系統" aria-label="返回營運系統"><ArrowLeft size={19} aria-hidden="true"/><span className="corely-sidebar-label">返回營運系統</span></a>}
         </nav>
         <div className="corely-sidebar-footer">
           <Link to="/settings" aria-label="設定" title="設定" aria-current={inSettings ? 'page' : undefined} className={`corely-settings-link ${inSettings ? 'corely-nav-link--active' : ''}`}><Settings size={20} aria-hidden="true" /><span className="corely-sidebar-label">設定</span></Link>

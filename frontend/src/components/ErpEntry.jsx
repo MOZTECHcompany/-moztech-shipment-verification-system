@@ -19,7 +19,7 @@ export function ErpEntry({ onLogin }) {
                 onLogin(data);
                 window.opener?.postMessage({type:'corely-wms-opened'}, origin);
                 window.opener = null;
-                navigate(data.user.role === 'dispatcher' ? '/admin' : '/tasks', {replace:true});
+                navigate(data.destination || (data.user.role === 'dispatcher' ? '/admin' : '/tasks'), {replace:true});
             } catch { if (active) { setError('無法開啟工作台，請回營運系統重試。'); window.opener?.postMessage({type:'corely-wms-error'}, origin); } }
         };
         window.addEventListener('message', receive);

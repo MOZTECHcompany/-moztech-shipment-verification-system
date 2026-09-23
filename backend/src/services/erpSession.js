@@ -24,7 +24,10 @@ async function callErp(action, body) {
     return response.json();
 }
 function validateIdentity(identity) {
-    if (!identity || typeof identity.userId !== 'string' || !identity.userId || identity.entityId !== process.env.ERP_PORTAL_ENTITY_ID || !['picker','packer','dispatcher'].includes(identity.role) || new Date(identity.expiresAt).getTime() <= Date.now() || !Number.isFinite(new Date(identity.expiresAt).getTime())) throw invalid();
+    if (!identity || typeof identity.userId !== 'string' || !identity.userId || identity.entityId !== process.env.ERP_PORTAL_ENTITY_ID || !['picker','packer','dispatcher','admin','viewer'].includes(identity.role) || new Date(identity.expiresAt).getTime() <= Date.now() || !Number.isFinite(new Date(identity.expiresAt).getTime())) throw invalid();
+    if (identity.role === 'admin' && !identity.permissions?.includes('wms_admin')) throw invalid();
+    if (identity.role === 'viewer' && (!Array.isArray(identity.permissions) || !identity.permissions.includes('wms_tasks:read'))) throw invalid();
+    if (identity.destination && !new Set(['/tasks','/tasks?group=pick','/tasks?group=pack','/tasks?view=completed','/admin','/admin/marketplace-converter','/warehouse-intakes','/admin/analytics','/admin/operation-logs','/admin/exceptions','/admin/scan-errors','/admin/defects','/settings/logistics','/team','/admin/users','/settings']).has(identity.destination)) throw invalid();
     return identity;
 }
 function signSession(user, session, expiresAt) {
@@ -51,8 +54,8 @@ async function exchange(pool, ticket, nonce) {
         await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
     if (!user) throw invalid();
-    user = { ...user, erpSubject: identity.userId, erpOrigin: config().origin, personalPaths: identity.personalPaths || [] };
-    return { user, accessToken: signSession(user, identity.session, identity.expiresAt) };
+    user = { ...user, erpSubject: identity.userId, erpOrigin: config().origin, personalPaths: identity.personalPaths || [], permissions: identity.permissions || [], entityId:identity.entityId };
+    return { user, destination:identity.destination || (identity.role === 'dispatcher' ? '/admin' : '/tasks'), accessToken: signSession(user, identity.session, identity.expiresAt) };
 }
 async function resolveUser(pool, claims) {
     if (typeof claims.erpSession !== 'string' || !/^[a-f0-9]{64}$/.test(claims.erpSession)) throw invalid();
@@ -60,7 +63,7 @@ async function resolveUser(pool, claims) {
     if (identity.userId !== claims.erpSubject) throw invalid();
     const row = (await pool.query('SELECT u.id,u.username,u.name,u.role FROM erp_staff_identities e JOIN users u ON u.id=e.wms_user_id WHERE e.erp_user_id=$1 AND e.entity_id=$2 AND u.id=$3', [identity.userId,identity.entityId,claims.id])).rows[0];
     if (!row || row.role !== identity.role) throw invalid();
-    return { ...row, erpSubject: identity.userId, erpOrigin: config().origin, personalPaths: identity.personalPaths || [] };
+    return { ...row, erpSubject: identity.userId, erpOrigin: config().origin, personalPaths: identity.personalPaths || [], permissions: identity.permissions || [], entityId:identity.entityId };
 }
 function authenticateService(value) {
     config();

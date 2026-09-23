@@ -30,8 +30,9 @@ async function authenticateToken(req, res, next) {
             req.user = await require('../services/erpSession').resolveUser(pool, claims);
             req.erpSession = claims.erpSession;
             req[verifiedStaff] = true;
-            return next();
+            return require('./erpPortalScope').portalScope(req,res,next);
         }
+        if (process.env.ERP_PORTAL_ONLY === 'true') return res.status(401).json({message:'請從營運管理系統進入'});
         const { rows } = await pool.query({
             text: 'SELECT id, username, name, role FROM users WHERE id = $1',
             values: [claims.id], query_timeout: 5000,
@@ -59,7 +60,7 @@ function authorizeAdmin(req, res, next) {
         return res.status(401).json({ message: '需要認證' });
     }
 
-    if (!(req.user.role === 'admin' || req.user.role === 'superadmin')) {
+    if (!(req.user.role === 'admin' || req.user.role === 'superadmin' || require('./erpPortalScope').allowsPortalRead(req))) {
         logger.warn(`授權失敗: ${req.user.username} (${req.user.role}) 嘗試存取管理員功能`);
         return res.status(403).json({ message: '需要管理員權限' });
     }

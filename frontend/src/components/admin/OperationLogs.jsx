@@ -5,7 +5,6 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
-import { socket } from '@/api/socket.js';
 import {
     FileText, Search, Filter, Download, RefreshCw,
     User, Package, Calendar, Activity, TrendingUp, ArrowLeft
@@ -84,22 +83,6 @@ export function OperationLogs() {
         fetchStats();
     }, []);
 
-    // 監聽即時更新
-    useEffect(() => {
-        const handleNewLog = (newLog) => {
-            setLogs(prevLogs => [newLog, ...prevLogs].slice(0, parseInt(filters.limit)));
-            toast.info(`新操作：${actionTypeMap[newLog.action_type]?.label || newLog.action_type}`);
-            // 更新統計資料
-            fetchStats();
-        };
-
-        socket.on('new_operation_log', handleNewLog);
-
-        return () => {
-            socket.off('new_operation_log', handleNewLog);
-        };
-    }, [filters.limit]);
-
     // 處理篩選變更
     const handleFilterChange = (key, value) => {
         setFilters(prev => ({ ...prev, [key]: value }));
@@ -159,7 +142,7 @@ export function OperationLogs() {
             JSON.stringify(log.details)
         ]);
         
-        return [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+        return [headers, ...rows].map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
     };
 
     // 格式化詳細資訊
@@ -184,7 +167,7 @@ export function OperationLogs() {
             <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
                 <PageHeader
                     title="操作日誌查詢"
-                    description="追蹤系統中所有操作記錄"
+                    description="儲運作業紀錄；其他營運模組尚未收錄於此頁"
                     actions={
                         <div className="flex gap-3">
                             <Link to="/settings">
@@ -388,7 +371,7 @@ export function OperationLogs() {
                                                     </div>
                                                     <div>
                                                         <div className="text-sm font-semibold text-gray-900">{log.user_name || '-'}</div>
-                                                        <div className="text-[10px] text-gray-500">{log.user_role || '-'}</div>
+                                                        <div className="text-[10px] text-gray-500">{log.user_role || '舊紀錄未保存當時角色'}</div>
                                                     </div>
                                                 </div>
                                             </TD>

@@ -534,9 +534,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
                 workBarcode, itemCount: group.items.length, totalQuantity: group.totalQuantity, serialCount: group.serialCount };
             const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
                 [req.user.id, orderId, 'import', JSON.stringify(details)]);
-            events.emit('new_operation_log', { id: log.rows[0].id, created_at: log.rows[0].created_at,
-                user_id: req.user.id, user_name: req.user.name, user_role: req.user.role, order_id: orderId,
-                voucher_number: workVoucher, customer_name: group.customerName, action_type: 'import', details });
+            events.emit('operation_logs_changed', {});
             events.emit('new_task', { id: orderId, voucher_number: workVoucher, work_barcode: workBarcode,
                 import_batch_id: batchId, batch_number: batchId ? voucherNumber : null,
                 source_order_number: group.sourceOrderNumber || null, source_platform: group.sourcePlatform || null, source_store: group.sourceStore || null,

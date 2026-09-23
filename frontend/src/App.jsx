@@ -8,7 +8,7 @@ import { socket, setSocketSession } from './api/socket';
 import soundNotification from './utils/soundNotification';
 
 import { ErpEntry } from './components/ErpEntry';
-import { LoginPage } from './components/LoginPage';
+import { PortalLogin } from './components/PortalLogin';
 const LogisticsSettings = lazy(() => import('./components/LogisticsSettings').then(module => ({ default: module.LogisticsSettings })));
 const SettingsPage = lazy(() => import('./components/SettingsPage').then(module => ({ default: module.SettingsPage })));
 const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard').then(module => ({ default: module.AdminDashboard })));
@@ -102,6 +102,7 @@ function App() {
         if (user?.erpSubject && user?.erpOrigin) window.location.assign(user.erpOrigin + '/warehouse');
     };
     
+    const canRead = permission => ['admin','superadmin'].includes(user?.role) || (user?.erpSubject && user.permissions?.includes(permission));
     const getHomeRoute = () => {
         if (!user || !token) return "/login";
         return "/tasks";
@@ -113,7 +114,7 @@ function App() {
             <BrowserRouter>
                 <Routes>
                     <Route path="/erp-entry" element={<ErpEntry onLogin={handleLogin} />} />
-                    <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+                    <Route path="/login" element={<PortalLogin onLogin={handleLogin} />} />
                     
                     <Route element={<ProtectedRoute user={user} token={token} />}>
                         <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
@@ -122,11 +123,11 @@ function App() {
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/marketplace-converter" element={['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? <MarketplaceConverter key={`${user?.id}:${user?.role}:${token}`} user={user} /> : <Navigate to="/tasks" replace />} />
                             <Route path="/admin/users" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/operation-logs" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <OperationLogs /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/analytics" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Analytics /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/scan-errors" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <ScanErrors /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/defects" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <DefectStats /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/operation-logs" element={canRead('wms_logs:read') ? <OperationLogs /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/analytics" element={canRead('wms_overview:read') ? <Analytics /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/scan-errors" element={canRead('wms_scan_errors:read') ? <ScanErrors /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/defects" element={canRead('wms_defects:read') ? <DefectStats /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/exceptions" element={canRead('wms_exceptions:read') ? <Exceptions /> : <Navigate to="/tasks" />} />
                             <Route path="/tasks" element={<TasksEntry key={`${user?.id}:${user?.role}`} user={user} />} />
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />

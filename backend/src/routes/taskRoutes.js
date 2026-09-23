@@ -13,7 +13,7 @@ router.get('/tasks', async (req, res) => {
     try {
         if (req.query.pagination === 'cursor') return res.json(await getTaskPage(pool, req.user, req.query, 'active'));
         const { id: userId, role } = req.user;
-        const effectiveRole = role === 'superadmin' ? 'admin' : role;
+        const effectiveRole = role === 'superadmin' ? 'admin' : role === 'viewer' ? 'dispatcher' : role;
         logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role} (effective=${effectiveRole})`);
         if (!effectiveRole) return res.status(403).json({ message: '使用者角色無效' });
 
@@ -112,7 +112,7 @@ router.get('/tasks/completed', async (req, res) => {
     try {
         if (req.query.pagination === 'cursor') return res.json(await getTaskPage(pool, req.user, req.query, 'completed'));
         const { id: userId, role } = req.user;
-        const effectiveRole = role === 'superadmin' ? 'admin' : role;
+        const effectiveRole = role === 'superadmin' ? 'admin' : role === 'viewer' ? 'dispatcher' : role;
         const parsedLimit = parseInt(req.query.limit || '50', 10);
         const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
         const date = typeof req.query.date === 'string' ? req.query.date.trim() : '';

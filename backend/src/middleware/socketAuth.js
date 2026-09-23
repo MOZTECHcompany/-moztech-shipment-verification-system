@@ -9,6 +9,7 @@ function authError(code = 'SOCKET_AUTH_REQUIRED') {
 }
 
 async function currentStaffUser(pool, id) {
+    if (process.env.ERP_PORTAL_ONLY === 'true') throw authError();
     const result = await pool.query({
         text: 'SELECT id, username, name, role FROM users WHERE id = $1',
         values: [id], query_timeout: 5000,

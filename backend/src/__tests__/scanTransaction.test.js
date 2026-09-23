@@ -169,7 +169,7 @@ test('claim logs and prepares its event using the same single client', async () 
     expect(db.earlyEvents()).toBe(0);
     expect(db.state().logs).toHaveLength(1);
     expect(pool.query).not.toHaveBeenCalled();
-    expect(db.io.emit.mock.calls.map(([event]) => event)).toEqual(['new_operation_log', 'task_claimed']);
+    expect(db.io.emit.mock.calls.map(([event]) => event)).toEqual(['operation_logs_changed', 'task_claimed']);
 });
 
 
