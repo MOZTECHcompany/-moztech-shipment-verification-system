@@ -26,7 +26,7 @@ function ReleaseDetail({id,user,token}){
  const [printData,setPrintData]=useState(null);
  const paperRef=useRef(null),printResolve=useRef(null),pending=useRef(null),alive=useRef(true),sessionToken=useRef(JSON.stringify(token));
  const pendingKey=`wms-warehouse-command:${user.id}:${id}`;
- const valid=()=>alive.current&&localStorage.getItem('wms_token')===sessionToken.current;
+ const valid=()=>alive.current&&sessionStorage.getItem('wms_token')===sessionToken.current;
  const manager=['admin','superadmin','dispatcher'].includes(user.role);
  const refresh=async()=>{const r=await api.get(`/api/warehouse-intakes/${id}`);if(valid())setData(r.data);return r.data;};
  useEffect(()=>{alive.current=true;try{pending.current=JSON.parse(sessionStorage.getItem(pendingKey)||'null');if(pending.current)setError('有結果待確認的操作，請按「重試原操作」核對；不會重複計數。');}catch{}refresh().catch(e=>setError(e.response?.data?.message||'批次讀取失敗'));if(manager)api.get('/api/warehouse-intakes/staff').then(r=>{if(valid())setStaff(r.data.staff);}).catch(()=>{});return()=>{alive.current=false;};},[id]);

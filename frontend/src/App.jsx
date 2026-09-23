@@ -1,6 +1,6 @@
 // frontend/src/App.jsx
 
-import { lazy, useEffect } from 'react';
+import { lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
 import apiClient from './api/api';
@@ -26,7 +26,7 @@ const ImportBatchView = lazy(() => import('./components/ImportBatchView').then(m
 const TeamBoard = lazy(() => import('./components/TeamBoard').then(module => ({ default: module.TeamBoard })));
 const TeamPostView = lazy(() => import('./components/TeamPostView').then(module => ({ default: module.TeamPostView })));
 import { loginEntryUrl } from './utils/entryDestination';
-import { useLocalStorage } from './hooks/useLocalStorage';
+import { useWarehouseSession } from './hooks/useWarehouseSession';
 import { AppLayout } from '@/ui';
 
 // AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
@@ -45,13 +45,17 @@ function TasksEntry({ user }) {
 }
 
 function App() {
-    const [user, setUser] = useLocalStorage('wms_user', null);
-    const [token, setToken] = useLocalStorage('wms_token', null);
+    // A handoff tab may contain a superseded station token from another tab.
+    // Do not start its socket while the new ERP ticket is being exchanged.
+    const [handoffPending, setHandoffPending] = useState(() => window.location.pathname === '/erp-entry');
+    const [user, setUser] = useWarehouseSession('wms_user', null);
+    const [token, setToken] = useWarehouseSession('wms_token', null);
 
     useEffect(() => { soundNotification.setUser(user?.id); }, [user?.id]);
 
     // Update the transport credentials on login, refresh, account switch and logout.
     useEffect(() => {
+        if (handoffPending) { setSocketSession(null); return; }
         if (token) {
             apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         } else {
@@ -59,10 +63,11 @@ function App() {
         }
         setSocketSession(token);
         return () => setSocketSession(null);
-    }, [token]);
+    }, [token, handoffPending]);
 
     useEffect(() => {
         const requireLogin = (reason = {}) => {
+            if (handoffPending) return;
             setSocketSession(null);
             setUser(null);
             setToken(null);
@@ -78,16 +83,17 @@ function App() {
             socket.off('session_expired', requireLogin);
             socket.off('connect_error', onConnectError);
         };
-    }, [setToken, setUser]);
+    }, [setToken, setUser, handoffPending, user?.erpOrigin, user?.erpSubject]);
 
     const handleLogin = (data) => {
         // Make the new identity available before child effects start loading tasks.
-        localStorage.setItem('wms_token', JSON.stringify(data.accessToken));
-        localStorage.setItem('wms_user', JSON.stringify(data.user));
+        sessionStorage.setItem('wms_token', JSON.stringify(data.accessToken));
+        sessionStorage.setItem('wms_user', JSON.stringify(data.user));
         apiClient.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
         soundNotification.setUser(data.user?.id);
         setToken(data.accessToken);
         setUser(data.user);
+        setHandoffPending(false);
     };
 
     const handleLogout = async () => {

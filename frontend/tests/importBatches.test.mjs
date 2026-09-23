@@ -108,7 +108,7 @@ test('the actual batch page displays active totals, voided history, owners, and 
         '../utils/sourceOrders': sourceOrders, '../utils/importBatches': batches,
     };
     const module = { exports: {} };
-    vm.runInNewContext(code, { module, exports: module.exports, require: name => overrides[name] || require(name), localStorage: { getItem: () => null } });
+    vm.runInNewContext(code, { module, exports: module.exports, require: name => overrides[name] || require(name), sessionStorage: { getItem: () => null } });
     const html = renderToStaticMarkup(React.createElement(module.exports.ImportBatchView, { user: { id: 7, role: 'picker' } }));
     assert.match(html, /TEST-BATCH/); assert.match(html, /批次商品總表/); assert.match(html, /001-002/);
     assert.match(html, /Test Picker/); assert.match(html, /Test Packer/); assert.match(html, /已作廢 1 張、1 個品項、9 件/);

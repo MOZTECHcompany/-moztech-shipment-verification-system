@@ -44,7 +44,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
         __loadXlsx: async () => ({ ...XLSX, writeFile: (book, name) => downloads.push({ book, name }) }),
-        localStorage: { getItem: key => storage.get(key) ?? null, setItem: (...args) => writes.push(args), removeItem: (...args) => writes.push(args) },
+        sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (...args) => writes.push(args), removeItem: (...args) => writes.push(args) },
         window: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) },
         fetch: (...args) => { requests.push(args); throw new Error('Converter must not issue requests'); },
         document:{body:{appendChild(){}},createElement:()=>({href:'',download:'',click(){downloads.push({url:this.href});},remove(){}})},

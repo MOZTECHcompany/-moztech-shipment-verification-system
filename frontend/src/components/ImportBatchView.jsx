@@ -29,8 +29,8 @@ function BatchDetail({ user, batchId }) {
     const session = useRef(null);
     if (!session.current) {
         let token;
-        try { token = JSON.parse(localStorage.getItem('wms_token')); } catch { /* Invalid sessions cannot load data. */ }
-        session.current = () => batchSessionMatches(localStorage, user, token);
+        try { token = JSON.parse(sessionStorage.getItem('wms_token')); } catch { /* Invalid sessions cannot load data. */ }
+        session.current = () => batchSessionMatches(sessionStorage, user, token);
     }
 
     useEffect(() => {

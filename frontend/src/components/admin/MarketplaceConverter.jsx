@@ -34,7 +34,7 @@ function ConverterPage({user}){
  const [dragging,setDragging]=useState(false),[catalog,setCatalog]=useState(null),[catalogError,setCatalogError]=useState('');
  const fileRef=useRef(null),request=useRef(0),mounted=useRef(true),token=useRef(null),actor=useRef({id:user.id,role:user.role}),inFlight=useRef(false);
  const showMessage=(value,kind='status')=>{setMessage(value);setMessageKind(kind);};
- const currentSession=()=>batchSessionMatches(localStorage,actor.current,token.current);
+ const currentSession=()=>batchSessionMatches(sessionStorage,actor.current,token.current);
  const loadProfiles=async()=>{
   const response=await apiClient.get('/api/marketplace-intakes/store-profiles');
   if(mounted.current&&currentSession())setProfiles(response.data.profiles||[]);
@@ -45,7 +45,7 @@ function ConverterPage({user}){
   setRecords(response.data.intakes);setAccess('ready');return true;
  };
  useEffect(()=>{
-  mounted.current=true;try{token.current=JSON.parse(localStorage.getItem('wms_token'));}catch{token.current=null;}
+  mounted.current=true;try{token.current=JSON.parse(sessionStorage.getItem('wms_token'));}catch{token.current=null;}
   loadProfiles().catch(()=>{if(mounted.current&&currentSession())setProfileNotice('店鋪設定暫時無法讀取，仍可手動填寫。');});
   loadRecords().catch(()=>{if(mounted.current){setAccess('denied');showMessage('無法確認轉檔權限，請重新登入。','error');}});
   const check=()=>{if(currentSession())return;request.current++;setInput(null);setName('');setSaved(null);setRecords([]);setProfiles([]);setProfileId('');setSettings(initialSettings());setAccess('denied');showMessage('登入人員已變更，請重新登入。','error');};

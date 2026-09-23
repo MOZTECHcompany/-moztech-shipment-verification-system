@@ -68,7 +68,7 @@ test('planned server drain reconnects with current credentials but logout cannot
     assert.equal(state.calls.filter(call => call.action === 'connect').length, count);
 });
 
-function app() {
+function app(pathname = '/tasks') {
     const state = transport();
     const auth = { user: { id: 7, role: 'admin' }, token: 'token-A' };
     const hooks = [], effects = [], notices = [], soundUsers = [];
@@ -78,6 +78,7 @@ function app() {
     const react = {
         createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
         lazy: () => 'Lazy',
+        useState(initial) { const index=cursor++; if(!hooks[index]) hooks[index]={value:typeof initial==='function'?initial():initial}; return [hooks[index].value,value=>{hooks[index].value=typeof value==='function'?value(hooks[index].value):value;}]; },
         useEffect(callback, deps) {
             const index = cursor++;
             if (!hooks[index] || !deps.every((value, i) => Object.is(value, hooks[index].deps[i]))) {
@@ -92,12 +93,12 @@ function app() {
         './api/api': api,
         './api/socket': state,
         './utils/soundNotification': { setUser: id => soundUsers.push(id ?? null) },
-        './hooks/useLocalStorage': { useLocalStorage: key => key === 'wms_token' ? [auth.token, setters.token] : [auth.user, setters.user] },
+        './hooks/useWarehouseSession': { useWarehouseSession: key => key === 'wms_token' ? [auth.token, setters.token] : [auth.user, setters.user] },
         sonner: { Toaster: 'Toaster', toast: { error: value => notices.push(value) } },
     };
     const generic = new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) });
     const module = { exports: {} };
-    vm.runInNewContext(appCode, { module, exports: module.exports, require: name => imports[name] || generic, React: react, localStorage: {setItem(){}} });
+    vm.runInNewContext(appCode, { module, exports: module.exports, require: name => imports[name] || generic, React: react, sessionStorage: {setItem(){}}, window: {location:{pathname,assign(){}}} });
     function render() { cursor = 0; tree = module.exports.default(); while (effects.length) effects.shift()(); return tree; }
     function find(node, key) {
         if (!node || typeof node !== 'object') return undefined;
@@ -158,4 +159,12 @@ test('task route remounts claim controllers and locks when the logged-in account
     const second = routeKey(view.render());
     view.callback('onLogin')({ accessToken: 'token-C', user: { id: 8, role: 'admin' } });
     assert.notEqual(routeKey(view.render()), second);
+});
+
+test('handoff does not connect a cached old station and waits for the new identity',()=>{
+ const view=app('/erp-entry');
+ assert.equal(view.state.calls.some(c=>c.action==='connect'),false);
+ view.state.listeners.get('session_expired')();assert.equal(view.auth.token,'token-A');
+ view.callback('onLogin')({accessToken:'new-entry',user:{id:7,role:'dispatcher',erpSubject:'staff',erpOrigin:'https://erp.test'}});
+ view.render();assert.equal(view.state.calls.at(-1).auth.token,'new-entry');
 });

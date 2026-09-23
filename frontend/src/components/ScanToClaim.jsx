@@ -16,7 +16,7 @@ export default function ScanToClaim({ user, active = true, disabled = false, onA
         storage: typeof sessionStorage === 'undefined' ? undefined : sessionStorage,
         newCommandId: () => globalThis.crypto?.randomUUID?.() || '',
         isCurrentActor: () => {
-            try { return Number(JSON.parse(localStorage.getItem('wms_user'))?.id) === Number(user.id); } catch { return false; }
+            try { return Number(JSON.parse(sessionStorage.getItem('wms_user'))?.id) === Number(user.id); } catch { return false; }
         },
         onState: state => { if (alive.current) setView(state); },
         acquire: () => propsRef.current.active && propsRef.current.onAcquire(),
