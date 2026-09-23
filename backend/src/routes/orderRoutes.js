@@ -579,7 +579,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 });
 
 // POST /api/orders/update_item
-router.post('/orders/update_item', async (req, res, next) => {
+function createScanOrder(scanPool = pool) { return async function scanOrder(req, res, next) {
     const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
     const { id: userId, role } = req.user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
@@ -635,7 +635,7 @@ router.post('/orders/update_item', async (req, res, next) => {
     let changedItemId, changedInstanceId;
     const events = deferredEvents(io);
     try {
-        client = await pool.connect();
+        client = await scanPool.connect();
         await client.query('BEGIN');
         transactionOpen = true;
         await client.query("SET LOCAL lock_timeout = '1500ms'");
@@ -657,6 +657,7 @@ router.post('/orders/update_item', async (req, res, next) => {
         const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
+        if (req.workspaceGuard) await req.workspaceGuard(client, order.id);
         if (command) {
             const before = await readLines(client,orderId);
             if (stateToken(order,before.items,before.instances) !== req.body.expectedState) {
@@ -996,7 +997,9 @@ router.post('/orders/update_item', async (req, res, next) => {
         });
         client?.release(releaseError);
     }
-});
+}; }
+const scanOrder = createScanOrder();
+router.post('/orders/update_item', scanOrder);
 
 // POST /api/orders/batch/delete
 router.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
@@ -1109,3 +1112,5 @@ router.get('/admin/defects/stats', authorizeAdmin, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.scanOrder = scanOrder;
+module.exports.createScanOrder = createScanOrder;

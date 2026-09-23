@@ -46,7 +46,14 @@ function parseClaimCommand(body) {
         throw fail(400, 'INVALID_INPUT', '請提供工作條碼、作業階段與有效的認領識別；負責人由登入身分決定。');
     }
     const barcode = body.barcode.trim(), stage = body.stage, commandId = body.commandId.toLowerCase(), expectedActorId = body.expectedActorId;
-    return { barcode, stage, commandId, expectedActorId, hash: createHash('sha256').update(JSON.stringify([barcode, stage, expectedActorId])).digest('hex') };
+    // Existing warehouse receipts retain their original hash. ERP-origin
+    // commands additionally bind the optimistic revision to the same key.
+    const hashInput = [barcode, stage, expectedActorId];
+    if (body.expectedRevision !== undefined) {
+        if (!Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 1) throw fail(400, 'INVALID_INPUT', '作業版本無效');
+        hashInput.push(body.expectedRevision);
+    }
+    return { barcode, stage, commandId, expectedActorId, hash: createHash('sha256').update(JSON.stringify(hashInput)).digest('hex') };
 }
 
 function createBarcodeClaimHandlers(pool) {
@@ -75,6 +82,7 @@ function createBarcodeClaimHandlers(pool) {
                 if (!matches.rows.length) throw fail(404, 'NOT_FOUND', '找不到此工作條碼，請掃描 WMS 工作單條碼。');
                 if (matches.rows.length !== 1) throw fail(409, 'AMBIGUOUS', '此條碼對應多張工作單，請重新列印唯一工作條碼。');
                 matchedOrderId = matches.rows[0].id;
+                if (req.workspaceGuard) await req.workspaceGuard(db, matchedOrderId);
                 const result = await transitionClaim({ client: db, order: matches.rows[0], user: req.user, stage: command.stage, events, allowContinue: true, method: 'order_barcode' });
                 response = { commandId: command.commandId, orderId: result.order.id, voucherNumber: result.order.voucher_number,
                     workBarcode: result.order.work_barcode || result.order.voucher_number, stage: command.stage,

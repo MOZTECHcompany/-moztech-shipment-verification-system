@@ -170,6 +170,8 @@ app.get('/ready', async (req, res) => {
 
 app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').createLogisticsCallbackRouter({pool}));
 // Corely-native intake is independently signed; it never uses an ECOUNT receipt.
+app.use('/api/integrations/erp/v1', require('./routes/corelyWorkspaceRoutes').createCorelyWorkspaceReadRouter({pool}));
+app.use('/api/integrations/erp/workflow/v1', require('./routes/corelyWorkspaceRoutes').createCorelyWorkspaceCommandRouter({pool}));
 app.use('/api/integrations/erp/workflow/v1', require('./routes/corelyNativeIntakeRoutes').createCorelyDispatchRouter({pool}));
 
 // 認證路由（無需認證）

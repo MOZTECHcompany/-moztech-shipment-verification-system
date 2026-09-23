@@ -21,7 +21,14 @@ function parseCommand(body, userId) {
     if (body.responseMode !== 'delta-v1' || typeof body.commandId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.commandId) || typeof body.expectedState !== 'string' || !/^[0-9a-f]{64}$/.test(body.expectedState)) {
         throw Object.assign(new Error('掃碼識別無效，請重新載入訂單'),{status:400});
     }
-    return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState])};
+    const input=[Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState];
+    // Preserve hashes of pre-existing warehouse receipts. Signed ERP commands
+    // bind their read revision in addition to the native state token.
+    if(body.expectedRevision!==undefined){
+        if(!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<1)throw Object.assign(new Error('作業版本無效'),{status:400});
+        input.push(body.expectedRevision);
+    }
+    return {id:body.commandId.toLowerCase(),userId,hash:digest(input)};
 }
 function createWorkSnapshot(pool) {
     return async (req,res,next) => {
