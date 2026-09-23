@@ -73,6 +73,7 @@ test('Corely signed workspace uses the native WMS queue, claim and scan receipts
     const claimed=ok(await post('pick','claim',claimBody));
     assert.equal(claimed.state,'picking');
     ok(await post('pick','claim',claimBody));
+    ok(await post('pick','claim',{...claimBody,expectedRevision:claimed.revision}),409);
     assert.equal((await db.query('SELECT count(*)::int n FROM wms_claim_commands')).rows[0].n,1);
     const ambiguous={entityId:'company',expectedRevision:claimed.revision,requestId:'scan-ambiguous',scanValue:'1234'};
     ok(await post('pick','scan',ambiguous),409);

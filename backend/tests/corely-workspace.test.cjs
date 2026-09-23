@@ -25,12 +25,15 @@ function fixture() {
     const source = { id:2,entity_id:'company',erp_order_id:'sale-1',order_id:8,import_batch_id:3,
         reservation_accepted:true,prepick_completed_at:new Date('2026-09-24T00:00:00Z'),payload:{orderNumber:'SO-1',brand:'MOZTECH',items:[]} };
     const calls=[];
-    const state={order,item,source,user:{id:7,name:'Picker',role:'picker'},calls,claimReceipt:null,scanReceipt:null};
+    const state={order,item,source,user:{id:7,name:'Picker',role:'picker'},calls,claimReceipt:null,scanReceipt:null,beforeOrderRead:null};
     const pool={ async query(sql,params=[]) {
         calls.push({sql,params});
         if(sql.includes('FROM erp_staff_identities e JOIN users u')) return {rows:params[0]==='erp-7'&&params[1]==='company'?[state.user]:[]};
         if(sql.includes('SELECT i.* FROM corely_native_intakes i WHERE')) return {rows:params[0]==='company'&&params[1]==='sale-1'?[source]:[]};
-        if(sql.startsWith('SELECT * FROM orders WHERE')) return {rows:[{...order}]};
+        if(sql.startsWith('SELECT * FROM orders WHERE')) {
+            if(state.beforeOrderRead){const callback=state.beforeOrderRead;state.beforeOrderRead=null;callback();}
+            return {rows:[{...order}]};
+        }
         if(sql.startsWith('SELECT * FROM order_items WHERE')) return {rows:[{...item}]};
         if(sql.startsWith('SELECT s.* FROM order_item_instances') || sql.startsWith('SELECT i.* FROM order_item_instances')) return {rows:[]};
         if(sql.includes('SELECT o.*,p.name AS picker_name')) return {rows:[{...order,picker_name:order.picker_id===7?'Picker':null,packer_name:order.packer_id===7?'Picker':null}]};
@@ -146,4 +149,30 @@ test('signed claim and scan use the native handlers, revision checks, and stage-
     assert.equal(scanned.body.state,'picked');assert.equal(scanned.body.picked,1);
     const queue=await request(app).get(readPath+'?view=all').set(auth(sign()));
     assert.equal(queue.body.total,0);assert.deepEqual(queue.body.readyKeys,[]);
+});
+
+test('a receipt committed after the first read but before revision check reaches native hash verification', async()=>{
+    const {pool,state}=fixture();let nativeCalls=0;
+    const app=appFor(pool,{claimHandler:async(req,res)=>{
+        nativeCalls++;
+        assert.equal(req.body.expectedRevision,initial.revision);
+        assert.equal(req.body.stage,'pick');
+        res.json({outcome:'claimed'});
+    }});
+    const initial=(await request(app).get(workflow).set(auth(detailToken()))).body;
+    const body={entityId:'company',expectedRevision:initial.revision,requestId:'same-concurrent-claim'};
+    // The first receipt lookup returns empty. The other request commits while
+    // this request builds its snapshot, so the revision has already changed.
+    state.beforeOrderRead=()=>{
+        state.claimReceipt={order_id:8,response:{outcome:'claimed'}};
+        state.order.status='picking';state.order.picker_id=7;
+        state.order.updated_at=new Date('2026-09-24T00:01:00Z');
+    };
+    const path='/orders/sale-1/pick/claim';
+    const result=await request(app).post(workflow+'/pick/claim').set(auth(sign('wms.workspace.command','pick',
+        {method:'POST',path,bodyHash:hash(body)}))).send(body);
+    assert.equal(result.status,200,JSON.stringify(result.body));
+    assert.equal(nativeCalls,1);
+    assert.equal(result.body.state,'picking');
+    assert.ok(state.calls.filter(call=>call.sql.includes('SELECT order_id,response FROM wms_claim_commands')).length>=2);
 });

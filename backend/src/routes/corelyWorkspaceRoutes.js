@@ -104,12 +104,21 @@ function createCorelyWorkspaceCommandRouter({ pool, env = process.env, scanHandl
                 const other = kind === 'claim' ? 'wms_scan_commands' : 'wms_claim_commands';
                 if ((await pool.query(`SELECT 1 FROM ${other} WHERE user_id=$1 AND command_id=$2`,[user.id,commandId])).rows.length)
                     throw workspace.fail(409,'WMS_REQUEST_ID_REUSED');
-                const stored = (await pool.query(`SELECT order_id,response FROM ${kind === 'claim' ? 'wms_claim_commands' : 'wms_scan_commands'}
+                const receiptTable = kind === 'claim' ? 'wms_claim_commands' : 'wms_scan_commands';
+                let stored = (await pool.query(`SELECT order_id,response FROM ${receiptTable}
                     WHERE user_id=$1 AND command_id=$2`,[user.id,commandId])).rows[0];
                 if (stored && stored.order_id && stored.order_id !== source.order_id) throw workspace.fail(409,'WMS_REQUEST_ID_REUSED');
                 if (!stored) {
                     const current = await workspace.snapshot(pool,scope,source,user,true);
-                    if (current.revision !== body.expectedRevision) throw workspace.fail(409,'WMS_REVISION_CHANGED');
+                    if (current.revision !== body.expectedRevision) {
+                        // A concurrent copy may have committed between our first
+                        // receipt read and snapshot. Let the native handler check
+                        // the durable request hash before returning that receipt.
+                        stored = (await pool.query(`SELECT order_id,response FROM ${receiptTable}
+                            WHERE user_id=$1 AND command_id=$2`,[user.id,commandId])).rows[0];
+                        if (!stored || (stored.order_id && stored.order_id !== source.order_id))
+                            throw workspace.fail(409,'WMS_REVISION_CHANGED');
+                    }
                 }
                 const selectedItem = kind === 'scan' && body.itemId !== undefined ?
                     await workspace.nativeItemId(pool,source.order_id,body.itemId) : null;
