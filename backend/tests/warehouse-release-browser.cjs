@@ -19,7 +19,7 @@ module.exports=async function({base,id,user,token,picker,receipt,output}){
   await page.getByRole('link',{name:'匯入理貨／出貨單',exact:true}).click();
   const book=xlsx.utils.book_new();xlsx.utils.book_append_sheet(book,xlsx.utils.aoa_to_sheet(receipt),'銷貨回傳');
   await page.locator('input[type=file]').setInputFiles({name:'local-only-receipt.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:xlsx.write(book,{type:'buffer',bookType:'xlsx'})});
-  await page.getByRole('link',{name:'開啟預揀任務',exact:true}).click();
+  await page.getByRole('link',{name:'列印與預揀',exact:true}).click();
   await page.getByRole('button',{name:'一鍵列印',exact:true}).click();await page.waitForFunction(()=>window.__prints.length===1);
   await page.getByRole('button',{name:'一鍵重印',exact:true}).waitFor();
   const papers=await page.evaluate(()=>window.__prints);assert.equal(papers[0].svg,5);assert.match(papers[0].text,/領單人：admin/);assert.match(papers[0].text,/TEST-A/);assert.match(papers[0].text,/TEST-B/);assert.match(papers[0].text,/須核對 1 組 SN/);

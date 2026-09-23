@@ -12,7 +12,7 @@ const noop = () => {};
 
 // Exercise real component callbacks and asynchronous state transitions with
 // deferred HTTP responses. No server, production data or browser is involved.
-function dashboard({ role = 'admin', storage = new Map() } = {}) {
+function dashboard({ role = 'admin', storage = new Map(), props = {} } = {}) {
     const hooks = [], effects = [], posts = [], reads = [], successes = [], failures = [];
     const listeners = new Map();
     let cursor = 0, tree, dirty = false, mounted = true, lateUpdates = 0;
@@ -73,7 +73,7 @@ function dashboard({ role = 'admin', storage = new Map() } = {}) {
         if (!mounted) return tree;
         for (let count = 0; count < 10; count++) {
             cursor = 0; dirty = false;
-            tree = module.exports.AdminDashboard({ user });
+            tree = module.exports.AdminDashboard({ user, ...props });
             while (effects.length) effects.shift()();
             if (!dirty) return tree;
         }
@@ -278,8 +278,23 @@ test('verified marketplace return and identical retry open the same warehouse ta
   const data={batchId:51,batchNumber:'WMS-RETURN',warehouseIntakeId:9,workOrderCount:1,totalQuantity:2,itemCount:1,serialCount:0,reused:status===200,orders:[{orderId:123,voucherNumber:'WT000000000000000001',workBarcode:'WT000000000000000001'}]};
   view.posts[0].resolve({status,data});await pending;await view.settle();
   assert.equal(view.control('import-batch-link').props.to,'/warehouse-intakes/9');
-  assert.match(view.text(view.render()),/開啟預揀任務/);
+  assert.match(view.text(view.render()),/列印與預揀/);
   assert.equal(view.find(view.render(),n=>n.type==='BatchPrintLabels'),undefined);
   assert.equal(view.storage.size,0);
  }
+});
+
+
+test('embedded return keeps its batch identity and only reports a verified import', async () => {
+ const matched=[];const view=dashboard({props:{embedded:true,batchId:9,onMatched:data=>matched.push(data)}});
+ assert.doesNotMatch(view.text(view.render()),/常用工具|商城訂單轉檔|報表與分析/);
+ const pending=view.drop(file());
+ assert.deepEqual(view.posts[0].body.parts.find(p=>p[0]==='marketplaceIntakeId'),['marketplaceIntakeId','9']);
+ assert.equal(matched.length,0);
+ view.posts[0].reject({response:{status:400,data:{code:'IMPORT_NOT_APPLIED',message:'來源不屬於本批'}}});await pending;await view.settle();
+ assert.equal(matched.length,0);assert.match(view.text(view.render()),/來源不屬於本批/);
+ const retry=view.select(file());
+ view.posts[1].resolve({status:201,data:{batchId:51,batchNumber:'WMS-RETURN',warehouseIntakeId:9,workOrderCount:1,totalQuantity:2,itemCount:1,serialCount:0,orders:[{orderId:123,voucherNumber:'WT000000000000000001',workBarcode:'WT000000000000000001'}]}});await retry;await view.settle();
+ assert.equal(matched.length,1);assert.equal(matched[0].warehouseIntakeId,9);
+ assert.equal(view.control('import-batch-link').props.to,'/warehouse-intakes/9');
 });

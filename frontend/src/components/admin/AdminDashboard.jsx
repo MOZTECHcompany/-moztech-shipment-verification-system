@@ -33,9 +33,9 @@ function saveRecovery(key, value) {
     } catch { /* No file contents or customer information are persisted here. */ }
 }
 
-export function AdminDashboard({ user }) {
+export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
     const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
-    const requestedIntakeId = typeof window !== 'undefined' && window.location?.search ? new URLSearchParams(window.location.search).get('intakeId') : '';
+    const requestedIntakeId = batchId ? String(batchId) : typeof window !== 'undefined' && window.location?.search ? new URLSearchParams(window.location.search).get('intakeId') : '';
     const intakeId = /^[1-9]\d{0,9}$/.test(requestedIntakeId || '') ? requestedIntakeId : '';
     const recoveryKey = `wms_import_recovery:${user?.id ?? 'current'}`;
     const [dateRange, setDateRange] = useState([null, null]);
@@ -93,6 +93,7 @@ export function AdminDashboard({ user }) {
             saveRecovery(recoveryKey, null);
             if (mounted.current) {
                 setImportState({ ...data, phase: 'success', fileName });
+                if (data.warehouseIntakeId) onMatched?.(data);
                 toast.success(data.warehouseIntakeId ? '核對完成，預揀任務已建立' : data.isBatch ? `批次「${data.batchNumber}」已建立 ${data.workOrderCount} 張商城工作單` : `訂單「${data.voucherNumber}」已成功匯入`);
             }
         } catch (error) {
@@ -185,21 +186,7 @@ export function AdminDashboard({ user }) {
         : ['unknown', 'duplicate'].includes(importState.phase) ? 'border-amber-200 bg-amber-50 text-amber-950'
             : importState.phase === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-blue-200 bg-blue-50 text-blue-950';
 
-    return (
-        <div className="bg-transparent pb-8">
-            <div className="w-full">
-                <PageHeader title="出貨管理" actions={
-                    <Button as={Link} to="/tasks" className="gap-2"><LayoutGrid size={18} />前往作業看板</Button>
-                } />
-
-                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <section className="mb-6 overflow-hidden rounded-2xl border border-blue-200 bg-blue-50" aria-label="商城原始訂單轉檔">
-                    <div className="flex flex-wrap items-center justify-between gap-5 p-6"><h2 className="text-2xl font-bold text-blue-950">商城訂單轉檔</h2><Button as={Link} to="/admin/marketplace-converter" className="min-h-12 px-6">上傳商城訂單<ArrowRight size={18} className="ml-2" /></Button></div>
-                    <div className="border-t border-blue-200 px-6 py-3 text-sm"><Link to="/admin/marketplace-converter#saved-batches" className="font-semibold text-blue-800 underline">已保存批次</Link></div>
-                </section>}
-
-                <div className="grid gap-5 lg:grid-cols-3">
-                    {intakeId && <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 lg:col-span-3">批次 #{intakeId} · 選擇 ECOUNT 理貨明細。<Link to="/admin/marketplace-converter" className="ml-2 underline">返回轉檔批次</Link></p>}
-                    <section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
+    const importPanel = (<section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
                         <div className="flex items-start gap-3">
                             <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><UploadCloud size={22} /></div>
                             <h2 id="import-title" className="text-xl font-semibold text-slate-900">匯入理貨／出貨單</h2>
@@ -228,12 +215,29 @@ export function AdminDashboard({ user }) {
                                 <ul className="mt-3 max-h-64 space-y-2 overflow-auto">{importState.orders.map(order => <li key={order.orderId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-current/10 bg-white/60 p-2"><span className="break-all">{[order.sourcePlatform, order.sourceStore, order.sourceOrderNumber].filter(Boolean).join(' · ')}</span><Link to={`/order/${order.orderId}`} className="shrink-0 font-semibold underline underline-offset-4">開啟工作單 {order.voucherNumber}</Link></li>)}</ul>
                             </div>}
                             <div className="mt-3 flex flex-wrap items-center gap-3">
-                                {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.batchId) && importState.batchId > 0 && <Link data-testid="import-batch-link" to={importState.warehouseIntakeId?`/warehouse-intakes/${importState.warehouseIntakeId}`:`/batches/${importState.batchId}`} className="font-semibold underline underline-offset-4">{importState.warehouseIntakeId?'開啟預揀任務':'查看理貨批次'}</Link>}
+                                {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.batchId) && importState.batchId > 0 && <Link data-testid="import-batch-link" to={importState.warehouseIntakeId?`/warehouse-intakes/${importState.warehouseIntakeId}`:`/batches/${importState.batchId}`} className="font-semibold underline underline-offset-4">{importState.warehouseIntakeId?'列印與預揀':'查看理貨批次'}</Link>}
                                 {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.orderId) && importState.orderId > 0 && <Link to={`/order/${importState.orderId}`} className="font-semibold underline underline-offset-4">開啟訂單</Link>}
                                 {importState.phase === 'unknown' && <><Link to="/tasks" className="font-semibold underline underline-offset-4">前往作業看板核對</Link><button type="button" data-testid="import-reset-unknown" onClick={resetUnknownImport} className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-medium hover:bg-amber-50">已核對，重新選擇檔案</button></>}
                             </div>
                         </div>}
-                    </section>
+                    </section>);
+    if (embedded) return importPanel;
+
+    return (
+        <div className="bg-transparent pb-8">
+            <div className="w-full">
+                <PageHeader title="出貨管理" actions={
+                    <Button as={Link} to="/tasks" className="gap-2"><LayoutGrid size={18} />前往作業看板</Button>
+                } />
+
+                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <section className="mb-6 overflow-hidden rounded-2xl border border-blue-200 bg-blue-50" aria-label="商城原始訂單轉檔">
+                    <div className="flex flex-wrap items-center justify-between gap-5 p-6"><h2 className="text-2xl font-bold text-blue-950">商城訂單轉檔</h2><Button as={Link} to="/admin/marketplace-converter" className="min-h-12 px-6">上傳商城訂單<ArrowRight size={18} className="ml-2" /></Button></div>
+                    <div className="border-t border-blue-200 px-6 py-3 text-sm"><Link to="/admin/marketplace-converter#saved-batches" className="font-semibold text-blue-800 underline">已保存批次</Link></div>
+                </section>}
+
+                <div className="grid gap-5 lg:grid-cols-3">
+                    {intakeId && <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 lg:col-span-3">批次 #{intakeId} · 選擇 ECOUNT 理貨明細。<Link to="/admin/marketplace-converter" className="ml-2 underline">返回轉檔批次</Link></p>}
+                    {importPanel}
 
                     <aside className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 md:p-7">
                         <h2 className="text-base font-semibold text-slate-900">出貨作業</h2>
