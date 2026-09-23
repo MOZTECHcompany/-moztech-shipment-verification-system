@@ -12,7 +12,8 @@ test('every ERP entry survives the WMS login redirect and reload', () => {
     }
 });
 test('order, batch, team and intake detail links retain their identity', () => {
-    for (const path of ['/order/123', '/batches/a-b', '/team/34', '/warehouse-intakes/abc_123']) assert.equal(safeEntryDestination(path), path);
+    for (const path of ['/order/123', '/batches/a-b', '/team/34', '/warehouse-intakes/abc_123', '/corely-intakes', '/corely-intakes/123']) assert.equal(safeEntryDestination(path), path);
+    for (const path of ['/corely-intakes/0','/corely-intakes/1234567890','/corely-intakes/a']) assert.equal(safeEntryDestination(path), '/tasks');
 });
 test('external, protocol-relative, encoded, API and login destinations are rejected', () => {
     for (const path of [null, '', 'https://evil.example', '//evil.example', '/\\evil.example', '/%2f%2fevil.example', '/api/users', '/login?next=/admin', '/tasks\n', '/order/a/b', '/unknown']) assert.equal(safeEntryDestination(path), '/tasks');

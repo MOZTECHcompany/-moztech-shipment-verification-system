@@ -27,7 +27,7 @@ function validateIdentity(identity) {
     if (!identity || typeof identity.userId !== 'string' || !identity.userId || identity.entityId !== process.env.ERP_PORTAL_ENTITY_ID || !['picker','packer','dispatcher','admin','viewer'].includes(identity.role) || new Date(identity.expiresAt).getTime() <= Date.now() || !Number.isFinite(new Date(identity.expiresAt).getTime())) throw invalid();
     if (identity.role === 'admin' && !identity.permissions?.includes('wms_admin')) throw invalid();
     if (identity.role === 'viewer' && (!Array.isArray(identity.permissions) || !identity.permissions.includes('wms_tasks:read'))) throw invalid();
-    if (identity.destination && !new Set(['/tasks','/tasks?group=pick','/tasks?group=pack','/tasks?view=completed','/admin','/admin/marketplace-converter','/warehouse-intakes','/admin/analytics','/admin/operation-logs','/admin/exceptions','/admin/scan-errors','/admin/defects','/settings/logistics','/team','/admin/users','/settings']).has(identity.destination)) throw invalid();
+    if (identity.destination && !/^\/corely-intakes(?:\/[1-9]\d{0,8})?$/.test(identity.destination) && !new Set(['/tasks','/tasks?group=pick','/tasks?group=pack','/tasks?view=completed','/admin','/admin/marketplace-converter','/warehouse-intakes','/admin/analytics','/admin/operation-logs','/admin/exceptions','/admin/scan-errors','/admin/defects','/settings/logistics','/team','/admin/users','/settings']).has(identity.destination)) throw invalid();
     return identity;
 }
 function signSession(user, session, expiresAt) {

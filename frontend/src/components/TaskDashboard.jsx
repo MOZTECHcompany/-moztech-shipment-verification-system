@@ -901,6 +901,7 @@ export function TaskDashboard({ user }) {
                 />
 
                 <WarehouseTaskQueue user={user} active={currentView==='active'}/>
+                <Link to="/corely-intakes" className="inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline">Corely 出貨預揀</Link>
                 <WorkplaceAnnouncements />
                 {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
                     key={user.id} user={user} active={currentView === 'active'}

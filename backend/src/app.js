@@ -135,6 +135,7 @@ app.use((req, res, next) => {
 app.use(cors(corsOptions));
 app.use('/api/marketplace-intakes', express.json({ limit: '10mb' }));
 app.use('/api/warehouse-intakes', express.json({ limit: '10mb' }));
+app.use('/api/integrations/erp/workflow/v1', express.json({ limit: '1mb' }));
 app.use(express.json());
 app.use(require('./middleware/requestPerformance').requestPerformance(pool));
 app.use(require('./middleware/queryAdmission').createQueryAdmission());
@@ -168,6 +169,8 @@ app.get('/ready', async (req, res) => {
 });
 
 app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').createLogisticsCallbackRouter({pool}));
+// Corely-native intake is independently signed; it never uses an ECOUNT receipt.
+app.use('/api/integrations/erp/workflow/v1', require('./routes/corelyNativeIntakeRoutes').createCorelyDispatchRouter({pool}));
 
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
@@ -180,6 +183,7 @@ app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes')
 app.use('/api/marketplace-products',authenticateToken,require('./services/marketplaceProductCatalog').createProductRouter({pool}));
 app.use('/api/marketplace-intakes', authenticateToken, require('./routes/marketplaceRoutes').createMarketplaceRouter({pool}));
 app.use('/api/warehouse-intakes', authenticateToken, require('./routes/warehouseReleaseRoutes').createWarehouseReleaseRouter({pool}));
+app.use('/api/corely-intakes', authenticateToken, require('./routes/corelyNativeIntakeRoutes').createCorelyPrepickRouter({pool}));
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);

@@ -19,6 +19,10 @@ describe('ERP work sessions', () => {
     await expect(resolveUser(pool,{...claims,erpSubject:'someone-else'})).rejects.toThrow();
     pool.query.mockResolvedValue({rows:[]});await expect(resolveUser(pool,claims)).rejects.toThrow();
   });
+  test('native intake destinations remain narrow and reject external or query-bearing targets',()=>{
+    for(const destination of ['/corely-intakes','/corely-intakes/123']) expect(validateIdentity({...valid,role:'dispatcher',destination}).destination).toBe(destination);
+    for(const destination of ['/corely-intakes/0','/corely-intakes/123?redirect=evil','https://evil.example/corely-intakes','/corely-intakes/1234567890']) expect(()=>validateIdentity({...valid,destination})).toThrow();
+  });
   test('failed ERP permission recheck closes access instead of trusting old JWT role',async()=>{
     global.fetch.mockResolvedValue({ok:false,status:403});
     await expect(resolveUser({}, {id:7,erpSubject:'staff',erpSession:'a'.repeat(64)})).rejects.toMatchObject({status:401});
