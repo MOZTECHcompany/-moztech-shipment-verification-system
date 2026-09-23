@@ -7,6 +7,7 @@ import apiClient from './api/api';
 import { socket, setSocketSession } from './api/socket';
 import soundNotification from './utils/soundNotification';
 
+import { ErpEntry } from './components/ErpEntry';
 import { LoginPage } from './components/LoginPage';
 const LogisticsSettings = lazy(() => import('./components/LogisticsSettings').then(module => ({ default: module.LogisticsSettings })));
 const SettingsPage = lazy(() => import('./components/SettingsPage').then(module => ({ default: module.SettingsPage })));
@@ -65,6 +66,7 @@ function App() {
             setSocketSession(null);
             setUser(null);
             setToken(null);
+            if (user?.erpSubject && user?.erpOrigin) { window.location.assign(user.erpOrigin + '/warehouse'); return; }
             toast.error(reason.code === 'SOCKET_AUTH_UNAVAILABLE' ? '即時連線驗證暫時無法完成，請稍後重新登入' : '登入已失效，請重新登入');
         };
         const onConnectError = error => {
@@ -79,16 +81,25 @@ function App() {
     }, [setToken, setUser]);
 
     const handleLogin = (data) => {
+        // Make the new identity available before child effects start loading tasks.
+        localStorage.setItem('wms_token', JSON.stringify(data.accessToken));
+        localStorage.setItem('wms_user', JSON.stringify(data.user));
+        apiClient.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
         soundNotification.setUser(data.user?.id);
         setToken(data.accessToken);
         setUser(data.user);
     };
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+        if (user?.erpSubject) {
+            try { await apiClient.post('/api/auth/erp/logout'); }
+            catch { toast.error('無法完成登出，請稍後重試'); return; }
+        }
         soundNotification.setUser(null);
         setSocketSession(null);
         setUser(null);
         setToken(null);
+        if (user?.erpSubject && user?.erpOrigin) window.location.assign(user.erpOrigin + '/warehouse');
     };
     
     const getHomeRoute = () => {
@@ -101,6 +112,7 @@ function App() {
             <Toaster richColors position="top-right" />
             <BrowserRouter>
                 <Routes>
+                    <Route path="/erp-entry" element={<ErpEntry onLogin={handleLogin} />} />
                     <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
                     
                     <Route element={<ProtectedRoute user={user} token={token} />}>

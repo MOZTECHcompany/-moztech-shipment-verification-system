@@ -1,3 +1,4 @@
+import { WorkplaceAnnouncements } from './WorkplaceAnnouncements';
 import { taskEntryFilters } from '../utils/entryDestination';
 // Corely AI task dashboard: bounded server search and role-aware work queues.
 
@@ -826,7 +827,7 @@ export function TaskDashboard({ user }) {
             <div className="w-full">
                 {/* 頁面標題 + 動作 */}
                 <PageHeader
-                  title="任務看板"
+                  title="作業工作台"
                   className="relative z-30"
                                     actions={(
                                         <div className="flex flex-wrap items-center gap-2 justify-end">
@@ -900,6 +901,7 @@ export function TaskDashboard({ user }) {
                 />
 
                 <WarehouseTaskQueue user={user} active={currentView==='active'}/>
+                <WorkplaceAnnouncements />
                 {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
                     key={user.id} user={user} active={currentView === 'active'}
                     disabled={claimingId !== null || isBatchClaiming}

@@ -97,7 +97,7 @@ function app() {
     };
     const generic = new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) });
     const module = { exports: {} };
-    vm.runInNewContext(appCode, { module, exports: module.exports, require: name => imports[name] || generic, React: react });
+    vm.runInNewContext(appCode, { module, exports: module.exports, require: name => imports[name] || generic, React: react, localStorage: {setItem(){}} });
     function render() { cursor = 0; tree = module.exports.default(); while (effects.length) effects.shift()(); return tree; }
     function find(node, key) {
         if (!node || typeof node !== 'object') return undefined;
@@ -118,6 +118,7 @@ test('real App callbacks update HTTP and Socket credentials on login/logout and 
     view.render();
     assert.equal(view.api.defaults.headers.common.Authorization, undefined);
     view.callback('onLogin')({ accessToken: 'token-B', user: { id: 8, role: 'picker' } });
+    assert.equal(view.api.defaults.headers.common.Authorization, 'Bearer token-B');
     view.render();
     assert.equal(view.state.calls.at(-1).auth.token, 'token-B');
     view.unmount();

@@ -23,12 +23,13 @@ class AuthService {
                 [username]
             );
 
-            if (result.rows.length !== 1) {
+            if (String(username).toLowerCase().startsWith('erp:') || result.rows.length !== 1) {
                 logger.warn(`登入失敗: 無法確認唯一帳號 - ${username}`);
                 throw new Error('用戶名或密碼錯誤');
             }
 
             const user = result.rows[0];
+            if (await require('./erpSession').isManaged(pool,user.id)) throw new Error('用戶名或密碼錯誤，請從營運管理系統登入');
 
             // 驗證密碼
             const isValidPassword = await bcrypt.compare(password, user.password);
@@ -94,6 +95,12 @@ class AuthService {
         try {
             const decoded = await this.verifyToken(oldToken);
 
+            if (decoded.erpSession) {
+                const erp = require('./erpSession');
+                const user = await erp.resolveUser(pool, decoded);
+                // ERP sessions have an absolute expiry. Refresh never extends it.
+                return erp.signSession(user, decoded.erpSession, new Date(decoded.exp * 1000));
+            }
             const userId = decoded.id ?? decoded.userId;
             if (!userId) {
                 const invalidToken = new Error('Token 無效或已過期');
@@ -108,7 +115,7 @@ class AuthService {
                 [userId]
             );
             const user = userResult.rows[0];
-            if (!user) {
+            if (!user || user.username.startsWith('erp:') || await require('./erpSession').isManaged(pool,user.id)) {
                 const missingUser = new Error('找不到用戶');
                 missingUser.status = 401;
                 throw missingUser;
