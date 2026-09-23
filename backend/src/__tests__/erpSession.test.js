@@ -9,6 +9,7 @@ describe('ERP work sessions', () => {
   afterEach(()=>jest.restoreAllMocks());
   test('does not accept admin, other companies or expired identities',()=>{
     expect(validateIdentity(valid)).toEqual(valid);
+    expect(validateIdentity({...valid,role:'dispatcher'}).role).toBe('dispatcher');
     for(const changes of [{role:'admin'},{role:'superadmin'},{entityId:'other'},{expiresAt:'invalid'},{expiresAt:'2000-01-01'}]) expect(()=>validateIdentity({...valid,...changes})).toThrow();
   });
   test('requires stable ERP identity and its explicit numeric WMS mapping',async()=>{

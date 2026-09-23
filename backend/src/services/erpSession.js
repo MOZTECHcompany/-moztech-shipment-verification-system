@@ -24,7 +24,7 @@ async function callErp(action, body) {
     return response.json();
 }
 function validateIdentity(identity) {
-    if (!identity || typeof identity.userId !== 'string' || !identity.userId || identity.entityId !== process.env.ERP_PORTAL_ENTITY_ID || !['picker','packer'].includes(identity.role) || new Date(identity.expiresAt).getTime() <= Date.now() || !Number.isFinite(new Date(identity.expiresAt).getTime())) throw invalid();
+    if (!identity || typeof identity.userId !== 'string' || !identity.userId || identity.entityId !== process.env.ERP_PORTAL_ENTITY_ID || !['picker','packer','dispatcher'].includes(identity.role) || new Date(identity.expiresAt).getTime() <= Date.now() || !Number.isFinite(new Date(identity.expiresAt).getTime())) throw invalid();
     return identity;
 }
 function signSession(user, session, expiresAt) {
@@ -72,7 +72,7 @@ async function isManaged(pool,id) {
     return (await pool.query('SELECT 1 FROM erp_staff_identities WHERE wms_user_id=$1',[id])).rows.length>0;
 }
 async function staff(pool) {
-    return {items:(await pool.query("SELECT u.id,u.username,u.name,u.role,e.erp_user_id FROM users u LEFT JOIN erp_staff_identities e ON e.wms_user_id=u.id WHERE u.role IN ('picker','packer') ORDER BY u.name,u.id")).rows};
+    return {items:(await pool.query("SELECT u.id,u.username,u.name,u.role,e.erp_user_id FROM users u LEFT JOIN erp_staff_identities e ON e.wms_user_id=u.id WHERE u.role IN ('picker','packer','dispatcher') ORDER BY u.name,u.id")).rows};
 }
 async function bind(pool,body) {
     if(typeof body.userId!=='string' || !body.userId || !Number.isSafeInteger(body.wmsUserId) || body.wmsUserId<1 || body.entityId!==process.env.ERP_PORTAL_ENTITY_ID) throw invalid();
@@ -81,7 +81,7 @@ async function bind(pool,body) {
         await client.query('BEGIN');
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['erp-staff:'+body.userId]);
         const user=(await client.query('SELECT id,role FROM users WHERE id=$1 FOR UPDATE',[body.wmsUserId])).rows[0];
-        if(!user || !['picker','packer'].includes(user.role)) throw Object.assign(new Error('只能連結既有揀貨員或裝箱員帳號'),{status:400});
+        if(!user || !['picker','packer','dispatcher'].includes(user.role)) throw Object.assign(new Error('只能連結既有揀貨、裝箱或出貨人員帳號'),{status:400});
         const linked=(await client.query('SELECT * FROM erp_staff_identities WHERE erp_user_id=$1 OR wms_user_id=$2',[body.userId,body.wmsUserId])).rows;
         if(linked.some(row=>row.erp_user_id!==body.userId || row.wms_user_id!==body.wmsUserId || row.entity_id!==body.entityId)) throw Object.assign(new Error('帳號已有連結，請先核對既有任務，不能直接覆寫'),{status:409});
         await client.query('INSERT INTO erp_staff_identities(erp_user_id,entity_id,wms_user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[body.userId,body.entityId,body.wmsUserId]);
