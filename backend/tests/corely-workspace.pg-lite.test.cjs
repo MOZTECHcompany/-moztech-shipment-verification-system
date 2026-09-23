@@ -36,8 +36,6 @@ test('Corely signed workspace uses the native WMS queue, claim and scan receipts
         {id:'line-2',productId:'product-1',sku:'SKU',name:'Product second source',barcode:'1234',quantity:1,tracked:false,serials:[]}
     ],reservationReference:{salesOrderId:'sale-1',warehouseId:'warehouse-1',quantitiesByProduct:[{productId:'product-1',quantity:2}]}}};
     const accepted=await dispatch(pool,{entityId:'company',actorId:'erp-dispatcher',station:'dispatch'},'sale-1',source);
-    await db.query('UPDATE corely_native_intakes SET prepick_completed_at=NOW() WHERE id=$1',[accepted.nativeIntakeId]);
-    await db.query('UPDATE orders SET warehouse_hold=FALSE WHERE id=$1',[accepted.wmsOrderId]);
 
     const keys=generateKeyPairSync('rsa',{modulusLength:2048});
     const env={ERP_WORKSPACE_READ_ENABLED:'true',ERP_WORKSPACE_COMMANDS_ENABLED:'true',
@@ -56,6 +54,17 @@ test('Corely signed workspace uses the native WMS queue, claim and scan receipts
     const post=(station,kind,body)=>request(server).post(paths.detail+'/'+station+'/'+kind).set('Authorization','Bearer '+sign('erp-'+(station==='pick'?'picker':'packer'),station,
         'wms.workspace.command',{method:'POST',path:'/orders/sale-1/'+station+'/'+kind,bodyHash:hash(body)})).send(body);
     const ok=(r,status=200)=>{assert.equal(r.status,status,JSON.stringify(r.body));return r.body;};
+    // Dispatch starts pending but is not a ready pick until the native prepick
+    // release has both the completion marker and the cleared warehouse hold.
+    assert.deepEqual(ok(await getList('pick')).readyKeys,[]);
+    assert.deepEqual(ok(await getDetail('pick')).allowedActions,[]);
+    await db.query('UPDATE orders SET warehouse_hold=FALSE WHERE id=$1',[accepted.wmsOrderId]);
+    assert.deepEqual(ok(await getList('pick')).readyKeys,[]);
+    const missingRelease=ok(await getDetail('pick'));
+    assert.deepEqual(missingRelease.allowedActions,[]);
+    ok(await post('pick','claim',{entityId:'company',expectedRevision:missingRelease.revision,requestId:'before-prepick'}),409);
+    assert.equal((await db.query('SELECT count(*)::int n FROM wms_claim_commands')).rows[0].n,0);
+    await db.query('UPDATE corely_native_intakes SET prepick_completed_at=NOW() WHERE id=$1',[accepted.nativeIntakeId]);
     assert.deepEqual(ok(await getList('pick')).readyKeys,['sale-1']);
     assert.equal(ok(await getList('pack')).total,0);
     const initial=ok(await getDetail('pick'));

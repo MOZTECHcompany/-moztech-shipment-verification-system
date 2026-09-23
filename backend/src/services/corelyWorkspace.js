@@ -43,6 +43,7 @@ async function snapshot(db, scope, source, user, writable = false) {
     if (!order) throw fail(409, 'WMS_NATIVE_ORDER_MISSING');
     const open = (await db.query(`SELECT type FROM order_exceptions WHERE order_id=$1 AND status='open' LIMIT 20`, [order.id])).rows;
     const blockers = [...native.blockers];
+    if (!source.prepick_completed_at && !blockers.includes('待預揀核對完成')) blockers.push('待預揀核對完成');
     if (open.some(row => row.type === 'order_change')) blockers.push('訂單異動尚未核可');
     if (scope.station === 'pack' && open.length && !open.some(row => row.type === 'order_change')) blockers.push('尚有未核可例外');
     if (order.status === 'voided') blockers.push('工作單已作廢');
@@ -102,7 +103,8 @@ async function list(db, scope, query) {
              FROM order_items oi LEFT JOIN order_item_instances s ON s.order_item_id=oi.id WHERE oi.order_id=o.id GROUP BY oi.id) x) st ON true
         WHERE ${where} ORDER BY o.updated_at DESC,o.id DESC LIMIT $7 OFFSET $8`, params)).rows;
     const ready = ['pick','pack'].includes(scope.station) ? (await db.query(`SELECT i.erp_order_id FROM corely_native_intakes i JOIN orders o ON o.id=i.order_id
-        WHERE i.entity_id=$1 AND (($2::text='pick' AND o.status IN ('pending','picking') AND (o.picker_id IS NULL OR o.picker_id=$3))
+        WHERE i.entity_id=$1 AND i.reservation_accepted AND i.prepick_completed_at IS NOT NULL AND o.warehouse_hold=FALSE
+        AND (($2::text='pick' AND o.status IN ('pending','picking') AND (o.picker_id IS NULL OR o.picker_id=$3))
           OR ($2='pack' AND o.status IN ('picked','packing') AND (o.packer_id IS NULL OR o.packer_id=$3)))
         ORDER BY o.id LIMIT 5001`, [scope.entityId,scope.station,user.id])).rows.map(r=>r.erp_order_id) : null;
     return { contractVersion: 'wms.workspace-read.v1', source: 'wms', mode: 'read_only', total,
@@ -121,6 +123,7 @@ async function guardLocked(db, scope, id, orderId, expectedRevision) {
     if (source.order_id !== Number(orderId)) throw fail(409, 'WMS_ORDER_CHANGED');
     const current = await snapshot(db, scope, source, user, true);
     if (current.revision !== expectedRevision) throw fail(409, 'WMS_REVISION_CHANGED');
+    if (current.blockers.length) throw fail(409, 'WMS_WORKFLOW_BLOCKED');
     return current;
 }
 async function nativeState(db, orderId) {

@@ -23,7 +23,7 @@ function fixture() {
     const item = { id:11,order_id:8,source_line_id:'line-1',product_code:'SKU',product_name:'Item',barcode:'1234',
         quantity:1,picked_quantity:0,packed_quantity:0 };
     const source = { id:2,entity_id:'company',erp_order_id:'sale-1',order_id:8,import_batch_id:3,
-        reservation_accepted:true,payload:{orderNumber:'SO-1',brand:'MOZTECH',items:[]} };
+        reservation_accepted:true,prepick_completed_at:new Date('2026-09-24T00:00:00Z'),payload:{orderNumber:'SO-1',brand:'MOZTECH',items:[]} };
     const calls=[];
     const state={order,item,source,user:{id:7,name:'Picker',role:'picker'},calls,claimReceipt:null,scanReceipt:null};
     const pool={ async query(sql,params=[]) {
@@ -89,6 +89,11 @@ test('command detail only accepts the command scope and limits actions to the na
     assert.equal(detail.body.contractVersion,'wms.workspace-command.v1');
     assert.deepEqual(detail.body.allowedActions,['pick:claim']);
     assert.ok(Number.isSafeInteger(detail.body.revision) && detail.body.revision>0);
+    state.source.prepick_completed_at=null;
+    const unreleased=await request(app).get(workflow).set(auth(detailToken()));
+    assert.deepEqual(unreleased.body.allowedActions,[]);
+    assert.ok(unreleased.body.blockers.includes('待預揀核對完成'));
+    state.source.prepick_completed_at=new Date('2026-09-24T00:00:00Z');
     state.order.picker_id=9;state.order.status='picking';
     const owned=await request(app).get(workflow).set(auth(detailToken()));
     assert.deepEqual(owned.body.allowedActions,[]);
