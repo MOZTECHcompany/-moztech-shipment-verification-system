@@ -5,11 +5,11 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "jest --coverage",
-    "test:watch": "jest --watch",
+    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --coverage",
+    "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "migrate": "node migrations/run.js",
     "retention": "node src/maintenance/retention.js",
-    "test:unit": "jest --runInBand --coverage=false",
+    "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --coverage=false",
     "test:workflow": "node --test tests/warehouse-parity.pg.test.cjs"
   },
   "keywords": [
