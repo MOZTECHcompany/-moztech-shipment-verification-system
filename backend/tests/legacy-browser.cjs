@@ -17,8 +17,8 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     const contexts = [];
     const expectedScanFailures = new Map();
     const originalCwd = process.cwd();
-    async function pageFor(role, mobile = false) {
-        const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
+    async function pageFor(role, mobile = false, timezoneId = 'Asia/Taipei') {
+        const context = await browser.newContext({ timezoneId, viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
         contexts.push(context);
         const user = (await pool.query('SELECT id,username,name,role FROM users WHERE id=$1', [users[role]])).rows[0];
         await context.addInitScript(({user,token}) => { localStorage.setItem('wms_user', JSON.stringify(user)); localStorage.setItem('wms_token', JSON.stringify(token)); }, { user, token: tokens[role] });
@@ -275,6 +275,28 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             assert.equal(await quantity(), 4);
             await admin.reload(); assert.equal(await quantity(), 4);
         });
+        await step('browser: latest-message card, floating chat and order discussion agree in Taiwan and US timezones', async () => {
+            const timeVoucher = prefix + '-TIME';
+            const timeOrder = (await pool.query("INSERT INTO orders(voucher_number,customer_name,status) VALUES($1,'Timezone UI fixture','pending') RETURNING id",[timeVoucher])).rows[0].id;
+            cleanupOrders.push(timeOrder);
+            await pool.query("INSERT INTO task_comments(order_id,user_id,content,priority,created_at) VALUES($1,$2,'Taiwan timezone fixture','urgent',timestamp '2026-09-29 05:53:59.263438')",[timeOrder,users.dispatcher]);
+            for (const timezone of ['Asia/Taipei','America/Los_Angeles']) {
+                const page = await pageFor('superadmin',false,timezone);
+                await page.goto(webBase + '/tasks');
+                await Promise.all([page.waitForResponse(r=>new URL(r.url()).searchParams.get('q')===timeVoucher),page.getByLabel('查找任務',{exact:true}).fill(timeVoucher)]);
+                await page.getByText('2026/09/29 13:53',{exact:true}).waitFor();
+                await page.getByRole('button',{name:'查看訂單 '+timeVoucher+' 的留言',exact:true}).click();
+                await page.getByText('2026/09/29 13:53',{exact:true}).nth(1).waitFor();
+                const times = await page.locator('time').evaluateAll(nodes=>nodes.map(n=>({text:n.textContent,instant:n.dateTime})));
+                assert.equal(times.length,2);
+                for(const time of times){assert.equal(time.text,'2026/09/29 13:53');assert.equal(time.instant,'2026-09-29T05:53:59.263Z');}
+                await page.screenshot({path:output+'/taipei-time-'+timezone.replace('/','-')+'.png',fullPage:true});
+                await page.goto(webBase + '/order/' + timeOrder);
+                const discussion = page.getByRole('region',{name:'訂單備註與討論'});
+                await discussion.getByText('2026/09/29 13:53',{exact:true}).waitFor();
+                await page.close();
+            }
+        });
         await step('browser: every legacy admin screen, reports, history, team and settings loads real API data', async () => {
             const pages = [['/admin','出貨管理'], ['/admin/users','成員與角色'], ['/admin/operation-logs','操作日誌查詢'], ['/admin/analytics','數據分析儀表板'], ['/admin/scan-errors','刷錯條碼分析'], ['/admin/defects','新品不良異動'], ['/admin/exceptions','例外總覽'], ['/team','公告板'], ['/settings','設定']];
             for (const [route,title] of pages) {
@@ -309,7 +331,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 13 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 14 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

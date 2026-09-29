@@ -37,7 +37,7 @@ router.get('/tasks', async (req, res) => {
                     'content', tc2.content,
                     'user_name', u.name,
                     'priority', tc2.priority,
-                    'created_at', tc2.created_at
+                    'created_at', tc2.created_at AT TIME ZONE 'UTC'
                 ) FROM task_comments tc2
                 LEFT JOIN users u ON tc2.user_id = u.id
                 WHERE tc2.order_id = o.id

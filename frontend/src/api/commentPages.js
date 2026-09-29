@@ -1,3 +1,5 @@
+import { parseMessageTimestamp } from '../utils/messageTimestamp.js';
+
 export function commentQueryKey(orderId, pageSize, user) {
     return ['comments', String(orderId), pageSize, String(user?.id ?? 'anonymous'), user?.role ?? ''];
 }
@@ -27,7 +29,7 @@ export function flattenCommentPages(data) {
         for (const item of page.items || []) byId.set(String(item.id), item);
     }
     return [...byId.values()].sort((a, b) => {
-        const time = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        const time = (parseMessageTimestamp(a.created_at)?.getTime() ?? NaN) - (parseMessageTimestamp(b.created_at)?.getTime() ?? NaN);
         if (time) return time;
         const exactA = a.cursor_created_at, exactB = b.cursor_created_at;
         if (exactA && exactB && exactA !== exactB) return exactA.localeCompare(exactB);

@@ -1,9 +1,9 @@
 import React from 'react';
-import { formatMessageTimestamp } from '@/utils/messageTimestamp';
+import { formatMessageTimestamp, parseMessageTimestamp } from '@/utils/messageTimestamp';
 
 export function MessageTimestamp({ value, className = '' }) {
-    const date = value == null || value === '' ? null : new Date(value);
-    const valid = date && !Number.isNaN(date.getTime());
+    const date = parseMessageTimestamp(value);
+    const valid = Boolean(date);
     return (
         <time dateTime={valid ? date.toISOString() : undefined}
             title={valid ? '台灣時間（UTC+8）' : undefined}

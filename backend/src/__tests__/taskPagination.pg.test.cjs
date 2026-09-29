@@ -27,7 +27,7 @@ test.before(async () => {
         CREATE TEMP TABLE users (id int PRIMARY KEY, name text, username text);
         CREATE TEMP TABLE orders (id int PRIMARY KEY, voucher_number text, customer_name text, status text, picker_id int, packer_id int, is_urgent bool DEFAULT false, created_at timestamptz, updated_at timestamptz);
         CREATE TEMP TABLE operation_logs (id int PRIMARY KEY, order_id int, user_id int, action_type text, created_at timestamptz);
-        CREATE TEMP TABLE task_comments (id int PRIMARY KEY, order_id int, user_id int, content text, priority text, created_at timestamptz);
+        CREATE TEMP TABLE task_comments (id int PRIMARY KEY, order_id int, user_id int, content text, priority text, created_at timestamp);
         CREATE TEMP TABLE task_comment_reads (comment_id int, user_id int);
         CREATE TEMP TABLE task_pins (order_id int);
         INSERT INTO users VALUES (7, 'Operator Seven', 'seven'), (8, 'Other Operator', 'eight');

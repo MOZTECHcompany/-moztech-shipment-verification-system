@@ -9,6 +9,8 @@ const logger = require('../utils/logger');
 const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 
+// Legacy comment/mention TIMESTAMP columns contain UTC wall time. Expose them
+// as instants; leave stored values and microsecond cursor text unchanged.
 const router = express.Router();
 const { deferredEvents } = require('../utils/transactionEvents');
 
@@ -54,7 +56,8 @@ router.get('/tasks/:orderId/comments', async (req, res) => {
         params.push(pageSize + 1);
         const direction = backwards ? 'DESC' : 'ASC';
         const comments = await client.query(
-            `SELECT c.id, c.content, c.parent_id, c.priority, c.created_at, c.updated_at,
+            `SELECT c.id, c.content, c.parent_id, c.priority,
+                    c.created_at AT TIME ZONE 'UTC' AS created_at, c.updated_at AT TIME ZONE 'UTC' AS updated_at,
                     c.created_at::text AS cursor_created_at,
                     u.id AS user_id, u.username, u.name AS user_name,
                     EXISTS (SELECT 1 FROM task_mentions tm WHERE tm.comment_id = c.id AND tm.mentioned_user_id = $2) AS mentioned_me,
@@ -170,7 +173,7 @@ router.post('/tasks/:orderId/comments', async (req, res) => {
         const result = await client.query(`
             INSERT INTO task_comments (order_id, user_id, content, parent_id, priority)
             VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, created_at
+            RETURNING id, created_at AT TIME ZONE 'UTC' AS created_at
         `, [orderId, userId, content, parent_id, priority]);
 
         const commentId = result.rows[0].id;
@@ -355,7 +358,7 @@ router.get('/comments/unread-summary', async (req, res) => {
                 o.customer_name,
                 COUNT(DISTINCT tc.id) as unread_count,
                 COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_count,
-                MAX(tc.created_at) as latest_comment_time
+                MAX(tc.created_at) AT TIME ZONE 'UTC' as latest_comment_time
             FROM orders o
             INNER JOIN task_comments tc ON tc.order_id = o.id
             WHERE NOT EXISTS (
@@ -391,8 +394,8 @@ router.get('/tasks/:orderId/mentions', async (req, res) => {
     const pageSize = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
     try {
         const rows = await pool.query(
-            `SELECT tm.comment_id, tm.is_read, tm.created_at,
-                    c.content, c.created_at AS comment_created_at,
+            `SELECT tm.comment_id, tm.is_read, tm.created_at AT TIME ZONE 'UTC' AS created_at,
+                    c.content, c.created_at AT TIME ZONE 'UTC' AS comment_created_at,
                     u.username
                FROM task_mentions tm
                JOIN task_comments c ON c.id = tm.comment_id
@@ -493,7 +496,8 @@ router.get('/tasks/:orderId/pins', async (req, res) => {
     try {
         await ensurePinsTable(client);
         const rows = await client.query(`
-            SELECT c.*, u.name as user_name, u.username
+            SELECT c.*, c.created_at AT TIME ZONE 'UTC' AS created_at,
+                   c.updated_at AT TIME ZONE 'UTC' AS updated_at, u.name as user_name, u.username
             FROM task_comment_pins p
             JOIN task_comments c ON p.comment_id = c.id
             LEFT JOIN users u ON c.user_id = u.id
