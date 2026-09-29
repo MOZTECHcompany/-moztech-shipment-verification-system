@@ -1,7 +1,9 @@
+import { WorkplaceAnnouncements } from './WorkplaceAnnouncements';
+import { taskEntryFilters } from '../utils/entryDestination';
 // Corely AI task dashboard: bounded server search and role-aware work queues.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
@@ -17,6 +19,9 @@ import NotificationCenter from './NotificationCenter';
 import DefectReportModal from './DefectReportModal';
 import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
 import TaskListFilters from './TaskListFilters';
+import ScanToClaim from './ScanToClaim';
+import WarehouseTaskQueue from './WarehouseTaskQueue';
+import { sourceOrderLabel } from '../utils/sourceOrders';
 import { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole } from '@/utils/taskFilters';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
 
@@ -39,7 +44,7 @@ const statusConfig = {
         dot: 'bg-apple-blue animate-pulse'
     },
     picked: { 
-        text: '待裝箱', 
+        text: '二次查核要裝箱',
         color: 'bg-gradient-to-r from-apple-purple/10 to-purple-50/80 text-apple-purple border border-apple-purple/30',
         icon: Box,
         dot: 'bg-apple-purple'
@@ -144,6 +149,9 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 </h3>
                             </div>
                             
+                            {task.batch_number && <p className="break-all text-xs text-slate-500">{task.import_batch_id ? <Link data-testid={`task-batch-${task.id}`} to={`/batches/${task.import_batch_id}`} onClick={event => event.stopPropagation()} className="inline-flex min-h-10 items-center font-medium text-blue-700 underline underline-offset-4">ERP 批次：{task.batch_number}</Link> : <>ERP 批次：{task.batch_number}</>}</p>}
+                            {task.source_order_number && <p className="mt-1 break-all text-sm font-medium text-slate-700">{sourceOrderLabel(task)}</p>}
+                            {(task.picker_name || task.packer_name) && <p className="mt-1 text-xs text-slate-500">揀貨：{task.picker_name || '待認領'} · 裝箱：{task.packer_name || '待認領'}</p>}
                             <div className="flex flex-wrap items-center gap-3 mt-2">
                                 <div className={`flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full shadow-sm ${statusInfo.color}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
@@ -315,10 +323,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 size="lg"
                                 className="flex-1 justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                                 onClick={() => onClaim(task.id, isMyTask)}
-                                disabled={claimDisabled}
+                                disabled={claimDisabled || task.warehouse_hold}
                             >
                                 <span className="flex items-center gap-2">
-                                    {isClaiming ? '認領中…' : isMyTask ? '開啟作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
+                                    {task.warehouse_hold ? '待整批預揀完成' : isClaiming ? '認領中…' : isMyTask ? '開啟作業' : (task.task_type === 'pick' ? '開始揀貨' : '開始裝箱')} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                                 </span>
                             </Button>
                         </div>
@@ -328,7 +336,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                             size="lg"
                             className="w-full justify-center h-12 sm:h-14 text-base sm:text-lg font-bold rounded-2xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95"
                             onClick={() => onClaim(task.id, true)}
-                            disabled={claimDisabled}
+                            disabled={claimDisabled || task.warehouse_hold}
                         >
                             <span className="flex items-center gap-2">
                                 繼續作業 <ArrowRight size={20} />
@@ -344,10 +352,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                     : 'bg-gray-900 hover:bg-gray-800 shadow-gray-900/20'
                             }`}
                             onClick={() => onClaim(task.id, false)}
-                            disabled={claimDisabled}
+                            disabled={claimDisabled || task.warehouse_hold}
                         >
                             <span className="flex items-center gap-2">
-                                {isClaiming ? '認領中…' : task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
+                                {task.warehouse_hold ? '待整批預揀完成' : isClaiming ? '認領中…' : task.task_type === 'pick' ? '開始揀貨' : '開始裝箱'} {isClaiming ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                             </span>
                         </Button>
                     )}
@@ -370,12 +378,16 @@ export function TaskDashboard({ user }) {
     const loadedScope = useRef(null);
     const activeClaimId = useRef(null);
     const [claimingId, setClaimingId] = useState(null);
+    const scanClaimPending = useRef(false);
+    const scanClaimContext = useRef(null);
+    const [isScanClaimPending, setIsScanClaimPending] = useState(false);
     const mountedRef = useRef(false);
     const claimContextRef = useRef(0);
     const batchClaimPending = useRef(false);
     const [isBatchClaiming, setIsBatchClaiming] = useState(false);
     const location = useLocation();
-    const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
+    const entryFilters = taskEntryFilters(location.search);
+    const initialView = location?.state?.view === 'completed' ? 'completed' : entryFilters.view;
     const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
     const prevViewRef = useRef(currentView);
@@ -418,7 +430,7 @@ export function TaskDashboard({ user }) {
         const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
         return () => clearTimeout(timer);
     }, [search]);
-    const [taskGroup, setTaskGroup] = useState('all');
+    const [taskGroup, setTaskGroup] = useState(entryFilters.group);
     const [taskSummary, setTaskSummary] = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
     const [urgentOnly, setUrgentOnly] = useState(false);
@@ -589,7 +601,7 @@ export function TaskDashboard({ user }) {
     };
 
     const handleBatchClaim = async () => {
-        if (!mountedRef.current || currentViewRef.current !== 'active' || loading || searchPending || batchClaimPending.current || activeClaimId.current !== null) return;
+        if (!mountedRef.current || currentViewRef.current !== 'active' || loading || searchPending || batchClaimPending.current || activeClaimId.current !== null || scanClaimPending.current) return;
         const claimableIds = selectedTasks.filter(id => tasks.some(task => task.id === id && canBatchClaim(task, user, batchMode)));
         if (claimableIds.length === 0) {
             toast.error(`請選擇尚未認領的${batchLabel}任務`);
@@ -692,7 +704,7 @@ export function TaskDashboard({ user }) {
 
     const handleClaimTask = async (orderId, isContinue) => {
         // One opening flow at a time, including callbacks fired before a rerender.
-        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current) return;
+        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current || scanClaimPending.current) return;
         if (isContinue) {
             navigate(`/order/${orderId}`);
             return;
@@ -815,7 +827,7 @@ export function TaskDashboard({ user }) {
             <div className="w-full">
                 {/* 頁面標題 + 動作 */}
                 <PageHeader
-                  title="任務看板"
+                  title="作業工作台"
                   className="relative z-30"
                                     actions={(
                                         <div className="flex flex-wrap items-center gap-2 justify-end">
@@ -867,7 +879,7 @@ export function TaskDashboard({ user }) {
                             variant={batchMode === stage ? 'primary' : 'secondary'}
                             size="sm"
                             onClick={() => toggleBatchMode(stage)}
-                            disabled={isBatchClaiming || claimingId !== null}
+                            disabled={isBatchClaiming || claimingId !== null || isScanClaimPending}
                             leadingIcon={ListChecks}
                             aria-pressed={batchMode === stage}
                         >
@@ -876,7 +888,7 @@ export function TaskDashboard({ user }) {
                       ))}
 
                       {batchMode && selectedTasks.length > 0 && (
-                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null || loading || searchPending} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
+                        <Button variant="primary" size="sm" onClick={handleBatchClaim} disabled={isBatchClaiming || claimingId !== null || loading || searchPending || isScanClaimPending} leadingIcon={CheckCircle2} className="animate-in fade-in zoom-in">
                           {isBatchClaiming ? '認領中…' : `認領 ${selectedTasks.length} 個${batchLabel}任務`}
                         </Button>
                       )}
@@ -888,6 +900,25 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
+                <WarehouseTaskQueue user={user} active={currentView==='active'}/>
+                <Link to="/corely-intakes" className="inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline">Corely 出貨預揀</Link>
+                <WorkplaceAnnouncements />
+                {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
+                    key={user.id} user={user} active={currentView === 'active'}
+                    disabled={claimingId !== null || isBatchClaiming}
+                    onAcquire={() => {
+                        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current || scanClaimPending.current) return false;
+                        scanClaimContext.current = claimContextRef.current;
+                        scanClaimPending.current = true; setIsScanClaimPending(true); return true;
+                    }}
+                    onLockChange={locked => { if (locked) scanClaimContext.current = claimContextRef.current; scanClaimPending.current = locked; setIsScanClaimPending(locked); }}
+                    onSuccess={result => {
+                        if (!mountedRef.current || currentViewRef.current !== 'active' || scanClaimContext.current !== claimContextRef.current) return;
+                        soundNotification.play('taskClaimed');
+                        toast.success(`${result.owner.name} · ${result.stage === 'pick' ? '揀貨' : '裝箱'}${result.outcome === 'continued' ? '繼續作業' : '認領成功'}`);
+                        navigate(`/order/${result.orderId}`);
+                    }}
+                />}
                 <TaskListFilters
                     search={search} onSearch={setSearch}
                     status={statusFilter} onStatus={setStatusFilter}
@@ -915,7 +946,7 @@ export function TaskDashboard({ user }) {
 
                 <p className="sr-only">統計涵蓋目前權限、搜尋、狀態與日期條件下的全部任務；點選卡片可篩選下方清單。</p>
                 {/* 本頁統計 */}
-                                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3 mb-5">
+                                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3 mb-5">
                                     {statCards.map((c)=>{
                     const Icon = c.icon;
                     return (
@@ -939,12 +970,12 @@ export function TaskDashboard({ user }) {
                       </button>
                     );
                   })}
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                </div>}
+                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                     <p role="status" className="text-sm font-semibold text-slate-700">目前清單：{selectedGroupLabel}</p>
                     {taskGroup !== 'all' && <button type="button" className="text-sm text-blue-700 underline min-h-9" onClick={() => setTaskGroup('all')}>查看全部分類</button>}
-                </div>
-                {!loading && !searchPending && !taskSummary && <p role="status" className="text-sm text-amber-700 mb-3">統計暫時無法取得，請重新整理；下方仍可查看已載入的任務。</p>}
+                </div>}
+                {!loading && !searchPending && !taskSummary && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <p role="status" className="text-sm text-amber-700 mb-3">統計暫時無法取得，請重新整理；下方仍可查看已載入的任務。</p>}
                 
 
                 {/* 任務列表 */}
@@ -1000,7 +1031,7 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask}
                                             isClaiming={claimingId === task.id}
-                                            claimDisabled={claimingId !== null || isBatchClaiming}
+                                            claimDisabled={claimingId !== null || isBatchClaiming || isScanClaimPending}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}
@@ -1061,7 +1092,7 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask}
                                             isClaiming={claimingId === task.id}
-                                            claimDisabled={claimingId !== null || isBatchClaiming}
+                                            claimDisabled={claimingId !== null || isBatchClaiming || isScanClaimPending}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}

@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { AlertTriangle, ArrowRight, CheckCircle2, Database, FileDown, FileSpreadsheet, LayoutGrid, Loader2, TrendingUp, UploadCloud } from 'lucide-react';
 import { PageHeader, Button } from '../../ui';
+import { readImportResult } from '../../utils/workOrders';
+import { BatchPrintLabels } from '../LabelPrinter';
 
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 const idleImport = { phase: 'idle' };
@@ -31,8 +33,10 @@ function saveRecovery(key, value) {
     } catch { /* No file contents or customer information are persisted here. */ }
 }
 
-export function AdminDashboard({ user }) {
+export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
     const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
+    const requestedIntakeId = batchId ? String(batchId) : typeof window !== 'undefined' && window.location?.search ? new URLSearchParams(window.location.search).get('intakeId') : '';
+    const intakeId = /^[1-9]\d{0,9}$/.test(requestedIntakeId || '') ? requestedIntakeId : '';
     const recoveryKey = `wms_import_recovery:${user?.id ?? 'current'}`;
     const [dateRange, setDateRange] = useState([null, null]);
     const [startDate, endDate] = dateRange;
@@ -78,27 +82,29 @@ export function AdminDashboard({ user }) {
         try {
             const body = new FormData();
             body.append('orderFile', file);
+            if (intakeId) body.append('marketplaceIntakeId', intakeId);
             const response = await apiClient.post('/api/orders/import', body, {
                 headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000,
             });
-            const data = response.data;
-            if (response.status !== 201 || !data?.voucherNumber || !Number.isSafeInteger(data.orderId) || data.orderId <= 0) {
+            const data = readImportResult(response.data);
+            if (![200,201].includes(response.status) || !data) {
                 throw new Error('匯入回應不完整，請先核對作業看板。');
             }
             saveRecovery(recoveryKey, null);
             if (mounted.current) {
                 setImportState({ ...data, phase: 'success', fileName });
-                toast.success(`訂單「${data.voucherNumber}」已成功匯入`);
+                if (data.warehouseIntakeId) onMatched?.(data);
+                toast.success(data.warehouseIntakeId ? '核對完成，預揀任務已建立' : data.isBatch ? `批次「${data.batchNumber}」已建立 ${data.workOrderCount} 張商城工作單` : `訂單「${data.voucherNumber}」已成功匯入`);
             }
         } catch (error) {
             const data = error.response?.data || {};
             const status = error.response?.status;
             let result;
             if (data.code === 'IMPORT_ALREADY_EXISTS') {
-                result = { phase: 'duplicate', fileName, voucherNumber: data.voucherNumber, orderId: data.orderId };
+                result = { ...data, phase: 'duplicate', fileName, isBatch: !!data.batchId };
                 saveRecovery(recoveryKey, null);
             } else if (data.code === 'IMPORT_NOT_APPLIED' || [401, 403, 413, 429].includes(status)) {
-                result = { phase: 'error', fileName, reason: data.reason, message: data.message || '未建立訂單，請確認檔案或登入狀態後再試。' };
+                result = { phase: 'error', fileName, warehouseIntakeId: data.warehouseIntakeId, reason: data.reason, message: data.message || '未建立訂單，請確認檔案或登入狀態後再試。' };
                 saveRecovery(recoveryKey, null);
             } else {
                 unknownImport.current = true;
@@ -180,6 +186,43 @@ export function AdminDashboard({ user }) {
         : ['unknown', 'duplicate'].includes(importState.phase) ? 'border-amber-200 bg-amber-50 text-amber-950'
             : importState.phase === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-blue-200 bg-blue-50 text-blue-950';
 
+    const importPanel = (<section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
+                        <div className="flex items-start gap-3">
+                            <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><UploadCloud size={22} /></div>
+                            <h2 id="import-title" className="text-xl font-semibold text-slate-900">匯入理貨／出貨單</h2>
+                        </div>
+                        <div data-testid="import-dropzone" onDrop={handleDrop} onDragOver={event => { event.preventDefault(); event.stopPropagation(); }} aria-busy={importState.phase === 'uploading'}
+                            className={`mt-5 rounded-xl border-2 border-dashed p-6 text-center ${importBlocked ? 'border-slate-200 bg-slate-50' : 'border-blue-200 bg-blue-50/40'}`}>
+                            <FileSpreadsheet size={30} className="mx-auto mb-3 text-blue-600" />
+                            <p className="text-sm font-medium text-slate-700">拖曳 ECOUNT 理貨／出貨單到這裡</p>
+                            <Button type="button" disabled={importBlocked} onClick={() => fileInputRef.current?.click()} className="mt-4 gap-2" variant="secondary">
+                                {importState.phase === 'uploading' && <Loader2 size={16} className="animate-spin" />}
+                                {importState.phase === 'uploading' ? '正在處理訂單' : '選擇訂單檔案'}
+                            </Button>
+                            <input data-testid="import-file" type="file" ref={fileInputRef} onChange={handleExcelImport} disabled={importBlocked} accept=".xlsx,.xls,.csv" className="hidden" aria-label="訂單檔案" />
+                            <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援原有出貨單格式及 ECOUNT 理貨明細（.xlsx、.xls、.csv），最大 10 MiB。</p><p className="mt-2">ECOUNT 明細每列需包含相同理貨單號、商城訂單編號、品項編碼（SKU）、國際條碼、品項名稱與數量；商城回匯必須保留平台、店鋪及來源明細號。一張理貨單保留一個 ERP 匯入批次，依平台、店鋪及商城訂單編號拆成可獨立認領的工作單。</p><p className="mt-2">每個匯入檔最多 5,000 列、1,000 個品項、10,000 筆 SN，總數量 50,000。沒有商城訂單欄位的舊格式仍可匯入。</p></details>
+                        </div>
+
+                        {importState.phase !== 'idle' && <div data-testid="import-result" role={['error', 'unknown'].includes(importState.phase) ? 'alert' : 'status'} aria-live="polite" className={`mt-4 rounded-xl border p-4 text-sm ${resultColor}`}>
+                            <p className="mb-2 break-all text-xs opacity-80">{importState.fileName}</p>
+                            {importState.phase === 'uploading' && <><p className="flex items-center gap-2 font-semibold"><Loader2 size={17} className="animate-spin" />正在驗證檔案並建立訂單</p><p className="mt-2 leading-6">請保持此頁開啟，完成前請勿重複上傳。</p></>}
+                            {importState.phase === 'success' && <><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={17} />{importState.isBatch ? `ERP 批次 ${importState.batchNumber} 已成功匯入` : `訂單 ${importState.voucherNumber} 已成功匯入`}</p><p className="mt-2">{importState.isBatch && `${importState.workOrderCount} 張商城工作單 · `}{importState.itemCount} 個品項 · 總數量 {importState.totalQuantity} · {importState.serialCount} 筆 SN</p></>}
+                            {importState.phase === 'duplicate' && <><p className="font-semibold">{importState.isBatch ? `ERP 批次 ${importState.batchNumber}` : `訂單 ${importState.voucherNumber}`} 已存在，未重複建立</p><p className="mt-2 leading-6">請開啟既有訂單核對內容。若需修正訂單，請依現有管理流程處理。</p></>}
+                            {importState.phase === 'error' && <div role="alert"><p className="font-semibold">{importState.reason === 'INVALID_BARCODE_FORMAT' ? '條碼格式異常，未建立訂單' : '匯入未完成，未建立訂單'}</p><p className="mt-2 whitespace-pre-wrap leading-6">{importState.message}</p><p className="mt-2">修正後可重新選擇檔案。</p>{Number.isSafeInteger(importState.warehouseIntakeId)&&<Link to={`/warehouse-intakes/${importState.warehouseIntakeId}`} className="mt-3 inline-block font-semibold underline">查看原批次與商品條碼</Link>}</div>}
+                            {importState.phase === 'unknown' && <><p className="flex items-center gap-2 font-semibold"><AlertTriangle size={17} />尚未確認匯入結果</p><p className="mt-2 leading-6">{importState.voucherNumber && `訂單 ${importState.voucherNumber}：`}請先到作業看板核對訂單是否已建立。連線中斷或等候逾時不代表匯入失敗，請勿直接重送。</p><p className="mt-2 leading-6">若訂單已存在，請繼續使用該訂單；確認沒有建立後，才重新選擇檔案。</p></>}
+                            {['success', 'duplicate'].includes(importState.phase) && importState.isBatch && !importState.warehouseIntakeId && Array.isArray(importState.orders) && <div className="mt-3">
+                                <BatchPrintLabels orders={importState.orders} />
+                                <ul className="mt-3 max-h-64 space-y-2 overflow-auto">{importState.orders.map(order => <li key={order.orderId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-current/10 bg-white/60 p-2"><span className="break-all">{[order.sourcePlatform, order.sourceStore, order.sourceOrderNumber].filter(Boolean).join(' · ')}</span><Link to={`/order/${order.orderId}`} className="shrink-0 font-semibold underline underline-offset-4">開啟工作單 {order.voucherNumber}</Link></li>)}</ul>
+                            </div>}
+                            <div className="mt-3 flex flex-wrap items-center gap-3">
+                                {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.batchId) && importState.batchId > 0 && <Link data-testid="import-batch-link" to={importState.warehouseIntakeId?`/warehouse-intakes/${importState.warehouseIntakeId}`:`/batches/${importState.batchId}`} className="font-semibold underline underline-offset-4">{importState.warehouseIntakeId?'列印與預揀':'查看理貨批次'}</Link>}
+                                {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.orderId) && importState.orderId > 0 && <Link to={`/order/${importState.orderId}`} className="font-semibold underline underline-offset-4">開啟訂單</Link>}
+                                {importState.phase === 'unknown' && <><Link to="/tasks" className="font-semibold underline underline-offset-4">前往作業看板核對</Link><button type="button" data-testid="import-reset-unknown" onClick={resetUnknownImport} className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-medium hover:bg-amber-50">已核對，重新選擇檔案</button></>}
+                            </div>
+                        </div>}
+                    </section>);
+    if (embedded) return importPanel;
+
     return (
         <div className="bg-transparent pb-8">
             <div className="w-full">
@@ -187,37 +230,14 @@ export function AdminDashboard({ user }) {
                     <Button as={Link} to="/tasks" className="gap-2"><LayoutGrid size={18} />前往作業看板</Button>
                 } />
 
-                <div className="grid gap-5 lg:grid-cols-3">
-                    <section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
-                        <div className="flex items-start gap-3">
-                            <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><UploadCloud size={22} /></div>
-                            <div><h2 id="import-title" className="text-xl font-semibold text-slate-900">匯入出貨單</h2><p className="mt-1 text-sm text-slate-500">建立新的揀貨與裝箱核對任務</p></div>
-                        </div>
-                        <div data-testid="import-dropzone" onDrop={handleDrop} onDragOver={event => { event.preventDefault(); event.stopPropagation(); }} aria-busy={importState.phase === 'uploading'}
-                            className={`mt-5 rounded-xl border-2 border-dashed p-6 text-center ${importBlocked ? 'border-slate-200 bg-slate-50' : 'border-blue-200 bg-blue-50/40'}`}>
-                            <FileSpreadsheet size={30} className="mx-auto mb-3 text-blue-600" />
-                            <p className="text-sm font-medium text-slate-700">將一個出貨單檔案拖放至此</p>
-                            <Button type="button" disabled={importBlocked} onClick={() => fileInputRef.current?.click()} className="mt-4 gap-2" variant="secondary">
-                                {importState.phase === 'uploading' && <Loader2 size={16} className="animate-spin" />}
-                                {importState.phase === 'uploading' ? '正在處理訂單' : '選擇訂單檔案'}
-                            </Button>
-                            <input data-testid="import-file" type="file" ref={fileInputRef} onChange={handleExcelImport} disabled={importBlocked} accept=".xlsx,.xls,.csv" className="hidden" aria-label="訂單檔案" />
-                            <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援 .xlsx、.xls、.csv，最大 10 MiB<br />每單最多 5,000 列、1,000 個品項、10,000 筆 SN，總數量 50,000</p></details>
-                        </div>
+                {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <section className="mb-6 overflow-hidden rounded-2xl border border-blue-200 bg-blue-50" aria-label="商城原始訂單轉檔">
+                    <div className="flex flex-wrap items-center justify-between gap-5 p-6"><h2 className="text-2xl font-bold text-blue-950">商城訂單轉檔</h2><Button as={Link} to="/admin/marketplace-converter" className="min-h-12 px-6">上傳商城訂單<ArrowRight size={18} className="ml-2" /></Button></div>
+                    <div className="border-t border-blue-200 px-6 py-3 text-sm"><Link to="/admin/marketplace-converter#saved-batches" className="font-semibold text-blue-800 underline">已保存批次</Link></div>
+                </section>}
 
-                        {importState.phase !== 'idle' && <div data-testid="import-result" role={['error', 'unknown'].includes(importState.phase) ? 'alert' : 'status'} aria-live="polite" className={`mt-4 rounded-xl border p-4 text-sm ${resultColor}`}>
-                            <p className="mb-2 break-all text-xs opacity-80">{importState.fileName}</p>
-                            {importState.phase === 'uploading' && <><p className="flex items-center gap-2 font-semibold"><Loader2 size={17} className="animate-spin" />正在驗證檔案並建立訂單</p><p className="mt-2 leading-6">請保持此頁開啟，完成前請勿重複上傳。</p></>}
-                            {importState.phase === 'success' && <><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={17} />訂單 {importState.voucherNumber} 已成功匯入</p><p className="mt-2">{importState.itemCount} 個品項 · 總數量 {importState.totalQuantity} · {importState.serialCount} 筆 SN</p></>}
-                            {importState.phase === 'duplicate' && <><p className="font-semibold">訂單 {importState.voucherNumber} 已存在，未重複建立</p><p className="mt-2 leading-6">請開啟既有訂單核對內容。若需修正訂單，請依現有管理流程處理。</p></>}
-                            {importState.phase === 'error' && <div role="alert"><p className="font-semibold">{importState.reason === 'INVALID_BARCODE_FORMAT' ? '條碼格式異常，未建立訂單' : '匯入未完成，未建立訂單'}</p><p className="mt-2 whitespace-pre-wrap leading-6">{importState.message}</p><p className="mt-2">修正後可重新選擇檔案。</p></div>}
-                            {importState.phase === 'unknown' && <><p className="flex items-center gap-2 font-semibold"><AlertTriangle size={17} />尚未確認匯入結果</p><p className="mt-2 leading-6">{importState.voucherNumber && `訂單 ${importState.voucherNumber}：`}請先到作業看板核對訂單是否已建立。連線中斷或等候逾時不代表匯入失敗，請勿直接重送。</p><p className="mt-2 leading-6">若訂單已存在，請繼續使用該訂單；確認沒有建立後，才重新選擇檔案。</p></>}
-                            <div className="mt-3 flex flex-wrap items-center gap-3">
-                                {['success', 'duplicate'].includes(importState.phase) && Number.isSafeInteger(importState.orderId) && importState.orderId > 0 && <Link to={`/order/${importState.orderId}`} className="font-semibold underline underline-offset-4">開啟訂單</Link>}
-                                {importState.phase === 'unknown' && <><Link to="/tasks" className="font-semibold underline underline-offset-4">前往作業看板核對</Link><button type="button" data-testid="import-reset-unknown" onClick={resetUnknownImport} className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-medium hover:bg-amber-50">已核對，重新選擇檔案</button></>}
-                            </div>
-                        </div>}
-                    </section>
+                <div className="grid gap-5 lg:grid-cols-3">
+                    {intakeId && <p className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 lg:col-span-3">批次 #{intakeId} · 選擇 ECOUNT 理貨明細。<Link to="/admin/marketplace-converter" className="ml-2 underline">返回轉檔批次</Link></p>}
+                    {importPanel}
 
                     <aside className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 md:p-7">
                         <h2 className="text-base font-semibold text-slate-900">出貨作業</h2>

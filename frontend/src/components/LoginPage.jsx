@@ -1,12 +1,16 @@
 import React, { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Box, CheckCheck, Eye, EyeOff, Loader2, LockKeyhole, ScanLine, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '../api/api';
+import { EnvironmentBanner } from './EnvironmentBanner';
 import './LoginPage.css';
+import { safeEntryDestination } from '../utils/entryDestination';
 
 export function LoginPage({ onLogin }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const destination = safeEntryDestination(new URLSearchParams(location.search).get('next'));
   const submittingRef = useRef(false);
   const usernameRef = useRef(null);
   const passwordRef = useRef(null);
@@ -34,7 +38,7 @@ export function LoginPage({ onLogin }) {
       const responseData = response.data;
       toast.success(`歡迎回來，${responseData.user.name || responseData.user.username}！`);
       onLogin(responseData);
-      navigate('/tasks');
+      navigate(destination, { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || '暫時無法登入，請稍後再試。');
     } finally {
@@ -73,6 +77,7 @@ export function LoginPage({ onLogin }) {
 
           <section className="corely-login__access" aria-labelledby="corely-login-title">
             <div className="corely-login__card">
+              <EnvironmentBanner className="mb-5 rounded-lg border" />
               <span className="corely-login__card-icon" aria-hidden="true"><LockKeyhole size={23} strokeWidth={1.7} /></span>
               <p className="corely-login__eyebrow">工作從這裡開始</p>
               <h2 id="corely-login-title">歡迎回來</h2>

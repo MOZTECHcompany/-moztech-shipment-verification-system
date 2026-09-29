@@ -7,6 +7,7 @@ const { assertSchemaReady } = require('./config/schemaReadiness');
 const { getAttachmentStorage } = require('./services/attachmentStorage');
 const logger = require('./utils/logger');
 const PORT = process.env.PORT || 3001;
+let handoverWorker;
 
 // 啟動伺服器
 async function startServer() {
@@ -21,6 +22,7 @@ async function startServer() {
 
         await assertSchemaReady(pool);
         getAttachmentStorage();
+        handoverWorker = require('./services/corelyHandoverOutbox').startHandoverWorker(pool, { log: message => logger.warn(message) });
 
         // 啟動 HTTP 伺服器
         server.listen(PORT, process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1', () => {
@@ -51,6 +53,7 @@ async function gracefulShutdown(signal) {
             server.closeIdleConnections?.();
         });
         await new Promise(resolve => io.close(resolve));
+        await handoverWorker?.stop();
         await closePool();
         clearTimeout(deadline);
         process.exit(0);

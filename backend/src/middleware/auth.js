@@ -18,7 +18,7 @@ async function authenticateToken(req, res, next) {
         claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
         const id = Number(claims.id ?? claims.userId);
         if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(claims.exp)) throw new Error('Invalid identity');
-        claims = { id, exp: claims.exp };
+        claims = { ...claims, id, exp: claims.exp };
     } catch {
         return res.status(403).json({ message: 'Token 無效或已過期' });
     }
@@ -26,19 +26,27 @@ async function authenticateToken(req, res, next) {
         // A token proves identity, not today's role. Check before taking a
         // transaction connection; deleted/demoted accounts lose HTTP access too.
         const { pool } = require('../config/database');
+        if (claims.erpSession) {
+            req.user = await require('../services/erpSession').resolveUser(pool, claims);
+            req.erpSession = claims.erpSession;
+            req[verifiedStaff] = true;
+            return require('./erpPortalScope').portalScope(req,res,next);
+        }
+        if (process.env.ERP_PORTAL_ONLY === 'true') return res.status(401).json({message:'請從營運管理系統進入'});
         const { rows } = await pool.query({
             text: 'SELECT id, username, name, role FROM users WHERE id = $1',
             values: [claims.id], query_timeout: 5000,
         });
         const user = rows[0];
         const role = String(user?.role || '').trim().toLowerCase();
-        if (!user || !['picker', 'packer', 'dispatcher', 'admin', 'superadmin'].includes(role) || claims.exp * 1000 <= Date.now()) {
+        if (!user || await require('../services/erpSession').isManaged(pool,user.id) || user.username.startsWith('erp:') || !['picker', 'packer', 'dispatcher', 'admin', 'superadmin'].includes(role) || claims.exp * 1000 <= Date.now()) {
             return res.status(403).json({ message: '帳號或登入已失效，請重新登入' });
         }
         req.user = { id: user.id, username: user.username, name: user.name, role };
         req[verifiedStaff] = true;
         return next();
-    } catch {
+    } catch (error) {
+        if (error.status === 401) return res.status(401).json({message:error.message});
         return res.status(503).json({ code: 'AUTH_UNAVAILABLE', message: '暫時無法確認帳號權限，請稍後再試' });
     }
 }
@@ -52,7 +60,7 @@ function authorizeAdmin(req, res, next) {
         return res.status(401).json({ message: '需要認證' });
     }
 
-    if (!(req.user.role === 'admin' || req.user.role === 'superadmin')) {
+    if (!(req.user.role === 'admin' || req.user.role === 'superadmin' || require('./erpPortalScope').allowsPortalRead(req))) {
         logger.warn(`授權失敗: ${req.user.username} (${req.user.role}) 嘗試存取管理員功能`);
         return res.status(403).json({ message: '需要管理員權限' });
     }

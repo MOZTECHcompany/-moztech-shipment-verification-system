@@ -16,7 +16,7 @@ export default function TaskListFilters({ search, onSearch, status, onStatus, ur
                             type="search"
                             value={search}
                             onChange={(event) => onSearch(event.target.value)}
-                            placeholder="輸入／掃描單號，或搜尋客戶"
+                            placeholder="搜尋工作單、批次或客戶（不會認領）"
                             aria-describedby="task-search-help"
                             autoComplete="off"
                             className="w-full h-11 pl-10 pr-10 rounded-xl border border-slate-200 bg-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"

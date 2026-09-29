@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import { createScanSubmission } from '../src/utils/scanSubmission.js';
 import * as orderWorkProgress from '../src/utils/orderWorkProgress.js';
+import * as sourceOrders from '../src/utils/sourceOrders.js';
 import * as scanDelta from '../src/utils/scanDelta.js';
 
 const source = await readFile(new URL('../src/components/OrderWorkView.jsx', import.meta.url), 'utf8');
@@ -68,6 +69,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         '@/api/socket': { socket },
         '@/utils/scanSubmission': { createScanSubmission },
         '@/utils/orderWorkProgress': orderWorkProgress,
+        '@/utils/sourceOrders': sourceOrders,
         '@/utils/scanDelta': scanDelta,
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
         '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, speakTaskComplete: type => spoken.push(['complete', type]) },
@@ -89,16 +91,16 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
     function find(tree, predicate) {
         if (!tree || typeof tree !== 'object') return;
         if (predicate(tree)) return tree;
-        for (const child of (tree.props?.children || []).flat(Infinity)) {
+        for (const child of [...(tree.props?.children || []).flat(Infinity), tree.props?.footer]) {
             const found = find(child, predicate);
             if (found) return found;
         }
     }
-    const input = () => find(render(), node => node.type === 'input' && node.props.onKeyDown);
+    const input = () => find(render(), node => node.props?.id === 'order-scan-input');
     const type = text => input().props.onChange({ target: { value: text } });
     const enter = () => input().props.onKeyDown({ key: 'Enter', preventDefault: noop });
     const camera = () => find(render(), node => node.type === 'CameraScanner');
-    return { find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[0] };
+    return { boundary: user => module.exports.OrderWorkView({ user }), find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[0] };
 }
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -328,4 +330,176 @@ test('a scan response received after leaving the order does not play success or 
     await settle();
     assert.deepEqual(view.sounds, []);
     assert.equal(view.currentData().items[0].picked_quantity, 0);
+});
+
+const sourceFixture = () => ({
+    order: { id: 1, status: 'picking', picker_id: 1 }, instances: [],
+    items: [
+        { id: 11, product_name: 'A 商品', barcode: 'SAME', quantity: 2, picked_quantity: 0, source_order_number: '000123', source_platform: '蝦皮', source_store: 'A' },
+        { id: 12, product_name: 'B 商品', barcode: 'SAME', quantity: 3, picked_quantity: 0, source_order_number: 'OTHER', source_platform: '1Shop', source_store: 'B' },
+    ],
+});
+const visibleItemIds = view => {
+    const ids = [];
+    const collect = node => {
+        if (node?.props?.progress) ids.push(node.props.progress.item.id);
+        for (const child of (node?.props?.children || []).flat(Infinity)) collect(child);
+    };
+    collect(view.render());
+    return ids;
+};
+const locateSource = (view, number) => {
+    const input = () => view.find(view.render(), node => node.props?.id === 'source-order-input');
+    input().props.onChange({ target: { value: number } });
+    input().props.onKeyDown({ key: 'Enter', preventDefault() {}, currentTarget: { value: number } });
+};
+
+test('marketplace barcode lookup is read only, scopes SKU scanning and retains whole-batch counts', async () => {
+    const view = workView({ initialData: sourceFixture() });
+    locateSource(view, '000123');
+    assert.equal(view.posts.length, 0);
+    assert.deepEqual(visibleItemIds(view), [11]);
+    const header = view.find(view.render(), node => node.props?.stats);
+    assert.equal(header.props.stats.totalQuantity, 5);
+    assert.equal(header.props.items.length, 2);
+    view.type('SAME'); view.enter();
+    await settle();
+    assert.equal(view.posts.length, 1);
+    assert.equal(view.posts[0].body.orderId, 1);
+    assert.equal(view.posts[0].body.orderItemId, 11);
+    view.posts[0].resolve({ data: view.fixture });
+    await settle();
+    const clear = view.find(view.render(), node => node.type === 'button' && node.props.children.includes('顯示整張理貨單'));
+    clear.props.onClick();
+    assert.deepEqual(visibleItemIds(view), [11, 12]);
+});
+
+test('duplicate order numbers require a platform/store choice and cannot trigger a product mutation', async () => {
+    const fixture = sourceFixture();
+    fixture.items[1].source_order_number = '000123';
+    const view = workView({ initialData: fixture });
+    locateSource(view, '000123');
+    assert.deepEqual(visibleItemIds(view), []);
+    view.type('SAME'); view.enter();
+    await settle();
+    assert.equal(view.posts.length, 0);
+    assert.equal(view.input().props.value, '');
+    const option = view.find(view.render(), node => node.type === 'button' && node.props.children.includes('1Shop · B · 000123'));
+    assert.ok(option);
+    option.props.onClick();
+    assert.deepEqual(visibleItemIds(view), [12]);
+    view.type('SAME'); view.enter();
+    await settle();
+    assert.equal(view.posts[0].body.orderItemId, 12);
+    view.posts[0].resolve({ data: fixture });
+    await settle();
+});
+
+test('missing source and an SN from another source are rejected without losing scanner recovery', async () => {
+    const fixture = sourceFixture();
+    fixture.instances = [{ id: 9, order_item_id: 12, serial_number: 'OTHER-SN', status: 'pending' }];
+    const view = workView({ initialData: fixture });
+    locateSource(view, 'missing');
+    view.type('SAME'); view.enter();
+    await settle();
+    assert.equal(view.posts.length, 0);
+    locateSource(view, '000123');
+    view.type('OTHER-SN'); view.enter();
+    await settle();
+    assert.equal(view.posts.length, 0);
+    assert.equal(view.input().props.value, '');
+    view.type('SAME'); view.enter();
+    await settle();
+    assert.equal(view.posts[0].body.orderItemId, 11);
+    view.posts[0].resolve({ data: fixture });
+    await settle();
+});
+
+test('mapped batch order changes retain each SKU row and send the selected item identity for approval', async () => {
+    const fixture = sourceFixture();
+    const view = workView({ role: 'admin', initialData: fixture });
+    const button = label => view.find(view.render(), node => node.props?.children?.includes(label) && node.props.onClick);
+    button('申請異動').props.onClick();
+    const reason = view.find(view.render(), node => node.props?.placeholder === '請描述異動原因（必填）');
+    reason.props.onChange({ target: { value: '調整來源 A 的數量' } });
+    const edit = button('編輯');
+    assert.ok(edit);
+    edit.props.onClick();
+    const quantity = view.find(view.render(), node => node.type === 'input' && node.props.type === 'number');
+    assert.equal(quantity.props.value, 2, 'same barcode across sources must not merge into quantity 5');
+    quantity.props.onChange({ target: { value: '3' } });
+    button('下一步核對').props.onClick();
+    button('確認送出').props.onClick();
+    await settle();
+    assert.equal(view.posts.length, 1);
+    assert.equal(view.posts[0].url, '/api/orders/1/exceptions');
+    const proposal = view.posts[0].body.snapshot.proposal.items;
+    assert.equal(proposal.length, 1);
+    assert.equal(proposal[0].orderItemId, 11);
+    assert.equal(proposal[0].quantityChange, 1);
+    assert.equal(proposal[0].sourceOrderNumber, undefined, 'existing ownership must not be overwritten');
+    view.posts[0].resolve({ data: {} });
+    await settle();
+});
+
+test('an explicitly pending retry cannot move a product into another marketplace order after switching', async () => {
+    const view = workView({ initialData: sourceFixture() });
+    locateSource(view, '000123');
+    view.type('SAME'); view.enter();
+    view.type('SAME'); view.enter();
+    await settle();
+    assert.equal(view.posts.length, 1);
+    locateSource(view, 'OTHER');
+    view.posts[0].resolve({ data: view.fixture });
+    await settle();
+    const retry = view.find(view.render(), node => node.type === 'button' && node.props.children.includes('重新送出這筆條碼'));
+    assert.equal(retry, undefined);
+    assert.equal(view.posts.length, 1);
+    assert.deepEqual(visibleItemIds(view), [12]);
+});
+
+test('administrators cannot scan or adjust another operator stage and picked does not auto-claim packing', async () => {
+    for (const role of ['admin', 'superadmin', 'packer']) {
+        for (const order of [{ id: 1, status: 'packing', packer_id: 2 }, { id: 1, status: 'picked', packer_id: null }]) {
+            const view = workView({ role, initialData: { order, items: [{ id: 11, quantity: 5, picked_quantity: 5, packed_quantity: 0, barcode: 'ITEM' }], instances: [] } });
+            assert.equal(view.input().props.disabled, true);
+            view.type('ITEM'); view.enter(); await settle();
+            assert.equal(view.posts.length, 0);
+            const card = view.find(view.render(), node => typeof node.type === 'function' && node.type.name === 'QuantityItemCard');
+            assert.ok(card);
+            assert.equal(card.props.onUpdate('ITEM', 'pack', 1, 11), false);
+            assert.equal(view.posts.length, 0);
+        }
+    }
+});
+
+test('administrators who own an active stage retain exact product scan capability', async () => {
+    const view = workView({ role: 'admin' });
+    assert.equal(view.input().props.disabled, false);
+    view.type('ITEM'); view.enter(); await settle();
+    assert.equal(view.posts.length, 1); assert.equal(view.posts[0].body.type, 'pack');
+    view.posts[0].resolve({ data: view.fixture }); await settle();
+});
+
+
+test('receipt navigation must fetch a current snapshot; completed or transferred ownership never enables scans', async () => {
+    for (const order of [{ id: 1, status: 'picking', picker_id: 2 }, { id: 1, status: 'completed', picker_id: 1, packer_id: 1 }]) {
+        const view = workView({ deferRead: true, initialData: { order: null, items: [], instances: [] } });
+        view.render();
+        assert.equal(view.input().props.disabled, true);
+        view.effects.find(callback => callback.toString().includes('fetchOrderDetails(orderId)') && !callback.toString().includes('active_sessions_update'))();
+        assert.equal(view.reads.length, 1);
+        view.reads[0].resolve({ data: { order, items: [{ id: 11, quantity: 1, barcode: 'ITEM' }], instances: [] } });
+        await settle();
+        assert.equal(view.input().props.disabled, true);
+        view.type('ITEM'); view.enter(); await settle();
+        assert.equal(view.posts.length, 0);
+    }
+});
+
+test('account or role changes remount the order view instead of reusing its snapshot and scan queue', () => {
+    const view = workView();
+    const first = view.boundary({ id: 1, role: 'picker' }).props.key;
+    assert.notEqual(view.boundary({ id: 2, role: 'picker' }).props.key, first);
+    assert.notEqual(view.boundary({ id: 1, role: 'admin' }).props.key, first);
 });

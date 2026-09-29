@@ -1,9 +1,10 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
+import { ArrowLeft, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { EnvironmentBanner } from '../components/EnvironmentBanner';
 
-const roleLabels = { picker: '揀貨員', packer: '裝箱員', dispatcher: '出貨調度', admin: '管理員', superadmin: '系統管理員' };
+const roleLabels = { viewer: '查詢人員', picker: '揀貨員', packer: '裝箱員', dispatcher: '出貨調度', admin: '管理員', superadmin: '系統管理員' };
 
 export function AppLayout({ user, onLogout, children }) {
   const location = useLocation();
@@ -47,7 +48,6 @@ export function AppLayout({ user, onLogout, children }) {
   });
   const links = [
     { to: '/tasks', label: '工作台', icon: ClipboardList },
-    { to: '/team', label: '公告板', icon: MessageSquare },
     ...(['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? [{ to: '/admin', label: '出貨管理', icon: LayoutDashboard }] : []),
   ];
   const inSettings = ['/settings', '/admin/users', '/admin/operation-logs'].includes(location.pathname);
@@ -62,6 +62,7 @@ export function AppLayout({ user, onLogout, children }) {
         </Link>
         <nav id="workspace-nav" aria-label="主要導覽" className="corely-nav">
           {links.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/admin' && inSettings} title={label} aria-label={label} className={({ isActive }) => `corely-nav-link ${(isActive && !inSettings) || (to === '/tasks' && location.pathname.startsWith('/order/')) ? 'corely-nav-link--active' : ''}`}><Icon size={19} aria-hidden="true" /><span className="corely-sidebar-label">{label}</span></NavLink>)}
+          {user?.erpOrigin && <a href={user.erpOrigin+'/warehouse'} className="corely-nav-link corely-return-link" title="返回營運系統" aria-label="返回營運系統"><ArrowLeft size={19} aria-hidden="true"/><span className="corely-sidebar-label">返回營運系統</span></a>}
         </nav>
         <div className="corely-sidebar-footer">
           <Link to="/settings" aria-label="設定" title="設定" aria-current={inSettings ? 'page' : undefined} className={`corely-settings-link ${inSettings ? 'corely-nav-link--active' : ''}`}><Settings size={20} aria-hidden="true" /><span className="corely-sidebar-label">設定</span></Link>
@@ -75,9 +76,10 @@ export function AppLayout({ user, onLogout, children }) {
           {user && <div className="ml-auto flex min-w-0 items-center gap-3">
             <span className="hidden text-xs text-slate-500 sm:block">{roleLabels[user.role] || '作業人員'}</span>
             <span className="max-w-32 truncate text-sm font-medium" title={user.name || user.username}>{user.name || user.username}</span>
-            <button type="button" onClick={onLogout} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-100" aria-label="登出"><LogOut size={16} aria-hidden="true" /><span className="hidden sm:inline">登出</span></button>
+            <button type="button" onClick={onLogout} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-100" aria-label={user?.erpSubject ? '離開作業' : '登出'}><LogOut size={16} aria-hidden="true" /><span className="hidden sm:inline">{user?.erpSubject ? '離開作業' : '登出'}</span></button>
           </div>}
         </header>
+        <EnvironmentBanner className="sticky top-0 z-30 border-b sm:top-16" />
         {offline && <div role="status" className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><WifiOff className="mt-0.5 shrink-0" size={17} /><span>網路已離線。請恢復連線並核對操作結果後，再繼續掃碼。</span></div>}
         <main id="main-content" tabIndex={-1} data-layout-content className="corely-main safe-bottom">
           <ErrorBoundary key={location.pathname}>

@@ -18,7 +18,7 @@ const MOTIFS = {
     taskClaimed: [[1000, 0.1, 0]],
     taskCompleted: [[523, 0.1, 0], [659, 0.1, 0.1], [784, 0.15, 0.2]]
 };
-const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
+const read = key => { try { return (key === 'wms_user' ? sessionStorage : localStorage).getItem(key); } catch { return null; } };
 const parse = value => { try { return JSON.parse(value); } catch { return null; } };
 const volumeValue = value => value !== null && value !== '' && Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : 0.3;
 const profileFor = id => SOUND_PROFILES.find(profile => profile.id === id);

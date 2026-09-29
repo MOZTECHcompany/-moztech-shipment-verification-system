@@ -28,7 +28,10 @@ function globalErrorHandler(err, req, res, next) {
     });
 
     // Only the scan route sets this after a confirmed rollback or before any transaction.
-    const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED', ...(err.scanReason === 'STATE_CHANGED' ? { reason: err.scanReason } : {}) } : {};
+    const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED', ...(['STATE_CHANGED', 'SOURCE_ITEM_REQUIRED'].includes(err.scanReason) ? { reason: err.scanReason } : {}) } : {};
+    if (err.code === '23514' && (/CORELY_HAND/.test(err.message || '') || err.constraint === 'corely_handed_over_quantity_bounds')) {
+        return res.status(409).json({ ...scanResult, message: '商品已交運，不能回退裝箱數量、異動來源或作廢；請核對交運紀錄。' });
+    }
     if (err.code === '57014' || /timeout exceeded when trying to connect|connection terminated due to connection timeout/i.test(err.message || '')) {
         return res.set('Retry-After', '1').status(503).json({ code: 'QUERY_BUSY', ...scanResult, message: '系統忙碌中，請稍後再試。' });
     }

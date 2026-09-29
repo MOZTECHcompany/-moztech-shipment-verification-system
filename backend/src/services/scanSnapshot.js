@@ -1,12 +1,13 @@
 const { createHash } = require('node:crypto');
+const { sourceIdentityFromRow, sourceIdentityValues } = require('./orderSourceIdentity');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
 // Opaque optimistic concurrency token. Only warehouse-relevant fields, so
 // joined user names and SQL column order do not create false mismatches.
 function stateToken(order, items, instances) {
     return digest([
-        [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason],
-        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity]),
+        [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.import_batch_id,order.source_order_number,order.source_platform,order.source_store,order.work_barcode],
+        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,...sourceIdentityValues(sourceIdentityFromRow(i))]),
         sorted(instances).map(i=>[i.id,i.order_item_id,i.serial_number,i.status])
     ]);
 }
@@ -20,7 +21,14 @@ function parseCommand(body, userId) {
     if (body.responseMode !== 'delta-v1' || typeof body.commandId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.commandId) || typeof body.expectedState !== 'string' || !/^[0-9a-f]{64}$/.test(body.expectedState)) {
         throw Object.assign(new Error('掃碼識別無效，請重新載入訂單'),{status:400});
     }
-    return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState])};
+    const input=[Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState];
+    // Preserve hashes of pre-existing warehouse receipts. Signed ERP commands
+    // bind their read revision in addition to the native state token.
+    if(body.expectedRevision!==undefined){
+        if(!Number.isSafeInteger(body.expectedRevision)||body.expectedRevision<1)throw Object.assign(new Error('作業版本無效'),{status:400});
+        input.push(body.expectedRevision);
+    }
+    return {id:body.commandId.toLowerCase(),userId,hash:digest(input)};
 }
 function createWorkSnapshot(pool) {
     return async (req,res,next) => {
@@ -30,7 +38,7 @@ function createWorkSnapshot(pool) {
             db=await pool.connect();
             await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');open=true;
             await db.query("SET LOCAL statement_timeout='5000ms'");
-            const order=(await db.query(`SELECT o.*,p.name AS picker_name,pk.name AS packer_name,
+            const order=(await db.query(`SELECT o.*,(SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number,p.name AS picker_name,pk.name AS packer_name,
                 (SELECT ol.user_id FROM operation_logs ol WHERE ol.order_id=o.id AND ol.action_type='import' ORDER BY ol.created_at DESC,ol.id DESC LIMIT 1) AS imported_by_user_id
                 FROM orders o LEFT JOIN users p ON p.id=o.picker_id LEFT JOIN users pk ON pk.id=o.packer_id WHERE o.id=$1`,[req.params.orderId])).rows[0];
             if(!order){await db.query('ROLLBACK');open=false;return res.status(404).json({message:'找不到訂單'});}

@@ -32,6 +32,32 @@ const refreshLimiter = rateLimit({
     }
 });
 
+for(const action of ['staff','bind']) router.post('/erp/'+action, loginLimiter, async(req,res)=>{
+    try {
+        const erp=require('../services/erpSession');erp.authenticateService(req.headers['x-erp-service-key']);
+        const pool=require('../config/database').pool;
+        res.set('Cache-Control','no-store').json(await erp[action](pool,req.body));
+    } catch(error) {res.status(error.status || 503).json({message:error.status ? error.message:'無法連結儲運帳號'});}
+});
+// The browser handoff uses postMessage with exact origin/source checks, never URL tokens.
+router.get('/erp/config', (_req,res) => {
+    if (process.env.ERP_PORTAL_SSO_ENABLED !== 'true' && process.env.ERP_PORTAL_ONLY !== 'true') return res.json({erpOnly:false});
+    try { res.set('Cache-Control','no-store').json({ origin: require('../services/erpSession').config().origin, erpOnly:process.env.ERP_PORTAL_ONLY === 'true' }); }
+    catch { res.status(503).json({ message: '儲運統一登入尚未啟用' }); }
+});
+router.post('/erp/exchange', loginLimiter, async (req,res) => {
+    try {
+        const result = await require('../services/erpSession').exchange(require('../config/database').pool, req.body.ticket, req.body.nonce);
+        res.set('Cache-Control','no-store').json(result);
+    } catch(error) { res.status(error.status || 503).json({message: error.status ? error.message : '無法開啟工作台，請重試'}); }
+});
+router.post('/erp/logout', require('../middleware/auth').authenticateToken, async (req,res) => {
+    try {
+        if (req.erpSession) await require('../services/erpSession').callErp('revoke', {session:req.erpSession});
+        res.json({ok:true});
+    } catch(error) { res.status(error.status || 503).json({message:'無法完成登出，請重試'}); }
+});
+
 /**
  * POST /api/auth/login
  * 用戶登入

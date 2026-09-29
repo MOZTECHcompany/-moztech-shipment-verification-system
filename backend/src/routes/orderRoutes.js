@@ -4,6 +4,9 @@
 const express = require('express');
 const multer = require('multer');
 const { IMPORT_LIMITS, parseOrderImport } = require('../services/orderImportParser');
+const { sourceIdentityValues } = require('../services/orderSourceIdentity');
+const { createWorkBarcode } = require('../services/warehouseBatch');
+const { transitionClaim, createBarcodeClaimHandlers } = require('../services/orderClaimService');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
@@ -16,6 +19,10 @@ const { deferredEvents } = require('../utils/transactionEvents');
 const router = express.Router();
 const { stateToken, readLines, parseCommand, createWorkSnapshot } = require('../services/scanSnapshot');
 router.get('/orders/:orderId/work-snapshot', createWorkSnapshot(pool));
+router.get('/order-import-batches/:batchId', require('../services/importBatchSnapshot').createImportBatchSnapshot(pool));
+const barcodeClaims = createBarcodeClaimHandlers(pool);
+router.post('/orders/claim-by-barcode', barcodeClaims.claim);
+router.get('/orders/claim-commands/:commandId', barcodeClaims.receipt);
 const { createReconcilePicking } = require('../services/reconcilePicking');
 router.post('/orders/:orderId/reconcile-picking', authorizeAdmin, createReconcilePicking(pool));
 
@@ -100,7 +107,7 @@ async function hasOpenOrderChange(db, orderId) {
 
 const importUpload = multer({
     storage: multer.memoryStorage(),
-    limits: { files: 1, fileSize: IMPORT_LIMITS.fileBytes, fields: 0 },
+    limits: { files: 1, fileSize: IMPORT_LIMITS.fileBytes, fields: 1, fieldSize: 16 },
     fileFilter: (req, file, cb) => {
         if (/\.(xlsx|xls|csv)$/i.test(file.originalname || '')) return cb(null, true);
         cb(new Error('不支援的檔案格式，請上傳 .xlsx / .xls / .csv'));
@@ -109,7 +116,13 @@ const importUpload = multer({
 
 function uploadImport(req, res, next) {
     importUpload(req, res, error => {
-        if (!error) return next();
+        if (!error) {
+            const entries = Object.entries(req.body || {});
+            if (entries.some(([key, value]) => key !== 'marketplaceIntakeId' || typeof value !== 'string' || !/^[1-9]\d{0,9}$/.test(value) || Number(value) > 2147483647)) {
+                return res.status(400).json({ code: 'IMPORT_NOT_APPLIED', message: '只允許有效的來源轉檔批次編號，未建立訂單' });
+            }
+            return next();
+        }
         const tooLarge = error.code === 'LIMIT_FILE_SIZE';
         return res.status(tooLarge ? 413 : 400).json({
             code: 'IMPORT_NOT_APPLIED',
@@ -151,24 +164,21 @@ async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false, sta
         client = await pool.connect();
         await client.query('BEGIN');
         transactionOpen = true;
+        await client.query("SET LOCAL lock_timeout='1500ms'");
+        await client.query("SET LOCAL statement_timeout='8000ms'");
         const orderResult = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (!orderResult.rows.length) throw fail(404, '找不到該訂單');
         const order = orderResult.rows[0];
-        if (await hasOpenOrderChange(client, orderId)) throw fail(409, '此訂單異動審核中，請先主管核可後再作業。');
-        let newStatus, task_type;
+        let task_type;
         if (stage !== 'pack' && (role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
-            newStatus = 'picking'; task_type = 'pick';
-            await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+            task_type = 'pick';
         } else if (stage !== 'pick' && !pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
-            if (await hasOpenExceptions(client, orderId)) throw fail(409, '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。');
-            newStatus = 'packing'; task_type = 'pack';
-            await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+            task_type = 'pack';
         } else {
             throw fail(400, `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。`);
         }
-        await logOperation({ userId, orderId, operationType: 'claim', details: { new_status: newStatus }, io: events, db: client });
-        const updatedOrder = (await client.query('SELECT o.*, u.name as current_user FROM orders o LEFT JOIN users u ON (CASE WHEN $1 = \'pick\' THEN o.picker_id WHEN $1 = \'pack\' THEN o.packer_id END) = u.id WHERE o.id = $2', [task_type, orderId])).rows[0];
-        events.emit('task_claimed', { ...updatedOrder, task_type });
+        const result = await transitionClaim({ client, order, user, stage: task_type, events });
+        const updatedOrder = { ...result.order, current_user: user.name };
         commitAttempted = true;
         await client.query('COMMIT');
         transactionOpen = false;
@@ -254,7 +264,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
         // Scans, claims and order changes lock this same row before changing items.
         // Lock only o because users are on nullable sides of the LEFT JOINs.
         const orderResult = await client.query(
-            'SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1 FOR UPDATE OF o',
+            'SELECT o.*, (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1 FOR UPDATE OF o',
             [orderId]
         );
         if (orderResult.rows.length === 0) {
@@ -276,7 +286,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
         let newStatus = order.status;
 
         // Empty orders, inconsistent SN counts and terminal statuses cannot auto-complete.
-        if (allPicked && allPacked && canAutoComplete(order.status)) {
+        if (!order.warehouse_hold && allPicked && allPacked && canAutoComplete(order.status)) {
             const hasOpen = await hasOpenExceptions(client, orderId);
             if (!hasOpen) {
                 updateAttempted = true;
@@ -287,7 +297,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
                 statusChanged = updated.rowCount > 0;
                 if (statusChanged) newStatus = 'completed';
             }
-        } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
+        } else if (!order.warehouse_hold && allPicked && (order.status === 'picking' || order.status === 'pending')) {
             updateAttempted = true;
             const updated = await client.query(
                 "UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = $2",
@@ -299,7 +309,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
 
         const responseOrder = updateAttempted
             ? (await client.query(
-                'SELECT o.*, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1',
+                'SELECT o.*, (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number, p.name as picker_name, pk.name as packer_name FROM orders o LEFT JOIN users p ON o.picker_id = p.id LEFT JOIN users pk ON o.packer_id = pk.id WHERE o.id = $1',
                 [orderId]
             )).rows[0]
             : order;
@@ -442,12 +452,19 @@ router.delete('/orders/:orderId', authorizeRoles('admin', 'dispatcher'), async (
 });
 
 // POST /api/orders/import
+const { parseMarketplaceLinkedImport, matchMarketplaceWorkOrders, marketplaceSourceKey } = require('../services/marketplaceImportLink');
 router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimiter, uploadImport, async (req, res) => {
     let parsed;
     try {
-        parsed = parseOrderImport(req.file?.buffer);
+        const returned = await require('../services/marketplaceReturnImport').importMarketplaceReturn(req.file?.buffer, pool, req.body?.marketplaceIntakeId, req.user);
+        if (returned) {
+            req.app.get('io')?.emit('warehouse_tasks_changed', { intakeId: returned.warehouseIntakeId });
+            return res.status(returned.reused ? 200 : 201).json({ ...returned, message: `核對完成，已建立 ${returned.workOrderCount} 筆訂單的預揀任務` });
+        }
+        parsed = await parseMarketplaceLinkedImport(req.file?.buffer, pool, req.body?.marketplaceIntakeId);
     } catch (error) {
-        return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message,
+        return res.status(error.status || 400).json({ code: error.status>=500?'IMPORT_RESULT_UNKNOWN':'IMPORT_NOT_APPLIED', message: error.message,
+            ...(error.warehouseIntakeId ? { warehouseIntakeId: error.warehouseIntakeId } : {}),
             ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 
@@ -468,48 +485,77 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         transactionOpen = true;
         await client.query("SET LOCAL lock_timeout = '1500ms'");
         await client.query("SET LOCAL statement_timeout = '8000ms'");
-        // Serialize only the same voucher, including concurrent uploads, without new schema.
+        // Both legacy orders and split batches share this lock and duplicate check.
         await client.query("SELECT pg_advisory_xact_lock(hashtext('wms-order-import'), hashtext($1))", [voucherNumber]);
+        const existingBatch = await client.query('SELECT id FROM warehouse_import_batches WHERE voucher_number = $1', [voucherNumber]);
+        if (existingBatch.rows.length) {
+            const batchId = existingBatch.rows[0].id;
+            const children = await client.query('SELECT id AS "orderId", voucher_number AS "voucherNumber", work_barcode AS "workBarcode", source_order_number AS "sourceOrderNumber", source_platform AS "sourcePlatform", source_store AS "sourceStore" FROM orders WHERE import_batch_id = $1 ORDER BY id', [batchId]);
+            await client.query('ROLLBACK'); transactionOpen = false;
+            return res.status(409).json({ code: 'IMPORT_ALREADY_EXISTS', message: `批次 ${voucherNumber} 已存在，未重複建立`, voucherNumber, batchNumber: voucherNumber, batchId, workOrderCount: children.rows.length, orders: children.rows });
+        }
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
         if (existingOrder.rows.length) {
             await client.query('ROLLBACK');
             transactionOpen = false;
             return res.status(409).json({ code: 'IMPORT_ALREADY_EXISTS', message: `訂單 ${voucherNumber} 已存在，未重複建立`, voucherNumber, orderId: existingOrder.rows[0].id });
         }
-        const orderResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status) VALUES ($1, $2, $3) RETURNING id', [voucherNumber, customerName, 'pending']);
-        orderId = orderResult.rows[0].id;
+        let batchId = null;
+        if (parsed.importFormat === 'source-details') {
+            batchId = (await client.query('INSERT INTO warehouse_import_batches (voucher_number, created_by) VALUES ($1, $2) RETURNING id', [voucherNumber, req.user.id])).rows[0].id;
+        }
+        const groups = batchId ? parsed.workOrders : [{ items, customerName, totalQuantity, serialCount }];
+        const marketplaceMatches = await matchMarketplaceWorkOrders(client, groups, req.body?.marketplaceIntakeId);
+        const importedOrders = [];
         const instanceItemIds = [];
         const serialValues = [];
-        for (const item of items) {
+        for (const group of groups) {
             checkDeadline();
-            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-                [orderId, item.productCode, item.productName, item.quantity, item.barcode]);
-            for (const serial of item.serials) {
-                instanceItemIds.push(inserted.rows[0].id);
-                serialValues.push(serial);
+            const workBarcode = createWorkBarcode();
+            const workVoucher = batchId ? workBarcode : voucherNumber;
+            orderId = (await client.query('INSERT INTO orders (voucher_number, customer_name, status, import_batch_id, source_order_number, source_platform, source_store, work_barcode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+                [workVoucher, group.customerName, 'pending', batchId, group.sourceOrderNumber || null, group.sourcePlatform || null, group.sourceStore || null, workBarcode])).rows[0].id;
+            const marketplaceSource = marketplaceMatches.get(marketplaceSourceKey(group));
+            if (marketplaceSource) await client.query('INSERT INTO marketplace_work_order_links(intake_order_id,order_id) VALUES($1,$2)', [marketplaceSource.id,orderId]);
+            for (const item of group.items) {
+                checkDeadline();
+                const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+                    [orderId, item.productCode, item.productName, item.quantity, item.barcode, ...sourceIdentityValues(item)]);
+                for (const serial of item.serials) {
+                    instanceItemIds.push(inserted.rows[0].id);
+                    serialValues.push(serial);
+                }
             }
+            // Attribution and every child audit belong to the batch transaction.
+            const details = { voucherNumber: workVoucher, batchId, batchNumber: batchId ? voucherNumber : null,
+                sourceDetails:group.items.map(i=>({sourceLineId:i.sourceLineId||null,sourceRow:i.sourceRow,summary:i.sourceSummary||'',serialField:i.sourceSerials||'',serialSource:i.serialSource||'legacy',serials:i.serials})),
+                marketplaceIntakeId: marketplaceSource?.intake_id || null, omittedNonStock: parsed.omittedNonStock || [],
+                sourceOrderNumber: group.sourceOrderNumber || null, sourcePlatform: group.sourcePlatform || null, sourceStore: group.sourceStore || null,
+                workBarcode, itemCount: group.items.length, totalQuantity: group.totalQuantity, serialCount: group.serialCount };
+            const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
+                [req.user.id, orderId, 'import', JSON.stringify(details)]);
+            events.emit('operation_logs_changed', {});
+            events.emit('new_task', { id: orderId, voucher_number: workVoucher, work_barcode: workBarcode,
+                import_batch_id: batchId, batch_number: batchId ? voucherNumber : null,
+                source_order_number: group.sourceOrderNumber || null, source_platform: group.sourcePlatform || null, source_store: group.sourceStore || null,
+                customer_name: group.customerName, status: 'pending', task_type: 'pick', imported_by_user_id: req.user.id });
+            importedOrders.push({ orderId, voucherNumber: workVoucher, workBarcode,
+                marketplaceIntakeId: marketplaceSource?.intake_id || null,
+                sourceOrderNumber: group.sourceOrderNumber || null, sourcePlatform: group.sourcePlatform || null, sourceStore: group.sourceStore || null });
         }
         if (serialValues.length) {
             checkDeadline();
             await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) SELECT * FROM unnest($1::int[], $2::text[])', [instanceItemIds, serialValues]);
         }
-        // Import attribution is still based on this log, so it is required and may not be swallowed.
-        const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount };
-        const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
-            [req.user.id, orderId, 'import', JSON.stringify(details)]);
-        events.emit('new_operation_log', {
-            id: log.rows[0].id, created_at: log.rows[0].created_at,
-            user_id: req.user.id, user_name: req.user.name, user_role: req.user.role,
-            order_id: orderId, voucher_number: voucherNumber, customer_name: customerName,
-            action_type: 'import', details
-        });
-        events.emit('new_task', { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick', imported_by_user_id: req.user.id });
         checkDeadline();
         commitAttempted = true;
         await client.query('COMMIT');
         transactionOpen = false;
         events.publish();
-        return res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount });
+        return res.status(201).json(batchId
+            ? { message: `批次 ${voucherNumber} 已建立 ${importedOrders.length} 張工作單`, batchId, batchNumber: voucherNumber,
+                workOrderCount: importedOrders.length, orders: importedOrders, itemCount: items.length, totalQuantity, serialCount }
+            : { message: `訂單 ${voucherNumber} 匯入成功`, orderId, voucherNumber, workBarcode: importedOrders[0].workBarcode, itemCount: items.length, totalQuantity, serialCount });
     } catch (error) {
         let notApplied = !transactionOpen && !commitAttempted;
         if (transactionOpen) {
@@ -521,6 +567,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             return res.status(503).json({ code: 'IMPORT_RESULT_UNKNOWN', message: '匯入結果尚未確認，請先到作業看板核對訂單號碼，請勿直接重送', voucherNumber });
         }
         logger.error('匯入訂單失敗:', { code: error.code, message: error.message });
+        if (error.code === 'MARKETPLACE_IMPORT_MISMATCH') return res.status(error.status || 409).json({ code: 'IMPORT_NOT_APPLIED', voucherNumber, message: error.message });
         const busy = error.code === '55P03' || error.code === '57014';
         return res.status(busy ? 409 : 500).json({
             code: 'IMPORT_NOT_APPLIED', voucherNumber,
@@ -532,7 +579,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 });
 
 // POST /api/orders/update_item
-router.post('/orders/update_item', async (req, res, next) => {
+function createScanOrder(scanPool = pool) { return async function scanOrder(req, res, next) {
     const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
     const { id: userId, role } = req.user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
@@ -565,8 +612,14 @@ router.post('/orders/update_item', async (req, res, next) => {
     if (!['pick', 'pack'].includes(type) || !Number.isSafeInteger(Number(amount)) || Number(amount) === 0) {
         return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '掃碼類型或數量無效' });
     }
+    if (!isAdminLike && role !== (type === 'pick' ? 'picker' : 'packer')) {
+        return res.status(403).json({ code: 'SCAN_NOT_APPLIED', message: '此角色不能執行該揀貨／裝箱操作' });
+    }
 
     const scanRaw = String(scanValue ?? '').trim();
+    if (orderItemId !== undefined && orderItemId !== null && (!Number.isSafeInteger(orderItemId) || orderItemId < 1 || orderItemId > 2147483647)) {
+        return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '商品明細識別無效，請重新選擇商品列' });
+    }
     if (!scanRaw) {
         scanOutcome = 'invalid_input';
         return res.status(400).json({ message: '掃描值不可為空' });
@@ -582,7 +635,7 @@ router.post('/orders/update_item', async (req, res, next) => {
     let changedItemId, changedInstanceId;
     const events = deferredEvents(io);
     try {
-        client = await pool.connect();
+        client = await scanPool.connect();
         await client.query('BEGIN');
         transactionOpen = true;
         await client.query("SET LOCAL lock_timeout = '1500ms'");
@@ -604,16 +657,23 @@ router.post('/orders/update_item', async (req, res, next) => {
         const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
+        if (req.workspaceGuard) await req.workspaceGuard(client, order.id);
         if (command) {
             const before = await readLines(client,orderId);
             if (stateToken(order,before.items,before.instances) !== req.body.expectedState) {
                 throw Object.assign(new Error('訂單已更新，請重新載入核對後再掃描'), {status:409,scanReason:'STATE_CHANGED'});
             }
         }
+        if (order.warehouse_hold) {
+            throw Object.assign(new Error('整批預揀核對尚未完成，請先完成預揀再開始分單作業。'), { status: 409 });
+        }
         if (order.status === 'voided') {
             const error = new Error('此訂單已作廢，無法進行掃碼作業');
             error.status = 409;
             throw error;
+        }
+        if (order.status !== (type === 'pick' ? 'picking' : 'packing')) {
+            throw Object.assign(new Error('請先認領此階段工作，再核對商品；已完成階段不可直接改量。'), { status: 409 });
         }
 
         // 訂單異動審核中：禁止揀貨/裝箱
@@ -634,16 +694,8 @@ router.post('/orders/update_item', async (req, res, next) => {
             }
         }
 
-        // Auto-transition from picked to packing if type is pack
-        if (type === 'pack' && order.status === 'picked') {
-             await client.query("UPDATE orders SET status = 'packing', packer_id = COALESCE(packer_id, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2", [userId, orderId]);
-             order.status = 'packing';
-             if (!order.packer_id) order.packer_id = userId;
-             events.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'packing' });
-        }
-
-        if ((type === 'pick' && order.picker_id !== userId && !isAdminLike) || (type === 'pack' && order.packer_id !== userId && !isAdminLike)) {
-            throw new Error('您不是此任務的指定操作員');
+        if ((type === 'pick' && order.picker_id !== userId) || (type === 'pack' && order.packer_id !== userId)) {
+            throw Object.assign(new Error('您不是此任務的指定操作員，請先認領或完成轉交。'), { status: 403 });
         }
         markStage('precheckMs');
 
@@ -660,8 +712,9 @@ router.post('/orders/update_item', async (req, res, next) => {
              FROM order_item_instances i
              JOIN order_items oi ON i.order_item_id = oi.id
              WHERE oi.order_id = $1 AND i.serial_number = $2
+               AND ($3::int IS NULL OR oi.id = $3)
              FOR UPDATE`,
-            [orderId, scanInfo.normalized]
+            [orderId, scanInfo.normalized, orderItemId ?? null]
         );
 
         if (instanceResult.rows.length > 0) {
@@ -693,8 +746,9 @@ router.post('/orders/update_item', async (req, res, next) => {
                      JOIN order_items oi ON i.order_item_id = oi.id
                      WHERE oi.order_id = $1
                        AND regexp_replace(i.serial_number, '[^0-9]', '', 'g') = $2
+                       AND ($3::int IS NULL OR oi.id = $3)
                      FOR UPDATE`,
-                    [orderId, scanInfo.digitsOnly]
+                    [orderId, scanInfo.digitsOnly, orderItemId ?? null]
                 );
 
                 if (digitsResult.rows.length === 1) {
@@ -776,7 +830,9 @@ router.post('/orders/update_item', async (req, res, next) => {
                         oi.id,
                         oi.quantity,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
-                        COALESCE(oi.packed_quantity, 0) as packed_quantity
+                        COALESCE(oi.packed_quantity, 0) as packed_quantity,
+                        (SELECT CASE WHEN bool_or(s.source_order_number IS NOT NULL) THEN count(*) ELSE 0 END
+                         FROM order_items s WHERE s.order_id = oi.order_id AND s.barcode = oi.barcode) AS source_match_count
                     FROM order_items oi
                     WHERE oi.order_id = $1
                       AND oi.barcode = $2
@@ -799,6 +855,9 @@ router.post('/orders/update_item', async (req, res, next) => {
                     `,
                     [orderId, scanRaw, amountNum, type]
                 );
+            }
+            if (!orderItemId && Number(itemResult.rows[0]?.source_match_count) > 1) {
+                throw Object.assign(new Error('此條碼對應多筆商城商品明細，請先選擇商城訂單與商品列'), { status: 409, scanReason: 'SOURCE_ITEM_REQUIRED' });
             }
             if (itemResult.rows.length === 0) {
                 rejectedScanAudit = { scanValue: scanRaw, type, reason: '條碼不屬於此訂單、需要掃描 SN 或已無剩餘數量' };
@@ -841,7 +900,7 @@ router.post('/orders/update_item', async (req, res, next) => {
         let finalStatus = order.status;
 
         // 完成必須同時滿足揀貨完成 + 裝箱完成
-        if (allPicked && allPacked && canAutoComplete(order.status)) {
+        if (!order.warehouse_hold && allPicked && allPacked && canAutoComplete(order.status)) {
             const hasOpen = await hasOpenExceptions(client, orderId);
             if (!hasOpen) {
                 finalStatus = 'completed';
@@ -853,7 +912,7 @@ router.post('/orders/update_item', async (req, res, next) => {
                     [userId, orderId]
                 );
             }
-        } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
+        } else if (!order.warehouse_hold && allPicked && (order.status === 'picking' || order.status === 'pending')) {
             finalStatus = 'picked';
             statusChanged = true;
             await trackedQuery(client, 'update_order_picked', "UPDATE orders SET status = 'picked', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [orderId]);
@@ -866,7 +925,7 @@ router.post('/orders/update_item', async (req, res, next) => {
 
         // Reuse the transaction's client; borrowing more clients here can exhaust the pool.
         // Prepare the response before COMMIT so a failed read cannot report a committed scan as failed.
-        const updatedOrderResult = await trackedQuery(client, 'refresh_order', 'SELECT * FROM orders WHERE id = $1', [orderId]);
+        const updatedOrderResult = await trackedQuery(client, 'refresh_order', 'SELECT o.*, (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number FROM orders o WHERE o.id = $1', [orderId]);
         markStage('refreshReadMs');
         const response = command ? {
             format:'delta-v1',commandId:command.id,baseState:req.body.expectedState,
@@ -938,7 +997,9 @@ router.post('/orders/update_item', async (req, res, next) => {
         });
         client?.release(releaseError);
     }
-});
+}; }
+const scanOrder = createScanOrder();
+router.post('/orders/update_item', scanOrder);
 
 // POST /api/orders/batch/delete
 router.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
@@ -985,8 +1046,9 @@ router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), as
     try {
         client = await pool.connect();
         await client.query('BEGIN'); transactionOpen = true;
-        const order = (await client.query('SELECT id, status FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
+        const order = (await client.query('SELECT id, status, import_batch_id FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到指定訂單');
+        if (order.import_batch_id) await client.query('SELECT id FROM warehouse_import_batches WHERE id=$1 FOR UPDATE', [order.import_batch_id]);
         if (order.status === 'voided') throw fail(409, '已作廢訂單不可更換SN');
         if (req.user.role === 'dispatcher') {
             const own = await client.query("SELECT 1 FROM operation_logs WHERE order_id=$1 AND action_type='import' AND user_id=$2 AND id=(SELECT id FROM operation_logs WHERE order_id=$1 AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1)", [orderId, userId]);
@@ -996,6 +1058,10 @@ router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), as
         if (!instance) throw fail(404, '找不到該訂單中對應的舊SN');
         const duplicate = await client.query('SELECT 1 FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE oi.order_id=$1 AND i.serial_number=$2', [orderId, newSn]);
         if (duplicate.rowCount) throw fail(409, '新SN已存在於此訂單');
+        if (order.import_batch_id) {
+            const batchDuplicate = await client.query('SELECT 1 FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id JOIN orders o ON o.id=oi.order_id WHERE o.import_batch_id=$1 AND i.serial_number=$2', [order.import_batch_id, newSn]);
+            if (batchDuplicate.rowCount) throw fail(409, '新SN已存在於此ERP批次的其他工作單');
+        }
         await client.query('UPDATE order_item_instances SET serial_number=$1, updated_at=NOW() WHERE id=$2', [newSn, instance.id]);
         await client.query('INSERT INTO product_defects (order_id,user_id,original_sn,new_sn,product_barcode,product_name,reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [orderId,userId,oldSn,newSn,instance.barcode,instance.product_name,reason]);
         await client.query(`INSERT INTO order_exceptions (order_id,type,status,reason_code,reason_text,created_by,ack_by,ack_at,resolved_by,resolved_at,snapshot)
@@ -1046,3 +1112,5 @@ router.get('/admin/defects/stats', authorizeAdmin, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.scanOrder = scanOrder;
+module.exports.createScanOrder = createScanOrder;

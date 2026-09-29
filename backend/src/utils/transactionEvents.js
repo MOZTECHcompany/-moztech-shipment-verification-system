@@ -4,7 +4,7 @@ const logger = require('./logger');
 function deferredEvents(io) {
     const events = [];
     return {
-        emit: (name, payload) => events.push([name, payload]),
+        emit: (name, payload) => events.push(name === 'new_operation_log' ? ['operation_logs_changed', {}] : [name, payload]),
         publish: () => {
             for (const [name, payload] of events) {
                 try { io?.emit(name, payload); }

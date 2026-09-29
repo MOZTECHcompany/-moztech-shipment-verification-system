@@ -1,9 +1,10 @@
+// Warehouse credentials belong to this tab, never to a different work station.
 import { useState, useEffect } from 'react';
 
-export function useLocalStorage(key, defaultValue) {
+export function useWarehouseSession(key, defaultValue) {
   const [state, setState] = useState(() => {
     try {
-      const storedValue = window.localStorage.getItem(key);
+      const storedValue = window.sessionStorage.getItem(key);
       return storedValue ? JSON.parse(storedValue) : defaultValue;
     } catch (error) {
       return defaultValue;
@@ -12,7 +13,7 @@ export function useLocalStorage(key, defaultValue) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(key, JSON.stringify(state));
+      window.sessionStorage.setItem(key, JSON.stringify(state));
     } catch (error) {}
   }, [key, state]);
 

@@ -2,9 +2,10 @@ const Papa = require('papaparse');
 const { dateRange } = require('../utils/queryLimits');
 const formatter = new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const time = date => date ? formatter.format(new Date(date)) : '';
-const fields = ['訂單編號', '訂單狀態', '出貨總件數', '揀貨人員', '裝箱人員', '出貨完成時間', '作廢人員', '作廢時間'];
+const fields = ['訂單編號', '訂單狀態', '出貨總件數', '揀貨人員', '裝箱人員', '出貨完成時間', '作廢人員', '作廢時間', 'ERP批次單號', '商城平台', '商城店鋪', '商城訂單編號', '工作條碼'];
 
-const reportSQL = `SELECT o.id, o.voucher_number, o.status, o.completed_at, o.updated_at,
+const reportSQL = `SELECT o.id, o.voucher_number, o.status, o.completed_at, o.updated_at, o.source_order_number, o.source_platform, o.source_store, o.work_barcode,
+    (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number,
     COALESCE((SELECT SUM(quantity) FROM order_items WHERE order_id=o.id),0) AS total_quantity,
     activity.pickers, activity.packers, activity.void_user, activity.void_at
 FROM orders o
@@ -25,7 +26,7 @@ ORDER BY o.updated_at DESC, o.completed_at DESC, o.id DESC`;
 function rowValues(o) {
     return [o.voucher_number, o.status === 'completed' ? '已完成' : '已作廢', o.total_quantity,
         o.pickers || '無紀錄', o.packers || '無紀錄', o.status === 'completed' ? time(o.completed_at) : '',
-        o.void_user || '', o.status === 'voided' ? time(o.void_at) : ''];
+        o.void_user || '', o.status === 'voided' ? time(o.void_at) : '', o.batch_number || '', o.source_platform || '', o.source_store || '', o.source_order_number || '', o.work_barcode || ''];
 }
 function write(res, chunk) {
     if (res.destroyed) return Promise.reject(new Error('EXPORT_DISCONNECTED'));

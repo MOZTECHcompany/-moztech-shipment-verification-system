@@ -13,13 +13,16 @@ router.get('/tasks', async (req, res) => {
     try {
         if (req.query.pagination === 'cursor') return res.json(await getTaskPage(pool, req.user, req.query, 'active'));
         const { id: userId, role } = req.user;
-        const effectiveRole = role === 'superadmin' ? 'admin' : role;
+        const effectiveRole = role === 'superadmin' ? 'admin' : role === 'viewer' ? 'dispatcher' : role;
         logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role} (effective=${effectiveRole})`);
         if (!effectiveRole) return res.status(403).json({ message: '使用者角色無效' });
 
         const query = `
             SELECT 
-                o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                o.id, o.warehouse_hold, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                o.picker_id, o.packer_id, o.import_batch_id, o.source_order_number, o.source_platform, o.source_store, o.work_barcode,
+                (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number,
+                packer_u.name AS packer_name,
                 (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
                 (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
                 COALESCE(o.is_urgent, FALSE) as is_urgent,
@@ -55,11 +58,11 @@ router.get('/tasks', async (req, res) => {
                 ORDER BY ol.created_at DESC
                 LIMIT 1
             ) import_log ON TRUE
-            WHERE 
+            WHERE COALESCE(o.warehouse_hold, FALSE) = FALSE AND (
                 ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'dispatcher' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL)))) OR
-                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
+                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1))))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 
                 (CASE WHEN $2 = 'dispatcher' THEN MAX(CASE WHEN import_log.user_id = $1 THEN 1 ELSE 0 END) ELSE 0 END) DESC,
@@ -109,7 +112,7 @@ router.get('/tasks/completed', async (req, res) => {
     try {
         if (req.query.pagination === 'cursor') return res.json(await getTaskPage(pool, req.user, req.query, 'completed'));
         const { id: userId, role } = req.user;
-        const effectiveRole = role === 'superadmin' ? 'admin' : role;
+        const effectiveRole = role === 'superadmin' ? 'admin' : role === 'viewer' ? 'dispatcher' : role;
         const parsedLimit = parseInt(req.query.limit || '50', 10);
         const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
         const date = typeof req.query.date === 'string' ? req.query.date.trim() : '';
@@ -161,6 +164,8 @@ router.get('/tasks/completed', async (req, res) => {
         const query = `
             SELECT 
                 o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                o.picker_id, o.packer_id, o.import_batch_id, o.source_order_number, o.source_platform, o.source_store, o.work_barcode,
+                (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number,
                 pk.name as packer_name,
                 o.updated_at as completed_at,
                 import_log.user_id as imported_by_user_id,

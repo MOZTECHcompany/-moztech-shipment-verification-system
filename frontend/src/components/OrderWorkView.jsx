@@ -19,7 +19,8 @@ import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
 import SerialList from './SerialList';
-import { buildWorkItems, filterWorkItems, workStage } from '@/utils/orderWorkProgress';
+import { buildWorkItems, filterWorkItems, workStage, canOperateWorkStage } from '@/utils/orderWorkProgress';
+import { sourceOrderKey, sourceOrderLabel, groupSourceOrders, findSourceOrders, filterSourceWorkItems, resolveSourceScanTarget, orderChangeItemIdentity } from '@/utils/sourceOrders';
 import voiceNotification from '@/utils/voiceNotification';
 import desktopNotification from '@/utils/desktopNotification';
 import { CameraScanner } from './CameraScanner';
@@ -73,6 +74,13 @@ const StatusBadge = ({ status }) => {
     );
 };
 
+const SourceOrderDetails = ({ item }) => sourceOrderKey(item) ? (
+    <p className="mb-3 break-all text-sm text-slate-700" data-testid="item-source-order">
+        <span className="font-medium">商城訂單：</span>{sourceOrderLabel(item)}
+        {item.source_line_id && <span className="ml-2 text-xs text-slate-500">明細 {item.source_line_id}</span>}
+    </p>
+) : null;
+
 // --- SN模式的品项卡片 ---
 const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
     const [expanded, setExpanded] = useState(false);
@@ -110,6 +118,7 @@ const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
                             )}
                         </div>
                         
+                        <SourceOrderDetails item={item} />
                         {/* 進度條 */}
                         <div className="w-full max-w-md">
                             <div className="flex justify-between text-xs text-gray-600 mb-1 font-medium">
@@ -160,9 +169,9 @@ const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
 };
 
 // --- 数量模式的品项卡片 ---
-const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progress, stage, lineInfo }) => {
-    const canAdjustPick = (user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && orderStatus === 'picking';
-    const canAdjustPack = (user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && orderStatus === 'packing';
+const QuantityItemCard = ({ item, onUpdate, user, order, isUpdating, progress, stage, lineInfo }) => {
+    const canAdjustPick = canOperateWorkStage(user, order, 'pick');
+    const canAdjustPack = canOperateWorkStage(user, order, 'pack');
     const isComplete = progress.complete;
 
     return (
@@ -193,6 +202,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progr
                         )}
                     </div>
 
+                    <SourceOrderDetails item={item} />
                     {/* 進度條 */}
                     <div className="w-full max-w-md">
                         <div className="flex justify-between text-xs text-gray-600 mb-1 font-medium">
@@ -263,7 +273,7 @@ export function OrderWorkView({ user }) {
             </div>
         );
     }
-    return <AuthenticatedOrderWorkView key={orderId} user={user} />;
+    return <AuthenticatedOrderWorkView key={`${user.id}:${user.role}:${orderId}`} user={user} />;
 }
 
 function AuthenticatedOrderWorkView({ user }) {
@@ -339,6 +349,30 @@ function AuthenticatedOrderWorkView({ user }) {
 
     const barcodeInputRef = useRef(null);
     const [itemSearch, setItemSearch] = useState('');
+    const [sourceOrderInput, setSourceOrderInput] = useState('');
+    const [sourceOrderQuery, setSourceOrderQuery] = useState('');
+    const [selectedSourceKey, setSelectedSourceKey] = useState('');
+    const sourceGroups = useMemo(() => groupSourceOrders(currentOrderData.items), [currentOrderData.items]);
+    const matchingSourceGroups = useMemo(() => findSourceOrders(sourceGroups, sourceOrderQuery), [sourceGroups, sourceOrderQuery]);
+    const selectedSource = sourceGroups.find(group => group.key === selectedSourceKey);
+    const sourceSelectionUnresolved = !!sourceOrderQuery && !selectedSource;
+    const clearSourceOrder = () => { setSourceOrderInput(''); setSourceOrderQuery(''); setSelectedSourceKey(''); };
+    const selectSourceOrder = group => {
+        setSourceOrderQuery(group.number);
+        setSelectedSourceKey(group.key);
+        setSourceOrderInput('');
+        setItemSearch('');
+        barcodeInputRef.current?.focus();
+    };
+    const locateSourceOrder = rawValue => {
+        const query = String(rawValue ?? sourceOrderInput).trim();
+        if (!query) { clearSourceOrder(); return; }
+        const matches = findSourceOrders(sourceGroups, query);
+        setSourceOrderInput('');
+        setSourceOrderQuery(query);
+        setSelectedSourceKey('');
+        if (matches.length === 1) selectSourceOrder(matches[0]);
+    };
     const [lastAcceptedScan, setLastAcceptedScan] = useState(null);
     const [pendingScan, setPendingScan] = useState('');
     const [loadError, setLoadError] = useState('');
@@ -710,6 +744,10 @@ function AuthenticatedOrderWorkView({ user }) {
                                 const snAdded = toSnLines(it?.snList);
                                 const snRemoved = toSnLines(it?.removedSnList);
                                 const title = `${escapeHtml(productName || '-')}${barcode ? `（${escapeHtml(barcode)}）` : ''}`;
+                                const sourceItem = it.orderItemId ? currentOrderData.items.find(row => Number(row.id) === Number(it.orderItemId)) : {
+                                    source_order_number: it.sourceOrderNumber, source_platform: it.sourcePlatform, source_store: it.sourceStore
+                                };
+                                const sourceLabel = sourceOrderLabel(sourceItem);
 
                                 const snAddedHtml = (!isNoSn && qty > 0 && snAdded.length > 0)
                                         ? `
@@ -734,6 +772,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                 return `
                                     <div style="border:1px solid #e5e7eb;background:#f9fafb;border-radius:12px;padding:10px;margin-top:10px">
                                         <div style="font-weight:700;color:#111827;font-size:12px;word-break:break-word">${title}</div>
+                                        ${sourceLabel ? `<div style="margin-top:4px;font-size:12px;word-break:break-word">商城訂單：${escapeHtml(sourceLabel)}</div>` : ''}
                                         <div style="margin-top:4px;font-size:12px;color:#374151">
                                             數量異動：<span style="font-weight:700">${escapeHtml(qtyText)}</span>
                                             ${isNoSn ? ' · 無SN' : ' · SN'}
@@ -880,11 +919,15 @@ function AuthenticatedOrderWorkView({ user }) {
         }
 
         const groupMap = new Map();
+        const hasSourceOrders = items.some(item => sourceOrderKey(item));
         for (const row of items) {
             const barcode = String(row?.barcode || '').trim();
             if (!barcode) continue;
-            const g = groupMap.get(barcode) || {
-                id: `sku-${barcode}`,
+            const groupKey = hasSourceOrders ? `item-${row.id}` : barcode;
+            const g = groupMap.get(groupKey) || {
+                id: hasSourceOrders ? groupKey : `sku-${barcode}`,
+                orderItemId: hasSourceOrders ? row.id : undefined,
+                sourceLabel: sourceOrderLabel(row),
                 isNew: false,
                 barcode,
                 productName: String(row?.product_name || row?.productName || '').trim(),
@@ -900,7 +943,7 @@ function AuthenticatedOrderWorkView({ user }) {
             g.packedQty += Number(row?.packed_quantity ?? 0) || 0;
             if (row?.id) g.orderItemIds.push(row.id);
             if (!g.productName) g.productName = String(row?.product_name || '').trim();
-            groupMap.set(barcode, g);
+            groupMap.set(groupKey, g);
         }
 
         for (const g of groupMap.values()) {
@@ -928,6 +971,8 @@ function AuthenticatedOrderWorkView({ user }) {
 
                 return {
                     id: g.id,
+                    orderItemId: g.orderItemId,
+                    sourceLabel: g.sourceLabel,
                     isNew: false,
                     barcode: g.barcode,
                     productName: g.productName,
@@ -972,6 +1017,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 isNew: true,
                 barcode: '',
                 productName: '',
+                sourceOrderNumber: '', sourcePlatform: '', sourceStore: '', sourceLineId: '',
                 isSn: false,
                 originalQty: 0,
                 targetQty: 1,
@@ -1016,6 +1062,11 @@ function AuthenticatedOrderWorkView({ user }) {
                 continue;
             }
 
+            if (row.isNew && sourceGroups.length && !String(row.sourceOrderNumber || '').trim()) {
+                return { ok: false, message: `新增品項 ${barcode} 請填寫所屬商城訂單編號` };
+            }
+            const identity = orderChangeItemIdentity(row);
+
             if (isSn && delta < 0) {
                 const pickedPacked = (Number(row?.pickedSnCount) || 0) + (Number(row?.packedSnCount) || 0);
                 if (targetQty < pickedPacked) {
@@ -1038,6 +1089,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 }
 
                 proposalItems.push({
+                    ...identity,
                     barcode,
                     productName,
                     quantityChange: delta,
@@ -1054,6 +1106,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     return { ok: false, message: `品項 ${barcode} 新增 ${addCount}，需提供同數量 SN（目前 ${added.length}）` };
                 }
                 proposalItems.push({
+                    ...identity,
                     barcode,
                     productName,
                     quantityChange: delta,
@@ -1065,6 +1118,7 @@ function AuthenticatedOrderWorkView({ user }) {
 
             // non-SN items
             proposalItems.push({
+                ...identity,
                 barcode,
                 productName,
                 quantityChange: delta,
@@ -1315,6 +1369,11 @@ function AuthenticatedOrderWorkView({ user }) {
     };
 
     const updateItemState = (scanValue, type, amount = 1, orderItemId) => {
+        if (!canOperateWorkStage(user, currentOrderData.order, type)) {
+            setScanError('請先認領目前階段；已由他人認領時，請管理員轉交給你。');
+            setRejectedScan({ value: scanValue, retryable: false });
+            return false;
+        }
         if (!currentOrderData.order) return false;
         const submission = scanSubmissionRef.current.submit(scanValue, async () => {
             try {
@@ -1327,7 +1386,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 if (!mountedRef.current) return;
                 orderDataVersionRef.current++;
                 setCurrentOrderData(updatedSnapshot);
-                setLastAcceptedScan({ value: scanValue, type, amount });
+                setLastAcceptedScan({ value: scanValue, type, amount, sourceLabel: selectedSource?.label });
                 soundNotification.play(type === 'pick' ? 'pickSuccess' : 'packSuccess');
 
                 // 不只依賴 socket：若回應已更新狀態，直接提示並導回任務列表
@@ -1424,7 +1483,7 @@ function AuthenticatedOrderWorkView({ user }) {
             }
         });
         if (!submission.accepted) {
-            setRejectedScan({ value: submission.scanValue, retryable: submission.reason === 'busy' });
+            setRejectedScan({ value: submission.scanValue, retryable: submission.reason === 'busy', sourceKey: selectedSourceKey });
             const message = submission.reason === 'review'
                 ? '上一筆掃描結果尚未確認，請先重新載入訂單核對。'
                 : `條碼 ${scanValue} 尚未處理，請等候上一筆完成後再送出。`;
@@ -1457,9 +1516,8 @@ function AuthenticatedOrderWorkView({ user }) {
             setScanError('訂單尚未載入，請稍候再試');
             return;
         }
-        let operationType = null;
-        if ((user.role === 'picker' || user.role === 'admin' || user.role === 'superadmin') && status === 'picking') operationType = 'pick';
-        else if ((user.role === 'packer' || user.role === 'admin' || user.role === 'superadmin') && (status === 'packing' || status === 'picked')) operationType = 'pack';
+        const operationType = canOperateWorkStage(user, currentOrderData.order, 'pick') ? 'pick'
+            : canOperateWorkStage(user, currentOrderData.order, 'pack') ? 'pack' : null;
         
         if (operationType) {
             if (hasOpenOrderChange) {
@@ -1494,10 +1552,21 @@ function AuthenticatedOrderWorkView({ user }) {
                 setRejectedScan({ value: scanValue, retryable: false });
                 return false;
             }
-            const accepted = updateItemState(scanValue, operationType, 1);
+            const target = resolveSourceScanTarget({
+                items: currentOrderData.items, instances: currentOrderData.instances,
+                selectedKey: selectedSourceKey, unresolved: sourceSelectionUnresolved,
+                scanValue, type: operationType
+            });
+            if (target.error) {
+                setScanError(target.error);
+                setRejectedScan({ value: scanValue, retryable: false });
+                soundNotification.play('error');
+                return false;
+            }
+            const accepted = updateItemState(scanValue, operationType, 1, target.orderItemId);
             return accepted;
         } else {
-            const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
+            const errorMsg = '請先在任務看板認領目前階段；已由他人認領時，需由管理員轉交後才能核對商品。';
             setScanError(errorMsg);
             
             // 播放錯誤音效（WebAudio）
@@ -1527,8 +1596,8 @@ function AuthenticatedOrderWorkView({ user }) {
 
     const canOperate = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'picker' || user?.role === 'packer';
     const orderStatus = currentOrderData.order?.status;
-    const canScanNow = ((user.role === 'picker' || isAdminLike) && orderStatus === 'picking')
-        || ((user.role === 'packer' || isAdminLike) && ['picked', 'packing'].includes(orderStatus));
+    const canScanNow = canOperateWorkStage(user, currentOrderData.order, 'pick')
+        || canOperateWorkStage(user, currentOrderData.order, 'pack');
 
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(e.currentTarget?.value ?? barcodeInput); } };
     const handleClick = () => { barcodeInputRef.current?.focus(); handleScan(); };
@@ -1581,6 +1650,12 @@ function AuthenticatedOrderWorkView({ user }) {
                 serialsByItem.set(instance.order_item_id, serials);
             }
             const data = snapshot.items.map(item => ({
+                '理貨單號': snapshot.order.batch_number || snapshot.order.voucher_number,
+                'WMS工作單號': snapshot.order.voucher_number,
+                '商城訂單編號': item.source_order_number || '',
+                '平台': item.source_platform || '',
+                '店鋪': item.source_store || '',
+                '商城明細編號': item.source_line_id || '',
                 '國際條碼': item.barcode,
                 '品項型號': item.product_code,
                 '品項名稱': item.product_name,
@@ -1604,7 +1679,8 @@ function AuthenticatedOrderWorkView({ user }) {
     const stage = workStage(user.role, currentOrderData.order?.status);
     const stageLabel = stage === 'pick' ? '揀貨' : '裝箱';
     const workItems = useMemo(() => buildWorkItems(currentOrderData.items, currentOrderData.instances, stage), [currentOrderData, stage]);
-    const visibleItems = useMemo(() => filterWorkItems(workItems, itemSearch, isFocusMode), [workItems, itemSearch, isFocusMode]);
+    const sourceWorkItems = useMemo(() => filterSourceWorkItems(workItems, { query: sourceOrderQuery, selectedKey: selectedSourceKey }), [workItems, sourceOrderQuery, selectedSourceKey]);
+    const visibleItems = useMemo(() => filterWorkItems(sourceWorkItems, itemSearch, isFocusMode), [sourceWorkItems, itemSearch, isFocusMode]);
     const allStageComplete = workItems.length > 0 && workItems.every(row => row.complete);
     const remainingQty = workItems.reduce((sum, row) => sum + row.remaining, 0);
     const progressStats = useMemo(() => ({
@@ -1671,6 +1747,7 @@ function AuthenticatedOrderWorkView({ user }) {
                         activeSessions={activeSessions}
                         order={currentOrderData.order}
                         items={currentOrderData.items}
+                        instances={currentOrderData.instances}
                         isFocusMode={isFocusMode}
                         toggleFocusMode={() => setIsFocusMode(!isFocusMode)}
                     />
@@ -1709,6 +1786,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                     掃描作業
                                 </h3>
                                 <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品條碼或 SN，按 Enter 送出</p>
+                                {!canScanNow && canOperate && !['completed', 'voided'].includes(orderStatus) && <p role="status" className="mb-3 text-sm text-amber-800">請先到任務看板認領目前階段。若已由他人認領，需請管理員轉交給你後再核對商品。</p>}
                                 <PersonalSoundControls user={user} compact />
                                 <VoiceControls compact />
                                 <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
@@ -1739,7 +1817,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                         aria-describedby="scan-instructions"
                                         ref={barcodeInputRef}
                                         type="text"
-                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (!canScanNow ? '目前訂單狀態不可掃描' : (operationBlockedByOrderChange ? '訂單異動審核中（需先主管核可）' : (packBlockedByExceptions ? '需先主管核可（待核可例外）' : '掃描或輸入條碼')))}
+                                        placeholder={!canOperate ? '僅檢視模式（不可掃描）' : (!canScanNow ? '請先認領目前階段，或由管理員轉交給你' : (operationBlockedByOrderChange ? '訂單異動審核中（需先主管核可）' : (packBlockedByExceptions ? '需先主管核可（待核可例外）' : '掃描或輸入條碼')))}
                                         value={barcodeInput}
                                         onChange={(e) => { if (!scanNeedsReview) setBarcodeInput(e.target.value); }}
                                         onKeyDown={handleKeyDown}
@@ -1766,7 +1844,7 @@ function AuthenticatedOrderWorkView({ user }) {
 
                                 <div role="status" aria-live="polite" className="mb-3 text-sm break-all">
                                     {isUpdating ? <span className="text-blue-700">正在確認：{pendingScan}</span> : lastAcceptedScan && (
-                                        <span className="text-emerald-700">✓ 最近{lastAcceptedScan.type === 'pick' ? '揀貨' : '裝箱'}{lastAcceptedScan.amount < 0 ? '數量已修正' : '已確認'}：{lastAcceptedScan.value}</span>
+                                        <span className="text-emerald-700">✓ 最近{lastAcceptedScan.type === 'pick' ? '揀貨' : '裝箱'}{lastAcceptedScan.amount < 0 ? '數量已修正' : '已確認'}：{lastAcceptedScan.value}{lastAcceptedScan.sourceLabel && <span className="mt-1 block text-xs">商城訂單：{lastAcceptedScan.sourceLabel}</span>}</span>
                                     )}
                                 </div>
                                 {scanNeedsReview && (
@@ -1781,7 +1859,8 @@ function AuthenticatedOrderWorkView({ user }) {
                                             <span>{scanError}</span>
                                             {rejectedScan && <p className="mt-1 break-all">{scanNeedsReview ? '待核對條碼' : '未完成條碼'}：{rejectedScan.value}</p>}
                                             {!scanNeedsReview && rejectedScan && <p className="mt-1">{isUpdating ? '上一筆仍在確認，請等候完成後再掃描。' : '輸入框已就緒，可直接重新掃描。'}</p>}
-                                            {rejectedScan?.retryable && !scanNeedsReview && <button type="button" disabled={isUpdating} className="mt-2 underline disabled:opacity-40" onClick={() => { handleScan(rejectedScan.value); barcodeInputRef.current?.focus(); }}>重新送出這筆條碼</button>}
+                                            {rejectedScan?.retryable && rejectedScan.sourceKey !== selectedSourceKey && <p className="mt-1">商城訂單已切換，請核對來源後重新掃描這筆未處理條碼。</p>}
+                                            {rejectedScan?.retryable && (rejectedScan.sourceKey ?? '') === selectedSourceKey && !scanNeedsReview && <button type="button" disabled={isUpdating} className="mt-2 underline disabled:opacity-40" onClick={() => { handleScan(rejectedScan.value); barcodeInputRef.current?.focus(); }}>重新送出這筆條碼</button>}
                                         </div>
                                     </div>
                                 )}
@@ -1857,7 +1936,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                                             const barcode = String(it?.barcode || '').trim();
                                                                             const delta = Math.trunc(Number(it?.quantityChange) || 0);
                                                                             const originalQty = (currentOrderData.items || [])
-                                                                                .filter((x) => String(x?.barcode || '').trim() === barcode)
+                                                                                .filter((x) => it.orderItemId ? Number(x.id) === Number(it.orderItemId) : String(x?.barcode || '').trim() === barcode)
                                                                                 .reduce((acc, x) => acc + (Number(x?.quantity ?? 0) || 0), 0);
                                                                             const targetQty = Math.max(0, Math.trunc(originalQty) + delta);
                                                                             const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
@@ -1867,6 +1946,7 @@ function AuthenticatedOrderWorkView({ user }) {
 
                                                                             return (
                                                                                 <div key={`${ex.id}-chg-${idx}`} className="text-[11px] text-gray-600 break-words">
+                                                                                    {it.orderItemId && <span>{sourceOrderLabel(currentOrderData.items.find(x => Number(x.id) === Number(it.orderItemId)))} · </span>}
                                                                                     {barcode} · {it.productName} · {originalQty}→{targetQty}（{deltaText}）
                                                                                     {isNoSn ? ' · 無SN' : ' · SN'}
                                                                                     {!isNoSn && snAdded > 0 ? ` · 新增SN ${snAdded}` : ''}
@@ -2050,6 +2130,29 @@ function AuthenticatedOrderWorkView({ user }) {
                                 )}
                             </div>
                             
+                            {(sourceGroups.length > 0 || sourceOrderQuery || selectedSourceKey) && (
+                                <section aria-label="商城訂單定位" className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
+                                    <form onSubmit={event => { event.preventDefault(); locateSourceOrder(); }} className="flex flex-wrap items-end gap-2">
+                                        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+                                            <label htmlFor="source-order-input" className="mb-1 block text-sm font-medium text-slate-700">輸入／掃描商城訂單號</label>
+                                            <input id="source-order-input" value={sourceOrderInput} onChange={event => setSourceOrderInput(event.target.value)}
+                                                onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent?.isComposing && !event.isComposing) { event.preventDefault(); locateSourceOrder(event.currentTarget?.value ?? sourceOrderInput); } }}
+                                                autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Shopify／1Shop 訂單編號"
+                                                className="w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                                        </div>
+                                        <button type="submit" className="min-h-10 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">定位訂單</button>
+                                        {(sourceOrderQuery || selectedSourceKey) && <button type="button" onClick={clearSourceOrder} className="min-h-10 px-2 text-sm text-blue-700 underline">顯示整張理貨單</button>}
+                                    </form>
+                                    <p className="mt-2 text-xs text-slate-500">本工作單共 {sourceGroups.length} 筆商城訂單；件數與完成狀態包含本工作單全部品項。</p>
+                                    {selectedSource && <p role="status" className="mt-2 break-all text-sm text-blue-800">目前商城訂單：{selectedSource.label} · {sourceWorkItems.length} 個品項</p>}
+                                    {sourceSelectionUnresolved && <div role="alert" className="mt-3 text-sm text-amber-800">
+                                        {matchingSourceGroups.length ? <>
+                                            <p>訂單號 {sourceOrderQuery} 對應多個來源，請選擇平台與店鋪：</p>
+                                            <div className="mt-2 flex flex-wrap gap-2">{matchingSourceGroups.map(group => <button key={group.key} type="button" onClick={() => selectSourceOrder(group)} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left break-all">{group.label}</button>)}</div>
+                                        </> : <p>本理貨單找不到商城訂單 {sourceOrderQuery}，請核對單號或顯示整張理貨單。</p>}
+                                    </div>}
+                                </section>
+                            )}
                             <div className="mb-4 flex flex-wrap items-center gap-3">
                                 <label htmlFor="order-item-search" className="text-sm font-medium text-gray-700">查找品項</label>
                                 <input id="order-item-search" type="search" value={itemSearch} onChange={event => setItemSearch(event.target.value)} placeholder="品名、型號、條碼或 SN" className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
@@ -2070,7 +2173,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                     {hasSN ? (
                                                         <SNItemCard item={item} instances={itemInstances} progress={progress} stage={stage} lineInfo={lineInfo} />
                                                     ) : (
-                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} />
+                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} order={currentOrderData.order} isUpdating={isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} />
                                                     )}
                                                 </div>
                                             );
@@ -2087,6 +2190,9 @@ function AuthenticatedOrderWorkView({ user }) {
 
                                     {visibleItems.length === 0 && workItems.length > 0 && itemSearch && (
                                         <EmptyState icon={Package} title="找不到符合的品項" description="請確認品名、條碼或 SN；專注模式會隱藏已完成品項。" />
+                                    )}
+                                    {selectedSource && isFocusMode && visibleItems.length === 0 && !itemSearch && !allStageComplete && (
+                                        <EmptyState icon={Check} title="此商城訂單目前沒有待核對品項" description="主單仍有其他商品待處理；可顯示整張理貨單繼續作業。" />
                                     )}
                                     {/* 專注模式下的完成提示 */}
                                     {isFocusMode && allStageComplete && !itemSearch && (
@@ -2367,6 +2473,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                         <Badge variant={delta === 0 ? 'neutral' : (delta > 0 ? 'success' : 'warning')}>{deltaLabel}</Badge>
                                                     </div>
                                                     <div className="text-xs text-gray-600 mt-1 break-words">條碼：{row.barcode || '（未填）'} · 原始 {originalQty} → 目標 {targetQty}</div>
+                                                    {row.sourceLabel && <div className="mt-1 break-all text-sm text-blue-700">商城訂單：{row.sourceLabel}</div>}
                                                     {isSn && (
                                                         <div className="text-xs text-gray-500 mt-1">SN 狀態：pending {pendingSerials.length} / picked {row.pickedSnCount} / packed {row.packedSnCount}</div>
                                                     )}
@@ -2387,6 +2494,14 @@ function AuthenticatedOrderWorkView({ user }) {
 
                                             {row.expanded && (
                                                 <div className="mt-4 space-y-3">
+                                                    {row.isNew && sourceGroups.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                        {[['sourceOrderNumber', '商城訂單編號（必填）'], ['sourcePlatform', '平台'], ['sourceStore', '店鋪'], ['sourceLineId', '商城明細編號']].map(([field, label]) => (
+                                                            <label key={field} className="block text-xs font-semibold text-gray-700">{label}
+                                                                <input value={row[field] || ''} onChange={event => updateOrderChangeDraft(row.id, { [field]: event.target.value })} disabled={orderChangeSubmitting}
+                                                                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+                                                            </label>
+                                                        ))}
+                                                    </div>}
                                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                         <div>
                                                             <label className="block text-xs font-semibold text-gray-700 mb-1">條碼（必填）</label>
@@ -2586,6 +2701,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                         <div className="min-w-0">
                                                             <div className="text-base font-extrabold text-gray-900 break-words">{it.productName}</div>
                                                             <div className="text-sm text-gray-700 mt-1 break-words">{it.barcode}</div>
+                                                            {(it.orderItemId || it.sourceOrderNumber) && <div className="mt-1 break-all text-sm text-blue-700">商城訂單：{sourceOrderLabel(it.orderItemId ? currentOrderData.items.find(row => Number(row.id) === Number(it.orderItemId)) : { source_order_number: it.sourceOrderNumber, source_platform: it.sourcePlatform, source_store: it.sourceStore })}</div>}
                                                             <div className="text-lg font-extrabold text-red-700 mt-2">異動：{deltaText}{it.noSn ? '（無SN）' : '（SN）'}</div>
                                                             {!it.noSn && qty > 0 && (
                                                                 <div className="mt-2">

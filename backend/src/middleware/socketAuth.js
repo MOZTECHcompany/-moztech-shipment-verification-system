@@ -9,6 +9,7 @@ function authError(code = 'SOCKET_AUTH_REQUIRED') {
 }
 
 async function currentStaffUser(pool, id) {
+    if (process.env.ERP_PORTAL_ONLY === 'true') throw authError();
     const result = await pool.query({
         text: 'SELECT id, username, name, role FROM users WHERE id = $1',
         values: [id], query_timeout: 5000,
@@ -17,7 +18,7 @@ async function currentStaffUser(pool, id) {
     const role = String(row?.role || '').trim().toLowerCase();
     // There is no is_active column in the current schema. A current account and
     // a recognized staff role are required; never authorize from JWT role claims.
-    if (!row || !STAFF_ROLES.has(role)) throw authError();
+    if (!row || await require('../services/erpSession').isManaged(pool,row.id) || row.username.startsWith('erp:') || !STAFF_ROLES.has(role)) throw authError();
     return { id: row.id, username: row.username, name: row.name, role };
 }
 
@@ -30,16 +31,17 @@ function createSocketAuthenticator({ pool, secret }) {
             claims = jwt.verify(token, secret, { algorithms: ['HS256'] });
             const id = Number(claims.id ?? claims.userId);
             if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(claims.exp) || claims.exp * 1000 <= Date.now()) throw authError();
-            claims = { id, expiresAt: claims.exp * 1000 };
+            claims = { ...claims, id, expiresAt: claims.exp * 1000 };
         } catch { return next(authError()); }
         try {
-            const user = await currentStaffUser(pool, claims.id);
+            const user = claims.erpSession ? await require('../services/erpSession').resolveUser(pool, claims) : await currentStaffUser(pool, claims.id);
+            socket.data.erpClaims = claims.erpSession ? claims : null;
             if (claims.expiresAt <= Date.now()) return next(authError());
             socket.data.user = user;
             socket.data.authExpiresAt = claims.expiresAt;
             return next();
         } catch (error) {
-            return next(authError(error.data?.code || 'SOCKET_AUTH_UNAVAILABLE'));
+            return next(authError(error.data?.code || (error.status === 401 ? 'SOCKET_AUTH_REQUIRED' : 'SOCKET_AUTH_UNAVAILABLE')));
         }
     };
 }
@@ -57,10 +59,10 @@ function guardSocketSession(socket, { pool, recheckMs = 60000 }) {
     expiryTimer.unref?.();
     const recheck = async () => {
         try {
-            const user = await currentStaffUser(pool, socket.data.user.id);
+            const user = socket.data.erpClaims ? await require('../services/erpSession').resolveUser(pool, socket.data.erpClaims) : await currentStaffUser(pool, socket.data.user.id);
             if (user.role !== socket.data.user.role) { closeSession(); return; }
             socket.data.user = user;
-        } catch (error) { closeSession(error.data?.code || 'SOCKET_AUTH_UNAVAILABLE'); return; }
+        } catch (error) { closeSession(error.data?.code || (error.status === 401 ? 'SOCKET_AUTH_REQUIRED' : 'SOCKET_AUTH_UNAVAILABLE')); return; }
         if (socket.connected) { accountTimer = setTimeout(recheck, recheckMs); accountTimer.unref?.(); }
     };
     accountTimer = setTimeout(recheck, recheckMs);

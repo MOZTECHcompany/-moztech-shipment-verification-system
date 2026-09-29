@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
+import { taskEntryFilters } from '../src/utils/entryDestination.js';
+import * as sourceOrders from '../src/utils/sourceOrders.js';
 import { filterTasks, canBatchPick, canBatchClaim, batchStagesForRole, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
 
@@ -17,7 +19,7 @@ const fixtures = [
 
 // Exercise the component's real callbacks with controlled hooks and deferred API
 // responses. This isolates UI state transitions without a database or browser.
-function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {}) {
+function dashboard({ role = 'admin', initialView = 'active', entrySearch = '', pinned = [] } = {}) {
     const hooks = [];
     const timers = new Map();
     let timerId = 0;
@@ -64,7 +66,8 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
     const notifications = new Proxy({ isEnabled: () => false, play: value => sounds.push(value) }, { get: (target, key) => key === '__esModule' ? false : target[key] || noop });
     const imports = {
         react,
-        'react-router-dom': { useNavigate: () => value => navigation.push(value), useLocation: () => ({ state: { view: initialView } }), Link: 'Link' },
+        '../utils/entryDestination': { taskEntryFilters },
+        'react-router-dom': { useNavigate: () => value => navigation.push(value), useLocation: () => ({ state: { view: initialView }, search: entrySearch }), Link: 'Link' },
         '@/api/api.js': {
             get: (url, options) => url === '/api/tasks/pins' ? Promise.resolve({ data: { pinned } }) : deferred(reads, { url, options }),
             post: (url, body, options) => deferred(posts, { url, body, options })
@@ -77,7 +80,9 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
         '@/utils/desktopNotification.js': notifications,
         sonner: { toast: { success: (...args) => successes.push(args), info: noop, warning: noop, error: (...args) => failures.push(args) } },
         'sweetalert2-react-content': () => ({ fire: async () => ({}) }),
-        './TaskListFilters': 'TaskListFilters'
+        './TaskListFilters': 'TaskListFilters',
+        './ScanToClaim': 'ScanToClaim',
+        '../utils/sourceOrders': sourceOrders
     };
     const generic = new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) });
     const module = { exports: {} };
@@ -568,6 +573,44 @@ test('status events remove tasks that no longer belong to the selected group and
     assert.match(view.text(view.render()), /統計與清單可能已變動/);
 });
 
+test('scan claim gate excludes manual claims synchronously and remains explicit for all operating roles', async () => {
+    for (const role of ['picker', 'packer', 'admin', 'superadmin']) {
+        const view = dashboard({ role });
+        view.reads[0].resolve({ data: fixtures }); await view.settle();
+        const scanner = view.find(view.render(), node => node.type === 'ScanToClaim');
+        assert.equal(scanner.props.user.role, role);
+        assert.equal(scanner.props.onAcquire(), true);
+        const card = view.card(role === 'packer' ? 2 : 1);
+        await card.props.onClaim(card.props.task.id, false);
+        assert.equal(view.posts.length, 0);
+        assert.equal(view.find(view.render(), node => node.type === 'ScanToClaim').props.onAcquire(), false);
+        scanner.props.onLockChange(false);
+        await view.find(view.render(), node => node.type === 'ScanToClaim').props.onSuccess({ orderId: 1, owner: { name: 'Test' }, stage: 'pick', outcome: 'claimed' });
+        assert.deepEqual(view.navigation, ['/order/1']);
+    }
+    const dispatcher = dashboard({ role: 'dispatcher' });
+    assert.equal(dispatcher.find(dispatcher.render(), node => node.type === 'ScanToClaim'), undefined);
+});
+
+test('late scan claim completion cannot redirect after the operator changed dashboard views', async () => {
+    const view = dashboard(); view.reads[0].resolve({ data: fixtures }); await view.settle();
+    const scanner = view.find(view.render(), node => node.type === 'ScanToClaim');
+    assert.equal(scanner.props.onAcquire(), true);
+    view.button('已完成').props.onClick(); view.render();
+    view.button('進行中').props.onClick(); view.render();
+    scanner.props.onLockChange(false);
+    scanner.props.onSuccess({ orderId: 1, owner: { name: 'Test' }, stage: 'pick', outcome: 'claimed' });
+    assert.equal(view.navigation.length, 0);
+});
+
+
+test('ERP picking, packing and completed entry links request the matching existing queue', () => {
+    for (const [search, expected] of [['?group=pick', 'group=pick'], ['?group=pack', 'group=pack'], ['?view=completed', '/api/tasks/completed']]) {
+        const view = dashboard({ entrySearch: search });
+        assert(view.reads[0].url.includes(expected), view.reads[0].url);
+        assert.equal(view.posts.length, 0);
+    }
+});
 async function enterBatch(view, label) {
     view.button('批次' + label).props.onClick();
     view.render();
@@ -660,4 +703,18 @@ test('batch completion after unmount does not fetch or update the next screen', 
     assert.equal(view.reads.length,readCount);
     assert.equal(view.updatesAfterUnmount(),0);
     assert.deepEqual(view.successes,[]);
+});
+
+test('barcode claim locks both role-specific batch claim buttons until scan completion', async () => {
+    for (const [role, label, id] of [['picker', '揀貨', 1], ['packer', '裝箱', 2]]) {
+        const view = await loaded({ role });
+        await enterBatch(view, label);
+        view.card(id).props.toggleTaskSelection(id);
+        const submit = view.button('認領 1 個' + label + '任務');
+        const scanner = view.find(view.render(), node => node.type === 'ScanToClaim');
+        assert.equal(scanner.props.onAcquire(), true);
+        await submit.props.onClick();
+        assert.equal(view.posts.length, 0);
+        assert.equal(view.button('認領 1 個' + label + '任務').props.disabled, true);
+    }
 });

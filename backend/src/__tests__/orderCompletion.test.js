@@ -161,6 +161,7 @@ function scanFixture({ status = 'packing', items, instances }) {
             if (q === 'ROLLBACK') { transaction = undefined; return rows([]); }
             const state = transaction || committed;
             if (q.startsWith('SELECT * FROM orders')) return rows([state.order]);
+            if (q.startsWith('SELECT o.*')) return rows([state.order]);
             if (q.includes('AS has_open')) return rows([{ has_open: false }]);
             if (q.startsWith('SELECT i.id, i.status')) return rows(state.instances.filter(value => value.serial_number === params[1]));
             if (q.startsWith('SELECT oi.id,')) return rows(state.items.filter(value => value.barcode === params[1]));

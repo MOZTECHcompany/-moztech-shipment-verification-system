@@ -17,10 +17,10 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
     (config) => {
         // 從 localStorage 獲取 token（使用正確的 key: 'wms_token'）
-        const tokenData = localStorage.getItem('wms_token');
+        const tokenData = sessionStorage.getItem('wms_token');
         if (tokenData) {
             try {
-                // useLocalStorage 會將資料以 JSON 格式儲存，所以需要 parse
+                // useWarehouseSession 會將資料以 JSON 格式儲存，所以需要 parse
                 const token = JSON.parse(tokenData);
                 if (token) {
                     // 如果 token 存在，就把它加到 Authorization 標頭裡

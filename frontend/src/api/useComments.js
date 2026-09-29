@@ -6,7 +6,7 @@ import { commentQueryKey, fetchCommentPage, flattenCommentPages } from './commen
 export function useComments(orderId, pageSize = 50) {
     const queryClient = useQueryClient();
     let user;
-    try { user = JSON.parse(localStorage.getItem('wms_user') || 'null'); } catch { user = null; }
+    try { user = JSON.parse(sessionStorage.getItem('wms_user') || 'null'); } catch { user = null; }
     const userId = user?.id, userRole = user?.role;
     const queryKey = useMemo(() => commentQueryKey(orderId, pageSize, { id: userId, role: userRole }), [orderId, pageSize, userId, userRole]);
     const query = useInfiniteQuery({
