@@ -1,4 +1,4 @@
-import { parseMarketplaceRows, parseMoneyMinor, buildEcountRows, buildMarketplaceAuditRows, buildPrepickRows } from './marketplaceIntake.mjs';
+import { productIdentifierIssue, parseMarketplaceRows, parseMoneyMinor, buildEcountRows, buildMarketplaceAuditRows, buildPrepickRows } from './marketplaceIntake.mjs';
 
 export const MARKETPLACE_ROLES = ['dispatcher', 'admin', 'superadmin'];
 export const TEST_ORDER_NUMBERS = ['TST6091550133', 'TST6091550109'];
@@ -58,6 +58,7 @@ export function inspectMarketplaceRows(input) {
   }
   const rows=[columns.map(([name])=>name),...input.slice(index+1).map(row=>columns.map(([name,col])=>{
     const value=row[col]??'';
+    if(['產品SKU','Lineitem sku','商品貨號'].includes(name)){const problem=productIdentifierIssue(value);if(problem)fail(problem);}
     if(!['string','number','boolean'].includes(typeof value) || (typeof value==='number'&&!Number.isFinite(value)) || String(value).length>5000) fail('來源儲存格格式或長度無效');
     // Keep only the safe expiry signal, not free-form payment references.
     return name==='金流備註' ? (/過期|逾期|逾時|期限已過|超過.*期限/.test(String(value))?'交易逾時':'') : value;

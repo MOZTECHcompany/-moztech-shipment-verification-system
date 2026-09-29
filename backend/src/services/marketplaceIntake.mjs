@@ -46,6 +46,7 @@ export function calculateInclusiveTax(grossMinor, quantity){
   return {grossMinor,netMinor,taxMinor,netUnitMinor:roundRatio(netMinor,quantity)};
 }
 export function prepareEcountSourceFinancials(record){
+  for(const item of record.items||[]){const problem=productIdentifierIssue(item.sku);if(problem)throw Error(problem);}
   const headers=record.headers||[], col=h=>headers.indexOf(h);
   const required=['交易類型','數量','單價(含稅)','單價','稅前價格','營業稅','商城訂單編號','平台','店鋪','來源明細號'];
   if(required.some(h=>col(h)<0)||!record.rows?.length)throw Error('銷貨金額核對欄位不完整');
@@ -295,7 +296,10 @@ export function parseMarketplaceRows(rows, { platform, allowedOrderNumbers, allo
       const qtyText = text(row[isOne ? '產品數量' : 'Lineitem quantity']);
       const quantity = /^\d+$/.test(qtyText) && Number.isSafeInteger(Number(qtyText)) && Number(qtyText) > 0 ? Number(qtyText) : null;
       if (quantity == null) issues.push(issue('INVALID_QUANTITY', '商品數量必須為正整數', extra));
-      const sku = text(row[isOne ? '產品SKU' : 'Lineitem sku']);
+      const rawSku = row[isOne ? '產品SKU' : 'Lineitem sku'];
+      const sku = text(rawSku);
+      const skuProblem = productIdentifierIssue(rawSku);
+      if(skuProblem)issues.push(issue('INVALID_PRODUCT_IDENTIFIER',skuProblem,extra));
       const productName = text(row[isOne ? '產品' : 'Lineitem name']);
       if (!sku || !productName) issues.push(issue('MISSING_PRODUCT', '商品列缺少 SKU 或產品名稱', extra));
       const unitPriceMinor = money(row[isOne ? '單價' : 'Lineitem price'], '商品單價', extra, !isOne);
@@ -346,10 +350,18 @@ export function parseMarketplaceRows(rows, { platform, allowedOrderNumbers, allo
   return finish();
 }
 
+export function productIdentifierIssue(value) {
+  const code = text(value);
+  if (/^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(code)) return `貨號「${code}」已變成科學記號，無法確認完整品號。請重新下載平台原始訂單檔，勿用 Excel 另存 CSV。`;
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return '商品編碼超出數字精度，請改用保留完整品號的文字欄位';
+  return '';
+}
+
 function mappingIssues(parsed, settings, requireBarcode = true) {
   const issues = [];
   for (const sku of new Set(parsed.items.map((item) => item.sku))) {
     const m = settings.skuMappings?.[sku];
+    for(const value of [sku,m?.erpSku,m?.barcode]){const problem=productIdentifierIssue(value);if(problem)issues.push(issue('INVALID_PRODUCT_IDENTIFIER',problem,{sku}));}
     if (!(m?.erpConfirmed === true || m?.confirmed === true) || !text(m?.erpSku)) issues.push(issue('PRODUCT_MAPPING_REQUIRED', `SKU ${sku} 必須確認 ERP 品項編碼`, { sku }));
     if (requireBarcode && (!text(m?.barcode) || !(m?.barcodeConfirmed === true || (m?.confirmed === true && m?.barcodeConfirmed !== false)))) issues.push(issue('BARCODE_MAPPING_REQUIRED', `SKU ${sku} 的實物條碼尚未確認，不可用 SKU 自行代替`, { sku }));
   }

@@ -50,3 +50,22 @@ test('unknown SHOPLINE bundle structure blocks instead of double counting parent
  const row={'訂單號碼':'SL','商品貨號':'0001','商品名稱':'合成套組','數量':'1','單價':'100','付款狀態':'已付款','送貨狀態':'待出貨','付款方式':'信用卡','訂單狀態':'已確認','訂單小計':'100','運費':'0','優惠折扣':'0','訂單合計':'100','商品類型':'組合商品'};
  const {parsed}=parseUnifiedMarketplace(table([row]));assert.equal(prepareUnifiedMarketplace(parsed,config(parsed)).output.ok,false);
 });
+
+test('scientific-notation SKUs cannot collapse distinct products even with confirmed mappings',()=>{
+ for(const code of ['4.71E+12','4.71e13','471E+10']){
+  const rows=table([item({'Lineitem sku':code,'Lineitem name':'商品甲'}),item({Name:'SYN-B','Lineitem sku':code,'Lineitem name':'商品乙'})]);
+  assert.throws(()=>parseUnifiedMarketplace(rows),/科學記號/);
+  assert.throws(()=>buildUnifiedConversion(rows,{skuMappings:{[code]:{erpSku:'4711299273094',confirmed:true}}}),/科學記號/);
+ }
+ assert.throws(()=>inspectMarketplaceRows([['訂單編號','產品SKU','產品數量'],['ONE','4.71E+12',1]]),/科學記號/);
+ const sl={'訂單號碼':'SL','商品貨號':'4.71E+12','商品名稱':'商品','數量':1,'單價':100,'付款狀態':'已付款','送貨狀態':'備貨中','付款方式':'信用卡','訂單狀態':'已確認','訂單小計':100,'運費':0,'優惠折扣':0,'訂單合計':100};
+ assert.throws(()=>parseUnifiedMarketplace(table([sl])),/科學記號/);
+});
+
+test('complete distinct SKUs survive grouping and identical SKUs sum quantity and money',()=>{
+ const rows=[item({'Lineitem sku':'04711299273094'}),item({Name:'SYN-B','Lineitem sku':'NEW47112992730942'}),item({Name:'SYN-C','Lineitem sku':'04711299273094',Subtotal:200,Total:200,'Lineitem quantity':2})];
+ const result=run(rows,{salesExportMode:'product-200-v1'});assert.equal(result.output.ok,true);
+ assert.equal(result.output.salesLayout.lines.length,2);assert.equal(result.output.summary.physicalQuantity,4);
+ const same=result.output.salesLayout.lines.find(x=>x.productCode==='04711299273094');assert.equal(same.quantity,3);assert.equal(same.grossMinor,30000);
+ const other=result.output.salesLayout.lines.find(x=>x.productCode==='NEW47112992730942');assert.equal(other.quantity,1);
+});

@@ -192,3 +192,9 @@ test('Shopify refund and currency mismatch cannot be mistaken for eligible paid 
   const rows = shopRows(); rows[0]['Financial Status'] = 'refunded'; rows[0]['Refunded Amount'] = '528'; rows[0].Currency = 'USD';
   const validation = validateMarketplaceExport(parseShop(rows), settings()); assert.ok(codes(validation).includes('ORDER_NOT_ELIGIBLE')); assert.ok(codes(validation).includes('CURRENCY_MISMATCH'));
 });
+
+test('direct parser rejects damaged scientific notation source codes',()=>{
+ const rows=oneRows();rows[0]['產品SKU']='4.71E+12';
+ const p=parse(rows);assert.ok(codes(p).includes('INVALID_PRODUCT_IDENTIFIER'));
+ assert.equal(buildEcountRows(p,settings()).ok,false);
+});

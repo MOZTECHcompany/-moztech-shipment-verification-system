@@ -44,6 +44,8 @@ function createProductRouter({ reader = readReference } = {}) {
  return router;
 }
 async function verifyCatalogMappings(_pool, settings, skus = Object.keys(settings.skuMappings), reader = readReference) {
+ const {productIdentifierIssue}=await import('./marketplaceIntake.mjs');
+ for(const sku of skus){const m=settings.skuMappings?.[sku];for(const value of [sku,m?.erpSku,m?.barcode]){const problem=productIdentifierIssue(value);if(problem)throw fail(problem);}}
  const reference = await reader();
  if (!reference) return;
  const resolved = resolveProducts(skus, reference.products);
