@@ -58,6 +58,21 @@ module.exports = async ({t,api,ok,pool,users,tokens,observedEvents}) => {
         ok(await api('picker','POST',`/api/tasks/${id}/comments/mark-read`,{commentIds:comments}));
         assert.ok(ok(await api('picker','GET','/api/order-reviews')).items.some(r=>r.id===ex),'reading a comment does not dismiss pending work');
     });
+    await t.test('durable order alarms are recipient-only and explicit receipt never approves a request',async()=>{
+        const inbox=ok(await api('picker','GET','/api/order-change-notices'));
+        const notice=inbox.items.find(row=>row.order_id===id&&row.payload.phase==='requested');
+        assert.ok(notice);assert.equal(notice.payload.deletion,true);
+        assert.match(notice.created_at,/Z$/);
+        assert.ok(!ok(await api('orderManager','GET','/api/order-change-notices')).items.some(row=>row.id===notice.id));
+        assert.equal((await api('orderManager','POST',`/api/order-change-notices/${notice.id}/acknowledge`)).status,404);
+        // Chat read receipts cannot clear an operational alarm.
+        assert.ok(ok(await api('picker','GET','/api/order-change-notices')).items.some(row=>row.id===notice.id));
+        for(let retry=0;retry<2;retry++)ok(await api('picker','POST',`/api/order-change-notices/${notice.id}/acknowledge`));
+        assert.ok(!ok(await api('picker','GET','/api/order-change-notices')).items.some(row=>row.id===notice.id));
+        assert.ok(ok(await api('packer','GET','/api/order-change-notices')).items.some(row=>row.id===notice.id));
+        assert.equal((await pool.query('SELECT status FROM order_exceptions WHERE id=$1',[ex])).rows[0].status,'open');
+        assert.equal(await state(id),'picking');
+    });
     await t.test('rejection resumes existing progress; approval voids while retaining all records and unread notice',async()=>{
         ok(await review('warehouseManager',id,ex,'reject'));
         ok(await api('picker','POST','/api/orders/update_item',{orderId:id,scanValue:'FIXTURE-BARCODE',type:'pick'}));
@@ -65,6 +80,11 @@ module.exports = async ({t,api,ok,pool,users,tokens,observedEvents}) => {
         const rowsBefore=await count('order_items',id);
         ok(await review('warehouseManager',id,requested.id));
         assert.equal(await state(id),'voided');assert.equal(await count('order_items',id),rowsBefore);
+        const offline=ok(await api('packer','GET','/api/order-change-notices')).items.filter(row=>row.order_id===id);
+        for(const phase of ['requested','rejected','approved'])assert.ok(offline.some(row=>row.payload.phase===phase),'Reconnect must recover '+phase);
+        assert.ok(offline.find(row=>row.payload.phase==='approved').payload.message.includes('停止出貨'));
+        assert.equal(offline.find(row=>row.payload.phase==='approved').is_current,true);
+        assert.ok(offline.filter(row=>row.payload.phase!=='approved').every(row=>row.is_current===false),'Earlier stop-work instructions must be identified as history');
         assert.equal((await pool.query('SELECT picked_quantity FROM order_items WHERE order_id=$1',[id])).rows[0].picked_quantity,1);
         assert.equal((await review('warehouseManager',id,requested.id)).status,409);
         assert.ok(!ok(await api('warehouseManager','GET','/api/order-reviews')).items.some(r=>r.order_id===id));
@@ -78,6 +98,7 @@ module.exports = async ({t,api,ok,pool,users,tokens,observedEvents}) => {
         try {
             assert.equal((await api('dispatcher','DELETE',`/api/orders/${rollbackId}`,{reason:'Fixture rollback'})).status,500);
             assert.equal(await count('order_exceptions',rollbackId),0);
+            assert.equal(await count('order_change_notices',rollbackId),0);
             assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_logs WHERE order_id=$1 AND action_type='order_delete_requested'",[rollbackId])).rows[0].n,0);
             assert.ok(!observedEvents.some(e=>e.event==='order_change_notice'&&e.body.orderId===rollbackId));
         } finally {await pool.query('DROP TRIGGER fail_review_notice ON task_comments; DROP FUNCTION fail_review_notice()');}

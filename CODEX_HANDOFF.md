@@ -18,6 +18,8 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_ORDER_ALERTS_2026-09-30.md`：例外查詢中文化、大型異動警示、專用聲音與持久收件確認；包含 migration 029 及部署／回復界線。
+
 - `docs/WMS_ORDER_REVIEW_2026-09-30.md`：訂單／倉儲管理員分工、刪除及數量異動強制送審、責任人通知、同條碼多列 SN 修復。正式 revision `corely-wms-order-review-20260930`，程式 `366ce36`；lemon 為訂單管理員、mozwen（陳怡玟）為倉儲管理員。舊候選網址已移除，不能直接回退到缺少 scope／審核限制的舊映像。
 - `docs/WMS_TAIPEI_TIME_FIX_2026-09-29.md`：修正最新留言卡片少 8 小時，統一留言 UTC 解讀與台灣時間顯示，保留微秒游標及原始資料；正式 revision `corely-wms-taipei-time-20260929`，程式 `4b8694a`，取代較早留言時間與發布快照。
 - `docs/WMS_IMPORT_FOOTER_2026-09-17.md`：忽略理貨單最後一行的單獨列印日期時間，保留商品檢查；正式 revision `corely-wms-import-footer-20260917`，程式 `7548074`。

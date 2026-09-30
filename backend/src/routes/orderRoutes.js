@@ -17,6 +17,29 @@ const router = express.Router();
 const {warehouseOnly} = require('../utils/managementScope');
 const {deletionRequestHandler, requestDeletion} = require('../services/orderReviewService');
 const {notifyOrderChange,warehouseReviewerIds} = require('../services/orderChangeNotifications');
+// Recipients are fixed by the committed operation, never supplied by the client.
+router.get('/order-change-notices', async (req,res,next) => {
+    try {
+        const result=await pool.query(`SELECT n.id,n.order_id,n.payload,n.created_at,
+            NOT EXISTS(SELECT 1 FROM order_change_notices newer WHERE newer.order_id=n.order_id AND newer.id>n.id) AS is_current,
+            COUNT(*) OVER()::int AS total
+            FROM order_change_notice_recipients r JOIN order_change_notices n ON n.id=r.notice_id
+            WHERE r.user_id=$1 AND r.acknowledged_at IS NULL
+            ORDER BY n.id DESC LIMIT 50`,[req.user.id]);
+        res.json({items:result.rows,total:result.rows[0]?.total || 0});
+    } catch(error) {next(error);}
+});
+router.post('/order-change-notices/:noticeId/acknowledge', async (req,res,next) => {
+    const id=Number(req.params.noticeId);
+    if(!Number.isSafeInteger(id) || id<=0)return res.status(400).json({message:'通知編號無效'});
+    try {
+        const result=await pool.query(`UPDATE order_change_notice_recipients
+            SET acknowledged_at=COALESCE(acknowledged_at,NOW()) WHERE notice_id=$1 AND user_id=$2
+            RETURNING notice_id`,[id,req.user.id]);
+        if(!result.rowCount)return res.status(404).json({message:'找不到此通知'});
+        res.json({acknowledged:true});
+    } catch(error) {next(error);}
+});
 router.get('/order-reviews', async (req,res,next) => {
     try {
         const reviewers = await warehouseReviewerIds(pool);

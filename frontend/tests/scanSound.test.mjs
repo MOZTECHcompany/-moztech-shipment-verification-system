@@ -115,3 +115,17 @@ test('mute disables both new scan motifs', async () => {
     await sound.play('packSuccess');
     assert.equal(tones.length, 0);
 });
+
+test('order changes have a distinct six-tone alarm, separate mute and no scan backlog', async () => {
+    const {sound,tones,storage} = sounds();
+    sound.setUser(303); sound.setProfile('clear'); sound.setEnabled(false);
+    assert.equal(await sound.play('orderChange'),true);
+    assert.deepEqual(tones.map(tone=>tone.frequency.value),[880,440,880,880,440,880]);
+    sound.setOrderAlertsEnabled(false);
+    assert.equal(await sound.play('orderChange'),false);
+    const reloaded=sounds(storage).sound;reloaded.setUser(303);
+    assert.equal(reloaded.getSettings().orderAlertsEnabled,false);
+    sound.userInteracted=false;
+    assert.equal(await sound.preview('orderChange'),true);
+    assert.equal(sound.getSettings().orderAlertsEnabled,false);
+});

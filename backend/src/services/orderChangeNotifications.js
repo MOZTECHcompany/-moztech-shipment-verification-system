@@ -25,7 +25,12 @@ async function notifyOrderChange({ db, events, orderId, actorId, exceptionId, ph
         SELECT $1,id FROM users WHERE id=ANY($2::int[])`, [comment.id, recipients]);
     events.emit('new_comment', {orderId:Number(orderId),commentId:comment.id,userId:actorId,content,priority:'urgent'});
     for (const userId of recipients) events.emit('new_mention', {userId,orderId:Number(orderId),commentId:comment.id,content,priority:'urgent'});
-    events.emit('order_change_notice', {orderId:Number(orderId),voucherNumber:order.voucher_number,exceptionId,phase,title,
-        message:instruction,recipientUserIds:recipients,actorId,reviewerIds:reviewers});
+    const payload = {orderId:Number(orderId),voucherNumber:order.voucher_number,exceptionId,phase,title,
+        message:instruction,reason:reason || '',deletion,category,actorId};
+    const notice = (await db.query(`INSERT INTO order_change_notices(order_id,actor_id,payload)
+        VALUES($1,$2,$3) RETURNING id`,[orderId,actorId,JSON.stringify(payload)])).rows[0];
+    await db.query(`INSERT INTO order_change_notice_recipients(notice_id,user_id)
+        SELECT $1,id FROM users WHERE id=ANY($2::int[]) AND id<>$3`,[notice.id,recipients,actorId]);
+    events.emit('order_change_notice', {...payload,noticeId:notice.id,recipientUserIds:recipients,reviewerIds:reviewers});
 }
 module.exports = { warehouseReviewerIds, notifyOrderChange };
