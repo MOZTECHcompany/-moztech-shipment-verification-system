@@ -234,7 +234,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             const created = await response(picker, `/api/orders/${exceptionOrder}/exceptions`, 'POST', () => create.getByRole('button', {name:'建立',exact:true}).click());
             const id = (await created.json()).id;
             await dispatcher.goto(webBase + '/order/' + exceptionOrder);
-            await dispatcher.getByRole('button', {name:'填處理',exact:true}).click();
+            await dispatcher.getByRole('button', {name:'填寫處理方式',exact:true}).click();
             const proposal = modal(dispatcher, '例外處理：填寫處理內容（待審核）');
             await proposal.locator('select').selectOption('other');
             await proposal.getByPlaceholder('請描述處理方式與原因，管理員會依此審核').fill('已更換包材，請主管核對');
@@ -332,6 +332,57 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             assert.equal(await manager.getByRole('link',{name:'成員與角色',exact:true}).count(),0);
             await manager.screenshot({path:output+'/order-manager-settings.png',fullPage:true});
             await manager.close();await supervisor.close();await worker.close();
+        });
+        await step('browser: both manager duties retain editing controls, show exact peer changes and load the correct member form',async()=>{
+            const voucher=prefix+'-MANAGERS';
+            const id=(await pool.query("INSERT INTO orders(voucher_number,customer_name,status) VALUES($1,'雙向通知驗收','pending') RETURNING id",[voucher])).rows[0].id;
+            cleanupOrders.push(id);
+            await pool.query("INSERT INTO order_items(order_id,product_code,barcode,product_name,quantity) VALUES($1,'MANAGER','MANAGER','測試商品',2)",[id]);
+            await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'import','{}')",[id,users.dispatcher]);
+            const requested=ok(await api('warehouseManager','POST',`/api/orders/${id}/exceptions`,{type:'order_change',reasonText:'倉儲確認數量',snapshot:{proposal:{note:'倉儲確認數量',items:[{barcode:'MANAGER',productName:'測試商品',quantityChange:1,noSn:true}]}}}),201);
+            const manager=await pageFor('orderManager',false,'Asia/Taipei',false);
+            await manager.goto(webBase+'/tasks');
+            const alert=manager.getByRole('complementary',{name:'重要訂單異動'});
+            await alert.getByText(voucher,{exact:true}).waitFor();
+            await alert.getByText('操作人：warehouseManager（倉儲管理員）',{exact:true}).waitFor();
+            await alert.getByRole('region',{name:'異動明細'}).getByText('測試商品 · MANAGER · 2 → 3 件',{exact:true}).waitFor();
+            await manager.screenshot({path:output+'/manager-change-details.png',fullPage:true});
+            await manager.setViewportSize({width:390,height:844});
+            assert.ok(await manager.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+            await manager.screenshot({path:output+'/manager-change-details-mobile.png',fullPage:true});
+            await manager.close();
+            ok(await api('warehouseManager','PATCH',`/api/orders/${id}/exceptions/${requested.id}/reject`,{note:'保留原数量'}));
+            const exception=ok(await api('picker','POST',`/api/orders/${id}/exceptions`,{type:'other',reasonText:'包材確認'}),201).id;
+            for(const role of ['orderManager','warehouseManager']) {
+                const page=await pageFor(role);
+                await page.goto(webBase+'/order/'+id);
+                await page.getByRole('button',{name:'申請異動',exact:true}).waitFor();
+                await page.getByRole('button',{name:'填寫處理方式',exact:true}).click();
+                const form=modal(page,'例外處理：填寫處理內容（待審核）');
+                await form.locator('select').selectOption('other');
+                await form.getByPlaceholder('請描述處理方式與原因，管理員會依此審核').fill(role+' 已確認包材');
+                await response(page,`/api/orders/${id}/exceptions/${exception}/propose`,'PATCH',()=>form.getByRole('button',{name:'送出審核',exact:true}).click());
+                await page.getByText('備註：'+role+' 已確認包材',{exact:true}).waitFor();
+                assert.equal(await page.getByRole('button',{name:'核可',exact:true}).count(),role==='warehouseManager'?1:0);
+                await page.close();
+            }
+            await admin.goto(webBase+'/admin/users');
+            for(const [role,scope] of [['orderManager','orders'],['warehouseManager','warehouse']]) {
+                await admin.getByRole('row').filter({hasText:role}).getByRole('button',{name:'編輯',exact:true}).click();
+                const form=modal(admin,'編輯使用者');
+                assert.equal(await form.locator('input[name="username"]').inputValue(),role);
+                assert.equal(await form.getByLabel('角色',{exact:true}).inputValue(),'admin');
+                assert.equal(await form.getByLabel('管理員分工',{exact:true}).inputValue(),scope);
+                await form.getByText('兩邊管理員都會收到異動明細與警示；通知不會自動核准異動。',{exact:true}).waitFor();
+                await admin.screenshot({path:output+'/member-scope-'+scope+'.png',fullPage:true});
+                await form.getByRole('button',{name:'取消',exact:true}).click();
+            }
+            await admin.getByRole('button',{name:'新增使用者',exact:true}).click();
+            const form=modal(admin,'新增使用者');
+            assert.equal(await form.locator('input[name="username"]').inputValue(),'');
+            await form.getByLabel('角色',{exact:true}).selectOption('admin');
+            assert.equal(await form.getByLabel('管理員分工',{exact:true}).inputValue(),'orders');
+            await form.getByRole('button',{name:'取消',exact:true}).click();
         });
         await step('browser: exception query is Chinese, explicit, read-only, paginated and usable on mobile', async () => {
             const queryVoucher=prefix+'-QUERY';
@@ -455,7 +506,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 17 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 18 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

@@ -702,7 +702,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 `;
 
                 if (isDeletionRequest(ex)) return wrap('<div style="color:#b91c1c;font-weight:600">核准後訂單將作廢並停止出貨，保留所有作業與異動紀錄。</div>');
-                if (!proposal) return wrap('<div style="font-size:12px;color:#6b7280">（無拋單員處理內容）</div>');
+                if (!proposal) return wrap('<div style="font-size:12px;color:#6b7280">（尚未填寫處理內容）</div>');
 
                 if (type === 'order_change' && Array.isArray(proposal?.items)) {
                         const itemsHtml = (proposal.items || []).slice(0, 200).map((it) => {
@@ -1842,7 +1842,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                     <div className="space-y-2">
                                         {orderExceptions.slice(0, 8).map((ex) => (
                                             <div key={ex.id} className="rounded-xl border border-gray-200 bg-white/60 p-3">
-                                                <div className="flex items-start justify-between gap-3">
+                                                <div className="flex flex-col gap-3">
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
                                                             <span className="text-sm font-bold text-gray-900">{isDeletionRequest(ex) ? '刪除訂單' : typeLabel(ex.type)}</span>
@@ -1887,7 +1887,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                         {String(ex?.type) !== 'order_change' && ex?.snapshot?.proposal && (
                                                             <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200">
                                                                 <div className="text-[11px] text-gray-700 font-semibold">
-                                                                    拋單員處理內容（待審核）
+                                                                    處理內容（{ex.status === 'open' ? '待審核' : ex.status === 'rejected' ? '已駁回' : ex.status === 'resolved' ? '已結案' : '已核可'}）
                                                                 </div>
                                                                 <div className="text-[11px] text-gray-600 mt-1">
                                                                     處理方式：{resolutionActionLabel(ex.snapshot.proposal?.resolutionAction)}
@@ -1978,7 +1978,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                     </div>
 
                                                     {isAdminLike && (
-                                                        <div className="flex flex-col gap-2 flex-shrink-0">
+                                                        <div className="flex flex-wrap gap-2">
                                                             {ex.status === 'open' && (
                                                                 <>
                                                                     <Button size="sm" onClick={() => handleAckException(ex.id)}>
@@ -1997,11 +1997,11 @@ function AuthenticatedOrderWorkView({ user }) {
                                                         </div>
                                                     )}
 
-                                                    {(!isAdminLike && canDispatcherPropose) && (
-                                                        <div className="flex flex-col gap-2 flex-shrink-0">
+                                                    {canProposeOrderChange && (
+                                                        <div className="flex flex-wrap gap-2">
                                                             {ex.status === 'open' && String(ex?.type) !== 'order_change' && (
                                                                 <Button size="sm" variant="secondary" onClick={() => openProposalModal(ex)}>
-                                                                    填處理
+                                                                    填寫處理方式
                                                                 </Button>
                                                             )}
                                                         </div>

@@ -470,6 +470,8 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
         await client.query('BEGIN');
 
         // dispatcher：僅允許該訂單「拋單員」提交處理內容；若訂單由管理員建立，dispatcher 不可提案
+        // Match order-change/resolve lock order before locking the exception.
+        await client.query('SELECT id FROM orders WHERE id=$1 FOR UPDATE', [orderId]);
         if (role === 'dispatcher') {
             const responsible = await fetchOrderResponsibleUser(client, orderId);
             const responsibleUserId = responsible?.userId ?? null;
@@ -482,7 +484,7 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
         }
 
         const exists = await client.query(
-            'SELECT id, type, status FROM order_exceptions WHERE id = $1 AND order_id = $2',
+            'SELECT id, type, status, snapshot FROM order_exceptions WHERE id = $1 AND order_id = $2 FOR UPDATE',
             [exceptionId, orderId]
         );
         if (exists.rowCount === 0) {
@@ -513,7 +515,7 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
             [JSON.stringify(proposal), exceptionId, orderId]
         );
 
-        await notifyOrderChange({db:client,events:notifications,orderId,actorId:userId,exceptionId,phase:'requested',reason:proposalNote,category:'exception'});
+        await notifyOrderChange({db:client,events:notifications,orderId,actorId:userId,exceptionId,phase:'requested',reason:proposalNote,category:'exception',previousProposal:exists.rows[0].snapshot?.proposal});
         await client.query('COMMIT');
         notifications.publish();
 

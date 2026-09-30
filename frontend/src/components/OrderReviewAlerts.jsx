@@ -93,6 +93,15 @@ export default function OrderReviewAlerts({user}) {
                     <p className="mt-2 text-base font-semibold">{current.is_current ? current.payload.message : '此為較早的異動通知，已有後續更新，請以訂單最新內容為準。'}</p>
                 </div>
                 {current.payload.reason&&<p className="text-sm text-slate-600 whitespace-pre-wrap break-words">原因：{current.payload.reason}</p>}
+                {current.payload.actorName&&<p className="text-sm text-slate-700">操作人：{current.payload.actorName}（{current.payload.actorRole}）</p>}
+                {current.payload.details?.lines?.length>0&&<section aria-label="異動明細" className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                    <h3 className="font-semibold">{current.payload.details.heading}</h3>
+                    <ul className="mt-2 space-y-2 whitespace-pre-wrap break-words">{current.payload.details.lines.slice(0,3).map((line,index)=><li key={index}>{line}</li>)}</ul>
+                    {current.payload.details.lines.length>3&&<details className="mt-2" key={current.id}>
+                        <summary className="min-h-10 cursor-pointer font-semibold text-blue-700">展開全部異動明細</summary>
+                        <ul className="space-y-2 whitespace-pre-wrap break-words">{current.payload.details.lines.slice(3).map((line,index)=><li key={index}>{line}</li>)}</ul>
+                    </details>}
+                </section>}
                 <p className="text-xs text-slate-500">{formatMessageTimestamp(current.created_at)} · 尚有 {inbox.total} 則未確認</p>
                 {soundBlocked&&<div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
                     <p>警示音尚未播放，請先點選啟用並確認裝置音量。</p>

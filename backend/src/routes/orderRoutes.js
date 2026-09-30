@@ -374,12 +374,12 @@ router.patch('/orders/:orderId/void', warehouseOnly, authorizeAdmin, async (req,
     try {
         client = await pool.connect();
         await client.query('BEGIN'); transactionOpen = true;
-        await client.query('SELECT id FROM orders WHERE id=$1 FOR UPDATE',[orderId]);
+        const previousOrder=(await client.query('SELECT id,status FROM orders WHERE id=$1 FOR UPDATE',[orderId])).rows[0];
         if (await hasOpenOrderChange(client,orderId)) { await client.query('ROLLBACK'); transactionOpen=false; return res.status(409).json({message:'此訂單已有待審核異動，請先核准或駁回申請'}); }
         const result = await client.query("UPDATE orders SET status = 'voided', void_reason = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId, reason]);
         if (!result.rowCount) { await client.query('ROLLBACK'); transactionOpen = false; return res.status(404).json({ message: '找不到要作廢的訂單' }); }
         await logOperation({ userId: req.user.id, orderId, operationType: 'void', details: { reason }, db: client, io: events });
-        await notifyOrderChange({db:client,events,orderId,actorId:req.user.id,phase:'voided',reason});
+        await notifyOrderChange({db:client,events,orderId,actorId:req.user.id,phase:'voided',reason,previousStatus:previousOrder?.status});
         events.emit('task_status_changed', { orderId: Number(orderId), newStatus: 'voided' });
         commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
         events.publish();
@@ -1003,10 +1003,10 @@ router.post('/orders/:orderId/defect', warehouseOnly, authorizeRoles('admin', 'd
         if (duplicate.rowCount) throw fail(409, '新SN已存在於此訂單');
         await client.query('UPDATE order_item_instances SET serial_number=$1, updated_at=NOW() WHERE id=$2', [newSn, instance.id]);
         await client.query('INSERT INTO product_defects (order_id,user_id,original_sn,new_sn,product_barcode,product_name,reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [orderId,userId,oldSn,newSn,instance.barcode,instance.product_name,reason]);
-        await client.query(`INSERT INTO order_exceptions (order_id,type,status,reason_code,reason_text,created_by,ack_by,ack_at,resolved_by,resolved_at,snapshot)
-            VALUES ($1,'sn_replace','resolved','DEFECT_EXCHANGE',$2,$3,$3,NOW(),$3,NOW(),$4::jsonb)`, [orderId,reason,userId,JSON.stringify({oldSn,newSn,product:{barcode:instance.barcode,name:instance.product_name,orderItemId:instance.order_item_id}})]);
+        const exception=(await client.query(`INSERT INTO order_exceptions (order_id,type,status,reason_code,reason_text,created_by,ack_by,ack_at,resolved_by,resolved_at,snapshot)
+            VALUES ($1,'sn_replace','resolved','DEFECT_EXCHANGE',$2,$3,$3,NOW(),$3,NOW(),$4::jsonb) RETURNING id`, [orderId,reason,userId,JSON.stringify({oldSn,newSn,product:{barcode:instance.barcode,name:instance.product_name,orderItemId:instance.order_item_id}})])).rows[0];
         await logOperation({ userId,orderId,operationType:'defect_exchange',details:{oldSn,newSn,reason,product:instance.product_name},io:events,db:client });
-        await notifyOrderChange({db:client,events,orderId,actorId:userId,phase:'sn_replaced',reason:'新品不良異動，請重新核對 SN。'});
+        await notifyOrderChange({db:client,events,orderId,actorId:userId,exceptionId:exception.id,phase:'sn_replaced',reason});
         events.emit('order_exception_changed', { orderId:Number(orderId), action:'resolved', type:'sn_replace' });
         commitAttempted=true; await client.query('COMMIT'); transactionOpen=false;
         events.publish();
