@@ -28,3 +28,14 @@ lemon 保留 `admin / orders`，mozwen（陳怡玟）保留 `admin / warehouse`�
 本次不需要資料庫 migration，不重播舊通知，不改 Render、Cloud SQL／Secrets、附件、IAM 或其他系統。候選版先佔 0% 流量，驗證後才切換；回復目標 `corely-wms-order-alerts-20260930`，保留所有新增通知和業務資料，不可倒灌舊資料庫。共享驗收服務保持原狀。
 
 發布證據：協作目錄 `artifacts/wms-manager-notices-20260930`。實體聲音仍需各工作站確認系統音量、瀏覽器音訊權限及個人警示音開關。
+
+## 正式發布結果（2026-09-30 18:25:27 台灣時間）
+
+- 程式提交：`315add5abd9e1ac73e5467d1eaef80ae1e5c2f77`；GitHub CI `36701824608` 成功。Cloud Build `bb694868-41ef-4dfa-bce4-d812a9267376` 成功。
+- 正式 revision：`corely-wms-manager-notices-20260930`，100% 流量。
+- backend：`sha256:2b666adc0f58838fd396f80f86936369d98b83c7c19f6cc847864170c6794ffc`；frontend：`sha256:5d0a8409b3a9fa09c6cb947108aa75b6c59d8ff9c6ebcfc5a250d23315928359`。
+- 191 項後端單元、139 項前端測試、58 項隔離 PostgreSQL／HTTP／Socket／瀏覽器流程（18 個瀏覽器情境）及前端 build 通過；含 500 次揀貨、500 次裝箱。
+- 0% 候選版與正式站健康、登入保護、真實帳號唯讀 API、通知收件對帳，以及 lemon／mozwen 的角色編輯畫面均通過；未儲存正式帳號或建立正式測試異動。
+- 正式唯讀查核最初同時開啟兩個外部查核連線時碰到角色連線上限；改成序列查核後全部通過。正式健康檢查及 API 成功，未調高資料庫連線上限。後續發版請序列執行 SQL 查核與瀏覽器查核，避免占用正式連線預算。
+- 無 migration；帳號、角色、訂單、Cloud SQL 連線、Secrets、附件 bucket、IAM 及共享驗收服務未更動。舊候選 tag 已移除，上一版 revision 保留供程式回復。
+- 操作站重新整理後使用新版；實體音量／瀏覽器音訊權限仍由各工作站試聽確認。

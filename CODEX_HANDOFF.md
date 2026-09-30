@@ -18,7 +18,7 @@
 
 ## 從哪裡確認進度
 
-- `docs/WMS_MANAGER_NOTICES_2026-09-30.md`：管理員雙向通知與異動前後明細、兩邊填寫例外處理、成員編輯表單修正；發布結果以該文件最新紀錄為準。
+- `docs/WMS_MANAGER_NOTICES_2026-09-30.md`：管理員雙向通知與異動前後明細、兩邊填寫例外處理、成員編輯表單修正；正式 revision `corely-wms-manager-notices-20260930`（100%），程式 `315add5`。
 
 - `docs/WMS_ORDER_ALERTS_2026-09-30.md`：例外查詢中文化、大型異動警示、專用聲音與持久收件確認；包含 migration 029 及部署／回復界線。正式 revision `corely-wms-order-alerts-20260930`（100%），程式 `bd6b5e8`。
 
