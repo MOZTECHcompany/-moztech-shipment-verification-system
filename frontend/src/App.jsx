@@ -1,5 +1,6 @@
 // frontend/src/App.jsx
 
+import { isWarehouseAdmin } from './utils/managementScope';
 import { lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
@@ -38,6 +39,13 @@ function App() {
     const [token, setToken] = useLocalStorage('wms_token', null);
 
     useEffect(() => { soundNotification.setUser(user?.id); }, [user?.id]);
+    useEffect(() => {
+        if (!token) return;
+        let alive=true;
+        apiClient.get('/api/auth/me',{headers:{Authorization:`Bearer ${token}`}}).then(({data})=>{if(alive)setUser(data.user);}).catch(()=>{});
+        return()=>{alive=false;};
+    },[token,setUser]);
+
 
     // Update the transport credentials on login, refresh, account switch and logout.
     useEffect(() => {
@@ -98,12 +106,12 @@ function App() {
                             <Route path="/settings/logistics" element={['admin','superadmin'].includes(user?.role) ? <LogisticsSettings /> : <Navigate to="/tasks" />} />
                             <Route path="/settings" element={<SettingsPage user={user} />} />
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/users" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/users" element={isWarehouseAdmin(user) ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <OperationLogs /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/analytics" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Analytics /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/scan-errors" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <ScanErrors /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/defects" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <DefectStats /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/exceptions" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <Exceptions user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/tasks" element={<TaskDashboard user={user} />} />
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />

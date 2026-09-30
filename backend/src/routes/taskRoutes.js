@@ -23,6 +23,8 @@ router.get('/tasks', async (req, res) => {
                 (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
                 (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
                 COALESCE(o.is_urgent, FALSE) as is_urgent,
+                EXISTS(SELECT 1 FROM order_exceptions e WHERE e.order_id=o.id AND e.type='order_change' AND e.status='open') AS change_pending,
+                EXISTS(SELECT 1 FROM order_exceptions e WHERE e.order_id=o.id AND e.type='order_change' AND e.status='open' AND e.snapshot->'proposal'->>'action'='delete_order') AS deletion_pending,
                 MAX(import_log.user_id) as imported_by_user_id,
                 COUNT(DISTINCT tc.id) as total_comments,
                 COUNT(DISTINCT tc.id) FILTER (WHERE tc.priority = 'urgent') as urgent_comments,

@@ -15,7 +15,7 @@ const token = jwt.sign({ id: 7, role: 'superadmin' }, process.env.JWT_SECRET, { 
 
 beforeEach(() => {
     pool.query.mockImplementation(async query => {
-        if (query?.text === 'SELECT id, username, name, role FROM users WHERE id = $1') {
+        if (query?.text === 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1') {
             return { rows: [{ id: 7, username: 'synthetic-admin', role: 'superadmin' }] };
         }
         if (query === 'SELECT run_all_purge($1, $2, $3, $4) AS result') return { rows: [{ result: { operation_logs_deleted: 0 } }] };
@@ -38,7 +38,7 @@ test.each([
     ['post', '/API/MIGRATE/ADD-PRIORITY-TEST/'], ['get', '/api/DEBUG/TABLES/'],
 ])('production disables %s %s even for superadmin and alternate route casing/slashes', async (method, path) => {
     await request(app)[method](path).set('Authorization', `Bearer ${token}`).send({}).expect(404);
-    expect(pool.query.mock.calls.every(([query]) => query.text === 'SELECT id, username, name, role FROM users WHERE id = $1')).toBe(true);
+    expect(pool.query.mock.calls.every(([query]) => query.text === 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1')).toBe(true);
     expect(pool.connect).not.toHaveBeenCalled();
 });
 

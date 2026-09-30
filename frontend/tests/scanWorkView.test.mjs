@@ -1,3 +1,5 @@
+import * as managementScope from '../src/utils/managementScope.js';
+import * as orderChangePresentation from '../src/utils/orderChangePresentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -61,6 +63,8 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         off: (name, callback) => { offCalls.push([name, callback]); }
     };
     const imports = {
+        '@/utils/managementScope': managementScope,
+        '@/utils/orderChangePresentation': orderChangePresentation,
         react,
         'react-router-dom': { useParams: () => ({ orderId: '1' }), useNavigate: () => noop },
         sonner: { toast: { warning: (...args) => warnings.push(args), error: noop, success: noop, info: noop } },

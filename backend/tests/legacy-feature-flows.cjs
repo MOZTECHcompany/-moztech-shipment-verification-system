@@ -138,7 +138,8 @@ module.exports = async function legacyFeatures({ t, api, ok, pool, users, import
         const ids = [];
         for (const voucher of ['PARITY-DELETE-A', 'PARITY-DELETE-B']) ids.push(ok(await importOrder(voucher, 1), 201).orderId);
         assert.equal((await api('dispatcher', 'POST', '/api/orders/batch/delete', { orderIds: ids })).status, 403);
-        ok(await api('admin', 'POST', '/api/orders/batch/delete', { orderIds: ids }));
-        assert.equal((await pool.query('SELECT id FROM orders WHERE id=ANY($1::int[])', [ids])).rowCount, 0);
+        const requested=ok(await api('admin', 'POST', '/api/orders/batch/delete', { orderIds: ids,reason:'Batch deletion fixture' }),202);
+        assert.equal(requested.requested.length,2);
+        assert.equal((await pool.query('SELECT id FROM orders WHERE id=ANY($1::int[])', [ids])).rowCount, 2);
     });
 };

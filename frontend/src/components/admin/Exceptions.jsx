@@ -1,3 +1,5 @@
+import {isDeletionRequest} from '@/utils/orderChangePresentation';
+import {isWarehouseAdmin} from '@/utils/managementScope';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -15,6 +17,7 @@ const typeLabel = (type) => {
     under_scan: '少掃',
     sn_replace: 'SN更換',
     other: '其他',
+    order_change: '訂單異動',
   };
   return map[type] || type;
 };
@@ -77,7 +80,8 @@ function renderSnBlock(label, snText) {
   );
 }
 
-export function Exceptions() {
+export function Exceptions({user}) {
+  const canReview=isWarehouseAdmin(user);
   const [tab, setTab] = useState('open');
   const [q, setQ] = useState('');
   const [items, setItems] = useState([]);
@@ -102,7 +106,7 @@ export function Exceptions() {
   const [createdBy, setCreatedBy] = useState('');
   const [ackBy, setAckBy] = useState('');
   const [resolvedBy, setResolvedBy] = useState('');
-  const [type, setType] = useState('');
+  const [type, setType] = useState(() => new URLSearchParams(window.location.search).get('type') || '');
   const [orderStatus, setOrderStatus] = useState('');
   const [overdueOnly, setOverdueOnly] = useState(false);
 
@@ -278,6 +282,12 @@ export function Exceptions() {
     }
   }, [ackNote, closeDetail, detailRow?.id, detailRow?.order_id, fetchList]);
 
+  const submitReject = async () => {
+    if(!ackNote.trim()){toast.error('請填寫駁回原因');return;}
+    try{await apiClient.patch(`/api/orders/${detailRow.order_id}/exceptions/${detailRow.id}/reject`,{note:ackNote.trim()});toast.success('已駁回');closeDetail();fetchList();}
+    catch(error){toast.error(error.response?.data?.message || '駁回失敗');}
+  };
+
   const submitResolve = useCallback(async () => {
     if (!detailRow?.order_id || !detailRow?.id) return;
     try {
@@ -321,6 +331,7 @@ export function Exceptions() {
               <CardContent className="flex gap-2 flex-wrap">
                 <Button variant={tab === 'open' ? 'primary' : 'secondary'} onClick={() => setTab('open')}>待核可</Button>
                 <Button variant={tab === 'ack' ? 'primary' : 'secondary'} onClick={() => setTab('ack')}>已核可</Button>
+                <Button variant={tab === 'rejected' ? 'primary' : 'secondary'} onClick={() => setTab('rejected')}>已駁回</Button>
                 <Button variant={tab === 'resolved' ? 'primary' : 'secondary'} onClick={() => setTab('resolved')}>已結案</Button>
               </CardContent>
             </Card>
@@ -384,7 +395,7 @@ export function Exceptions() {
                     <option value="over_scan">多掃</option>
                     <option value="under_scan">少掃</option>
                     <option value="sn_replace">SN更換</option>
-                    <option value="other">其他</option>
+                    <option value="order_change">訂單異動</option><option value="order_delete">刪除申請</option><option value="other">其他</option>
                   </select>
                 </div>
 
@@ -494,7 +505,7 @@ export function Exceptions() {
                           </div>
                         </TD>
                         <TD>
-                          <div className="font-bold">{typeLabel(row.type)}</div>
+                          <div className="font-bold">{isDeletionRequest(row) ? '刪除訂單' : typeLabel(row.type)}</div>
                           <div className="text-xs text-gray-500">{formatTs(row.created_at)}</div>
                         </TD>
                         <TD>
@@ -519,12 +530,12 @@ export function Exceptions() {
                             <Button size="sm" variant="secondary" onClick={() => openDetail(row)} disabled={loading}>
                               查看
                             </Button>
-                            {row.status === 'open' && (
+                            {canReview && row.status === 'open' && (
                               <Button size="sm" onClick={() => openDetail(row)} disabled={loading}>
                                 核可
                               </Button>
                             )}
-                            {row.status === 'ack' && (
+                            {canReview && row.status === 'ack' && (
                               <Button size="sm" onClick={() => openDetail(row)} disabled={loading}>
                                 結案
                               </Button>
@@ -562,12 +573,13 @@ export function Exceptions() {
         footer={
           <>
             <Button variant="secondary" onClick={closeDetail}>關閉</Button>
-            {detailRow?.status === 'open' && (
-              <Button onClick={submitAck}>
-                核可
-              </Button>
+            {canReview && detailRow?.status === 'open' && (
+              <>
+              <Button variant="danger" onClick={submitReject}>駁回</Button>
+              <Button onClick={submitAck}>{isDeletionRequest(detailRow) ? '核准刪除並作廢' : '核可'}</Button>
+              </>
             )}
-            {detailRow?.status === 'ack' && (
+            {canReview && detailRow?.status === 'ack' && (
               <Button onClick={submitResolve}>
                 結案
               </Button>
@@ -586,7 +598,7 @@ export function Exceptions() {
                   <div className="text-xs text-gray-500 mt-0.5">{detailRow.customer_name || ''}</div>
                   <div className="mt-2 flex items-center gap-2 flex-wrap">
                     <Badge variant={statusVariant(detailRow.status)}>{statusLabel(detailRow.status)}</Badge>
-                    <Badge variant="neutral">{typeLabel(detailRow.type)}</Badge>
+                    <Badge variant="neutral">{isDeletionRequest(detailRow) ? '刪除訂單' : typeLabel(detailRow.type)}</Badge>
                     <Badge variant="neutral">附件 {detailRow.attachment_count || 0}</Badge>
                   </div>
                 </div>
@@ -600,9 +612,10 @@ export function Exceptions() {
               <div className="text-sm text-gray-800 mt-3 whitespace-pre-wrap break-words">{detailRow.reason_text}</div>
             </div>
 
-            {detailRow?.snapshot?.proposal && (
+            {isDeletionRequest(detailRow) && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">核准後訂單將作廢並停止出貨，品項、SN、留言與異動紀錄全部保留。</div>}
+            {!isDeletionRequest(detailRow) && detailRow?.snapshot?.proposal && (
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                <div className="text-sm font-bold text-gray-900">拋單員處理內容（待審核）</div>
+                <div className="text-sm font-bold text-gray-900">異動內容（{detailRow.status==='open'?'待審核':detailRow.status==='rejected'?'已駁回':'已核可'}）</div>
                 {String(detailRow?.type) === 'order_change' && Array.isArray(detailRow.snapshot.proposal?.items) ? (
                   <>
                     <div className="text-sm text-gray-700 mt-2 whitespace-pre-wrap break-words">異動原因：{detailRow.snapshot.proposal?.note || '-'}</div>
@@ -648,9 +661,9 @@ export function Exceptions() {
               </div>
             )}
 
-            {detailRow?.status === 'open' && (
+            {canReview && detailRow?.status === 'open' && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">核可備註（可選）</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">審核備註（駁回時必填）</label>
                 <textarea
                   value={ackNote}
                   onChange={(e) => setAckNote(e.target.value)}
@@ -660,7 +673,7 @@ export function Exceptions() {
               </div>
             )}
 
-            {detailRow?.status === 'ack' && (
+            {canReview && detailRow?.status === 'ack' && (
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">處置類型（必填）</label>

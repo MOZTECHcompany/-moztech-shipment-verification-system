@@ -1,3 +1,4 @@
+import {isWarehouseAdmin} from '../utils/managementScope';
 import React, { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, ChevronRight, History, Truck, Users } from 'lucide-react';
@@ -33,7 +34,7 @@ export function SettingsPage({ user }) {
       <VoiceControls />
       {admin && <section aria-labelledby="system-settings-title" className="rounded-xl border border-slate-200 bg-white p-5">
         <h2 id="system-settings-title" className="mb-4 font-semibold">系統管理</h2>
-        {[{to:'/settings/logistics', label:'物流串接', icon:Truck}, {to:'/admin/users', label:'成員與角色', icon:Users}, {to:'/admin/operation-logs', label:'操作日誌', icon:History}].map(({to,label,icon:Icon}) => <Link key={to} to={to} className="flex min-h-14 items-center gap-3 rounded-lg px-3 py-4 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700"><Icon size={19} /><span className="flex-1">{label}</span><ChevronRight size={17} /></Link>)}
+        {[{to:'/settings/logistics', label:'物流串接', icon:Truck}, {to:'/admin/users', label:'成員與角色', icon:Users}, {to:'/admin/operation-logs', label:'操作日誌', icon:History}].filter(item=>item.to!=='/admin/users'||isWarehouseAdmin(user)).map(({to,label,icon:Icon}) => <Link key={to} to={to} className="flex min-h-14 items-center gap-3 rounded-lg px-3 py-4 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700"><Icon size={19} /><span className="flex-1">{label}</span><ChevronRight size={17} /></Link>)}
       </section>}
       <section aria-labelledby="personal-settings-title" className="rounded-xl border border-slate-200 bg-white p-5">
         <h2 id="personal-settings-title" className="font-semibold">提示與通知</h2>

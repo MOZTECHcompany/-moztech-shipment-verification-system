@@ -1,3 +1,4 @@
+import {managementRoleLabel} from '@/utils/managementScope';
 // frontend/src/components/admin/UserManagement.jsx
 // 使用者管理頁面 - Apple 風格現代化版本
 
@@ -19,6 +20,7 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
         name: user?.name || '',
         password: '',
         role: user?.role || 'picker',
+        management_scope: user?.management_scope || 'all',
     });
     const [isSaving, setIsSaving] = useState(false);
     const isEditMode = !!user;
@@ -101,6 +103,14 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
                         <p className="mt-2 text-xs text-gray-500">只有最高管理員可以建立/指派管理員角色</p>
                     )}
                 </div>
+                {isSuperAdminActor && formData.role === 'admin' && <div>
+                    <label htmlFor="management-scope" className="block mb-2 text-sm font-semibold">管理員分工</label>
+                    <select id="management-scope" name="management_scope" value={formData.management_scope} onChange={handleChange} className="w-full rounded-xl border px-4 py-3">
+                        <option value="orders">訂單管理員（拋單、提出異動）</option>
+                        <option value="warehouse">倉儲管理員（倉儲作業、審核）</option>
+                        <option value="all">管理員（完整管理）</option>
+                    </select>
+                </div>}
             </form>
         </Modal>
     );
@@ -131,7 +141,7 @@ export function UserManagement({ currentUser }) {
     const handleOpenModal = (user = null) => {
         const actorRole = (currentUser?.role || '').toLowerCase();
         const targetRole = (user?.role || '').toLowerCase();
-        if (user && targetRole === 'superadmin' && actorRole !== 'superadmin') {
+        if (user && ['admin','superadmin'].includes(targetRole) && actorRole !== 'superadmin') {
             toast.error('權限不足', { description: '管理員不可編輯最高管理員帳號' });
             return;
         }
@@ -145,6 +155,7 @@ export function UserManagement({ currentUser }) {
     };
 
     const handleSaveUser = async (formData) => {
+        if (currentUser?.role !== 'superadmin') { formData = {...formData}; delete formData.management_scope; }
         const isEdit = !!editingUser;
         const apiCall = isEdit
             ? apiClient.put(`/api/admin/users/${editingUser.id}`, formData)
@@ -279,13 +290,13 @@ export function UserManagement({ currentUser }) {
                                                         {((user.role || '').toLowerCase() === 'picker') && <UserIcon className="h-3 w-3" />}
                                                         {((user.role || '').toLowerCase() === 'packer') && <UserIcon className="h-3 w-3" />}
                                                         {((user.role || '').toLowerCase() === 'dispatcher') && <UserIcon className="h-3 w-3" />}
-                                                        {roleMap[(user.role || '').toLowerCase()]?.label || user.role}
+                                                        {managementRoleLabel(user)}
                                                     </Badge>
                                                 </TD>
                                                 <TD className="text-xs text-gray-600">{new Date(user.created_at).toLocaleDateString('zh-TW')}</TD>
                                                 <TD className="text-right">
                                                     <div className="flex justify-end gap-2">
-                                                        {((user.role || '').toLowerCase() !== 'superadmin' || (currentUser?.role || '').toLowerCase() === 'superadmin') && (
+                                                        {(!['admin','superadmin'].includes((user.role || '').toLowerCase()) || (currentUser?.role || '').toLowerCase() === 'superadmin') && (
                                                             <>
                                                                 <Button variant="secondary" size="xs" className="gap-1" onClick={() => handleOpenModal(user)}>
                                                                     <Edit className="h-3 w-3" /> 編輯

@@ -20,7 +20,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     async function pageFor(role, mobile = false, timezoneId = 'Asia/Taipei') {
         const context = await browser.newContext({ timezoneId, viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
         contexts.push(context);
-        const user = (await pool.query('SELECT id,username,name,role FROM users WHERE id=$1', [users[role]])).rows[0];
+        const user = (await pool.query('SELECT id,username,name,role,management_scope FROM users WHERE id=$1', [users[role]])).rows[0];
         await context.addInitScript(({user,token}) => { localStorage.setItem('wms_user', JSON.stringify(user)); localStorage.setItem('wms_token', JSON.stringify(token)); }, { user, token: tokens[role] });
         const page = await context.newPage(); page.setDefaultTimeout(15000);
         await page.addInitScript(() => {
@@ -297,6 +297,39 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
                 await page.close();
             }
         });
+        await step('browser: order manager submits deletion; warehouse supervisor and assigned picker receive persistent review alerts',async()=>{
+            const requestVoucher=prefix+'-DELETE';
+            const id=(await pool.query("INSERT INTO orders(voucher_number,customer_name,status,picker_id) VALUES($1,'Review fixture','picking',$2) RETURNING id",[requestVoucher,users.picker])).rows[0].id;
+            cleanupOrders.push(id);
+            await pool.query("INSERT INTO order_items(order_id,product_code,barcode,product_name,quantity) VALUES($1,'REVIEW','REVIEW','Review item',1)",[id]);
+            await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'import','{}')",[id,users.orderManager]);
+            const manager=await pageFor('orderManager'),supervisor=await pageFor('warehouseManager'),worker=await pageFor('picker');
+            await worker.goto(webBase+'/order/'+id);
+            await worker.getByPlaceholder('掃描或輸入條碼',{exact:true}).waitFor();
+            await supervisor.goto(webBase+'/tasks');
+            await manager.goto(webBase+'/tasks');
+            await manager.getByText('訂單管理員',{exact:true}).waitFor();
+            await Promise.all([manager.waitForResponse(r=>new URL(r.url()).searchParams.get('q')===requestVoucher),manager.getByLabel('查找任務',{exact:true}).fill(requestVoucher)]);
+            assert.equal(await manager.getByRole('button',{name:'批次揀貨',exact:true}).count(),0);
+            await manager.getByRole('button',{name:'申請刪除訂單 '+requestVoucher,exact:true}).click();
+            await manager.getByRole('textbox',{name:'刪除原因',exact:true}).fill('UI review reason');
+            await response(manager,`/api/orders/${id}/deletion-requests`,'POST',()=>manager.getByRole('button',{name:'送交主管審核',exact:true}).click());
+            await worker.getByRole('region',{name:'訂單異動提醒'}).getByRole('status').waitFor();
+            await worker.waitForFunction(()=>document.querySelector('input[placeholder*="審核中"]')?.disabled===true);
+            await supervisor.getByRole('region',{name:'訂單異動提醒'}).getByRole('link',{name:'前往審核'}).click();
+            const row=supervisor.getByRole('row').filter({hasText:requestVoucher});
+            await row.getByRole('button',{name:'核可',exact:true}).click();
+            await supervisor.getByRole('alert').filter({hasText:'核准後訂單將作廢'}).waitFor();
+            await supervisor.screenshot({path:output+'/warehouse-delete-review.png',fullPage:true});
+            const exception=(await pool.query("SELECT id FROM order_exceptions WHERE order_id=$1 AND status='open'",[id])).rows[0].id;
+            await response(supervisor,`/api/orders/${id}/exceptions/${exception}/ack`,'PATCH',()=>supervisor.getByRole('button',{name:'核准刪除並作廢',exact:true}).click());
+            assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status,'voided');
+            assert.equal((await pool.query('SELECT id FROM order_items WHERE order_id=$1',[id])).rowCount,1);
+            await manager.goto(webBase+'/settings');
+            assert.equal(await manager.getByRole('link',{name:'成員與角色',exact:true}).count(),0);
+            await manager.screenshot({path:output+'/order-manager-settings.png',fullPage:true});
+            await manager.close();await supervisor.close();await worker.close();
+        });
         await step('browser: every legacy admin screen, reports, history, team and settings loads real API data', async () => {
             const pages = [['/admin','出貨管理'], ['/admin/users','成員與角色'], ['/admin/operation-logs','操作日誌查詢'], ['/admin/analytics','數據分析儀表板'], ['/admin/scan-errors','刷錯條碼分析'], ['/admin/defects','新品不良異動'], ['/admin/exceptions','例外總覽'], ['/team','公告板'], ['/settings','設定']];
             for (const [route,title] of pages) {
@@ -331,7 +364,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 14 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 15 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

@@ -72,13 +72,14 @@ router.post('/bootstrap/superadmin', localMaintenanceOnly, async (req, res) => {
 });
 
 // 與舊版 API 兼容：POST /api/admin/create-user
-router.post('/create-user', async (req, res) => {
+router.post('/create-user', require('../utils/managementScope').warehouseOnly, async (req, res) => {
   try {
-    let { username, password, name, role } = req.body || {};
+    let { username, password, name, role, management_scope } = req.body || {};
     if (!username || !password || !name || !role) {
       return res.status(400).json({ message: '請提供完整的使用者資料' });
     }
 
+    if (management_scope !== undefined && (req.user?.role !== 'superadmin' || !['all','orders','warehouse'].includes(management_scope))) return res.status(403).json({message:'管理員分工僅能由系統管理員設定'});
     role = String(role).trim().toLowerCase();
 
     // 只有最高管理員可以新增/指定管理員（admin/superadmin）
@@ -86,7 +87,7 @@ router.post('/create-user', async (req, res) => {
     if ((role === 'admin' || role === 'superadmin') && actorRole !== 'superadmin') {
       return res.status(403).json({ message: '只有最高管理員可以新增管理員' });
     }
-    const user = await userService.createUser({ username, password, name, role });
+    const user = await userService.createUser({ username, password, name, role, management_scope });
 
     return res.status(201).json({
       message: `使用者 ${user.username} (${user.role}) 已成功建立`,

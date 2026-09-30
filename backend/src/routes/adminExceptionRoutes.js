@@ -8,7 +8,7 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 const VALID_STATUSES = new Set(['open', 'ack', 'resolved', 'rejected']);
-const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change']);
+const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change', 'order_delete']);
 
 function parsePositiveInt(value, fallback) {
   const n = parseInt(String(value ?? ''), 10);
@@ -57,7 +57,9 @@ router.get('/exceptions', async (req, res) => {
       where += ` AND e.status = $${params.length}`;
     }
 
-    if (type) {
+    if (type === 'order_delete') {
+      where += " AND e.type='order_change' AND e.snapshot->'proposal'->>'action'='delete_order'";
+    } else if (type) {
       params.push(type);
       where += ` AND e.type = $${params.length}`;
     }

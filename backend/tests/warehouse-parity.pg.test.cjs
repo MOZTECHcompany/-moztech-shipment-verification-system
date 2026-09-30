@@ -277,8 +277,8 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         assert.notEqual((await scan('picker', orderId, 'FIXTURE-BARCODE', 'pick')).status, 200);
         assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_logs WHERE order_id=$1 AND action_type='void'", [orderId])).rows[0].n, 1);
         assert.equal((await api('picker', 'DELETE', `/api/orders/${orderId}`)).status, 403);
-        ok(await api('dispatcher', 'DELETE', `/api/orders/${orderId}`));
-        assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE id=$1', [orderId])).rows[0].n, 0);
+        assert.equal((await api('dispatcher', 'DELETE', `/api/orders/${orderId}`,{reason:'already voided'})).status,409);
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE id=$1', [orderId])).rows[0].n, 1);
     });
     await t.test('explicit batch stages cannot cross phases, retain partial results and require normal scans', async () => {
         const first = ok(await importOrder('BATCH-STAGES-A', 1), 201).orderId;
@@ -314,6 +314,7 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
             assert.equal((await pool.query("SELECT count(*)::int n FROM operation_logs WHERE order_id=$1 AND action_type='claim'",[id])).rows[0].n,2);
         }
     });
+    await require('./order-review-flows.cjs')({t,api,ok,pool,users,tokens,importOrder,observedEvents});
     await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
     await require('./order-completion-flows.cjs')({ t, api, ok, pool, users, observedEvents });
     await require('./comment-time-flows.cjs')({ t, api, ok, pool, users });

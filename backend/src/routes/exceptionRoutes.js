@@ -8,9 +8,25 @@ const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 const multer = require('multer');
 const { getAttachmentStorage, createAttachmentKey, cleanOriginalName, cleanupAttachments, sendAttachment, isMissing } = require('../services/attachmentStorage');
-const { validateOrderChangeProposal, applyOrderChangeProposal, hasAnyOpenOrderChange } = require('../services/orderChangeService');
 
+const {deferredEvents} = require('../utils/transactionEvents');
+const {notifyOrderChange} = require('../services/orderChangeNotifications');
 const router = express.Router();
+const {warehouseOnly} = require('../utils/managementScope');
+const {requestChange,deletionReviewMiddleware,resolveException} = require('../services/orderReviewService');
+// All item changes, including admin imports, must be explicitly reviewed.
+router.post('/orders/:orderId/exceptions', async (req,res,next) => {
+    if (req.body?.type !== 'order_change') return next();
+    try {
+        const result = await requestChange({pool,io:req.app.get('io'),orderId:req.params.orderId,user:req.user,
+            reason:req.body.reasonText,proposal:req.body.snapshot?.proposal,requestId:req.requestId});
+        res.status(201).json(result);
+    } catch(error) { next(error); }
+});
+router.patch('/orders/:orderId/exceptions/:exceptionId/ack', warehouseOnly, authorizeAdmin, deletionReviewMiddleware(pool,'approve'));
+router.patch('/orders/:orderId/exceptions/:exceptionId/reject', warehouseOnly, authorizeAdmin, deletionReviewMiddleware(pool,'reject'));
+router.patch('/orders/:orderId/exceptions/:exceptionId/propose', deletionReviewMiddleware(pool));
+
 
 const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change']);
 const VALID_STATUSES = new Set(['open', 'ack', 'resolved', 'rejected']);
@@ -18,13 +34,6 @@ const VALID_RESOLUTION_ACTIONS = new Set(['short_ship', 'restock', 'exchange', '
 
 function normalizeRole(value) {
     return value ? String(value).trim().toLowerCase() : '';
-}
-
-function extractOrderChangeProposal({ reasonText, snapshotObj }) {
-    const proposal = snapshotObj?.proposal && typeof snapshotObj.proposal === 'object' ? snapshotObj.proposal : null;
-    const note = String((proposal?.note ?? reasonText) || '').trim();
-    const items = Array.isArray(proposal?.items) ? proposal.items : [];
-    return { note, items };
 }
 
 async function fetchOrderResponsibleUser(client, orderId) {
@@ -54,57 +63,6 @@ async function fetchOrderResponsibleUser(client, orderId) {
         role: row.role || null,
         name: row.name || null
     };
-}
-
-async function createTaskCommentAndMentions({ client, orderId, authorUserId, content, priority, mentionUserIds, io }) {
-    const safeContent = String(content || '').trim().slice(0, 2000);
-    if (!safeContent) return null;
-
-    const safePriority = (priority === 'urgent' || priority === 'important' || priority === 'normal') ? priority : 'normal';
-    const mentioned = Array.isArray(mentionUserIds) ? mentionUserIds.filter(Boolean) : [];
-    const dedupMentionIds = Array.from(new Set(mentioned.map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n) && n > 0))).slice(0, 20);
-
-    const commentResult = await client.query(
-        `INSERT INTO task_comments (order_id, user_id, content, parent_id, priority)
-         VALUES ($1, $2, $3, NULL, $4)
-         RETURNING id, created_at`,
-        [orderId, authorUserId, safeContent, safePriority]
-    );
-
-    const commentId = commentResult.rows[0].id;
-
-    for (const mentionedUserId of dedupMentionIds) {
-        await client.query(
-            `INSERT INTO task_mentions (comment_id, mentioned_user_id)
-             VALUES ($1, $2)`,
-            [commentId, mentionedUserId]
-        );
-        io?.emit('new_mention', {
-            userId: mentionedUserId,
-            orderId: parseInt(orderId, 10),
-            commentId,
-            content: safeContent.slice(0, 100),
-            priority: safePriority
-        });
-    }
-
-    io?.emit('new_comment', {
-        orderId: parseInt(orderId, 10),
-        commentId,
-        userId: authorUserId,
-        content: safeContent,
-        priority: safePriority
-    });
-
-    return { commentId, createdAt: commentResult.rows[0].created_at };
-}
-
-async function fetchAdminUserIds(client, limit = 10) {
-    const rows = await client.query(
-        `SELECT id FROM users WHERE role IN ('admin','superadmin') ORDER BY id ASC LIMIT $1`,
-        [Math.max(1, Math.min(50, parseInt(limit, 10) || 10))]
-    );
-    return (rows.rows || []).map((r) => r.id);
 }
 
 const attachmentUpload = multer({
@@ -203,11 +161,12 @@ router.get('/orders/:orderId/exceptions', async (req, res) => {
 
 // PATCH /api/orders/:orderId/exceptions/:exceptionId/reject
 // 主管駁回（管理員）
-router.patch('/orders/:orderId/exceptions/:exceptionId/reject', authorizeAdmin, async (req, res) => {
+router.patch('/orders/:orderId/exceptions/:exceptionId/reject', warehouseOnly, authorizeAdmin, async (req, res) => {
     const { orderId, exceptionId } = req.params;
     const { note } = req.body || {};
     const userId = req.user.id;
     const io = req.app.get('io');
+    const notifications = deferredEvents(io);
 
     const rejectNote = note ? String(note).trim().slice(0, 2000) : null;
 
@@ -242,7 +201,9 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/reject', authorizeAdmin, 
             [userId, rejectNote, exceptionId, orderId]
         );
 
+        await notifyOrderChange({db:client,events:notifications,orderId,actorId:userId,exceptionId,phase:'rejected',reason:rejectNote || row.reason_text,category:'exception'});
         await client.query('COMMIT');
+        notifications.publish();
 
         await logOperation({
             userId,
@@ -282,6 +243,7 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
     const { type, reasonCode, reasonText, orderItemId, instanceId, snapshot } = req.body || {};
     const { id: userId, role } = req.user;
     const io = req.app.get('io');
+    const notifications = deferredEvents(io);
 
     if (!type || !VALID_TYPES.has(String(type))) {
         return res.status(400).json({ message: 'type 無效' });
@@ -330,36 +292,6 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
         const importedByRole = normalizeRole(orderExist.rows[0]?.imported_by_role);
         const actorRole = normalizeRole(role);
 
-        // order_change: dispatcher only for own imported orders
-        if (String(type) === 'order_change' && actorRole === 'dispatcher') {
-            if (!importedByUserId || importedByRole !== 'dispatcher' || String(importedByUserId) !== String(userId)) {
-                await client.query('ROLLBACK');
-                return res.status(403).json({ message: '僅允許該訂單拋單員申請訂單異動', requestId: req.requestId });
-            }
-        }
-
-        // order_change: prevent multiple concurrent requests
-        if (String(type) === 'order_change') {
-            const hasOpen = await hasAnyOpenOrderChange(client, orderId);
-            if (hasOpen) {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ message: '此訂單已有待審核的異動申請，請先完成審核', requestId: req.requestId });
-            }
-
-            const proposal = extractOrderChangeProposal({ reasonText: normalizedReasonText, snapshotObj });
-            const validated = validateOrderChangeProposal(proposal);
-            if (!validated.ok) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ message: validated.message, requestId: req.requestId });
-            }
-            snapshotObj.proposal = {
-                ...validated.value,
-                proposedBy: userId,
-                proposedAt: new Date().toISOString(),
-                requestId: req.requestId
-            };
-        }
-
         // 可選：驗證 orderItemId/instanceId 是否屬於此訂單（避免亂塞）
         if (orderItemId) {
             const chkItem = await client.query('SELECT 1 FROM order_items WHERE id = $1 AND order_id = $2', [orderItemId, orderId]);
@@ -407,37 +339,9 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
         );
 
         const exceptionId = inserted.rows[0].id;
-        let orderChangeAutoApproved = false;
-        let orderChangeApplyResult = null;
-
-        // 管理員自拋單：可直接異動，不需審核，但仍留痕
-        if (String(type) === 'order_change') {
-            const isAdminLike = actorRole === 'admin' || actorRole === 'superadmin';
-            const isSelfImported = importedByUserId && String(importedByUserId) === String(userId) && (importedByRole === 'admin' || importedByRole === 'superadmin');
-
-            if (isAdminLike && isSelfImported) {
-                const applyResult = await applyOrderChangeProposal({
-                    client,
-                    orderId,
-                    proposal: snapshotObj.proposal,
-                    actorUserId: userId
-                });
-
-                orderChangeApplyResult = applyResult;
-
-                await client.query(
-                    `UPDATE order_exceptions
-                     SET status = 'ack', ack_by = $1, ack_at = NOW(), ack_note = COALESCE($2, ack_note),
-                         snapshot = jsonb_set(COALESCE(snapshot, '{}'::jsonb), '{applyResult}', $3::jsonb, true)
-                     WHERE id = $4 AND order_id = $5`,
-                    [userId, '管理員自拋單：自動放行並套用異動', JSON.stringify(applyResult), exceptionId, orderId]
-                );
-
-                orderChangeAutoApproved = true;
-            }
-        }
-
+        await notifyOrderChange({db:client,events:notifications,orderId,actorId:userId,exceptionId,phase:'requested',reason:normalizedReasonText,category:'exception'});
         await client.query('COMMIT');
+        notifications.publish();
 
         await logOperation({
             userId,
@@ -461,59 +365,9 @@ router.post('/orders/:orderId/exceptions', async (req, res) => {
             exceptionId,
             action: 'created',
             type: String(type),
-            status: orderChangeAutoApproved ? 'ack' : 'open',
+            status: 'open',
             voucherNumber: orderExist.rows[0]?.voucher_number || null
         });
-
-        // 若為 order_change 且自動放行，訂單狀態已被退回（pending / picking）
-        if (String(type) === 'order_change' && orderChangeAutoApproved) {
-            io?.emit('task_status_changed', {
-                orderId: parseInt(orderId, 10),
-                newStatus: orderChangeApplyResult?.newStatus || 'picking'
-            });
-        }
-
-        // 通知責任人（拋單員 / 管理員建立者）：以 task comment + mention 方式推送到通知中心
-        try {
-            const voucherNumber = orderExist.rows[0]?.voucher_number;
-
-            const isOrderChange = String(type) === 'order_change';
-            const content = isOrderChange
-                ? `【訂單異動待審核】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`}\n原因: ${normalizedReasonText}`
-                : `【例外回報】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`} 類型: ${String(type)}\n原因: ${normalizedReasonText}`;
-
-            // order_change 一律通知管理員審核；其他例外維持既有策略
-            const mentionIds = isOrderChange
-                ? await fetchAdminUserIds(client, 10)
-                : ((importedByUserId && importedByRole === 'dispatcher')
-                    ? [importedByUserId]
-                    : await fetchAdminUserIds(client, 10));
-
-            if (mentionIds.length > 0) {
-                const notifyClient = client;
-                const notificationEvents = [];
-                const pendingIo = { emit: (event, body) => notificationEvents.push([event, body]) };
-                try {
-                    await notifyClient.query('BEGIN');
-                    await createTaskCommentAndMentions({
-                        client: notifyClient,
-                        orderId,
-                        authorUserId: userId,
-                        content,
-                        priority: 'urgent',
-                        mentionUserIds: mentionIds,
-                        io: pendingIo
-                    });
-                    await notifyClient.query('COMMIT');
-                    for (const [event, body] of notificationEvents) io?.emit(event, body);
-                } catch (e) {
-                    await notifyClient.query('ROLLBACK');
-                    logger.warn('exception_create: 建立通知 comment/mention 失敗（可忽略）:', e.message);
-                }
-            }
-        } catch (e) {
-            logger.warn('exception_create: 通知責任人失敗（可忽略）:', e.message);
-        }
 
         return res.status(201).json({
             message: '例外已建立',
@@ -590,6 +444,7 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
     const userId = req.user.id;
     const role = req.user.role;
     const io = req.app.get('io');
+    const notifications = deferredEvents(io);
 
     const { resolutionAction, note, newSn, correctBarcode } = req.body || {};
 
@@ -658,27 +513,9 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
             [JSON.stringify(proposal), exceptionId, orderId]
         );
 
-        // 通知管理員審核：建立 task comment + mention all admins
-        try {
-            const adminIds = await fetchAdminUserIds(client, 10);
-            if (adminIds.length > 0) {
-                const orderRow = await client.query('SELECT voucher_number FROM orders WHERE id = $1', [orderId]);
-                const voucherNumber = orderRow.rows[0]?.voucher_number;
-                await createTaskCommentAndMentions({
-                    client,
-                    orderId,
-                    authorUserId: userId,
-                    content: `【例外待審核】${voucherNumber ? `訂單 ${voucherNumber}` : `order #${orderId}`}\n處理方式: ${action}${proposalNote ? `\n備註: ${proposalNote}` : ''}${proposedNewSn ? `\n異動 SN: ${proposedNewSn}` : ''}${proposedBarcode ? `\n正確條碼: ${proposedBarcode}` : ''}`,
-                    priority: 'urgent',
-                    mentionUserIds: adminIds,
-                    io
-                });
-            }
-        } catch (e) {
-            logger.warn('exception_propose: 通知管理員失敗（可忽略）:', e.message);
-        }
-
+        await notifyOrderChange({db:client,events:notifications,orderId,actorId:userId,exceptionId,phase:'requested',reason:proposalNote,category:'exception'});
         await client.query('COMMIT');
+        notifications.publish();
 
         await logOperation({
             userId,
@@ -712,11 +549,12 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/propose', authorizeRoles(
 
 // PATCH /api/orders/:orderId/exceptions/:exceptionId/ack
 // 主管核可（管理員）
-router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, async (req, res) => {
+router.patch('/orders/:orderId/exceptions/:exceptionId/ack', warehouseOnly, authorizeAdmin, async (req, res) => {
     const { orderId, exceptionId } = req.params;
     const { note } = req.body || {};
     const userId = req.user.id;
     const io = req.app.get('io');
+    const notifications = deferredEvents(io);
 
     const ackNote = note ? String(note).trim().slice(0, 2000) : null;
 
@@ -740,29 +578,6 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
             return res.status(409).json({ message: `無法核可，目前狀態為 ${row.status}`, requestId: req.requestId });
         }
 
-        let applyResult = null;
-        if (String(row.type) === 'order_change') {
-            let snapshotObj = row.snapshot;
-            if (typeof snapshotObj === 'string') {
-                try { snapshotObj = JSON.parse(snapshotObj); } catch { snapshotObj = {}; }
-            }
-            if (!snapshotObj || typeof snapshotObj !== 'object' || Array.isArray(snapshotObj)) {
-                snapshotObj = {};
-            }
-
-            const proposal = snapshotObj?.proposal || null;
-            if (!proposal) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ message: '此訂單異動缺少 proposal，無法核可套用', requestId: req.requestId });
-            }
-            applyResult = await applyOrderChangeProposal({
-                client,
-                orderId,
-                proposal,
-                actorUserId: userId
-            });
-        }
-
         const updated = await client.query(
             `UPDATE order_exceptions
              SET status = 'ack', ack_by = $1, ack_at = NOW(), ack_note = COALESCE($2, ack_note),
@@ -772,22 +587,23 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
                  END
              WHERE id = $4 AND order_id = $5
              RETURNING id, type, status, ack_at`,
-            [userId, ackNote, applyResult ? JSON.stringify(applyResult) : null, exceptionId, orderId]
+            [userId, ackNote, null, exceptionId, orderId]
         );
 
+        await notifyOrderChange({db:client,events:notifications,orderId,actorId:userId,exceptionId,phase:'approved',reason:ackNote || row.reason_text,category:'exception'});
         await client.query('COMMIT');
+        notifications.publish();
 
         await logOperation({
             userId,
             orderId,
-            operationType: String(row.type) === 'order_change' ? 'order_change_ack' : 'exception_ack',
+            operationType: 'exception_ack',
             db: client,
             strict: false, // This legacy audit runs after the business COMMIT.
             details: {
                 exceptionId: parseInt(exceptionId, 10),
                 status: 'ack',
                 note: ackNote,
-                ...(applyResult ? { applyResult } : {}),
                 meta: { requestId: req.requestId }
             },
             io
@@ -798,13 +614,6 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
             exceptionId: parseInt(exceptionId, 10),
             action: 'acked'
         });
-
-        if (String(row.type) === 'order_change') {
-            io?.emit('task_status_changed', {
-                orderId: parseInt(orderId, 10),
-                newStatus: applyResult?.newStatus || 'picking'
-            });
-        }
 
         return res.json({ message: '例外已核可', item: updated.rows[0] });
     } catch (error) {
@@ -877,7 +686,7 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/ack', authorizeAdmin, asy
 
 // PATCH /api/orders/:orderId/exceptions/:exceptionId/resolve
 // 結案（需要先 ack）
-router.patch('/orders/:orderId/exceptions/:exceptionId/resolve', authorizeAdmin, async (req, res) => {
+router.patch('/orders/:orderId/exceptions/:exceptionId/resolve', warehouseOnly, authorizeAdmin, async (req, res) => {
     const { orderId, exceptionId } = req.params;
     const { note, resolutionAction } = req.body || {};
     const userId = req.user.id;
@@ -895,50 +704,10 @@ router.patch('/orders/:orderId/exceptions/:exceptionId/resolve', authorizeAdmin,
     }
 
     try {
-        const result = await pool.query(
-            `UPDATE order_exceptions
-             SET status = 'resolved',
-                 resolved_by = $1,
-                 resolved_at = NOW(),
-                 resolution_action = $2,
-                 resolution_note = COALESCE($3, resolution_note)
-             WHERE id = $4 AND order_id = $5 AND status = 'ack'
-             RETURNING id, type, status, resolved_at`,
-            [userId, action, resolutionNote, exceptionId, orderId]
-        );
-
-        if (result.rowCount === 0) {
-            const exists = await pool.query('SELECT status FROM order_exceptions WHERE id = $1 AND order_id = $2', [exceptionId, orderId]);
-            if (exists.rowCount === 0) {
-                return res.status(404).json({ message: '找不到例外事件', requestId: req.requestId });
-            }
-            return res.status(409).json({ message: `無法結案，目前狀態為 ${exists.rows[0].status}（需先核可 ack）`, requestId: req.requestId });
-        }
-
-        await logOperation({
-            userId,
-            orderId,
-            operationType: 'exception_resolve',
-            details: {
-                exceptionId: parseInt(exceptionId, 10),
-                status: 'resolved',
-                resolutionAction: action,
-                note: resolutionNote,
-                meta: { requestId: req.requestId }
-            },
-            io
-        });
-
-        io?.emit('order_exception_changed', {
-            orderId: parseInt(orderId, 10),
-            exceptionId: parseInt(exceptionId, 10),
-            action: 'resolved'
-        });
-
-        return res.json({ message: '例外已結案', item: result.rows[0] });
-    } catch (error) {
-        logger.error('[/api/orders/:orderId/exceptions/:exceptionId/resolve] 失敗:', error);
-        return res.status(500).json({ message: '結案失敗', requestId: req.requestId });
+        res.json(await resolveException({pool,io,orderId,exceptionId,user:req.user,action,note:resolutionNote,requestId:req.requestId}));
+    } catch(error) {
+        logger.error('例外結案失敗',{message:error.message});
+        res.status(error.status || 500).json({message:error.status ? error.message : '結案失敗',requestId:req.requestId});
     }
 });
 

@@ -1,3 +1,5 @@
+import * as managementScope from '../src/utils/managementScope.js';
+import * as orderChangePresentation from '../src/utils/orderChangePresentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -63,6 +65,8 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
     };
     const notifications = new Proxy({ isEnabled: () => false, play: value => sounds.push(value) }, { get: (target, key) => key === '__esModule' ? false : target[key] || noop });
     const imports = {
+        '@/utils/managementScope': managementScope,
+        '@/utils/orderChangePresentation': orderChangePresentation,
         react,
         'react-router-dom': { useNavigate: () => value => navigation.push(value), useLocation: () => ({ state: { view: initialView } }), Link: 'Link' },
         '@/api/api.js': {

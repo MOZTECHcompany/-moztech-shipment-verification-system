@@ -14,10 +14,26 @@ const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletio
 const { deferredEvents } = require('../utils/transactionEvents');
 
 const router = express.Router();
+const {warehouseOnly} = require('../utils/managementScope');
+const {deletionRequestHandler, requestDeletion} = require('../services/orderReviewService');
+const {notifyOrderChange,warehouseReviewerIds} = require('../services/orderChangeNotifications');
+router.get('/order-reviews', async (req,res,next) => {
+    try {
+        const reviewers = await warehouseReviewerIds(pool);
+        const canReview = reviewers.includes(req.user.id);
+        const rows = await pool.query(`SELECT e.id,e.order_id,e.reason_text,e.snapshot->'proposal'->>'action' AS proposal_action,
+            e.created_at AT TIME ZONE 'UTC' AS created_at,o.voucher_number,COUNT(*) OVER()::int AS total
+            FROM order_exceptions e JOIN orders o ON o.id=e.order_id
+            WHERE e.type='order_change' AND e.status='open' AND ($2 OR e.created_by=$1 OR o.picker_id=$1 OR o.packer_id=$1
+              OR $1=(SELECT user_id FROM operation_logs WHERE order_id=o.id AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1))
+            ORDER BY e.created_at,e.id LIMIT 50`,[req.user.id,canReview]);
+        res.json({items:rows.rows,total:rows.rows[0]?.total || 0,canReview});
+    } catch(error) { next(error); }
+});
 const { stateToken, readLines, parseCommand, createWorkSnapshot } = require('../services/scanSnapshot');
 router.get('/orders/:orderId/work-snapshot', createWorkSnapshot(pool));
 const { createReconcilePicking } = require('../services/reconcilePicking');
-router.post('/orders/:orderId/reconcile-picking', authorizeAdmin, createReconcilePicking(pool));
+router.post('/orders/:orderId/reconcile-picking', warehouseOnly, authorizeAdmin, createReconcilePicking(pool));
 
 const scanPerfWindow = [];
 const SCAN_PERF_WINDOW_SIZE = 300;
@@ -224,11 +240,11 @@ async function claimBatch(req, res, next, pickingOnly) {
     } catch (error) { next(error); }
 }
 
-router.post('/orders/batch-claim', (req, res, next) => claimBatch(req, res, next, true));
-router.post('/orders/batch/claim', (req, res, next) => claimBatch(req, res, next, false));
+router.post('/orders/batch-claim', warehouseOnly, (req, res, next) => claimBatch(req, res, next, true));
+router.post('/orders/batch/claim', warehouseOnly, (req, res, next) => claimBatch(req, res, next, false));
 
 // POST /api/orders/:orderId/claim
-router.post('/orders/:orderId/claim', async (req, res, next) => {
+router.post('/orders/:orderId/claim', warehouseOnly, async (req, res, next) => {
     try {
         await claimWarehouseOrder({ orderId: req.params.orderId, user: req.user, io: req.app.get('io') });
         res.status(200).json({ message: '任務認領成功' });
@@ -327,7 +343,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
 });
 
 // PATCH /api/orders/:orderId/void
-router.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
+router.patch('/orders/:orderId/void', warehouseOnly, authorizeAdmin, async (req, res) => {
     const { orderId } = req.params;
     const reason = typeof req.body.reason === 'string' ? req.body.reason.trim().slice(0, 2000) : null;
     const events = deferredEvents(req.app.get('io'));
@@ -335,9 +351,12 @@ router.patch('/orders/:orderId/void', authorizeAdmin, async (req, res) => {
     try {
         client = await pool.connect();
         await client.query('BEGIN'); transactionOpen = true;
+        await client.query('SELECT id FROM orders WHERE id=$1 FOR UPDATE',[orderId]);
+        if (await hasOpenOrderChange(client,orderId)) { await client.query('ROLLBACK'); transactionOpen=false; return res.status(409).json({message:'此訂單已有待審核異動，請先核准或駁回申請'}); }
         const result = await client.query("UPDATE orders SET status = 'voided', void_reason = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId, reason]);
         if (!result.rowCount) { await client.query('ROLLBACK'); transactionOpen = false; return res.status(404).json({ message: '找不到要作廢的訂單' }); }
         await logOperation({ userId: req.user.id, orderId, operationType: 'void', details: { reason }, db: client, io: events });
+        await notifyOrderChange({db:client,events,orderId,actorId:req.user.id,phase:'voided',reason});
         events.emit('task_status_changed', { orderId: Number(orderId), newStatus: 'voided' });
         commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
         events.publish();
@@ -415,31 +434,9 @@ router.patch('/orders/:orderId/urgent', authorizeRoles('admin', 'dispatcher'), a
     }
 });
 
-// DELETE /api/orders/:orderId
-// admin/superadmin：可刪除所有訂單
-// dispatcher：僅可刪除自己拋單的訂單
-router.delete('/orders/:orderId', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
-    const { orderId } = req.params;
-    const io = req.app.get('io');
-    const result = req.user?.role === 'dispatcher'
-                ? await pool.query(
-                        `DELETE FROM orders o
-                         WHERE o.id = $1
-                             AND (
-                                 SELECT ol.user_id
-                                 FROM operation_logs ol
-                                 WHERE ol.order_id = o.id AND ol.action_type = 'import'
-                                 ORDER BY ol.created_at DESC
-                                 LIMIT 1
-                             ) = $2
-                         RETURNING voucher_number`,
-                        [orderId, req.user.id]
-                )
-        : await pool.query('DELETE FROM orders WHERE id = $1 RETURNING voucher_number', [orderId]);
-    if (result.rowCount === 0) return res.status(404).json({ message: '找不到要刪除的訂單' });
-    io?.emit('task_deleted', { orderId: parseInt(orderId, 10) });
-    res.status(200).json({ message: `訂單 ${result.rows[0].voucher_number} 已被永久刪除` });
-});
+// Legacy DELETE remains a request-only compatibility entry point.
+router.delete('/orders/:orderId', authorizeRoles('admin','dispatcher'), deletionRequestHandler(pool));
+router.post('/orders/:orderId/deletion-requests', authorizeRoles('admin','dispatcher'), deletionRequestHandler(pool));
 
 // POST /api/orders/import
 router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimiter, uploadImport, async (req, res) => {
@@ -532,7 +529,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 });
 
 // POST /api/orders/update_item
-router.post('/orders/update_item', async (req, res, next) => {
+router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
     const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
     const { id: userId, role } = req.user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
@@ -940,39 +937,23 @@ router.post('/orders/update_item', async (req, res, next) => {
     }
 });
 
-// POST /api/orders/batch/delete
-router.post('/orders/batch/delete', authorizeAdmin, async (req, res) => {
-    const { orderIds } = req.body;
-    const io = req.app.get('io');
-
-    if (!Array.isArray(orderIds) || orderIds.length === 0) {
-        return res.status(400).json({ message: '請提供訂單 ID 列表' });
-    }
-
+// Every batch member uses the same review-only path; nothing is hard-deleted.
+router.post('/orders/batch/delete', authorizeAdmin, async (req,res,next) => {
     try {
-        const result = await pool.query(
-            'DELETE FROM orders WHERE id = ANY($1) RETURNING id, voucher_number',
-            [orderIds]
-        );
-
-        result.rows.forEach(order => {
-            io?.emit('task_deleted', { orderId: order.id });
-        });
-
-        res.json({
-            message: `成功刪除 ${result.rowCount} 筆訂單`,
-            deletedOrders: result.rows
-        });
-    } catch (error) {
-        logger.error('[/api/orders/batch/delete] 失敗:', error);
-        res.status(500).json({ message: '批次刪除失敗' });
-    }
+        const ids = parseClaimIds(req.body?.orderIds);
+        const requested = [], failed = [];
+        for (const orderId of ids) {
+            try { requested.push({orderId,...await requestDeletion({pool,io:req.app.get('io'),orderId,user:req.user,reason:req.body?.reason,requestId:req.requestId})}); }
+            catch(error) { failed.push({orderId,message:error.status ? error.message : '申請失敗，請重新整理核對'}); }
+        }
+        res.status(requested.length ? 202 : 409).json({message:`已送出 ${requested.length} 筆刪除申請，等待主管審核`,requested,failed});
+    } catch(error) { next(error); }
 });
 
 // POST /api/orders/:orderId/defect
 // admin/superadmin：可操作所有訂單
 // dispatcher：僅可操作自己拋單的訂單
-router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), async (req, res) => {
+router.post('/orders/:orderId/defect', warehouseOnly, authorizeRoles('admin', 'dispatcher'), async (req, res) => {
     const { orderId } = req.params;
     const { oldSn: oldInput, newSn: newInput, reason } = req.body;
     const userId = req.user.id;
@@ -988,6 +969,7 @@ router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), as
         const order = (await client.query('SELECT id, status FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到指定訂單');
         if (order.status === 'voided') throw fail(409, '已作廢訂單不可更換SN');
+        if (await hasOpenOrderChange(client,orderId)) throw fail(409,'此訂單異動待審核，暫停 SN 更換');
         if (req.user.role === 'dispatcher') {
             const own = await client.query("SELECT 1 FROM operation_logs WHERE order_id=$1 AND action_type='import' AND user_id=$2 AND id=(SELECT id FROM operation_logs WHERE order_id=$1 AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1)", [orderId, userId]);
             if (!own.rowCount) throw fail(403, '僅允許操作自己拋單的訂單');
@@ -1001,6 +983,7 @@ router.post('/orders/:orderId/defect', authorizeRoles('admin', 'dispatcher'), as
         await client.query(`INSERT INTO order_exceptions (order_id,type,status,reason_code,reason_text,created_by,ack_by,ack_at,resolved_by,resolved_at,snapshot)
             VALUES ($1,'sn_replace','resolved','DEFECT_EXCHANGE',$2,$3,$3,NOW(),$3,NOW(),$4::jsonb)`, [orderId,reason,userId,JSON.stringify({oldSn,newSn,product:{barcode:instance.barcode,name:instance.product_name,orderItemId:instance.order_item_id}})]);
         await logOperation({ userId,orderId,operationType:'defect_exchange',details:{oldSn,newSn,reason,product:instance.product_name},io:events,db:client });
+        await notifyOrderChange({db:client,events,orderId,actorId:userId,phase:'sn_replaced',reason:'新品不良異動，請重新核對 SN。'});
         events.emit('order_exception_changed', { orderId:Number(orderId), action:'resolved', type:'sn_replace' });
         commitAttempted=true; await client.query('COMMIT'); transactionOpen=false;
         events.publish();

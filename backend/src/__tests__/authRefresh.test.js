@@ -27,7 +27,7 @@ test('complete old superadmin claims refresh only with the current account and d
     pool.query.mockResolvedValueOnce({ rows: [currentUser], rowCount: 1 });
     const token = await authService.refreshToken(oldToken);
     const decoded = jwt.verify(token, secret);
-    expect(pool.query).toHaveBeenCalledWith('SELECT id, username, name, role FROM users WHERE id = $1', [7]);
+    expect(pool.query).toHaveBeenCalledWith('SELECT id, username, name, role, management_scope FROM users WHERE id = $1', [7]);
     expect(decoded).toMatchObject(currentUser);
     expect(decoded.exp - decoded.iat).toBe(8 * 60 * 60);
     expect(decoded).not.toHaveProperty('userId');

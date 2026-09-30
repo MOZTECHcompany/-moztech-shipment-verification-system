@@ -12,6 +12,7 @@ const { logOperation } = require('../services/operationLogService');
 // Legacy comment/mention TIMESTAMP columns contain UTC wall time. Expose them
 // as instants; leave stored values and microsecond cursor text unchanged.
 const router = express.Router();
+const {warehouseOnly,isOrderManager} = require('../utils/managementScope');
 const { deferredEvents } = require('../utils/transactionEvents');
 
 const rateMap = new Map();
@@ -366,7 +367,7 @@ router.get('/comments/unread-summary', async (req, res) => {
                 WHERE tcr.comment_id = tc.id AND tcr.user_id = $1
             )
             AND tc.user_id != $1
-            AND o.status IN ('pending', 'picking', 'picked', 'packing')
+            AND (o.status IN ('pending','picking','picked','packing') OR EXISTS(SELECT 1 FROM task_mentions tm WHERE tm.comment_id=tc.id AND tm.mentioned_user_id=$1))
             GROUP BY o.id, o.voucher_number, o.customer_name
             HAVING COUNT(DISTINCT tc.id) > 0
             ORDER BY 
@@ -619,7 +620,7 @@ router.get('/tasks/:orderId/sessions', async (req, res) => {
     }
 });
 
-router.post('/tasks/:orderId/transfer', async (req, res) => {
+router.post('/tasks/:orderId/transfer', warehouseOnly, async (req, res) => {
     const { orderId } = req.params;
     const { to_user_id, task_type, reason } = req.body;
     const { id: fromUserId, role } = req.user;
@@ -637,8 +638,8 @@ router.post('/tasks/:orderId/transfer', async (req, res) => {
         const owner = task_type === 'pick' ? order.picker_id : order.packer_id;
         if (!isAdmin && (role !== expectedRole || owner !== fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
         if (order.status !== (task_type === 'pick' ? 'picking' : 'packing')) throw fail(409, '僅能轉交進行中的同階段作業');
-        const target = (await client.query('SELECT id, role FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
-        if (!target || ![expectedRole, 'admin', 'superadmin'].includes(target.role)) throw fail(400, '接手人員沒有此作業的權限');
+        const target = (await client.query('SELECT id, role, management_scope FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
+        if (!target || isOrderManager(target) || ![expectedRole, 'admin', 'superadmin'].includes(target.role)) throw fail(400, '接手人員沒有此作業的權限');
         await client.query('INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason) VALUES ($1,$2,$3,$4,$5)', [orderId, fromUserId, to_user_id, task_type, reason]);
         await client.query(task_type === 'pick' ? 'UPDATE orders SET picker_id=$1, updated_at=NOW() WHERE id=$2' : 'UPDATE orders SET packer_id=$1, updated_at=NOW() WHERE id=$2', [to_user_id, orderId]);
         await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', details: { to_user_id, task_type, reason }, db: client, io: events });

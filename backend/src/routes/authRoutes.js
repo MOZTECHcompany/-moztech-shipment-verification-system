@@ -3,6 +3,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.get('/me', require('../middleware/auth').authenticateToken, (req,res) => res.json({user:req.user}));
 const rateLimit = require('express-rate-limit');
 const authService = require('../services/authService');
 const logger = require('../utils/logger');

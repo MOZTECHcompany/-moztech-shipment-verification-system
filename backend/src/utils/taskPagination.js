@@ -109,7 +109,10 @@ async function getTaskPage(pool, user, query, view) {
             SELECT * FROM selected ${after}
             ORDER BY _mine DESC, _pin DESC, _urgent DESC, _at ASC, id ASC LIMIT ${limit}
         ), enriched AS (
-        SELECT page.*, COALESCE(page.imported_by_user_id, page_import.user_id) AS _imported_by_user_id, picker.name AS picker_name, packer.name AS packer_name,
+        SELECT page.*,
+            EXISTS(SELECT 1 FROM order_exceptions e WHERE e.order_id=page.id AND e.type='order_change' AND e.status='open') AS change_pending,
+            EXISTS(SELECT 1 FROM order_exceptions e WHERE e.order_id=page.id AND e.type='order_change' AND e.status='open' AND e.snapshot->'proposal'->>'action'='delete_order') AS deletion_pending,
+            COALESCE(page.imported_by_user_id, page_import.user_id) AS _imported_by_user_id, picker.name AS picker_name, packer.name AS packer_name,
             CASE WHEN page.status = 'picking' THEN picker.name WHEN page.status = 'packing' THEN packer.name ELSE NULL END AS current_user,
             CASE WHEN page.status IN ('pending','picking') THEN 'pick' WHEN page.status IN ('picked','packing') THEN 'pack' ELSE 'done' END AS task_type,
             COALESCE(comments.total_comments, 0) AS total_comments, COALESCE(comments.urgent_comments, 0) AS urgent_comments,
