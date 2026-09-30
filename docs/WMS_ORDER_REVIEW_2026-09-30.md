@@ -33,3 +33,14 @@
 新角色分工生效後，不能直接切回忽略 management_scope／刪除審核的舊映像，否則會恢復舊權限與硬刪除行為。優先向前修復，或使用同樣維持審核與 scope 檢查的回復映像。schema 欄位、已核准紀錄與真實後續作業資料保留，不能整庫回復覆蓋新作業。
 
 發布證據及受控資料操作結果存於協作工作區 `artifacts/wms-order-review-20260930`；不把正式資料、帳密或 token 放進 Git。
+
+## 已完成發布（2026-09-30 17:28 台灣時間）
+
+- 程式提交 `366ce36d116d0913f50853c9ae85bbcada0919af`；GitHub CI run `36695921270` 成功。Cloud Build `129005f3-6006-4436-966e-2d51dfe62a85` 成功。
+- 正式 `corely-wms-order-review-20260930` 接收 100% 流量；`wms.corely.cc` 與新 run.app 入口健康、readiness、未登入拒絕及已登入唯讀 API 均通過。IAM、Cloud SQL 連線、附件及共享驗收服務保持不變。
+- 映像 digest：backend `sha256:e4dfcb2ff2ea2c4a54d36689d0da0470a911cc42080441c4ca2780d6d24f8b87`；frontend `sha256:092c1b498e7dfc1108876370c6b24ba899b0e6a252964bceb6e1c17bdccd606d`。
+- 新增 migration 028 成功，其他 migration checksum 一致。獨立設定 lemon / id 5 為 orders、mozwen / id 19 為 warehouse；其他帳號不變。正式 API 確認前者不可審核或讀成員管理，後者可以。角色異動日誌 254142、254143。
+- 訂單 5111 條件式修復成功：35437／35438 為 1／1，總數 2，SN 不變；全部揀貨完成，status=picked（待裝箱），留存日誌 254144。活動訂單的 SN 超過所屬列數量唯讀盤點只發現此一筆。
+- 9 個舊候選 tag 已移除且逐一確認 HTTP 404，避免舊入口繞過新的分工及審核規則；舊 revision 保留歷史證據，不可直接恢復流量。
+- 驗證結果：185 backend 單元、138 frontend 測試、53 PostgreSQL/HTTP/Socket/瀏覽器流程測試（含 15 瀏覽器情境）、分頁整合測試及前端 build 全通過。正式資料只執行上述角色分配與已授權的訂單修復，沒有在正式庫建立測試訂單。現場人員實際作業驗收仍應使用新版本確認。
+- 受影響帳號請重新登入；其餘操作站重新整理，以載入新按鈕與提示。
