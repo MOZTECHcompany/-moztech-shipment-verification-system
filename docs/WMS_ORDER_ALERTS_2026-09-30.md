@@ -23,3 +23,14 @@
 發布使用公司 `moztech-main-db` 專案的 `corely-wms`，先 0% 候選版；不操作共享驗收服務。新 migration 加表可與上一版共存；若應用回復，可回到 `corely-wms-order-review-20260930`，保留新表與通知紀錄，但該版無大型警示／通知知悉功能。不可回到缺少審核與角色限制的更舊映像，也不可用整庫還原覆盖新作業。
 
 發布證據在協作目錄 `artifacts/wms-exceptions-ux-20260930`；正式通知、帳密與 token 不放 Git。
+
+## 正式發布結果（2026-09-30 17:57:13 台灣時間）
+
+- 程式提交：`bd6b5e87a148aa2ca9c824820c505842bdd08cd4`；GitHub CI `36698875259` 成功。Cloud Build `73f4518d-6aa0-4cd4-83bb-5299318db02b` 成功。
+- 正式 revision：`corely-wms-order-alerts-20260930`，100% 流量；取代 `corely-wms-order-review-20260930`。
+- backend：`sha256:841e6dceca477fcf2bec79983cd7fbe8e433a19ba6c47623d722078ff46a82c1`；frontend：`sha256:a2953c29cf6ca6811360b147ca023fc536b73f6b6d1f62dfa5d572a7e3c24f5d`。
+- migration 029 已套用；當時沒有待審的 order_change，補建通知 0 筆。未改動既有訂單、角色或帳號。
+- 185 後端單元、139 前端測試、56 個隔離 PostgreSQL／HTTP／Socket／瀏覽器流程（含 17 瀏覽器情境）、前端 build 通過；其中有 500 次揀貨及 500 次裝箱。
+- 候選版與正式站的健康、登入保護、真實帳號唯讀 API、中文查詢介面與獨立警示音開關均通過。lemon 維持 orders／不可審核，mozwen 維持 warehouse／可審核；未建立正式測試訂單或送出正式審核。
+- Cloud SQL 連線、Secrets、附件 bucket、IAM 及共享驗收服務未改動；上一版 candidate tag 已移除，受保護的上一版 revision 保留作回復。
+- 操作站需重新整理載入新版；到設定試聽訂單異動音。實體音量與現場聽辨尚須各工作站確認。
