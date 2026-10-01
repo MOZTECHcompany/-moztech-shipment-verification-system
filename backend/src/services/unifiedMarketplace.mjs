@@ -24,9 +24,9 @@ const SL_FIELDS = {
 const SL_REQUIRED = ['訂單號碼','商品貨號','商品名稱','數量','單價','付款狀態','送貨狀態','付款方式','訂單狀態','訂單小計','運費','優惠折扣','訂單合計'];
 export const SHOPLINE_REQUIRED_FIELDS = [...SL_REQUIRED];
 
-export function inspectMarketplaceRows(input) {
-  if (!Array.isArray(input) || !input.length || input.length > 5000) fail('原始訂單檔須為 1 至 5,000 列');
-  if (input.some(r => !Array.isArray(r) || r.length > 200)) fail('原始檔最多 200 欄');
+// Detect headers independently of row validation so damaged order sheets are
+// still offered for selection and report their actual error when parsed.
+export function detectMarketplaceHeaders(input) {
   const candidates = [];
   for (let i=0;i<Math.min(10,input.length);i++) {
     const names = input[i].map(norm);
@@ -35,6 +35,13 @@ export function inspectMarketplaceRows(input) {
     if (has('訂單編號') && has('產品SKU') && has('產品數量')) candidates.push({platform:'1Shop',index:i});
     if ((has('訂單號碼') || has('訂單編號')) && has('商品貨號') && has('商品名稱')) candidates.push({platform:'SHOPLINE',index:i});
   }
+  return candidates;
+}
+
+export function inspectMarketplaceRows(input) {
+  if (!Array.isArray(input) || !input.length || input.length > 5000) fail('原始訂單檔須為 1 至 5,000 列');
+  if (input.some(r => !Array.isArray(r) || r.length > 200)) fail('原始檔最多 200 欄');
+  const candidates = detectMarketplaceHeaders(input);
   if (candidates.length !== 1) fail(candidates.length ? '檔案含多組平台表頭，請分開匯出後再選檔' : '無法辨識原始訂單格式。請使用 1Shop 訂單 Excel、Shopify 訂單 CSV 或 SHOPLINE 訂單報表；不要上傳彙總表或 ECOUNT 銷貨檔。');
   const {platform,index} = candidates[0], header = input[index].map(norm);
   const nonempty = header.filter(Boolean);

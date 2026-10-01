@@ -7,7 +7,8 @@ import { API_ORIGIN } from '../../api/origin';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
 import { batchSessionMatches } from '../../utils/importBatches';
 import { formatMinor, buildEcountUploadTable, ECOUNT_GROUPED_MODE, formatEcountProductColumn } from '../../utils/marketplaceIntake.mjs';
-import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, parseUnifiedMarketplace, prepareUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
+import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, prepareUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
+import { marketplaceOrderSheets, parseMarketplaceWorksheet } from '../../utils/marketplaceWorkbook.mjs';
 
 const knownMappings = {
  '4711299270024': { erpSku:'4711299270024',barcode:'4711299270024',erpName:'bonson-奈米纖維拖把布(兩入)',spec:'BO-A02' },
@@ -32,6 +33,7 @@ function ConverterPage({user}){
  const [busy,setBusy]=useState(false),[access,setAccess]=useState('loading'),[message,setMessage]=useState(''),[messageKind,setMessageKind]=useState('status'),[records,setRecords]=useState([]),[saved,setSaved]=useState(null);
  const [profiles,setProfiles]=useState([]),[profileId,setProfileId]=useState(''),[profileNotice,setProfileNotice]=useState('');
  const [dragging,setDragging]=useState(false),[catalog,setCatalog]=useState(null),[catalogError,setCatalogError]=useState('');
+ const [workbook,setWorkbook]=useState(null),[selectedSheet,setSelectedSheet]=useState('');
  const fileRef=useRef(null),request=useRef(0),mounted=useRef(true),token=useRef(null),actor=useRef({id:user.id,role:user.role}),inFlight=useRef(false);
  const showMessage=(value,kind='status')=>{setMessage(value);setMessageKind(kind);};
  const currentSession=()=>batchSessionMatches(sessionStorage,actor.current,token.current);
@@ -48,7 +50,7 @@ function ConverterPage({user}){
   mounted.current=true;try{token.current=JSON.parse(sessionStorage.getItem('wms_token'));}catch{token.current=null;}
   loadProfiles().catch(()=>{if(mounted.current&&currentSession())setProfileNotice('店鋪設定暫時無法讀取，仍可手動填寫。');});
   loadRecords().catch(()=>{if(mounted.current){setAccess('denied');showMessage('無法確認轉檔權限，請重新登入。','error');}});
-  const check=()=>{if(currentSession())return;request.current++;setInput(null);setName('');setSaved(null);setRecords([]);setProfiles([]);setProfileId('');setSettings(initialSettings());setAccess('denied');showMessage('登入人員已變更，請重新登入。','error');};
+  const check=()=>{if(currentSession())return;request.current++;setInput(null);setName('');setSaved(null);setWorkbook(null);setSelectedSheet('');setRecords([]);setProfiles([]);setProfileId('');setSettings(initialSettings());setAccess('denied');showMessage('登入人員已變更，請重新登入。','error');};
   window.addEventListener('storage',check);return()=>{mounted.current=false;request.current++;window.removeEventListener('storage',check);};
  },[]);
  const locked=busy||access!=='ready';
@@ -85,9 +87,29 @@ function ConverterPage({user}){
   }catch(e){if(mounted.current&&currentSession())setProfileNotice(e.response?.data?.message||'店鋪設定未保存，請重試。');}
   finally{inFlight.current=false;if(mounted.current)setBusy(false);}
  };
+ const resetSource=()=>{
+  showMessage('');setInput(null);setSaved(null);setName('');setProfileId('');setProfileNotice('');setCatalog(null);setCatalogError('');
+  setSettings(initialSettings());
+ };
+ const loadWorksheet=async(XLSX,book,sheetName,fileName,sequence)=>{
+   const result=parseMarketplaceWorksheet(XLSX,book,sheetName);
+   if(!mounted.current||sequence!==request.current||!currentSession())return;
+   setInput(result);setName(fileName);setSelectedSheet(sheetName);
+   const mappings=Object.fromEntries(result.parsed.items.map(i=>[i.sku,{...(knownMappings[i.sku]||{erpSku:i.sku,erpName:i.productName,barcode:''}),confirmed:false,barcodeConfirmed:false,category:''}]));
+   try{
+    const matched=(await apiClient.post('/api/marketplace-products/resolve',{skus:[...new Set(result.parsed.items.map(i=>i.sku))]})).data;
+    if(!mounted.current||sequence!==request.current||!currentSession())return;
+    setCatalog(matched);
+    for(const [sku,r] of Object.entries(matched.products||{}))if(r.status==='matched'){
+     const p=r.matches[0];mappings[sku]={erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec,barcode:p.barcode,confirmed:true,barcodeConfirmed:!!p.barcode,category:''};
+    }
+   }catch{if(mounted.current&&sequence===request.current&&currentSession())setCatalogError('ECOUNT 商品主檔暫時無法讀取，請重新上傳檔案再試。');}
+   if(!mounted.current||sequence!==request.current||!currentSession())return;
+   setSettings({...initialSettings(),skuMappings:mappings});
+ };
  const selectFiles=async files=>{
   if(locked||!files?.length)return;
-  showMessage('');setInput(null);setSaved(null);setName('');setProfileId('');setProfileNotice('');setCatalog(null);setCatalogError('');
+  resetSource();setWorkbook(null);setSelectedSheet('');
   if(!currentSession()){setAccess('denied');return;}
   const file=files[0];
   if(files.length!==1||! /\.(xlsx|xls|csv)$/i.test(file.name)||!file.size||file.size>10*1024*1024){showMessage('請選擇一個非空白的 Excel 或 CSV，檔案上限 10 MiB。','error');return;}
@@ -96,25 +118,24 @@ function ConverterPage({user}){
    const XLSX=await import('xlsx'),buffer=await file.arrayBuffer();let source=buffer;
    if(/\.csv$/i.test(file.name))try{source=new TextDecoder('utf-8',{fatal:true}).decode(buffer);}catch{throw Error('CSV 請使用 UTF-8 編碼重新匯出，或改選 Excel 原始檔。');}
    const book=XLSX.read(source,{type:typeof source==='string'?'string':'array',raw:true,cellFormula:false,cellHTML:false,sheetRows:5001});
-   if(book.SheetNames.length!==1)throw Error('請使用單一訂單工作表，避免漏讀其他工作表。');
-   const sheet=book.Sheets[book.SheetNames[0]],range=XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']||'A1');
-   if(range.e.r>=5000||range.e.c>=200)throw Error('原始檔最多 5,000 列或 200 欄，請分批匯出。');
-   const result=parseUnifiedMarketplace(XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:'',blankrows:true}));
    if(!mounted.current||sequence!==request.current||!currentSession())return;
-   setInput(result);setName(file.name);
-   const mappings=Object.fromEntries(result.parsed.items.map(i=>[i.sku,{...(knownMappings[i.sku]||{erpSku:i.sku,erpName:i.productName,barcode:''}),confirmed:false,barcodeConfirmed:false,category:''}]));
-   let matched=null;
-   try{
-    matched=(await apiClient.post('/api/marketplace-products/resolve',{skus:[...new Set(result.parsed.items.map(i=>i.sku))]})).data;
-    if(!mounted.current||sequence!==request.current||!currentSession())return;
-    setCatalog(matched);
-    for(const [sku,r] of Object.entries(matched.products||{}))if(r.status==='matched'){
-     const p=r.matches[0];mappings[sku]={erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec,barcode:p.barcode,confirmed:true,barcodeConfirmed:!!p.barcode,category:''};
-    }
-   }catch{if(mounted.current&&sequence===request.current)setCatalogError('ECOUNT 商品主檔暫時無法讀取，請重新上傳檔案再試。');}
-   if(!mounted.current||sequence!==request.current||!currentSession())return;
-   setSettings({...initialSettings(),skuMappings:mappings});
+   const sheets=marketplaceOrderSheets(XLSX,book);
+   if(sheets.length>1){setWorkbook({book,fileName:file.name,sheets});return;}
+   // Single-sheet inputs keep the parser's specific format error; multi-sheet
+   // workbooks select the unique order sheet instead of the first tab.
+   if(!sheets.length&&book.SheetNames.length!==1)throw Error('找不到商城訂單工作表，請選擇平台原始訂單檔。');
+   await loadWorksheet(XLSX,book,sheets[0]||book.SheetNames[0],file.name,sequence);
   }catch(e){if(mounted.current&&sequence===request.current)showMessage(e.message||'無法讀取來源檔','error');}
+  finally{if(mounted.current&&sequence===request.current)setBusy(false);}
+ };
+ const chooseSheet=async sheetName=>{
+  if(locked||!workbook||!currentSession())return;
+  resetSource();setSelectedSheet(sheetName);
+  const sequence=++request.current;
+  if(!sheetName)return;
+  setBusy(true);
+  try{await loadWorksheet(await import('xlsx'),workbook.book,sheetName,workbook.fileName,sequence);}
+  catch(e){if(mounted.current&&sequence===request.current&&currentSession())showMessage(e.message||'無法讀取訂單工作表','error');}
   finally{if(mounted.current&&sequence===request.current)setBusy(false);}
  };
  const writeBook=async(record,kind)=>{
@@ -159,7 +180,8 @@ function ConverterPage({user}){
    <div className="flex flex-col items-center py-4 text-center"><UploadCloud size={36} className="mb-3 text-blue-600"/><h2 className="text-lg font-semibold">{dragging?"放開檔案，開始讀取":"上傳商城訂單"}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p>
    <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={()=>fileRef.current?.click()}>{busy?<Loader2 className="mr-2 animate-spin" size={18}/>:<FileSpreadsheet className="mr-2" size={18}/>}選擇訂單檔</Button></div>
    <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={locked} onChange={e=>{const files=Array.from(e.target.files||[]);e.target.value='';return selectFiles(files);}} aria-label="商城原始訂單檔"/>
-   {name&&<p className="mt-3 text-sm">已辨識：<strong>{input?.parsed.platform}</strong> · {name}</p>}
+   {workbook&&<div className="mt-3 max-w-xl"><p className="mb-2 text-sm text-slate-600">{workbook.fileName}</p><Field label="訂單工作表"><select className={inputClass} disabled={locked} value={selectedSheet} onChange={e=>chooseSheet(e.target.value)}><option value="">請選擇工作表</option>{workbook.sheets.map(sheet=><option key={sheet} value={sheet}>{sheet}</option>)}</select></Field></div>}
+   {name&&<p className="mt-3 text-sm">已辨識：<strong>{input?.parsed.platform}</strong> · {name} · {selectedSheet}</p>}
    <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">各平台下載方式</summary><ul className="mt-2 list-disc space-y-1 pl-5"><li>Shopify：訂單 → 匯出 → 訂單 CSV；不要選交易紀錄。</li><li>1Shop：選取本批訂單 → 匯出 Excel。</li><li>SHOPLINE：訂單 → 更多動作 → 訂單報表，包含商品貨號、商品明細及訂單金額欄。客製欄位或組合商品仍須用實際檔驗收。</li></ul></details>
   </section>
   {input&&prepared&&<>

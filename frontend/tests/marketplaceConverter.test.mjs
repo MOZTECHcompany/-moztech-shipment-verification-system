@@ -7,6 +7,7 @@ import { transform } from 'esbuild';
 import * as XLSX from 'xlsx';
 import * as intake from '../src/utils/marketplaceIntake.mjs';
 import * as unified from '../src/utils/unifiedMarketplace.mjs';
+import * as workbook from '../src/utils/marketplaceWorkbook.mjs';
 import * as sessions from '../src/utils/importBatches.js';
 
 const source = await readFile(new URL('../src/components/admin/MarketplaceConverter.jsx', import.meta.url), 'utf8');
@@ -21,6 +22,15 @@ function file(rows = fixtureRows, name = 'synthetic.csv') {
     const bytes = name.endsWith('.csv') ? Buffer.from(XLSX.utils.sheet_to_csv(book.Sheets.Source)) : XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
     return { name, size: bytes.length, arrayBuffer: async () => bytes };
 }
+function workbookFile(sheets, name = 'multi-sheet.xlsx') {
+    const book = XLSX.utils.book_new();
+    for (const [name, rows] of Object.entries(sheets)) XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), name);
+    const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+    return { name, size: bytes.length, arrayBuffer: async () => bytes };
+}
+const secondRows = [headers,
+    ['SECOND-ORDER', '一般品', '00077', 'Second order product', '4', '7', '28', '28', '0', '0', '28', '已付款', '未出貨'],
+];
 
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
@@ -39,7 +49,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
     const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles } }; }, post: async (url, body) => { requests.push({url,body}); if(url==='/api/marketplace-intakes/store-profiles')return {data:{id:9,platform:body.platform,store:body.settings.store,settings:body.settings}}; if(url==='/api/marketplace-products/resolve')return {data:resolved||{sync:null,products:{}}}; if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}}; if (denied) throw Error('Forbidden'); const built=unified.buildUnifiedConversion(body.rows,body.settings); return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}}; } };
-    const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
+    const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -66,12 +76,23 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
     const all = predicate => { const result = []; const walk = node => { if (Array.isArray(node)) return node.forEach(walk); if (!node || typeof node !== 'object') return; if (predicate(node)) result.push(node); walk(node.props?.children || []); }; walk(render()); return result; };
     const button = label => find(render(), node => node.type === 'Button' && text(node).includes(label));
     const label = value => find(render(), node => node.type === 'label' && text(node).trim().startsWith(value));
-    const change = (name, value) => { const control = find(label(name), node => ['input', 'select'].includes(node.type)); assert.ok(control, `Control ${name}`); control.props.onChange({ target: { value, checked: value } }); render(); };
+    const change = (name, value) => { const control = find(label(name), node => ['input', 'select'].includes(node.type)); assert.ok(control, `Control ${name}`); const pending = control.props.onChange({ target: { value, checked: value } }); render(); return Promise.resolve(pending).then(() => render()); };
     const select = async (...files) => { await find(render(), node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files, value: 'selected' } }); render(); };
     render();
     for (let i=0;i<5;i++) await Promise.resolve();
     render();
     return { render, find, text, all, button, change, select, downloads, requests, writes, storage, listeners, unmount: () => { mounted = false; hooks.forEach(h => h?.cleanup?.()); }, lateUpdates: () => lateUpdates };
+}
+
+function confirmSales(view) {
+    for (const card of view.all(node => node.type === 'div' && node.props.className === 'rounded-lg border border-slate-200 p-4')) {
+        view.find(card, node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } });
+    }
+    view.render();
+    view.change('商城店鋪', 'Warehouse test store');
+    view.change('ECOUNT 銷貨客戶編碼', '00020');
+    view.change('已確認本次金額為 TWD', true);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, false);
 }
 
 test('converter route guard preserves authorized roles across deployment environments', async () => {
@@ -194,4 +215,80 @@ test('selecting a stored profile fills customer and tax settings only for the up
  await c.select(file());
  const stores=c.all(n=>n.type==='input').filter(n=>n.props.value==='Saved Store');assert.equal(stores.length,0,'new file must select its store explicitly');
  c.change('店鋪','2');assert.doesNotMatch(c.text(c.render()),/銷貨客戶： WRONG/);
+});
+
+test('after a completed sales download a second workbook selects its only order sheet and starts a fresh batch', async () => {
+    const view = await converter();
+    await view.select(file());
+    confirmSales(view);
+    await view.button('銷貨檔 → 上傳 ECOUNT').props.onClick(); view.render();
+    assert.equal(view.downloads.length, 1);
+    const firstSave = view.requests.find(request => request.url === '/api/marketplace-intakes');
+
+    await view.select(workbookFile({ '空白頁': [], '使用說明': [['請使用平台原始訂單資料']], '第二批訂單': secondRows }, 'second-batch.xlsx'));
+    const preview = view.text(view.render());
+    assert.match(preview, /Second order product/);
+    assert.match(preview, /00077/);
+    assert.match(preview, /本批納入\s+1\s+筆、\s*1\s+商品列、\s*4\s+件/);
+    assert.doesNotMatch(preview, /TEST product A|TST6091550133|銷貨檔已下載|請使用單一訂單工作表/);
+    assert.equal(view.button('選擇訂單檔').props.disabled, false);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true, 'new source must not reuse prior customer/tax confirmations');
+    assert.equal(view.downloads.length, 1, 'reading a second workbook must not save or download it automatically');
+    const resolved = view.requests.filter(request => request.url === '/api/marketplace-products/resolve');
+    assert.deepEqual(Array.from(resolved.at(-1).body.skus), ['00077']);
+
+    confirmSales(view);
+    await view.button('銷貨檔 → 上傳 ECOUNT').props.onClick(); view.render();
+    const saves = view.requests.filter(request => request.url === '/api/marketplace-intakes');
+    assert.equal(saves.length, 2);
+    assert.notEqual(saves[1].body.settings.batchNumber, firstSave.body.settings.batchNumber);
+    assert.match(JSON.stringify(saves[1].body.rows), /SECOND-ORDER/);
+    assert.doesNotMatch(JSON.stringify(saves[1].body.rows), /TST6091550133|00123/);
+    assert.equal(view.downloads.length, 2);
+});
+
+test('a damaged second workbook reports its product error and a subsequent valid workbook recovers without the previous preview', async () => {
+    const view = await converter(); await view.select(file());
+    const damaged = secondRows.map(row => [...row]); damaged[1][2] = '4.71E+12';
+    await view.select(workbookFile({ '說明': [['訂單匯出資料']], '訂單': damaged }, 'damaged-second.xlsx'));
+    const failed = view.text(view.render());
+    assert.match(failed, /科學記號/);
+    assert.doesNotMatch(failed, /00123|TEST product A|請使用單一訂單工作表/);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT'), undefined);
+    assert.equal(view.button('選擇訂單檔').props.disabled, false);
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-products/resolve').length, 1, 'damaged codes must not reach reference matching');
+
+    await view.select(workbookFile({ '空白': [], '訂單': secondRows }, 'recovered.xlsx'));
+    const recovered = view.text(view.render());
+    assert.match(recovered, /Second order product|00077/);
+    assert.doesNotMatch(recovered, /科學記號|00123|TEST product A/);
+    assert.equal(view.button('選擇訂單檔').props.disabled, false);
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-products/resolve').length, 2);
+    assert.equal(view.downloads.length, 0);
+});
+
+test('multiple order sheets require explicit selection and switching replaces the preview, mappings and confirmations', async () => {
+    const view = await converter();
+    await view.select(workbookFile({ '第一批': fixtureRows, '說明': [['訂單資料']], '第二批': secondRows }));
+    assert.match(view.text(view.render()), /請選擇工作表/);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT'), undefined);
+    assert.equal(view.requests.length, 0, 'worksheet ambiguity must not resolve products from an arbitrary first sheet');
+
+    await view.change('訂單工作表', '第一批');
+    assert.match(view.text(view.render()), /00123|TEST product A/);
+    confirmSales(view);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, false);
+    await view.change('訂單工作表', '第二批');
+    const switched = view.text(view.render());
+    assert.match(switched, /Second order product|00077/);
+    assert.doesNotMatch(switched, /TEST product A|TST6091550133|00123/);
+    assert.equal(view.button('銷貨檔 → 上傳 ECOUNT').props.disabled, true, 'switching order sheet starts a fresh conversion');
+    const resolveCalls = view.requests.filter(request => request.url === '/api/marketplace-products/resolve');
+    assert.equal(resolveCalls.length, 2);
+    assert.deepEqual(Array.from(resolveCalls[1].body.skus), ['00077']);
+
+    await view.select(workbookFile({ '說明': [['沒有訂單商品資料']], '第三批': fixtureRows }, 'next-file.xlsx'));
+    assert.match(view.text(view.render()), /00123/);
+    assert.doesNotMatch(view.text(view.render()), /Second order product|00077/);
+    assert.equal(view.downloads.length, 0);
 });
