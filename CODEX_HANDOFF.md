@@ -22,6 +22,12 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_MANAGER_NOTICES_2026-09-30.md`：管理員雙向通知與異動前後明細、兩邊填寫例外處理、成員編輯表單修正；正式 revision `corely-wms-manager-notices-20260930`（100%），程式 `315add5`。
+
+- `docs/WMS_ORDER_ALERTS_2026-09-30.md`：例外查詢中文化、大型異動警示、專用聲音與持久收件確認；包含 migration 029 及部署／回復界線。正式 revision `corely-wms-order-alerts-20260930`（100%），程式 `bd6b5e8`。
+
+- `docs/WMS_ORDER_REVIEW_2026-09-30.md`：訂單／倉儲管理員分工、刪除及數量異動強制送審、責任人通知、同條碼多列 SN 修復。正式 revision `corely-wms-order-review-20260930`，程式 `366ce36`；lemon 為訂單管理員、mozwen（陳怡玟）為倉儲管理員。舊候選網址已移除，不能直接回退到缺少 scope／審核限制的舊映像。
+- `docs/WMS_TAIPEI_TIME_FIX_2026-09-29.md`：修正最新留言卡片少 8 小時，統一留言 UTC 解讀與台灣時間顯示，保留微秒游標及原始資料；正式 revision `corely-wms-taipei-time-20260929`，程式 `4b8694a`，取代較早留言時間與發布快照。
 - `docs/WMS_IMPORT_FOOTER_2026-09-17.md`：忽略理貨單最後一行的單獨列印日期時間，保留商品檢查；正式 revision `corely-wms-import-footer-20260917`，程式 `7548074`。
 - `docs/WMS_BATCH_STAGES_2026-09-17.md`：恢復揀貨員批次揀貨、裝箱員批次裝箱，保留階段與審核限制；正式 revision `corely-wms-batch-stages-20260917`，程式 `4e05daf`。
 - `docs/WMS_RENDER_RETIREMENT_2026-09-17.md`：舊 Render API／DB 已暫停、停止新增服務費用；涵蓋備份、依賴、缺檔查核及其他系統仍有費用的範圍。取代較早文件中的「尚未停止 Render」狀態。

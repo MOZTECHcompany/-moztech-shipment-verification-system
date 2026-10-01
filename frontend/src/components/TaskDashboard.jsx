@@ -1,5 +1,7 @@
 import { WorkplaceAnnouncements } from './WorkplaceAnnouncements';
+import MarketplaceBatchAlerts from './MarketplaceBatchAlerts';
 import { taskEntryFilters } from '../utils/entryDestination';
+import {isOrderManager} from '@/utils/managementScope';
 // Corely AI task dashboard: bounded server search and role-aware work queues.
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -192,10 +194,10 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 <button onClick={handleSetUrgent} aria-label={isUrgent ? '取消緊急' : '標記緊急'} title={isUrgent ? '取消緊急' : '標記緊急'} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-red-600 transition-colors ">
                                     <AlertTriangle size={18} />
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); onReportDefect(task); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-orange-600 transition-colors " title="新品不良更換">
+                                <button disabled={task.change_pending || isOrderManager(user)} onClick={(e) => { e.stopPropagation(); onReportDefect(task); }} className="p-2 hover:bg-white/50 rounded-full text-gray-400 hover:text-orange-600 transition-colors " title="新品不良更換">
                                     <RefreshCw size={18} />
                                 </button>
-                                <button onClick={() => onDelete(task.id, task.voucher_number)} aria-label={`刪除訂單 ${task.voucher_number}`} title="刪除訂單" className="p-2 hover:bg-red-50/50 rounded-full text-gray-400 hover:text-red-600 transition-colors ">
+                                <button onClick={() => onDelete(task.id, task.voucher_number)} disabled={task.change_pending} aria-label={`申請刪除訂單 ${task.voucher_number}`} title="申請刪除訂單" className="p-2 hover:bg-red-50/50 rounded-full text-gray-400 hover:text-red-600 transition-colors ">
                                     <Trash2 size={18} />
                                 </button>
                             </div>
@@ -203,6 +205,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                     </div>
                 </div>
 
+                {task.change_pending && <div role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-900">{task.deletion_pending ? '刪除申請' : '訂單異動'}待審核 · 暫停作業</div>}
                 {/* 揀貨員資訊 */}
                 {task.task_type === 'pack' && task.picker_name && (
                     <div className="mb-6 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-lg border border-blue-100/30 w-fit">
@@ -295,7 +298,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 查看訂單 <ArrowRight size={20} />
                             </span>
                         </Button>
-                    ) : user?.role === 'dispatcher' ? (
+                    ) : (user?.role === 'dispatcher' || isOrderManager(user) || task.change_pending) ? (
                         <Button
                             variant="secondary"
                             size="lg"
@@ -365,7 +368,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
     );
 };
 
-export function TaskDashboard({ user }) {
+export function TaskDashboard({ user, token }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState('');
@@ -686,7 +689,7 @@ export function TaskDashboard({ user }) {
                 return next;
             });
         };
-        const events = { new_task: handleNewTask, task_claimed: handleTaskUpdate, task_status_changed: handleTaskUpdate,
+        const events = { order_deletion_changed: () => fetchTasks(), new_task: handleNewTask, task_claimed: handleTaskUpdate, task_status_changed: handleTaskUpdate,
             task_deleted: handleTaskDeleted, task_urgent_changed: handleUrgentChanged, task_pin_changed: handleTaskPinChanged };
         Object.entries(events).forEach(([name, handler]) => socket.on(name, handler));
         return () => Object.entries(events).forEach(([name, handler]) => socket.off(name, handler));
@@ -732,36 +735,15 @@ export function TaskDashboard({ user }) {
         }
     };
 
-    const handleDeleteOrder = (orderId, voucherNumber) => {
-        MySwal.fire({
-            title: `確定要永久刪除訂單？`,
-            html: `<p class="text-gray-600">訂單號: <strong>${voucherNumber}</strong></p>
-                   <p class="text-sm text-red-600 mt-2">此操作將會刪除所有相關資料，且無法復原！</p>`,
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#FF3B30',
-            cancelButtonColor: '#8E8E93',
-            confirmButtonText: '確認刪除',
-            cancelButtonText: '取消',
-            customClass: {
-                popup: 'rounded-2xl',
-                title: 'text-xl font-semibold',
-                confirmButton: 'rounded-xl px-6 py-2.5',
-                cancelButton: 'rounded-xl px-6 py-2.5'
-            }
-        }).then((result) => {
-            if (result.isConfirmed) {
-                const promise = apiClient.delete(`/api/orders/${orderId}`);
-                toast.promise(promise, {
-                    loading: `正在刪除訂單 ${voucherNumber}...`,
-                    success: (res) => {
-                        setTasks(prevTasks => prevTasks.filter(task => task.id !== orderId));
-                        return res.data.message;
-                    },
-                    error: (err) => err.response?.data?.message || '刪除失敗'
-                });
-            }
+    const handleDeleteOrder = async (orderId, voucherNumber) => {
+        const result = await MySwal.fire({title:'申請刪除訂單',text:`${voucherNumber}：送出後暫停作業，主管核准後作廢並保留紀錄。`,
+            input:'textarea',inputLabel:'刪除原因',inputAttributes:{maxlength:'2000'},showCancelButton:true,
+            confirmButtonText:'送交主管審核',cancelButtonText:'取消',showLoaderOnConfirm:true,
+            preConfirm:async value=>{if(!value?.trim()){MySwal.showValidationMessage('請填寫刪除原因');return false;}
+                try{return (await apiClient.post(`/api/orders/${orderId}/deletion-requests`,{reason:value.trim()})).data;}
+                catch(error){MySwal.showValidationMessage(error.response?.data?.message || '送出失敗，請重新整理核對');return false;}}
         });
+        if(result.isConfirmed){toast.success(result.value.message);await fetchTasks();}
     };
 
     const visibleTasks = useMemo(
@@ -900,9 +882,10 @@ export function TaskDashboard({ user }) {
                   )}
                 />
 
+                <MarketplaceBatchAlerts user={user} token={token}/>
                 <WarehouseTaskQueue user={user} active={currentView==='active'}/>
                 <WorkplaceAnnouncements />
-                {['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
+                {!isOrderManager(user) && ['picker', 'packer', 'admin', 'superadmin'].includes(user?.role) && <ScanToClaim
                     key={user.id} user={user} active={currentView === 'active'}
                     disabled={claimingId !== null || isBatchClaiming}
                     onAcquire={() => {

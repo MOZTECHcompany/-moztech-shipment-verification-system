@@ -50,7 +50,7 @@ describe('AuthService', () => {
 
             // 驗證資料庫查詢被調用
             expect(pool.query).toHaveBeenCalledWith(
-                'SELECT id, username, password, name, role FROM users WHERE LOWER(username) = LOWER($1)',
+                'SELECT id, username, password, name, role, management_scope FROM users WHERE LOWER(username) = LOWER($1)',
                 ['testuser']
             );
         });

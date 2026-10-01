@@ -20,7 +20,7 @@ class AuthService {
 
             // 查詢用戶（忽略大小寫）
             const result = await pool.query(
-                'SELECT id, username, password, name, role FROM users WHERE LOWER(username) = LOWER($1)',
+                'SELECT id, username, password, name, role, management_scope FROM users WHERE LOWER(username) = LOWER($1)',
                 [username]
             );
 
@@ -47,7 +47,7 @@ class AuthService {
                     id: user.id,
                     username: user.username,
                     name: user.name,
-                    role: cleanedRole
+                    role: cleanedRole, management_scope:user.management_scope || 'all'
                 },
                 process.env.JWT_SECRET,
                 { expiresIn: '8h' }
@@ -61,7 +61,7 @@ class AuthService {
                     id: user.id,
                     username: user.username,
                     name: user.name,
-                    role: cleanedRole
+                    role: cleanedRole, management_scope:user.management_scope || 'all'
                 }
             };
         } catch (error) {
@@ -113,7 +113,7 @@ class AuthService {
             // The old token proves identity only. Always load the current account so a
             // deleted user or an old elevated role cannot be renewed from stale claims.
             const userResult = await pool.query(
-                'SELECT id, username, name, role FROM users WHERE id = $1',
+                'SELECT id, username, name, role, management_scope FROM users WHERE id = $1',
                 [userId]
             );
             const user = userResult.rows[0];
@@ -124,7 +124,7 @@ class AuthService {
             }
 
             const role = user.role ? String(user.role).trim().toLowerCase() : null;
-            const payload = { id: user.id, username: user.username, name: user.name, role };
+            const payload = { id: user.id, username: user.username, name: user.name, role, management_scope:user.management_scope || 'all' };
 
             const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
 

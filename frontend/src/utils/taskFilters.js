@@ -1,3 +1,4 @@
+import {isOrderManager} from './managementScope.js';
 const normalize = (value) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase();
 const compact = (value) => normalize(value).replace(/[^\p{L}\p{N}]/gu, '');
 
@@ -37,6 +38,7 @@ export function canBatchPick(task) {
 }
 
 export function batchStagesForRole(user) {
+    if (isOrderManager(user)) return [];
     if (['admin', 'superadmin'].includes(user?.role)) return ['pick', 'pack'];
     if (user?.role === 'picker') return ['pick'];
     if (user?.role === 'packer') return ['pack'];
@@ -44,7 +46,7 @@ export function batchStagesForRole(user) {
 }
 
 export function canBatchClaim(task, user, stage) {
-    if (!batchStagesForRole(user).includes(stage)) return false;
+    if (task.change_pending || !batchStagesForRole(user).includes(stage)) return false;
     return stage === 'pick' ? canBatchPick(task)
         : task.task_type === 'pack' && task.status === 'picked';
 }

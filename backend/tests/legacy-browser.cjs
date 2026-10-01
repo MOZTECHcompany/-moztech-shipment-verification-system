@@ -17,10 +17,10 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     const contexts = [];
     const expectedScanFailures = new Map();
     const originalCwd = process.cwd();
-    async function pageFor(role, mobile = false) {
-        const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
+    async function pageFor(role, mobile = false, timezoneId = 'Asia/Taipei', collapseAlerts = true) {
+        const context = await browser.newContext({ timezoneId, viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
         contexts.push(context);
-        const user = (await pool.query('SELECT id,username,name,role FROM users WHERE id=$1', [users[role]])).rows[0];
+        const user = (await pool.query('SELECT id,username,name,role,management_scope FROM users WHERE id=$1', [users[role]])).rows[0];
         await context.addInitScript(({user,token}) => { localStorage.setItem('wms_user', JSON.stringify(user)); localStorage.setItem('wms_token', JSON.stringify(token)); }, { user, token: tokens[role] });
         const page = await context.newPage(); page.setDefaultTimeout(15000);
         await page.addInitScript(() => {
@@ -43,6 +43,9 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             const expected = route === '/api/orders/update_item' && r.status() === expectedScanFailures.get(r.request().postDataJSON()?.scanValue);
             report.failedResponses.push({ path: route, status: r.status(), expected });
         });
+        // Existing workflows acknowledge the prominent overlay by collapsing it;
+        // the dedicated alert scenario below verifies explicit receipts and sound.
+        if(collapseAlerts)await page.addLocatorHandler(page.getByRole('button',{name:'收合異動警示',exact:true}),async()=>{await page.getByRole('button',{name:'收合異動警示',exact:true}).click();});
         return page;
     }
     async function step(name, run) {
@@ -56,7 +59,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     if (base.startsWith('http:')) {
         process.chdir(root + '/frontend');
         const { createServer } = await import(path.join(path.dirname(require.resolve('vite', { paths: [root + '/frontend/node_modules'] })), 'dist/node/index.js'));
-        vite = await createServer({ root: root + '/frontend', configFile: root + '/frontend/vite.config.js', logLevel: 'error', server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: base }, '/socket.io': { target: base, ws: true } } } });
+        vite = await createServer({ root: root + '/frontend', configFile: root + '/frontend/vite.config.js', logLevel: 'error', optimizeDeps: {include:['react-chartjs-2','chart.js']}, server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: base }, '/socket.io': { target: base, ws: true } } } });
         await vite.listen(); webBase = 'http://127.0.0.1:' + vite.httpServer.address().port;
     }
         report.webBase = webBase;
@@ -231,7 +234,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             const created = await response(picker, `/api/orders/${exceptionOrder}/exceptions`, 'POST', () => create.getByRole('button', {name:'建立',exact:true}).click());
             const id = (await created.json()).id;
             await dispatcher.goto(webBase + '/order/' + exceptionOrder);
-            await dispatcher.getByRole('button', {name:'填處理',exact:true}).click();
+            await dispatcher.getByRole('button', {name:'填寫處理方式',exact:true}).click();
             const proposal = modal(dispatcher, '例外處理：填寫處理內容（待審核）');
             await proposal.locator('select').selectOption('other');
             await proposal.getByPlaceholder('請描述處理方式與原因，管理員會依此審核').fill('已更換包材，請主管核對');
@@ -275,6 +278,200 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             assert.equal(await quantity(), 4);
             await admin.reload(); assert.equal(await quantity(), 4);
         });
+        await step('browser: latest-message card, floating chat and order discussion agree in Taiwan and US timezones', async () => {
+            const timeVoucher = prefix + '-TIME';
+            const timeOrder = (await pool.query("INSERT INTO orders(voucher_number,customer_name,status) VALUES($1,'Timezone UI fixture','pending') RETURNING id",[timeVoucher])).rows[0].id;
+            cleanupOrders.push(timeOrder);
+            await pool.query("INSERT INTO task_comments(order_id,user_id,content,priority,created_at) VALUES($1,$2,'Taiwan timezone fixture','urgent',timestamp '2026-09-29 05:53:59.263438')",[timeOrder,users.dispatcher]);
+            for (const timezone of ['Asia/Taipei','America/Los_Angeles']) {
+                const page = await pageFor('superadmin',false,timezone);
+                await page.goto(webBase + '/tasks');
+                await Promise.all([page.waitForResponse(r=>new URL(r.url()).searchParams.get('q')===timeVoucher),page.getByLabel('查找任務',{exact:true}).fill(timeVoucher)]);
+                await page.getByText('2026/09/29 13:53',{exact:true}).waitFor();
+                await page.getByRole('button',{name:'查看訂單 '+timeVoucher+' 的留言',exact:true}).click();
+                await page.getByText('2026/09/29 13:53',{exact:true}).nth(1).waitFor();
+                const times = await page.locator('time').evaluateAll(nodes=>nodes.map(n=>({text:n.textContent,instant:n.dateTime})));
+                assert.equal(times.length,2);
+                for(const time of times){assert.equal(time.text,'2026/09/29 13:53');assert.equal(time.instant,'2026-09-29T05:53:59.263Z');}
+                await page.screenshot({path:output+'/taipei-time-'+timezone.replace('/','-')+'.png',fullPage:true});
+                await page.goto(webBase + '/order/' + timeOrder);
+                const discussion = page.getByRole('region',{name:'訂單備註與討論'});
+                await discussion.getByText('2026/09/29 13:53',{exact:true}).waitFor();
+                await page.close();
+            }
+        });
+        await step('browser: order manager submits deletion; warehouse supervisor and assigned picker receive persistent review alerts',async()=>{
+            const requestVoucher=prefix+'-DELETE';
+            const id=(await pool.query("INSERT INTO orders(voucher_number,customer_name,status,picker_id) VALUES($1,'Review fixture','picking',$2) RETURNING id",[requestVoucher,users.picker])).rows[0].id;
+            cleanupOrders.push(id);
+            await pool.query("INSERT INTO order_items(order_id,product_code,barcode,product_name,quantity) VALUES($1,'REVIEW','REVIEW','Review item',1)",[id]);
+            await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'import','{}')",[id,users.orderManager]);
+            const manager=await pageFor('orderManager'),supervisor=await pageFor('warehouseManager'),worker=await pageFor('picker');
+            await worker.goto(webBase+'/order/'+id);
+            await worker.getByPlaceholder('掃描或輸入條碼',{exact:true}).waitFor();
+            await supervisor.goto(webBase+'/tasks');
+            await manager.goto(webBase+'/tasks');
+            await manager.getByText('訂單管理員',{exact:true}).waitFor();
+            await Promise.all([manager.waitForResponse(r=>new URL(r.url()).searchParams.get('q')===requestVoucher),manager.getByLabel('查找任務',{exact:true}).fill(requestVoucher)]);
+            assert.equal(await manager.getByRole('button',{name:'批次揀貨',exact:true}).count(),0);
+            await manager.getByRole('button',{name:'申請刪除訂單 '+requestVoucher,exact:true}).click();
+            await manager.getByRole('textbox',{name:'刪除原因',exact:true}).fill('UI review reason');
+            await response(manager,`/api/orders/${id}/deletion-requests`,'POST',()=>manager.getByRole('button',{name:'送交主管審核',exact:true}).click());
+            await worker.getByRole('region',{name:'訂單異動提醒'}).getByRole('status').waitFor();
+            await worker.waitForFunction(()=>document.querySelector('input[placeholder*="審核中"]')?.disabled===true);
+            await supervisor.getByRole('region',{name:'訂單異動提醒'}).getByRole('link',{name:'前往審核'}).click();
+            const row=supervisor.getByRole('row').filter({hasText:requestVoucher});
+            await row.getByRole('button',{name:'查看並審核',exact:true}).click();
+            await supervisor.getByRole('alert').filter({hasText:'核准後訂單將作廢'}).waitFor();
+            await supervisor.screenshot({path:output+'/warehouse-delete-review.png',fullPage:true});
+            const exception=(await pool.query("SELECT id FROM order_exceptions WHERE order_id=$1 AND status='open'",[id])).rows[0].id;
+            await response(supervisor,`/api/orders/${id}/exceptions/${exception}/ack`,'PATCH',()=>supervisor.getByRole('button',{name:'核准刪除並作廢',exact:true}).click());
+            assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status,'voided');
+            assert.equal((await pool.query('SELECT id FROM order_items WHERE order_id=$1',[id])).rowCount,1);
+            await manager.goto(webBase+'/settings');
+            assert.equal(await manager.getByRole('link',{name:'成員與角色',exact:true}).count(),0);
+            await manager.screenshot({path:output+'/order-manager-settings.png',fullPage:true});
+            await manager.close();await supervisor.close();await worker.close();
+        });
+        await step('browser: both manager duties retain editing controls, show exact peer changes and load the correct member form',async()=>{
+            const voucher=prefix+'-MANAGERS';
+            const id=(await pool.query("INSERT INTO orders(voucher_number,customer_name,status) VALUES($1,'雙向通知驗收','pending') RETURNING id",[voucher])).rows[0].id;
+            cleanupOrders.push(id);
+            await pool.query("INSERT INTO order_items(order_id,product_code,barcode,product_name,quantity) VALUES($1,'MANAGER','MANAGER','測試商品',2)",[id]);
+            await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'import','{}')",[id,users.dispatcher]);
+            const requested=ok(await api('warehouseManager','POST',`/api/orders/${id}/exceptions`,{type:'order_change',reasonText:'倉儲確認數量',snapshot:{proposal:{note:'倉儲確認數量',items:[{barcode:'MANAGER',productName:'測試商品',quantityChange:1,noSn:true}]}}}),201);
+            const manager=await pageFor('orderManager',false,'Asia/Taipei',false);
+            await manager.goto(webBase+'/tasks');
+            const alert=manager.getByRole('complementary',{name:'重要訂單異動'});
+            await alert.getByText(voucher,{exact:true}).waitFor();
+            await alert.getByText('操作人：warehouseManager（倉儲管理員）',{exact:true}).waitFor();
+            await alert.getByRole('region',{name:'異動明細'}).getByText('測試商品 · MANAGER · 2 → 3 件',{exact:true}).waitFor();
+            await manager.screenshot({path:output+'/manager-change-details.png',fullPage:true});
+            await manager.setViewportSize({width:390,height:844});
+            assert.ok(await manager.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+            await manager.screenshot({path:output+'/manager-change-details-mobile.png',fullPage:true});
+            await manager.close();
+            ok(await api('warehouseManager','PATCH',`/api/orders/${id}/exceptions/${requested.id}/reject`,{note:'保留原数量'}));
+            const exception=ok(await api('picker','POST',`/api/orders/${id}/exceptions`,{type:'other',reasonText:'包材確認'}),201).id;
+            for(const role of ['orderManager','warehouseManager']) {
+                const page=await pageFor(role);
+                await page.goto(webBase+'/order/'+id);
+                await page.getByRole('button',{name:'申請異動',exact:true}).waitFor();
+                await page.getByRole('button',{name:'填寫處理方式',exact:true}).click();
+                const form=modal(page,'例外處理：填寫處理內容（待審核）');
+                await form.locator('select').selectOption('other');
+                await form.getByPlaceholder('請描述處理方式與原因，管理員會依此審核').fill(role+' 已確認包材');
+                await response(page,`/api/orders/${id}/exceptions/${exception}/propose`,'PATCH',()=>form.getByRole('button',{name:'送出審核',exact:true}).click());
+                await page.getByText('備註：'+role+' 已確認包材',{exact:true}).waitFor();
+                assert.equal(await page.getByRole('button',{name:'核可',exact:true}).count(),role==='warehouseManager'?1:0);
+                await page.close();
+            }
+            await admin.goto(webBase+'/admin/users');
+            for(const [role,scope] of [['orderManager','orders'],['warehouseManager','warehouse']]) {
+                await admin.getByRole('row').filter({hasText:role}).getByRole('button',{name:'編輯',exact:true}).click();
+                const form=modal(admin,'編輯使用者');
+                assert.equal(await form.locator('input[name="username"]').inputValue(),role);
+                assert.equal(await form.getByLabel('角色',{exact:true}).inputValue(),'admin');
+                assert.equal(await form.getByLabel('管理員分工',{exact:true}).inputValue(),scope);
+                await form.getByText('兩邊管理員都會收到異動明細與警示；通知不會自動核准異動。',{exact:true}).waitFor();
+                await admin.screenshot({path:output+'/member-scope-'+scope+'.png',fullPage:true});
+                await form.getByRole('button',{name:'取消',exact:true}).click();
+            }
+            await admin.getByRole('button',{name:'新增使用者',exact:true}).click();
+            const form=modal(admin,'新增使用者');
+            assert.equal(await form.locator('input[name="username"]').inputValue(),'');
+            await form.getByLabel('角色',{exact:true}).selectOption('admin');
+            assert.equal(await form.getByLabel('管理員分工',{exact:true}).inputValue(),'orders');
+            await form.getByRole('button',{name:'取消',exact:true}).click();
+        });
+        await step('browser: exception query is Chinese, explicit, read-only, paginated and usable on mobile', async () => {
+            const queryVoucher=prefix+'-QUERY';
+            const id=(await pool.query("INSERT INTO orders(voucher_number,customer_name,status) VALUES($1,'查詢測試客戶','picked') RETURNING id",[queryVoucher])).rows[0].id;
+            cleanupOrders.push(id);
+            await pool.query("INSERT INTO order_exceptions(order_id,type,status,reason_text,created_by) SELECT $1,'stockout','open','查詢驗收：缺貨待確認',$2 FROM generate_series(1,101)",[id,users.picker]);
+            const page=await pageFor('warehouseManager');
+            let queries=0, writes=0;
+            page.on('request', request=>{
+                if(new URL(request.url()).pathname==='/api/admin/exceptions') queries++;
+                if(request.url().includes('/api/') && ['POST','PATCH','PUT','DELETE'].includes(request.method())) writes++;
+            });
+            await response(page,'/api/admin/exceptions','GET',()=>page.goto(webBase+'/admin/exceptions'));
+            assert.deepEqual(await page.getByLabel('訂單作業進度',{exact:true}).locator('option').allTextContents(),['全部','待揀貨','揀貨中','待裝箱','裝箱中','已完成','已作廢']);
+            assert.equal(await page.getByLabel('申請人',{exact:true}).count(),0);
+            const before=queries;
+            await page.getByLabel('訂單號碼或 ID',{exact:true}).fill(queryVoucher);
+            await page.getByLabel('訂單作業進度',{exact:true}).selectOption('picked');
+            await page.getByLabel('申請類型',{exact:true}).selectOption('stockout');
+            await page.getByText('條件已變更，請按查詢',{exact:true}).waitFor();
+            assert.equal(queries,before,'Draft filters must not issue queries until submitted');
+            const result=await response(page,'/api/admin/exceptions','GET',()=>page.getByRole('button',{name:'查詢',exact:true}).click());
+            const query=new URL(result.url()).searchParams;
+            assert.equal(query.get('q'),queryVoucher);assert.equal(query.get('orderStatus'),'picked');assert.equal(query.get('type'),'stockout');
+            await page.getByText('第 1 頁 · 本頁 100 筆',{exact:true}).waitFor();
+            await response(page,'/api/admin/exceptions','GET',()=>page.getByRole('button',{name:'下一頁',exact:true}).click());
+            await page.getByText('第 2 頁 · 本頁 1 筆',{exact:true}).waitFor();
+            await page.getByRole('button',{name:'人員篩選',exact:true}).click();
+            await page.getByLabel('申請人',{exact:true}).selectOption(String(users.picker));
+            await response(page,'/api/admin/exceptions','GET',()=>page.getByLabel('訂單號碼或 ID',{exact:true}).press('Enter'));
+            await page.getByText('第 1 頁 · 本頁 100 筆',{exact:true}).waitFor();
+            await response(page,'/api/admin/exceptions','GET',()=>page.getByRole('button',{name:'下一頁',exact:true}).click());
+            await page.getByText('第 2 頁 · 本頁 1 筆',{exact:true}).waitFor();
+            await page.getByRole('button',{name:'人員篩選（1）',exact:true}).click();
+            await page.evaluate(()=>window.scrollTo(0,0));
+            await page.screenshot({path:output+'/exceptions-desktop.png',fullPage:true});
+            await page.setViewportSize({width:390,height:844});
+            assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile page must not overflow');
+            await page.getByRole('button',{name:'查看並審核',exact:true}).filter({visible:true}).waitFor();
+            await page.screenshot({path:output+'/exceptions-mobile.png',fullPage:true});
+            await page.getByLabel('訂單號碼或 ID',{exact:true}).fill(prefix+'-NO-MATCH');
+            await response(page,'/api/admin/exceptions','GET',()=>page.getByRole('button',{name:'查詢',exact:true}).click());
+            await page.getByText('沒有符合條件的案件',{exact:true}).waitFor();
+            const clear=await response(page,'/api/admin/exceptions','GET',()=>page.getByRole('button',{name:'清除條件，查看全部',exact:true}).click());
+            for(const key of ['q','type','orderStatus','createdBy'])assert.equal(new URL(clear.url()).searchParams.has(key),false);
+            assert.equal(await page.getByLabel('訂單號碼或 ID',{exact:true}).inputValue(),'');
+            await page.route('**/api/admin/exceptions?**',route=>route.abort());
+            await page.getByRole('button',{name:'重新整理',exact:true}).click();
+            await page.getByRole('alert').filter({hasText:'無法載入案件'}).waitFor();
+            assert.equal(await page.getByText('沒有符合條件的案件',{exact:true}).count(),0);
+            await page.unroute('**/api/admin/exceptions?**');
+            await response(page,'/api/admin/exceptions','GET',()=>page.getByRole('button',{name:'重試',exact:true}).click());
+            await page.getByText('第 1 頁 · 本頁 100 筆',{exact:true}).waitFor();
+            assert.equal(writes,0,'Filtering must never change order data');
+            assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status,'picked');
+            await page.close();
+        });
+        await step('browser: order alarms are large, audible, recover after reload and receipt does not approve',async()=>{
+            const alarmVoucher=prefix+'-ALARM';
+            const id=(await pool.query("INSERT INTO orders(voucher_number,customer_name,status,picker_id,packer_id) VALUES($1,'Alarm fixture','picking',$2,$3) RETURNING id",[alarmVoucher,users.picker,users.packer])).rows[0].id;
+            cleanupOrders.push(id);
+            await pool.query("INSERT INTO order_items(order_id,product_code,barcode,product_name,quantity) VALUES($1,'ALARM','ALARM','Alarm item',1)",[id]);
+            await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'import','{}')",[id,users.orderManager]);
+            const worker=await pageFor('picker',false,'Asia/Taipei',false);
+            await worker.goto(webBase+'/settings');
+            // Leave other fixture alarms pending; a fresh one must become prominent.
+            if(await worker.getByRole('button',{name:'收合異動警示',exact:true}).count())await worker.getByRole('button',{name:'收合異動警示',exact:true}).click();
+            await worker.getByRole('heading',{name:'個人掃碼音效',exact:true}).click();
+            const before=await worker.evaluate(()=>window.__wmsTones.length);
+            const request=ok(await api('orderManager','POST',`/api/orders/${id}/deletion-requests`,{reason:'UI 大型警示驗收'}),202);
+            const alarm=worker.getByRole('complementary',{name:'重要訂單異動',exact:true});
+            await alarm.getByText(alarmVoucher,{exact:true}).waitFor();
+            await alarm.getByText('刪除訂單待審核',{exact:true}).waitFor();
+            await worker.waitForFunction(count=>window.__wmsTones.length>=count+6,before);
+            await worker.screenshot({path:output+'/order-alert-desktop.png',fullPage:false});
+            await worker.reload();
+            await alarm.getByText(alarmVoucher,{exact:true}).waitFor();
+            await worker.setViewportSize({width:390,height:844});
+            assert.ok(await worker.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+            await worker.screenshot({path:output+'/order-alert-mobile.png',fullPage:false});
+            const notice=ok(await api('picker','GET','/api/order-change-notices')).items.find(row=>row.order_id===id);
+            await response(worker,`/api/order-change-notices/${notice.id}/acknowledge`,'POST',()=>alarm.getByRole('button',{name:'我已知悉',exact:true}).click());
+            assert.equal((await pool.query('SELECT status FROM order_exceptions WHERE id=$1',[request.id])).rows[0].status,'open');
+            assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[id])).rows[0].status,'picking');
+            // Rejection is a second durable notification even though pending review clears.
+            ok(await api('warehouseManager','PATCH',`/api/orders/${id}/exceptions/${request.id}/reject`,{note:'UI 駁回驗收'}));
+            await alarm.getByText('刪除訂單已駁回',{exact:true}).waitFor();
+            await worker.close();
+        });
         await step('browser: every legacy admin screen, reports, history, team and settings loads real API data', async () => {
             const pages = [['/admin','出貨管理'], ['/admin/users','成員與角色'], ['/admin/operation-logs','操作日誌查詢'], ['/admin/analytics','數據分析儀表板'], ['/admin/scan-errors','刷錯條碼分析'], ['/admin/defects','新品不良異動'], ['/admin/exceptions','例外總覽'], ['/team','公告板'], ['/settings','設定']];
             for (const [route,title] of pages) {
@@ -309,7 +506,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 13 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 18 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

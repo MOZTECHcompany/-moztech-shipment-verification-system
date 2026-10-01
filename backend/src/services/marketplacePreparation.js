@@ -1,6 +1,8 @@
 const {createHash,randomBytes}=require('node:crypto');
 const {lookupProducts}=require('./marketplaceProductCatalog');
 const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
+const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
+const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
 const {safeSettings}=require('./marketplaceSettings');
 const clean=value=>String(value??'').trim();
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -43,18 +45,23 @@ function selectProfile(profiles,platform,input={}){
   if(!match)throw fail('店鋪設定不存在或平台不同，請重新選擇店鋪','STORE_PROFILE_INVALID');return match;
  }
  const named=clean(input.settings?.store);
- if(named)return choices.find(p=>p.store===named)||null;
+ if(named){
+  const match=choices.find(p=>p.store===named);
+  if(!match&&all.length)throw fail('請選擇已設定的店鋪；新店鋪須先保存設定','STORE_PROFILE_INVALID');
+  return match||null;
+ }
  return shop&&bound.length===1?bound[0]:choices.length===1&&all.length===1?choices[0]:null;
 }
 
-function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVerifier(),resolveProducts=lookupProducts}={}){
+function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVerifier(),verifyShopline=createShoplineOrderVerifier(),verifyOneShop=createOneShopOrderVerifier(),resolveProducts=lookupProducts}={}){
  // Short-lived preview reuse avoids sending Shopify another request for each
  // settings blur. Saving always performs a new read before committing.
  const cache=new Map();
- async function currentShopify(rows,refresh){
-  const key=digest(rows),previous=cache.get(key);
+ async function currentPlatform(platform,rows,context,refresh){
+  const key=digest([platform,context,rows]),previous=cache.get(key);
   if(!refresh&&previous&&previous.expires>Date.now())return previous.promise;
-  const promise=verifyShopify(rows);
+  const verifier=platform==='Shopify'?verifyShopify:platform==='SHOPLINE'?verifyShopline:verifyOneShop;
+  const promise=verifier(rows,context);
   cache.set(key,{expires:Date.now()+15000,promise});
   if(cache.size>16)cache.delete(cache.keys().next().value);
   try{return await promise;}catch(e){cache.delete(key);throw e;}
@@ -68,25 +75,33 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   safeSettings({...supplied,skuMappings:supplied.skuMappings??{}});
   let verifiedRows=source.rows,verification=null;
   if(source.platform==='Shopify'){
-   const result=await currentShopify(source.rows,options.refresh===true);
-   verifiedRows=result.rows;verification={...result.verification,currentFingerprint:digest([result.verification.shop,result.rows])};
+   const result=await currentPlatform(source.platform,source.rows,{},options.refresh===true);
+   verifiedRows=result.rows;verification=result.verification?{...result.verification,mode:'api',platform:source.platform,currentFingerprint:digest([result.verification.shop,result.rows,result.verification.fingerprint||null])}:null;
   }
   const profile=selectProfile(profiles,source.platform,{...input,shopifyShop:verification?.shop});
+  if(source.platform!=='Shopify'){
+   // Only a persisted store binding can select a server-side API credential.
+   // Uploaded settings cannot turn a required live check on or off.
+   const context={apiConnectionId:clean(profile?.settings?.apiConnectionId)};
+   const result=await currentPlatform(source.platform,source.rows,context,options.refresh===true);
+   verifiedRows=result.rows;verification=result.verification?{...result.verification,mode:'api',platform:source.platform,currentFingerprint:digest([source.platform,context.apiConnectionId,result.rows,result.verification.fingerprint])}:null;
+  }
   const initialProfile=profile&&!clean(input.profileId)&&!clean(supplied.store)&&!clean(supplied.customerCode);
   const settingsInput={salesExportMode:'product-200-v1',store:'',customerCode:'',customerName:'',warehouseCode:'003',date:date(),batchSequence:'1',batchNumber:`WMS-${date().replaceAll('-','')}-${randomBytes(2).toString('hex').toUpperCase()}`,currency:'',taxMode:'erp_inclusive',taxType:'11',summaryNote:'',shippingSku:{erpSku:'00001',name:'運費',confirmed:false,nonStock:false},skuMappings:{},...profile?.settings};
   for(const [key,value] of Object.entries(supplied)){
+   if(key==='apiConnectionId')continue;
    // Initial UI defaults do not erase an already confirmed store profile.
    if(initialProfile&&['store','customerCode','customerName','warehouseCode','currency'].includes(key)&&!clean(value))continue;
    if(initialProfile&&['taxConfirmed','erpResponsibilityConfirmed','shippingSku','taxMode','taxType','projectOwner','salesOwner','erpStaffCode','erpProjectCode'].includes(key)&&!clean(supplied.store)&&!clean(input.profileId))continue;
    settingsInput[key]=value;
   }
   safeSettings(settingsInput);
-  if(verification)settingsInput.shopifyShop=verification.shop;
+  if(verification&&source.platform==='Shopify')settingsInput.shopifyShop=verification.shop;
   const current=parseUnifiedMarketplace(verifiedRows);
   const raw=deliveryForOrders(current.source,current.parsed);
   // A cancelled order may have no remaining product rows. Keep its current
   // order-level evidence visible without reviving any removed CSV products.
-  for(const order of verification?.orders||[]){
+  for(const order of source.platform==='Shopify'?verification?.orders||[]:[]){
    if(raw.orders.some(o=>o.sourceOrderNumber===order.number))continue;
    if(order.currentQuantity!==0)throw fail(`${order.number}：Shopify 商品明細未完整解析`,'SHOPIFY_RESPONSE_INVALID');
    raw.orders.push({sourcePlatform:'Shopify',sourceOrderNumber:order.number,currentQuantity:0,
@@ -102,7 +117,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const apiBarcodes=new Map();
   for(const order of verification?.orders||[])for(const i of order.items||[]){
    if(!skus.includes(i.sku)||!i.barcode)continue;
-   if(apiBarcodes.has(i.sku)&&apiBarcodes.get(i.sku)!==i.barcode)throw fail(`商品 ${i.sku} 在 Shopify 對應不同條碼，請核對商品設定`,'BARCODE_AMBIGUOUS');
+   if(apiBarcodes.has(i.sku)&&apiBarcodes.get(i.sku)!==i.barcode)throw fail(`商品 ${i.sku} 在 ${source.platform} 對應不同條碼，請核對商品設定`,'BARCODE_AMBIGUOUS');
    apiBarcodes.set(i.sku,i.barcode);
   }
   settingsInput.skuMappings={...settingsInput.skuMappings};
@@ -111,7 +126,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    if(match?.status==='matched'){
     const p=match.matches[0];
     const apiBarcode=apiBarcodes.get(item.sku);
-    if(p.barcode&&apiBarcode&&p.barcode!==apiBarcode)throw fail(`商品 ${item.sku} 的 Shopify 與 ECOUNT 條碼不同，請先核對`,'BARCODE_MISMATCH');
+    if(p.barcode&&apiBarcode&&p.barcode!==apiBarcode)throw fail(`商品 ${item.sku} 的 ${source.platform} 與 ECOUNT 條碼不同，請先核對`,'BARCODE_MISMATCH');
     settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,barcode:p.barcode||apiBarcode||provided.barcode||'',barcodeConfirmed:p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
    }else if(!settingsInput.skuMappings[item.sku])settingsInput.skuMappings[item.sku]={erpSku:item.sku,erpName:item.productName,barcode:'',confirmed:false,barcodeConfirmed:false,category:''};
   }

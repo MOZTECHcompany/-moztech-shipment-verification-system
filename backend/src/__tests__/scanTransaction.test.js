@@ -4,7 +4,7 @@ jest.mock('../utils/logger', () => ({ debug: jest.fn(), info: jest.fn(), warn: j
 const { pool } = require('../config/database');
 const router = require('../routes/orderRoutes');
 
-const handlerFor = path => router.stack.find(layer => layer.route?.path === path).route.stack[0].handle;
+const handlerFor = path => router.stack.find(layer => layer.route?.path === path).route.stack.at(-1).handle;
 const scan = handlerFor('/orders/update_item');
 const claim = handlerFor('/orders/:orderId/claim');
 

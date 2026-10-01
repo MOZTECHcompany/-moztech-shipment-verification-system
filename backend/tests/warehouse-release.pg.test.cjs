@@ -11,14 +11,40 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
  const {pool}=require('../src/config/database');let io;
  t.after(async()=>{if(io)await new Promise(resolve=>io.close(resolve));await pool.end();await control.query('DROP DATABASE "'+database+'"');await control.end();});
  await require('../src/maintenance/migrationRunner').runMigrations({pool,targetDatabase:database});
+ // Fixture API evidence only: this disposable workflow never contacts Shopify.
+ const preparation=require('../src/services/marketplacePreparation'),createPreparation=preparation.createMarketplacePreparation;
+ preparation.createMarketplacePreparation=options=>createPreparation({...options,verifyShopify:async rows=>({rows,verification:{shop:'fixture-workflow.myshopify.com',orders:[]}})});
  const {server,io:socket}=require('../src/app');io=socket;await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const users={},tokens={};for(const role of ['admin','dispatcher','picker','packer']){users[role]=(await pool.query('INSERT INTO users(username,password,name,role) VALUES($1,$2,$1,$1) RETURNING id',[role,'unused'])).rows[0].id;tokens[role]=jwt.sign({id:users[role]},process.env.JWT_SECRET,{expiresIn:600});}
- async function api(role,method,path,body){const r=await fetch(`http://127.0.0.1:${server.address().port}`+path,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens[role]},body:body?JSON.stringify(body):undefined});return {status:r.status,data:await r.json()};}
+ const socketEvents=[],emit=io.emit.bind(io);io.emit=(name,payload)=>{socketEvents.push({name,payload});return emit(name,payload);};
+ const users={},tokens={};for(const role of ['admin','ordersAdmin','dispatcher','picker','packer']){users[role]=(await pool.query('INSERT INTO users(username,password,name,role,management_scope) VALUES($1,$2,$1,$3,$4) RETURNING id',[role,'unused',role==='ordersAdmin'?'admin':role,role==='ordersAdmin'?'orders':'all'])).rows[0].id;tokens[role]=jwt.sign({id:users[role]},process.env.JWT_SECRET,{expiresIn:600});}
+ async function api(role,method,path,body){
+  if(method==='POST'&&path==='/api/marketplace-intakes'&&!body?.previewFingerprint){const preview=await api(role,'POST',path+'/preview',body);if(preview.status!==200)return preview;body={...body,previewFingerprint:preview.data.verification?.currentFingerprint};}
+  const r=await fetch(`http://127.0.0.1:${server.address().port}`+path,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens[role]},body:body?JSON.stringify(body):undefined});return {status:r.status,data:await r.json()};
+ }
  const ok=(r,status=200)=>{assert.equal(r.status,status,JSON.stringify(r.data));return r.data;};
  const headers=['Name','Financial Status','Fulfillment Status','Currency','Subtotal','Shipping','Taxes','Total','Discount Amount','Refunded Amount','Lineitem quantity','Lineitem name','Lineitem price','Lineitem sku','Lineitem discount','Payment Method'];
  const rows=[headers,['TEST-A','paid','unfulfilled','TWD','105','0','0','105','0','0','1','品項 A','105','0001','0','card'],['TEST-B','paid','unfulfilled','TWD','210','0','0','210','0','0','2','品項 A','105','0001','0','card']];
- const settings={store:'本機隔離',customerCode:'CUST',customerName:'客戶',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-RELEASE-0917',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'品項 A',barcode:'4711299273087',confirmed:true,barcodeConfirmed:true}},shippingSku:{}};
+ const settings={store:'本機隔離',customerCode:'CUST',customerName:'客戶',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-RELEASE-0917',salesExportMode:'order-lines-v1',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'品項 A',barcode:'4711299273087',confirmed:true,barcodeConfirmed:true}},shippingSku:{}};
  const saved=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows,settings}),201);
+ await t.test('save commits one private supervisor notice while staff and order-only admins cannot read it',async()=>{
+  const inbox=ok(await api('admin','GET','/api/marketplace-batch-notices'));assert.equal(inbox.total,1);assert.equal(inbox.notices[0].stage,'prepared');assert.equal(inbox.notices[0].intakeId,saved.id);
+  for(const role of ['picker','packer','dispatcher','ordersAdmin'])assert.equal((await api(role,'GET','/api/marketplace-batch-notices')).status,403);
+  const duplicate=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows,settings}));assert.equal(duplicate.reused,true);
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM marketplace_batch_notices WHERE intake_id=$1',[saved.id])).rows[0].n,1);
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders')).rows[0].n,0);
+  assert.ok(socketEvents.filter(e=>e.name==='marketplace_batch_notice').every(e=>Object.keys(e.payload).length===0));
+ });
+ await t.test('a notification persistence failure rolls back the whole saved batch and publishes no notice',async()=>{
+  await pool.query("CREATE FUNCTION fail_batch_notice_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT batch_number FROM marketplace_intakes WHERE id=NEW.intake_id)='TEST-NOTICE-FAIL' THEN RAISE EXCEPTION 'isolated notice persistence failure'; END IF; RETURN NEW; END $$");
+  await pool.query('CREATE TRIGGER reject_batch_notice_test BEFORE INSERT ON marketplace_batch_notices FOR EACH ROW EXECUTE FUNCTION fail_batch_notice_test()');
+  const count=(await pool.query('SELECT COUNT(*)::int n FROM marketplace_intakes')).rows[0].n,noticeEvents=socketEvents.filter(e=>e.name==='marketplace_batch_notice').length;
+  try{
+   const failureRows=[headers,...rows.slice(1).map((r,n)=>{const line=[...r];line[0]='FAIL-NOTICE-'+n;return line;})];
+   assert.equal((await api('dispatcher','POST','/api/marketplace-intakes',{rows:failureRows,settings:{...settings,batchNumber:'TEST-NOTICE-FAIL'}})).status,500);
+   assert.equal((await pool.query('SELECT COUNT(*)::int n FROM marketplace_intakes')).rows[0].n,count);
+   assert.equal(socketEvents.filter(e=>e.name==='marketplace_batch_notice').length,noticeEvents);
+  }finally{await pool.query('DROP TRIGGER reject_batch_notice_test ON marketplace_batch_notices');await pool.query('DROP FUNCTION fail_batch_notice_test()');}
+ });
  await t.test('old batch grouped download uses real file endpoint, preserves source and accepts its grouped receipt',async()=>{
   const before=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[saved.id])).rows[0].snapshot;
   assert.equal((await api('picker','POST',`/api/marketplace-intakes/${saved.id}/download-link`,{kind:'ecount-grouped'})).status,403);
@@ -41,7 +67,8 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
  assert.equal(ok(await api('admin','GET','/api/warehouse-intakes')).batches.length,1);
  const command=(role,extra={})=>({commandId:randomUUID(),expectedActorId:users[role],...extra});
  const action=(role,a,extra={})=>api(role,'POST',path+'/'+a,command(role,extra));
- let data=ok(await api('picker','GET',path));assert.equal(data.orders.length,2);assert.ok(data.orders.every(o=>/^WT[0-9A-F]{18}$/.test(o.work_barcode)));assert.equal(data.flow.erp_confirmed_at,null);assert.equal(data.batch.snapshot,undefined);
+ assert.equal((await api('picker','GET',path)).status,403);
+ let data=ok(await api('admin','GET',path));assert.equal(data.orders.length,2);assert.ok(data.orders.every(o=>/^WT[0-9A-F]{18}$/.test(o.work_barcode)));assert.equal(data.flow.erp_confirmed_at,null);assert.equal(data.batch.snapshot,undefined);
  assert.equal((await action('picker','print')).status,403);assert.equal((await action('admin','print')).status,409);
  const H=require('../src/services/erpSalesReceipt').HEADERS;
  const receipt=[H,...saved.rows.map(r=>['2026/09/17 - 100',saved.batchNumber,r[2],r[6],r[7],r[13],r[14],r[12],r[15],r[11],r[19],r[23],r[24],Number(r[23])+Number(r[24]),'4711299273087','',''])];
@@ -57,6 +84,7 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   assert.equal((await action('picker','confirm-barcode',{productCode:'ERP-0001',barcode:'4711299273087',confirmed:true})).status,403);
   assert.equal((await action('dispatcher','confirm-barcode',{productCode:'ERP-0001',barcode:'4711299273087',confirmed:false})).status,400);
   ok(await action('dispatcher','confirm-barcode',{productCode:'ERP-0001',barcode:'4711299273087',confirmed:true}));
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM marketplace_batch_notices WHERE intake_id=$1 AND stage='ready_for_print'",[saved.id])).rows[0].n,0);
  });
  if(process.env.WMS_RELEASE_BROWSER==='1')await t.test('browser upload, print ownership, complete barcode papers and mobile layout',async()=>{
   await require('./warehouse-release-browser.cjs')({base:'http://127.0.0.1:'+server.address().port,id:saved.id,user:{id:users.admin,username:'admin',name:'admin',role:'admin'},token:tokens.admin,picker:{user:{id:users.picker,username:'picker',name:'picker',role:'picker'},token:tokens.picker},receipt,output:require('node:path').resolve(__dirname,'../../../artifacts/warehouse-release-20260917')});
@@ -65,6 +93,11 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   const results=await Promise.all([action('dispatcher','confirm-sales',{rows:receipt,savedSalesConfirmed:true}),action('dispatcher','confirm-sales',{rows:receipt,savedSalesConfirmed:true})]);results.forEach(r=>ok(r));
   data=ok(await api('admin','GET',path));assert.equal(data.orders.length,2);assert.ok(data.orders.every(o=>o.order_id));assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders')).rows[0].n,2);
   assert.equal(data.orders[0].expected_items[0].snCount,1);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM marketplace_batch_notices WHERE intake_id=$1 AND stage='ready_for_print'",[saved.id])).rows[0].n,1);
+  const notice=ok(await api('admin','GET','/api/marketplace-batch-notices')).notices.find(n=>n.intakeId===saved.id);assert.equal(notice.stage,'ready_for_print');
+  assert.equal((await api('ordersAdmin','POST',`/api/marketplace-batch-notices/${notice.noticeId}/seen`,{})).status,403);
+  ok(await api('admin','POST',`/api/marketplace-batch-notices/${notice.noticeId}/seen`,{}));
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders WHERE warehouse_hold')).rows[0].n,2);
   assert.equal((await api('picker','POST','/api/orders/'+data.orders[0].order_id+'/claim')).status,409);
   const claim={commandId:randomUUID(),expectedActorId:users.picker,barcode:data.orders[0].work_barcode,stage:'pick'};assert.equal((await api('picker','POST','/api/orders/claim-by-barcode',claim)).status,409);
   const heldId=data.orders[0].order_id;
@@ -74,7 +107,8 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   await pool.query("UPDATE orders SET status='pending',picker_id=NULL WHERE id=$1",[heldId]);
  });
  await t.test('print ownership, assignment and scan receipt are persistent',async()=>{
-  await action('admin','print',{kind:'prepick'}).then(ok);await action('dispatcher','print',{kind:'orders'}).then(ok);
+  assert.equal((await action('dispatcher','print',{kind:'orders'})).status,403);assert.equal((await action('ordersAdmin','print',{kind:'all'})).status,403);
+  await action('admin','print',{kind:'prepick'}).then(ok);await action('admin','print',{kind:'orders'}).then(ok);
   data=ok(await api('admin','GET',path));assert.equal(data.flow.print_owner_id,users.admin);
   await action('admin','assign',{assigneeId:users.picker}).then(ok);
   assert.equal(ok(await api('picker','GET','/api/warehouse-intakes')).batches.length,1);
@@ -167,6 +201,65 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   assert.equal((await api('picker','POST','/api/orders/'+flow.orders[0].order_id+'/claim')).status,409);
   ok(await api('admin','POST',`/api/warehouse-intakes/${batch.id}/assign`,command('admin',{assigneeId:users.picker})));
   assert.ok(ok(await api('picker','GET','/api/warehouse-intakes?ready=1')).batches.some(b=>b.id===batch.id));
+ });
+
+ // Real source files are never checked into Git. Customer/code/barcode mappings
+ // and the ERP return below are isolated fixtures, not actual ERP acceptance.
+ if(process.env.WMS_REAL_MARKETPLACE_FILES==='1')for(const fixture of [
+  {platform:'SHOPLINE',file:process.env.WMS_REAL_SHOPLINE_FILE,orders:16,quantity:44,gross:30766},
+  {platform:'1Shop',file:process.env.WMS_REAL_1SHOP_FILE,orders:2,quantity:4,gross:1427},
+ ])await t.test(`${fixture.platform} real-file path preserves source, money and independent pick/pack through an isolated ERP-return fixture`,async()=>{
+  assert.ok(fixture.file,`${fixture.platform} file path must be supplied explicitly`);
+  const XLSX=require('xlsx'),book=XLSX.readFile(fixture.file,{raw:true});
+  const {marketplaceOrderSheets,parseMarketplaceWorksheet}=await import('../../frontend/src/utils/marketplaceWorkbook.mjs');
+  const sheets=marketplaceOrderSheets(XLSX,book);assert.equal(sheets.length,1);
+  const parsed=parseMarketplaceWorksheet(XLSX,book,sheets[0]);assert.equal(parsed.source.platform,fixture.platform);
+  const localSettings={...settings,store:'LOCAL-'+fixture.platform,customerCode:'LOCAL-CUSTOMER',customerName:'隔離檔案核對',batchNumber:'TEST-REAL-'+(fixture.platform==='SHOPLINE'?'SL':'ONE'),salesExportMode:'product-200-v1',includeTestOrders:true,
+   shippingSku:{erpSku:'LOCAL-SHIPPING',name:'運費',confirmed:true,nonStock:true},skuMappings:Object.fromEntries(parsed.parsed.items.map(i=>[i.sku,{erpSku:i.sku,erpName:i.productName,barcode:'LOCAL-'+i.sku,confirmed:true,barcodeConfirmed:true}]))};
+  if(fixture.platform==='1Shop'){
+   const blocked=ok(await api('dispatcher','POST','/api/marketplace-intakes/preview',{rows:parsed.source.rows,settings:localSettings}));
+   assert.ok(blocked.output.issues.some(i=>i.code==='BUNDLE_ALLOCATION_REQUIRED'));
+   // Explicit fixture confirmation: the bundle anchor carries its price.
+   localSettings.bundleZeroConfirmed=true;
+  }
+  const batch=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows:parsed.source.rows,settings:localSettings}),201);
+  assert.equal(batch.orders.length,fixture.orders);assert.equal(batch.summary.totalQuantity,fixture.quantity);assert.equal(batch.summary.totalMinor,fixture.gross*100);
+  const {prepareEcountFinancials}=await import('../src/services/marketplaceIntake.mjs');const exportView=prepareEcountFinancials(batch);
+  assert.equal(exportView.financials.grossMinor,fixture.gross*100);
+  for(const row of exportView.rows){assert.equal(typeof row[11],'string');assert.ok(Number.isInteger(row[23])&&Number.isInteger(row[24]));assert.ok(row[19]<=200);}
+  const physical=new Map(batch.items.map(i=>[localSettings.skuMappings[i.sku].erpSku,localSettings.skuMappings[i.sku].barcode]));
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  const linkResponse=await fetch(`${origin}/api/marketplace-intakes/${batch.id}/download-link`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokens.dispatcher},body:JSON.stringify({kind:'ecount'})});
+  assert.equal(linkResponse.status,200);const link=await linkResponse.json(),cookie=linkResponse.headers.getSetCookie().map(c=>c.split(';')[0]).join(';');
+  const downloaded=await fetch(origin+link.url,{headers:{Cookie:cookie}});assert.equal(downloaded.status,200);
+  const resultBook=XLSX.read(Buffer.from(await downloaded.arrayBuffer())),sheet=resultBook.Sheets[resultBook.SheetNames[0]],downloadRows=XLSX.utils.sheet_to_json(sheet,{header:1,raw:true});
+  assert.equal(resultBook.SheetNames.length,1);assert.equal(downloadRows[0].length,27);
+  const codeIndex=downloadRows[0].indexOf('品項編碼'),quantityIndex=downloadRows[0].indexOf('數量');assert.equal(codeIndex,11);
+  assert.equal(downloadRows.slice(1).filter(r=>physical.has(r[codeIndex])).reduce((n,r)=>n+r[quantityIndex],0),fixture.quantity);
+  for(let n=1;n<downloadRows.length;n++){const cell=sheet['L'+(n+1)];assert.equal(cell.t,'s');assert.equal(typeof cell.v,'string');assert.ok(!/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(cell.v));}
+  const receipt=[H,...exportView.rows.filter(r=>physical.has(r[11])).map(r=>['LOCAL-ERP-'+fixture.platform,batch.batchNumber,r[2],r[6],r[7],r[13],r[14],r[12],r[15],r[11],r[19],r[23],r[24],r[23]+r[24],physical.get(r[11]),'',''])];
+  const route='/api/warehouse-intakes/'+batch.id;
+  const act=(role,a,extra={})=>api(role,'POST',route+'/'+a,command(role,extra));
+  const bad=structuredClone(receipt);bad[1][10]++;assert.equal((await act('dispatcher','confirm-return',{rows:bad})).status,400);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM marketplace_batch_notices WHERE intake_id=$1 AND stage='ready_for_print'",[batch.id])).rows[0].n,0);
+  ok(await act('dispatcher','confirm-return',{rows:receipt}));ok(await act('dispatcher','confirm-return',{rows:receipt}));
+  let warehouse=ok(await api('admin','GET',route));assert.equal(warehouse.orders.length,fixture.orders);assert.equal(warehouse.products.reduce((n,p)=>n+p.quantity,0),fixture.quantity);
+  assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders WHERE id=ANY($1::int[]) AND warehouse_hold',[warehouse.orders.map(o=>o.order_id)])).rows[0].n,fixture.orders);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM marketplace_batch_notices WHERE intake_id=$1 AND stage='ready_for_print'",[batch.id])).rows[0].n,1);
+  ok(await act('admin','print',{kind:'all'}));ok(await act('admin','assign',{assigneeId:users.picker}));
+  for(const p of warehouse.products)ok(await act('picker','scan',{productKey:p.key,barcode:p.barcode,quantity:p.quantity}));
+  ok(await act('picker','complete'));
+  warehouse=ok(await api('admin','GET',route));assert.equal(new Set(warehouse.orders.map(o=>o.work_barcode)).size,fixture.orders);
+  for(const order of warehouse.orders){
+   const claim=(role,stage)=>api(role,'POST','/api/orders/claim-by-barcode',command(role,{barcode:order.work_barcode,stage}));
+   ok(await claim('picker','pick'));assert.equal((await claim('packer','pack')).status,409);
+   const items=(await pool.query('SELECT id,barcode,quantity FROM order_items WHERE order_id=$1 ORDER BY id',[order.order_id])).rows;
+   for(const item of items)for(let n=0;n<item.quantity;n++)ok(await api('picker','POST','/api/orders/update_item',{orderId:order.order_id,orderItemId:item.id,scanValue:item.barcode,type:'pick'}));
+   assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[order.order_id])).rows[0].status,'picked');
+   ok(await claim('packer','pack'));
+   for(const item of items)for(let n=0;n<item.quantity;n++)ok(await api('packer','POST','/api/orders/update_item',{orderId:order.order_id,orderItemId:item.id,scanValue:item.barcode,type:'pack'}));
+   assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1',[order.order_id])).rows[0].status,'completed');
+  }
  });
 
 });

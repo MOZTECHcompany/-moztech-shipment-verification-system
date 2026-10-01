@@ -10,6 +10,7 @@ export const SOUND_PROFILES = Object.freeze([
     { id: 'pulse', label: '低頻脈衝', wave: 'square', pitch: 0.45, gain: 0.3 }
 ]);
 const MOTIFS = {
+    orderChange: [[880, 0.16, 0], [440, 0.16, 0.2], [880, 0.22, 0.4], [880, 0.16, 0.85], [440, 0.16, 1.05], [880, 0.22, 1.25]],
     pickSuccess: [[1200, 0.08, 0]],
     packSuccess: [[660, 0.08, 0], [880, 0.1, 0.1]],
     error: [[800, 0.1, 0], [200, 0.15, 0.1], [800, 0.1, 0.25]],
@@ -60,6 +61,7 @@ class SoundNotification {
         const stored = parse(read(settingsKey(userId))) || {};
         return {
             enabled: typeof stored.enabled === 'boolean' ? stored.enabled : read('sound_enabled') !== 'false',
+            orderAlertsEnabled: stored.orderAlertsEnabled !== false,
             volume: volumeValue(stored.volume ?? read('sound_volume')),
             profile: profileFor(stored.profile)?.id || defaultProfile(userId)
         };
@@ -82,6 +84,7 @@ class SoundNotification {
         this.emit();
     }
     setEnabled(enabled) { this.update({ enabled: !!enabled }); }
+    setOrderAlertsEnabled(enabled) { this.update({ orderAlertsEnabled: !!enabled }); }
     isEnabled() { return this.settings.enabled; }
     setVolume(volume) { this.update({ volume: volumeValue(volume) }); }
     setProfile(profile) {
@@ -105,7 +108,7 @@ class SoundNotification {
     }
     async play(soundName, { preview = false } = {}) {
         const notes = MOTIFS[soundName];
-        if (!notes || (!preview && !this.settings.enabled)) return false;
+        if (!notes || (!preview && !(soundName === 'orderChange' ? this.settings.orderAlertsEnabled : this.settings.enabled))) return false;
         this.stop();
         const sequence = this.sequence;
         const ctx = await this.initAudioContext();

@@ -11,15 +11,15 @@ function authError(code = 'SOCKET_AUTH_REQUIRED') {
 async function currentStaffUser(pool, id) {
     if (process.env.ERP_PORTAL_ONLY === 'true') throw authError();
     const result = await pool.query({
-        text: 'SELECT id, username, name, role FROM users WHERE id = $1',
+        text: 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1',
         values: [id], query_timeout: 5000,
     });
     const row = result.rows[0];
     const role = String(row?.role || '').trim().toLowerCase();
     // There is no is_active column in the current schema. A current account and
     // a recognized staff role are required; never authorize from JWT role claims.
-    if (!row || await require('../services/erpSession').isManaged(pool,row.id) || row.username.startsWith('erp:') || !STAFF_ROLES.has(role)) throw authError();
-    return { id: row.id, username: row.username, name: row.name, role };
+    if (!row || await require('../services/erpSession').isManaged(pool,row.id) || String(row.username || '').startsWith('erp:') || !STAFF_ROLES.has(role)) throw authError();
+    return { id: row.id, username: row.username, name: row.name, role, management_scope:row.management_scope || 'all' };
 }
 
 function createSocketAuthenticator({ pool, secret }) {
@@ -60,7 +60,7 @@ function guardSocketSession(socket, { pool, recheckMs = 60000 }) {
     const recheck = async () => {
         try {
             const user = socket.data.erpClaims ? await require('../services/erpSession').resolveUser(pool, socket.data.erpClaims) : await currentStaffUser(pool, socket.data.user.id);
-            if (user.role !== socket.data.user.role) { closeSession(); return; }
+            if (user.role !== socket.data.user.role || (user.management_scope || 'all') !== (socket.data.user.management_scope || 'all')) { closeSession(); return; }
             socket.data.user = user;
         } catch (error) { closeSession(error.data?.code || (error.status === 401 ? 'SOCKET_AUTH_REQUIRED' : 'SOCKET_AUTH_UNAVAILABLE')); return; }
         if (socket.connected) { accountTimer = setTimeout(recheck, recheckMs); accountTimer.unref?.(); }

@@ -179,6 +179,7 @@ app.get('/api/marketplace-files/:id/:kind',require('./services/marketplaceDownlo
 app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));
 app.use('/api/marketplace-products',authenticateToken,require('./services/marketplaceProductCatalog').createProductRouter({pool}));
 app.use('/api/marketplace-intakes', authenticateToken, require('./routes/marketplaceRoutes').createMarketplaceRouter({pool}));
+app.use('/api/marketplace-batch-notices', authenticateToken, require('./routes/marketplaceBatchNoticeRoutes').createMarketplaceBatchNoticeRouter({pool}));
 app.use('/api/warehouse-intakes', authenticateToken, require('./routes/warehouseReleaseRoutes').createWarehouseReleaseRouter({pool}));
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);

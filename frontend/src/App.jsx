@@ -1,5 +1,6 @@
 // frontend/src/App.jsx
 
+import { isWarehouseAdmin } from './utils/managementScope';
 import { lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
@@ -39,9 +40,9 @@ function ProtectedRoute({ user, token }) {
     return <Outlet />;
 }
 
-function TasksEntry({ user }) {
+function TasksEntry({ user, token }) {
     const location = useLocation();
-    return <TaskDashboard key={`${user?.id}:${user?.role}:${location.search}`} user={user} />;
+    return <TaskDashboard key={`${user?.id}:${user?.role}:${location.search}`} user={user} token={token} />;
 }
 
 function App() {
@@ -52,6 +53,13 @@ function App() {
     const [token, setToken] = useWarehouseSession('wms_token', null);
 
     useEffect(() => { soundNotification.setUser(user?.id); }, [user?.id]);
+    useEffect(() => {
+        if (!token) return;
+        let alive=true;
+        apiClient.get('/api/auth/me',{headers:{Authorization:`Bearer ${token}`}}).then(({data})=>{if(alive)setUser(data.user);}).catch(()=>{});
+        return()=>{alive=false;};
+    },[token,setUser]);
+
 
     // Update the transport credentials on login, refresh, account switch and logout.
     useEffect(() => {
@@ -128,13 +136,13 @@ function App() {
                             <Route path="/settings" element={<SettingsPage user={user} />} />
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/marketplace-converter" element={['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? <MarketplaceConverter key={`${user?.id}:${user?.role}:${token}`} user={user} /> : <Navigate to="/tasks" replace />} />
-                            <Route path="/admin/users" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
+                            <Route path="/admin/users" element={isWarehouseAdmin(user) ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={canRead('wms_logs:read') ? <OperationLogs /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/analytics" element={canRead('wms_overview:read') ? <Analytics /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/scan-errors" element={canRead('wms_scan_errors:read') ? <ScanErrors /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/defects" element={canRead('wms_defects:read') ? <DefectStats /> : <Navigate to="/tasks" />} />
-                            <Route path="/admin/exceptions" element={canRead('wms_exceptions:read') ? <Exceptions /> : <Navigate to="/tasks" />} />
-                            <Route path="/tasks" element={<TasksEntry key={`${user?.id}:${user?.role}`} user={user} />} />
+                            <Route path="/admin/exceptions" element={canRead('wms_exceptions:read') ? <Exceptions user={user} /> : <Navigate to="/tasks" />} />
+                            <Route path="/tasks" element={<TasksEntry key={`${user?.id}:${user?.role}`} user={user} token={token} />} />
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />

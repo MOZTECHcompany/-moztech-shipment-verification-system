@@ -1,3 +1,4 @@
+import * as managementScope from '../src/utils/managementScope.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -73,7 +74,7 @@ function app(pathname = '/tasks') {
     const auth = { user: { id: 7, role: 'admin' }, token: 'token-A' };
     const hooks = [], effects = [], notices = [], soundUsers = [];
     let cursor = 0, tree;
-    const api = { defaults: { headers: { common: {} } } };
+    const api = { get: async () => ({data:{user:auth.user}}), defaults: { headers: { common: {} } } };
     const setters = { user: value => { auth.user = value; }, token: value => { auth.token = value; } };
     const react = {
         createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
@@ -89,6 +90,7 @@ function app(pathname = '/tasks') {
         }
     };
     const imports = {
+        './utils/managementScope': managementScope,
         react,
         './api/api': api,
         './api/socket': state,

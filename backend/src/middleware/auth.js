@@ -34,7 +34,7 @@ async function authenticateToken(req, res, next) {
         }
         if (process.env.ERP_PORTAL_ONLY === 'true') return res.status(401).json({message:'請從營運管理系統進入'});
         const { rows } = await pool.query({
-            text: 'SELECT id, username, name, role FROM users WHERE id = $1',
+            text: 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1',
             values: [claims.id], query_timeout: 5000,
         });
         const user = rows[0];
@@ -42,7 +42,7 @@ async function authenticateToken(req, res, next) {
         if (!user || await require('../services/erpSession').isManaged(pool,user.id) || user.username.startsWith('erp:') || !['picker', 'packer', 'dispatcher', 'admin', 'superadmin'].includes(role) || claims.exp * 1000 <= Date.now()) {
             return res.status(403).json({ message: '帳號或登入已失效，請重新登入' });
         }
-        req.user = { id: user.id, username: user.username, name: user.name, role };
+        req.user = { id: user.id, username: user.username, name: user.name, role, management_scope:user.management_scope || 'all' };
         req[verifiedStaff] = true;
         return next();
     } catch (error) {

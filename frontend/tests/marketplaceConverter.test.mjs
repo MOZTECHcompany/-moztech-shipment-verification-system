@@ -35,7 +35,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {} } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -69,7 +69,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
                 effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || provided.barcodeConfirmed === true};
             }
             const prepared = unified.prepareUnifiedMarketplace(raw,effectiveSettings);
-            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1'}}};
+            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification}}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         const built=unified.buildUnifiedConversion(body.rows,body.settings);
@@ -175,7 +175,7 @@ test('save revalidates original source with preview fingerprint and download use
     assert.equal(view.downloads.length, 1);
     assert.equal(view.downloads[0].url, '/api/marketplace-files/1/ecount');
     assert.match(view.text(view.render()), /已保存・待 ECOUNT 匯入/);
-    assert.ok(view.find(view.render(), node => node.props?.to === '/warehouse-intakes/1'));
+    assert.ok(view.find(view.render(), node => node.props?.to === '?batch=1&view=return#batch-detail'));
     assert.equal(view.requests.filter(request => request.url === '/api/marketplace-intakes/store-profiles').length, 1, 'validated store settings are saved without another action');
     assert.equal(view.writes.length, 0);
 });
@@ -330,4 +330,26 @@ test('multiple order sheets require selection and switching replaces the server 
     await view.change('訂單工作表','第二批'); const text = view.text(view.render());
     assert.match(text,/Second order product|00077/); assert.doesNotMatch(text,/TEST product A|TST6091550133|00123/);
     assert.equal(previewCalls(view).length,2); assert.equal(view.downloads.length,0);
+});
+
+
+test('zero eligible orders show their cancellation reasons before collapsed details and retain the download gate', async () => {
+    const view = await converter({ authoritative: raw => ({ ...raw, orders: raw.orders.map(order => ({ ...order, cancelled: true, currentQuantity: 0 })), items: [] }) });
+    await view.select(file());
+    const problems = view.find(view.render(), node => node.props?.['aria-label'] === '待處理問題');
+    assert.match(view.text(problems), /TST6091550133\s*：\s*Shopify 已取消訂單/);
+    assert.match(view.text(problems), /TST6091550109\s*：\s*Shopify 已取消訂單/);
+    assert.doesNotMatch(view.text(problems), /沒有可轉換的商品明細/);
+    assert.match(view.text(view.render()), /已讀取 3 筆・可銷貨 0 筆/);
+    assert.equal(downloadSales(view).props.disabled, true);
+    assert.equal(view.downloads.length, 0);
+});
+
+test('preview distinguishes API verification from file-only checks and uses the verified platform', async () => {
+    const fromFile = await converter({ verification: { mode: 'file', platform: '1Shop' } }); await fromFile.select(file());
+    assert.match(fromFile.text(fromFile.render()), /檔案核對通過/);
+    assert.doesNotMatch(fromFile.text(fromFile.render()), /API 已核對/);
+    const fromApi = await converter({ verification: { mode: 'api', platform: '1Shop' } }); await fromApi.select(file());
+    assert.match(fromApi.text(fromApi.render()), /1Shop API 已核對/);
+    assert.doesNotMatch(fromApi.text(fromApi.render()), /Shopify API 已核對/);
 });

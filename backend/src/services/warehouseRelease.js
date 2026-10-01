@@ -1,7 +1,11 @@
 const {createHash}=require('node:crypto');
 const {createWorkBarcode}=require('./warehouseBatch');
 const {reconcileSales}=require('./erpSalesReceipt');
+const {isWarehouseAdmin}=require('../utils/managementScope');
+const {notifyMarketplaceBatch}=require('./marketplaceBatchNotifications');
+const {deferredEvents}=require('../utils/transactionEvents');
 const manager=user=>['admin','superadmin','dispatcher'].includes(user.role);
+const warehouseManager=user=>isWarehouseAdmin(user);
 const fail=(message,status=409)=>Object.assign(new Error(message),{status});
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const productKey=i=>JSON.stringify([i.productCode,i.barcode]);
@@ -32,11 +36,14 @@ async function readFlow(db,id){
  const events=(await db.query('SELECT e.action,e.created_at,u.name AS actor_name,e.details FROM marketplace_warehouse_events e LEFT JOIN users u ON u.id=e.actor_id WHERE intake_id=$1 ORDER BY e.id DESC LIMIT 50',[id])).rows;
  return {batch,flow,orders,products:products(orders),events};
 }
-async function mutateFlow(pool,id,action,body,user){
+async function mutateFlow(pool,id,action,body,user,io){
  if(!/^[1-9]\d{0,9}$/.test(String(id))||Number(id)>2147483647)throw fail('批次編號無效',400);
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.commandId||'')||body.expectedActorId!==user.id)throw fail('登入人員或操作識別已變更，請重新整理',400);
  if(!['enable','confirm-barcode','confirm-sales','confirm-return','print','assign','scan','reset-product','complete'].includes(action))throw fail('操作無效',400);
  if(['enable','confirm-barcode','confirm-sales','confirm-return','print','assign','reset-product'].includes(action)&&!manager(user))throw fail('此操作需要拋單員或管理員',403);
+ if(['print','assign','reset-product'].includes(action)&&!warehouseManager(user))throw fail('此操作需要倉儲主管',403);
+ if(['scan','complete'].includes(action)&&!['picker','packer','admin','superadmin'].includes(user.role))throw fail('此操作需要預揀人員',403);
+ const events=deferredEvents(io);
  const db=await pool.connect();let open=false,commit=false,tainted=false;
  try{
   await db.query('BEGIN');open=true;
@@ -85,6 +92,7 @@ async function mutateFlow(pool,id,action,body,user){
      await db.query("INSERT INTO operation_logs(user_id,order_id,action_type,details) VALUES($1,$2,'import',$3)",[user.id,orderId,JSON.stringify({method:action==='confirm-return'?'erp_warehouse_return':'erp_sales_receipt',marketplaceIntakeId:Number(id),erpVouchers:result.receipt.vouchers,warehouseHold:true,sourceDetails:group.items.map(i=>({sourceLineId:i.sourceLineId,serials:i.serials,serialSource:i.serialSource,summary:i.sourceSummary}))})]);
     }
     await db.query('UPDATE marketplace_warehouse_flows SET erp_receipt=$2,erp_confirmed_by=$3,erp_confirmed_at=NOW(),import_batch_id=$4 WHERE intake_id=$1',[id,JSON.stringify(result.receipt),user.id,batchId]);
+    await notifyMarketplaceBatch({db,events,intakeId:id,actorId:user.id,stage:'ready_for_print'});
    }
    details={vouchers:result.receipt.vouchers,financials:result.receipt.financials};
   }
@@ -103,7 +111,7 @@ async function mutateFlow(pool,id,action,body,user){
   if(action==='assign'){
    if(!f.printed_at)throw fail('請先領單並列印');
    if(f.prepick_completed_at)throw fail('預揀已完成，不能變更負責人');
-   const assignee=(await db.query("SELECT id FROM users WHERE id=$1 AND role IN ('picker','packer','admin','superadmin')",[Number.isSafeInteger(body.assigneeId)?body.assigneeId:0])).rows[0];
+   const assignee=(await db.query("SELECT id FROM users WHERE id=$1 AND (role IN ('picker','packer','superadmin') OR (role='admin' AND management_scope IN ('all','warehouse')))",[Number.isSafeInteger(body.assigneeId)?body.assigneeId:0])).rows[0];
    if(!assignee)throw fail('請選擇有效的預揀人員',400);
    await db.query('UPDATE marketplace_warehouse_flows SET prepick_owner_id=$2 WHERE intake_id=$1',[id,assignee.id]);details={from:f.prepick_owner_id,to:assignee.id};
   }
@@ -134,11 +142,11 @@ async function mutateFlow(pool,id,action,body,user){
   const response={ok:true,intakeId:Number(id),action};
   if(['confirm-sales','confirm-return'].includes(action)){const fresh=await readFlow(db,id);Object.assign(response,{batchId:fresh.flow.import_batch_id,batchNumber:fresh.batch.batch_number,workOrderCount:fresh.orders.length,totalQuantity:fresh.products.reduce((n,p)=>n+p.quantity,0),warehouseIntakeId:Number(id),itemCount:fresh.orders.reduce((n,o)=>n+o.expected_items.length,0),serialCount:fresh.orders.reduce((n,o)=>n+o.expected_items.reduce((sum,i)=>sum+i.snCount,0),0),orders:fresh.orders.map(o=>({orderId:o.order_id,voucherNumber:o.work_barcode,workBarcode:o.work_barcode,sourceOrderNumber:o.source_order_number,sourcePlatform:o.source_platform,sourceStore:o.source_store})),reused:!!f.erp_receipt});}
   await db.query('INSERT INTO marketplace_warehouse_commands(actor_id,command_id,request_hash,response) VALUES($1,$2,$3,$4)',[user.id,body.commandId,fingerprint,JSON.stringify(response)]);
-  commit=true;await db.query('COMMIT');open=false;return response;
+  commit=true;await db.query('COMMIT');open=false;events.publish();return response;
  }catch(e){if(open)try{await db.query('ROLLBACK');}catch{tainted=true;}
   if(commit||tainted)throw fail('操作結果尚未確認，請保留同一操作識別重試，或重新讀取批次核對',503);
   if(['55P03','57014','23505'].includes(e.code))throw fail('批次正在處理或已建立關聯，請重新讀取後再試');
   throw e;
  }finally{db.release(tainted);}
 }
-module.exports={enableFlow,readFlow,mutateFlow,products,manager};
+module.exports={enableFlow,readFlow,mutateFlow,products,manager,warehouseManager};

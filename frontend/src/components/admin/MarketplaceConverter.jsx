@@ -84,10 +84,11 @@ function ConverterPage({ user }) {
   const locked = busy || access !== 'ready';
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
   const matchingProfiles = profiles.filter(profile => profile.platform === input?.parsed.platform);
+  const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason) : [];
   const issueGroups = useMemo(() => {
     const groups = new Map();
     for (const issue of prepared?.output?.issues || []) {
-      if (issue.severity === 'warning') continue;
+      if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && emptyExclusions.length)) continue;
       const key = `${issue.code}:${issue.field || ''}`;
       if (!groups.has(key)) groups.set(key, { key, items: [] });
       groups.get(key).items.push(issue);
@@ -273,19 +274,20 @@ function ConverterPage({ user }) {
         {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store} · {profile.settings.customerCode}</option>)}</select></Field></div>
           : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><h2 className="text-lg font-semibold">{prepared.parsed.summary.orderCount} 筆訂單 · {prepared.parsed.summary.totalQuantity} 件商品</h2><p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>
+          <div><h2 className="text-lg font-semibold">{emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2><p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>
             {prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
           </div>
           <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>
         </div>
         {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
-          : prepared.output.ok && !catalogBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification ? '訂單已核對' : '核對通過'}・下載後上傳 ECOUNT</p>}
-        {!previewDirty && (issueGroups.length > 0 || catalogBlocked) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">待處理</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
+          : prepared.output.ok && !catalogBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
+        {!previewDirty && (issueGroups.length > 0 || catalogBlocked || emptyExclusions.length > 0) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">{issueGroups.length || catalogBlocked ? '待處理' : '本批無可銷貨訂單'}</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
+          {emptyExclusions.map(choice => <li key={choice.number}>{choice.number}：{choice.reason}</li>)}
           {catalogIssues.map(value => <li key={value}>{value}</li>)}
           {issueGroups.map(group => <li key={group.key}>{group.items.length > 1 ? <details><summary className="cursor-pointer">{group.title}{group.items[0].code !== 'PRODUCT_MAPPING_REQUIRED' ? `（${group.items.length} 筆）` : ''}</summary><ul className="mt-2 space-y-1 pl-4">{group.items.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.sourceRow ? `第 ${issue.sourceRow} 列：` : ''}{issue.message}</li>)}</ul></details> : <>{group.items[0].orderNumber ? `${group.items[0].orderNumber}：` : ''}{group.items[0].sourceRow ? `第 ${group.items[0].sourceRow} 列：` : ''}{group.title}</>}</li>)}
         </ul></div>}
-        {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`/warehouse-intakes/${saved.id}`}>開啟倉儲批次</Link>}
+        {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>
       {(needsStore || storeSetupOpen || choosingStore) && <section className={sectionClass} aria-label="店鋪設定"><h2 className="font-semibold">{matchingProfiles.length ? '確認銷貨店鋪' : '首次店鋪設定'}</h2><fieldset disabled={locked}><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{settingsField('商城店鋪', 'store')}{settingsField('ECOUNT 銷貨客戶編碼', 'customerCode')}{settingsField('ECOUNT 客戶名稱', 'customerName')}</div></fieldset></section>}
       {unresolvedProducts.length > 0 && <details className={sectionClass} open><summary className="cursor-pointer font-semibold">待對照商品（{unresolvedProducts.length} 項）</summary><fieldset disabled={locked}><div className="mt-4 space-y-3">{unresolvedProducts.map(item => {

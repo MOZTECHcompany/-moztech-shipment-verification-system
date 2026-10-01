@@ -8,6 +8,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as entryDestination from '../src/utils/entryDestination.js';
 import * as environment from '../src/utils/deploymentEnvironment.js';
+import * as managementScope from '../src/utils/managementScope.js';
 
 test('only the explicit dev deployment flag enables the marker', () => {
     assert.equal(environment.isDevDeployment('dev'), true);
@@ -44,7 +45,7 @@ for (const flag of [undefined, 'production', 'dev']) {
         const { EnvironmentBanner } = await component('../src/components/EnvironmentBanner.jsx', { '../utils/deploymentEnvironment': environment }, flag);
         const router = { useNavigate: () => () => {}, useLocation: () => ({ pathname: '/tasks' }), Link, NavLink: Link };
         const { LoginPage } = await component('../src/components/LoginPage.jsx', { './EnvironmentBanner': { EnvironmentBanner }, 'react-router-dom': router, '../api/api': {}, './LoginPage.css': {}, '../utils/entryDestination': entryDestination }, flag);
-        const { AppLayout } = await component('../src/ui/AppLayout.jsx', { '../components/EnvironmentBanner': { EnvironmentBanner }, 'react-router-dom': router, '../components/ErrorBoundary': ({ children }) => children }, flag);
+        const { AppLayout } = await component('../src/ui/AppLayout.jsx', { '../components/EnvironmentBanner': { EnvironmentBanner }, '@/utils/managementScope': managementScope, '@/components/OrderReviewAlerts': () => null, 'react-router-dom': router, '../components/ErrorBoundary': ({ children }) => children }, flag);
         const pages = [React.createElement(LoginPage, { onLogin: () => {} }), React.createElement(AppLayout, { user: { id: 1, role: 'picker', name: 'Test Picker' }, onLogout: () => {} }, React.createElement('p', null, 'Warehouse tasks'))];
         for (const page of pages) {
             const html = renderToStaticMarkup(page);

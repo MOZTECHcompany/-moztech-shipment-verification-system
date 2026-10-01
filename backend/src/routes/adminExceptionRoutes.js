@@ -8,7 +8,7 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 const VALID_STATUSES = new Set(['open', 'ack', 'resolved', 'rejected']);
-const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change']);
+const VALID_TYPES = new Set(['stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other', 'order_change', 'order_delete']);
 
 function parsePositiveInt(value, fallback) {
   const n = parseInt(String(value ?? ''), 10);
@@ -57,7 +57,9 @@ router.get('/exceptions', async (req, res) => {
       where += ` AND e.status = $${params.length}`;
     }
 
-    if (type) {
+    if (type === 'order_delete') {
+      where += " AND e.type='order_change' AND e.snapshot->'proposal'->>'action'='delete_order'";
+    } else if (type) {
       params.push(type);
       where += ` AND e.type = $${params.length}`;
     }
@@ -118,15 +120,15 @@ router.get('/exceptions', async (req, res) => {
         e.reason_text,
         e.snapshot,
         e.created_by,
-        e.created_at,
+        e.created_at AT TIME ZONE 'UTC' AS created_at,
         e.ack_by,
-        e.ack_at,
+        e.ack_at AT TIME ZONE 'UTC' AS ack_at,
         e.ack_note,
         e.rejected_by,
-        e.rejected_at,
+        e.rejected_at AT TIME ZONE 'UTC' AS rejected_at,
         e.rejected_note,
         e.resolved_by,
-        e.resolved_at,
+        e.resolved_at AT TIME ZONE 'UTC' AS resolved_at,
         e.resolution_action,
         e.resolution_note,
         (SELECT COUNT(*)::int FROM order_exception_attachments a WHERE a.exception_id = e.id) AS attachment_count,

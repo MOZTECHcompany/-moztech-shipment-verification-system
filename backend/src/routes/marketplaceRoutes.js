@@ -7,6 +7,8 @@ const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex
 const clean=value=>String(value??'').trim();
 const {safeSettings}=require('../services/marketplaceSettings');
 const {createMarketplacePreparation}=require('../services/marketplacePreparation');
+const {deferredEvents}=require('../utils/transactionEvents');
+const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
 function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool})}){
  const router=express.Router();
@@ -47,12 +49,12 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  }
  router.post('/',async(req,res,next)=>{
-  let db,open=false,commitAttempted=false,tainted=false;
+  let db,open=false,commitAttempted=false,tainted=false;const events=deferredEvents(req.app.get('io'));
   try{
    const conversion=await prepareMarketplace(req.body||{},{refresh:true});
    const {parsed,output,source,raw,settings,verification,sourceEvidence}=conversion;
    if(!output.ok)throw Object.assign(new Error('請先修正轉檔問題'),{status:400,code:'MARKETPLACE_NOT_READY',issues:output.issues});
-   if(verification&&req.body?.previewFingerprint!==verification.currentFingerprint)throw Object.assign(new Error('Shopify 訂單已更新，請重新核對後下載'),{status:409,code:'SHOPIFY_PREVIEW_CHANGED'});
+   if(verification&&req.body?.previewFingerprint!==verification.currentFingerprint)throw Object.assign(new Error(`${source.platform} 訂單已更新，請重新核對後下載`),{status:409,code:source.platform==='Shopify'?'SHOPIFY_PREVIEW_CHANGED':'MARKETPLACE_PREVIEW_CHANGED'});
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))]);
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows,...(verification?{currentFingerprint:verification.currentFingerprint}:{})});
@@ -78,7 +80,9 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
     await db.query('INSERT INTO marketplace_intake_orders(intake_id,source_platform,source_store,source_order_number,expected_items,nonstock_items,financial) VALUES($1,$2,$3,$4,$5,$6,$7)',[record.id,order.sourcePlatform,clean(settings.store),order.sourceOrderNumber,JSON.stringify(items),JSON.stringify(nonstock),JSON.stringify({source:raw.orders.find(r=>r.sourceOrderNumber===order.sourceOrderNumber).financial,ecount:order.financial})]);
    }
    await require('../services/warehouseRelease').enableFlow(db,record.id,req.user.id);
+   await notifyMarketplaceBatch({db,events,intakeId:record.id,actorId:req.user.id,stage:'prepared'});
    commitAttempted=true;await db.query('COMMIT');open=false;
+   events.publish();
    res.status(201).json(publicRecord(record));
   }catch(e){
    if(open)try{await db.query('ROLLBACK');}catch{e.status=503;tainted=true;}

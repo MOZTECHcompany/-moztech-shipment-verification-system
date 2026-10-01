@@ -65,3 +65,27 @@ test('a cancelled empty order does not remove a different valid current shipment
  h.verifyShopify.mockResolvedValueOnce({rows:active,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[]},{number:'#154195',currentQuantity:0,cancelled:true,paymentStatus:'voided',fulfillmentStatus:'unfulfilled',subtotalMinor:0,totalMinor:0,shippingMinor:0,discountMinor:0,outstandingMinor:0,items:[]}]}});
  const r=await h.prepare({rows:source});expect(r.output.ok).toBe(true);expect(r.output.summary.physicalQuantity).toBe(1);expect(r.output.summary.ecountTotalMinor).toBe(89000);expect(r.parsed.orders.map(o=>o.sourceOrderNumber)).toEqual(['#154230']);expect(r.raw.orders.map(o=>o.sourceOrderNumber)).toEqual(['#154230','#154195']);expect(r.choices[1]).toMatchObject({eligible:false,number:'#154195',reason:'Shopify 已取消訂單'});
 });
+test('SHOPLINE store binding is trusted, cached by connection, and refreshed before saving',async()=>{
+ const sl={...profile,id:20,platform:'SHOPLINE',store:'bonson(SHOPLINE)',settings:{...profile.settings,store:'bonson(SHOPLINE)',customerCode:'00020',apiConnectionId:'bonson-read'}};
+ const rows=table([{'訂單編號':'SL-LOCAL','商品貨號':'4711299272493','商品名稱':'商品','數量':'1','單價':'100','付款狀態':'已付款','送貨狀態':'備貨中','付款方式':'信用卡','訂單狀態':'已確認','訂單小計':'100','運費':'0','優惠折扣':'0','訂單合計':'100'}]);
+ const verifyShopline=jest.fn(async r=>({rows:r,verification:{platform:'SHOPLINE',shop:'merchant',fingerprint:'current-api-hash',orders:[]}}));
+ const h=harness([sl],{verifyShopline});
+ const input={rows,settings:{apiConnectionId:''}};
+ const first=await h.prepare(input);expect(first.verification).toMatchObject({mode:'api',platform:'SHOPLINE'});expect(first.settings.apiConnectionId).toBe('bonson-read');expect(first.output.ok).toBe(true);
+ expect(verifyShopline).toHaveBeenCalledWith(expect.any(Array),{apiConnectionId:'bonson-read'});
+ await h.prepare(input);expect(verifyShopline).toHaveBeenCalledTimes(1);
+ const refreshed=await h.prepare(input,{refresh:true});expect(verifyShopline).toHaveBeenCalledTimes(2);expect(refreshed.verification.currentFingerprint).toBe(first.verification.currentFingerprint);
+ verifyShopline.mockResolvedValueOnce({rows,verification:{platform:'SHOPLINE',shop:'merchant',fingerprint:'new-shipping-hash',orders:[]}});
+ expect((await h.prepare(input,{refresh:true})).verification.currentFingerprint).not.toBe(first.verification.currentFingerprint);
+ await expect(h.prepare({rows,settings:{store:'未知店鋪',apiConnectionId:''}})).rejects.toMatchObject({code:'STORE_PROFILE_INVALID'});
+ expect(verifyShopline).toHaveBeenCalledTimes(3);
+ verifyShopline.mockRejectedValueOnce(Object.assign(new Error('IP 未允許'),{status:503,code:'SHOPLINE_IP_NOT_ALLOWED'}));
+ await expect(h.prepare(input,{refresh:true})).rejects.toMatchObject({code:'SHOPLINE_IP_NOT_ALLOWED'});
+ expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test('unbound SHOPLINE store remains explicitly file mode without pretending API verification',async()=>{
+ const rows=table([{'訂單編號':'SL-FILE','商品貨號':'4711299272493','商品名稱':'商品','數量':'1','單價':'100','付款狀態':'已付款','送貨狀態':'備貨中','付款方式':'信用卡','訂單狀態':'已確認','訂單小計':'100','運費':'0','優惠折扣':'0','訂單合計':'100'}]);
+ const sl={...profile,platform:'SHOPLINE'};
+ const h=harness([sl]);const result=await h.prepare({rows});
+ expect(result.verification).toBeNull();expect(result.output.ok).toBe(true);expect(h.verifyShopify).not.toHaveBeenCalled();
+});

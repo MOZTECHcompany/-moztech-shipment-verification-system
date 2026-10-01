@@ -3,7 +3,7 @@ jest.mock('../utils/logger', () => ({ debug: jest.fn(), info: jest.fn(), warn: j
 
 const { pool } = require('../config/database');
 const router = require('../routes/orderRoutes');
-const handler = (path, method) => router.stack.find(layer => layer.route?.path === path && layer.route.methods[method]).route.stack[0].handle;
+const handler = (path, method) => router.stack.find(layer => layer.route?.path === path && layer.route.methods[method]).route.stack.at(-1).handle;
 const detail = handler('/orders/:orderId', 'get');
 const scan = handler('/orders/update_item', 'post');
 const rows = values => ({ rows: structuredClone(values), rowCount: values.length });

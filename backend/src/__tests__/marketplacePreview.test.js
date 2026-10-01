@@ -7,7 +7,7 @@ test('preview enforces the same role gates as saving and returns no internal sou
  expect(prepare).not.toHaveBeenCalled();const {app,pool}=appFor(prepare);const r=await request(app).post('/api/marketplace-intakes/preview').send({rows:[]});expect(r.status).toBe(200);expect(r.body.sourceEvidence).toBeUndefined();expect(r.headers['cache-control']).toBe('private, no-store');expect(pool.connect).not.toHaveBeenCalled();
 });
 test('save requires a fresh identical Shopify preview before any batch or warehouse write',async()=>{
- const prepare=jest.fn(async()=>({parsed:{items:[]},output:{ok:true},verification:{currentFingerprint:'current'}}));
+ const prepare=jest.fn(async()=>({source:{platform:'Shopify'},parsed:{items:[]},output:{ok:true},verification:{currentFingerprint:'current'}}));
  const {app,pool}=appFor(prepare);const r=await request(app).post('/api/marketplace-intakes').send({previewFingerprint:'old'});
  expect(r.status).toBe(409);expect(r.body.code).toBe('SHOPIFY_PREVIEW_CHANGED');expect(prepare).toHaveBeenCalledWith({previewFingerprint:'old'},{refresh:true});expect(pool.connect).not.toHaveBeenCalled();
 });

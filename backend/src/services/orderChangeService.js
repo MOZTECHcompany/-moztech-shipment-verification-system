@@ -219,6 +219,25 @@ function pickInstancesToRemove(instances, removeCount) {
     return chosen;
 }
 
+// Reduce the rows owning the removed SNs, then consume only each row's
+// untracked capacity. A barcode may span several independent source lines.
+async function reduceSnLineQuantities(client, items, instances, removed, untrackedReduction) {
+    const counts = new Map(), removedCounts = new Map();
+    for (const row of instances) counts.set(row.order_item_id,(counts.get(row.order_item_id)||0)+1);
+    for (const row of removed) removedCounts.set(row.order_item_id,(removedCounts.get(row.order_item_id)||0)+1);
+    let left = untrackedReduction;
+    for (const item of [...items].reverse()) {
+        const count = counts.get(item.id)||0;
+        const capacity = Number(item.quantity)-count;
+        if (capacity < 0) throw Object.assign(new Error('品項數量與 SN 不一致，請先核對原始資料'),{status:409});
+        const reduction = Math.min(capacity,left);
+        const quantity = Number(item.quantity)-(removedCounts.get(item.id)||0)-reduction;
+        if (quantity !== Number(item.quantity)) await client.query('UPDATE order_items SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',[quantity,item.id]);
+        left -= reduction;
+    }
+    if (left !== 0) throw Object.assign(new Error('可減少數量不足，請重新核對異動'),{status:409});
+}
+
 async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId }) {
     const validated = validateOrderChangeProposal(proposal);
     if (!validated.ok) {
@@ -236,6 +255,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
     }
     const order = orderResult.rows[0];
     if (order.import_batch_id) await client.query('SELECT id FROM warehouse_import_batches WHERE id=$1 FOR UPDATE', [order.import_batch_id]);
+    if (order.status === 'voided') throw Object.assign(new Error('已作廢訂單不可異動'),{status:409});
     const originalStatus = normalizeOrderStatusForRollback(order.status);
 
     const changesApplied = [];
@@ -377,7 +397,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                 // without deleting instances (to avoid instance_count > quantity).
                 const totalInstanceCount = existingInstances.length;
                 const untrackedQty = Math.max(0, existingTotalQty - totalInstanceCount);
-                const reduceFromUntracked = Math.min(removeCountTotal, untrackedQty);
+                const reduceFromUntracked = Math.min(Math.max(0,removeCountTotal-removedSnList.length), untrackedQty);
                 const removeCount = Math.max(0, removeCountTotal - reduceFromUntracked);
 
                 // Allow decrease only from pending instances.
@@ -395,16 +415,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
 
                 // If we only need to reduce untracked quantity, just reduce order_items quantities.
                 if (removeCount === 0) {
-                    let remainingToReduce = removeCountTotal;
-                    const rowsDesc = [...existingItems].sort((a, b) => b.id - a.id);
-                    for (const row of rowsDesc) {
-                        if (remainingToReduce <= 0) break;
-                        const q = Number(row.quantity ?? 0);
-                        const reduceHere = Math.min(q, remainingToReduce);
-                        const newQ = q - reduceHere;
-                        await client.query('UPDATE order_items SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newQ, row.id]);
-                        remainingToReduce -= reduceHere;
-                    }
+                    await reduceSnLineQuantities(client,existingItems,existingInstances,[],reduceFromUntracked);
 
                     // Delete empty rows (keep instances intact; they must still have a parent row)
                     await client.query(
@@ -481,18 +492,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                 const removedSerials = chosen.map((i) => i.serial_number);
                 await client.query('DELETE FROM order_item_instances WHERE id = ANY($1::int[])', [chosen.map((i) => i.id)]);
 
-                // Reduce quantities across rows to match new total (includes untracked reduction).
-                // We reduce from the last rows first to avoid disturbing primary row if possible.
-                let remainingToReduce = removeCountTotal;
-                const rowsDesc = [...existingItems].sort((a, b) => b.id - a.id);
-                for (const row of rowsDesc) {
-                    if (remainingToReduce <= 0) break;
-                    const q = Number(row.quantity ?? 0);
-                    const reduceHere = Math.min(q, remainingToReduce);
-                    const newQ = q - reduceHere;
-                    await client.query('UPDATE order_items SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newQ, row.id]);
-                    remainingToReduce -= reduceHere;
-                }
+                await reduceSnLineQuantities(client,existingItems,existingInstances,chosen,reduceFromUntracked);
 
                 // Delete empty rows
                 await client.query(
@@ -562,7 +562,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
         const others = existingItems.slice(1);
 
         // Adjust quantities + rollback picked/packed if needed
-        const rollbackInfo = await rollbackNonSnQuantities(client, first, targetTotalQty);
+        const rollbackInfo = await rollbackNonSnQuantities(client, {...first,picked_quantity:sumBy(existingItems,'picked_quantity'),packed_quantity:sumBy(existingItems,'packed_quantity')}, targetTotalQty);
 
         // Update product name if provided
         await client.query(
@@ -593,7 +593,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
     // including SN coverage: removing an unpicked line can finish picking without
     // another scan. Approval alone must never declare a shipment completed.
     const { items, instances } = await readLines(client, orderId);
-    const nextStatus = getOrderCompletion(items, instances).allPicked ? 'picked' : 'picking';
+    const nextStatus = order.warehouse_hold ? 'pending' : (getOrderCompletion(items, instances).allPicked ? 'picked' : 'picking');
     await client.query('UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [nextStatus, orderId]);
 
     return {

@@ -1,4 +1,4 @@
-const FIELDS=['shopifyShop','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
+const FIELDS=['apiConnectionId','shopifyShop','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
 const fail=message=>{throw Object.assign(new Error(message),{status:400});};
 function profileSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))fail('店鋪設定格式無效');

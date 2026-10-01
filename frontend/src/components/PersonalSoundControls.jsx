@@ -23,6 +23,10 @@ export function PersonalSoundControls({ user, compact = false }) {
             <span className="text-sm">{user?.name || '我'}的掃碼音效</span>
             <button type="button" role="switch" aria-label="掃碼音效" aria-checked={settings.enabled} onClick={() => update('setEnabled', !settings.enabled)} className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm text-slate-700">{settings.enabled ? '已開啟' : '已關閉'}</button>
         </div>
+        <div className="flex items-center justify-between gap-3">
+            <span className="text-sm">訂單異動警示音</span>
+            <button type="button" role="switch" aria-label="訂單異動警示音" aria-checked={settings.orderAlertsEnabled} onClick={() => update('setOrderAlertsEnabled', !settings.orderAlertsEnabled)} className="min-h-11 rounded-lg border border-slate-200 px-3 text-sm text-slate-700">{settings.orderAlertsEnabled ? '已開啟' : '已關閉'}</button>
+        </div>
         <label className="block text-sm text-slate-700">我的音色
             <select aria-label="我的音色" value={settings.profile} onChange={event => update('setProfile', event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-slate-900">
                 {SOUND_PROFILES.map(profile => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
@@ -32,7 +36,7 @@ export function PersonalSoundControls({ user, compact = false }) {
             <input aria-label="掃碼音量" type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={event => update('setVolume', event.target.value)} className="min-h-11 min-w-0 flex-1 accent-blue-600" />
             <span className="w-10 text-right tabular-nums">{Math.round(settings.volume * 100)}%</span>
         </label>
-        <div className="flex flex-wrap gap-2">{[['pickSuccess', '揀貨'], ['packSuccess', '裝箱'], ['error', '錯誤']].map(([motif, label]) => <button key={motif} type="button" onClick={() => preview(motif)} className="min-h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-blue-50">試聽{label}</button>)}</div>
+        <div className="flex flex-wrap gap-2">{[['pickSuccess', '揀貨'], ['packSuccess', '裝箱'], ['error', '錯誤'], ['orderChange', '訂單異動']].map(([motif, label]) => <button key={motif} type="button" onClick={() => preview(motif)} className="min-h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-blue-50">試聽{label}</button>)}</div>
         <p className="text-xs text-slate-500">此帳號在這台瀏覽器記住音色；同場人員可選不同音色。</p>
     </div>;
     const profile = SOUND_PROFILES.find(item => item.id === settings.profile);

@@ -1,3 +1,5 @@
+import {isOrderManager,isWarehouseAdmin} from '@/utils/managementScope';
+import {isDeletionRequest,changeQuantityRange} from '@/utils/orderChangePresentation';
 // frontend/src/components/OrderWorkView.jsx
 // 訂單作業視圖 - Apple 風格現代化版本 (Focus Mode & Enhanced UI)
 
@@ -19,7 +21,7 @@ import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
 import SerialList from './SerialList';
-import { buildWorkItems, filterWorkItems, workStage, canOperateWorkStage } from '@/utils/orderWorkProgress';
+import { buildWorkItems, filterWorkItems, workStage, canOperateWorkStage as canOperateAssignedStage } from '@/utils/orderWorkProgress';
 import { sourceOrderKey, sourceOrderLabel, groupSourceOrders, findSourceOrders, filterSourceWorkItems, resolveSourceScanTarget, orderChangeItemIdentity } from '@/utils/sourceOrders';
 import voiceNotification from '@/utils/voiceNotification';
 import desktopNotification from '@/utils/desktopNotification';
@@ -32,6 +34,8 @@ import { PersonalSoundControls } from './PersonalSoundControls';
 import { VoiceControls } from './VoiceControls';
 import ErrorBoundary from './ErrorBoundary';
 import DefectReportModal from './DefectReportModal';
+
+const canOperateWorkStage = (user, order, type) => !isOrderManager(user) && canOperateAssignedStage(user, order, type);
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" }) => {
@@ -658,7 +662,7 @@ function AuthenticatedOrderWorkView({ user }) {
         return <Badge variant="neutral">{status}</Badge>;
     };
 
-    const isAdminLike = user?.role === 'admin' || user?.role === 'superadmin';
+    const isAdminLike = isWarehouseAdmin(user);
     const isDispatcher = user?.role === 'dispatcher';
     const canDispatcherPropose = useMemo(() => {
         if (!isDispatcher) return false;
@@ -668,7 +672,7 @@ function AuthenticatedOrderWorkView({ user }) {
         return String(responsibleUserId) === String(user?.id);
     }, [exceptionsMeta?.responsibleRole, exceptionsMeta?.responsibleUserId, isDispatcher, user?.id]);
 
-    const canProposeOrderChange = isAdminLike || canDispatcherPropose;
+    const canProposeOrderChange = isAdminLike || isOrderManager(user) || canDispatcherPropose;
     const orderChangeReady = !loading && !loadError
         && String(currentOrderData.order?.id) === String(orderId);
 
@@ -733,7 +737,8 @@ function AuthenticatedOrderWorkView({ user }) {
                     </div>
                 `;
 
-                if (!proposal) return wrap('<div style="font-size:12px;color:#6b7280">（無拋單員處理內容）</div>');
+                if (isDeletionRequest(ex)) return wrap('<div style="color:#b91c1c;font-weight:600">核准後訂單將作廢並停止出貨，保留所有作業與異動紀錄。</div>');
+                if (!proposal) return wrap('<div style="font-size:12px;color:#6b7280">（尚未填寫處理內容）</div>');
 
                 if (type === 'order_change' && Array.isArray(proposal?.items)) {
                         const itemsHtml = (proposal.items || []).slice(0, 200).map((it) => {
@@ -889,6 +894,7 @@ function AuthenticatedOrderWorkView({ user }) {
 
     const packBlockedByExceptions = canPackNow && hasOpenExceptions;
     const operationBlockedByOrderChange = hasOpenOrderChange;
+    const deletionPending = orderExceptions.some(ex=>ex.status==='open' && isDeletionRequest(ex));
 
     const parseSnText = (text) => {
         const raw = String(text || '');
@@ -1217,7 +1223,7 @@ function AuthenticatedOrderWorkView({ user }) {
         const ex = (orderExceptions || []).find((x) => String(x?.id) === String(exceptionId)) || null;
         const ackSnStorageKey = `ack_sn_checked:${String(orderId)}:${String(exceptionId)}`;
         const result = await MySwal.fire({
-            title: '主管核可',
+            title: isDeletionRequest(ex) ? '核准刪除並作廢訂單' : '主管核可',
             html: ex ? buildAckPreviewHtml(ex) : undefined,
             input: 'textarea',
             inputLabel: '核可備註（可選）',
@@ -1594,7 +1600,7 @@ function AuthenticatedOrderWorkView({ user }) {
         return false;
     };
 
-    const canOperate = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'picker' || user?.role === 'packer';
+    const canOperate = !isOrderManager(user) && ['picker','packer','admin','superadmin'].includes(user?.role);
     const orderStatus = currentOrderData.order?.status;
     const canScanNow = canOperateWorkStage(user, currentOrderData.order, 'pick')
         || canOperateWorkStage(user, currentOrderData.order, 'pack');
@@ -1794,7 +1800,8 @@ function AuthenticatedOrderWorkView({ user }) {
                                     <button type="button" className="underline underline-offset-4 text-blue-700" onClick={() => barcodeInputRef.current?.focus()}>回到掃碼</button>
                                 </div>
 
-                                {packBlockedByExceptions && (
+                                {operationBlockedByOrderChange && <div role="alert" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{deletionPending?'刪除申請':'訂單異動'}待審核，揀貨與裝箱已暫停，請等待倉儲主管核准或駁回。</div>}
+                                {packBlockedByExceptions && !operationBlockedByOrderChange && (
                                     <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 text-sm flex items-start gap-2 animate-fade-in">
                                         <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0">
@@ -1916,17 +1923,17 @@ function AuthenticatedOrderWorkView({ user }) {
                                     <div className="space-y-2">
                                         {orderExceptions.slice(0, 8).map((ex) => (
                                             <div key={ex.id} className="rounded-xl border border-gray-200 bg-white/60 p-3">
-                                                <div className="flex items-start justify-between gap-3">
+                                                <div className="flex flex-col gap-3">
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="text-sm font-bold text-gray-900">{typeLabel(ex.type)}</span>
+                                                            <span className="text-sm font-bold text-gray-900">{isDeletionRequest(ex) ? '刪除訂單' : typeLabel(ex.type)}</span>
                                                             {statusBadge(ex.status)}
                                                         </div>
                                                         <div className="text-xs text-gray-600 mt-1 break-words">{ex.reason_text}</div>
 
                                                         {String(ex?.type) === 'order_change' && ex?.snapshot?.proposal && (
                                                             <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200">
-                                                                <div className="text-[11px] text-gray-700 font-semibold">異動內容（待審核）</div>
+                                                                <div className="text-[11px] text-gray-700 font-semibold">異動內容（{ex.status === 'open' ? '待審核' : ex.status === 'rejected' ? '已駁回' : '已核可'}）</div>
                                                                 {ex.snapshot.proposal?.note && (
                                                                     <div className="text-[11px] text-gray-600 break-words mt-1">原因：{ex.snapshot.proposal.note}</div>
                                                                 )}
@@ -1935,10 +1942,13 @@ function AuthenticatedOrderWorkView({ user }) {
                                                                         {ex.snapshot.proposal.items.slice(0, 8).map((it, idx) => {
                                                                             const barcode = String(it?.barcode || '').trim();
                                                                             const delta = Math.trunc(Number(it?.quantityChange) || 0);
-                                                                            const originalQty = (currentOrderData.items || [])
-                                                                                .filter((x) => it.orderItemId ? Number(x.id) === Number(it.orderItemId) : String(x?.barcode || '').trim() === barcode)
-                                                                                .reduce((acc, x) => acc + (Number(x?.quantity ?? 0) || 0), 0);
-                                                                            const targetQty = Math.max(0, Math.trunc(originalQty) + delta);
+                                                                            let range = changeQuantityRange(ex,idx,currentOrderData.items);
+                                                                            if (ex.status === 'open' && it.orderItemId) {
+                                                                                const baseline = ex.snapshot?.baselineItems?.some(x => Number(x.id) === Number(it.orderItemId)) ? ex.snapshot.baselineItems : currentOrderData.items || [];
+                                                                                const before = baseline.filter(x => Number(x.id) === Number(it.orderItemId)).reduce((n,x) => n + Number(x.quantity || 0), 0)
+                                                                                    + ex.snapshot.proposal.items.slice(0,idx).filter(x => Number(x.orderItemId) === Number(it.orderItemId)).reduce((n,x) => n + Number(x.quantityChange || 0), 0);
+                                                                                range = { before, after: before + delta };
+                                                                            }
                                                                             const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
                                                                             const isNoSn = !!it?.noSn;
                                                                             const snAdded = !isNoSn && delta > 0 && Array.isArray(it?.snList) ? it.snList.length : 0;
@@ -1947,7 +1957,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                                             return (
                                                                                 <div key={`${ex.id}-chg-${idx}`} className="text-[11px] text-gray-600 break-words">
                                                                                     {it.orderItemId && <span>{sourceOrderLabel(currentOrderData.items.find(x => Number(x.id) === Number(it.orderItemId)))} · </span>}
-                                                                                    {barcode} · {it.productName} · {originalQty}→{targetQty}（{deltaText}）
+                                                                                    {barcode} · {it.productName} · {range ? `${range.before}→${range.after}` : '數量異動'}（{deltaText}）
                                                                                     {isNoSn ? ' · 無SN' : ' · SN'}
                                                                                     {!isNoSn && snAdded > 0 ? ` · 新增SN ${snAdded}` : ''}
                                                                                     {!isNoSn && snRemoved > 0 ? ` · 移除SN ${snRemoved}` : ''}
@@ -1965,7 +1975,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                         {String(ex?.type) !== 'order_change' && ex?.snapshot?.proposal && (
                                                             <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200">
                                                                 <div className="text-[11px] text-gray-700 font-semibold">
-                                                                    拋單員處理內容（待審核）
+                                                                    處理內容（{ex.status === 'open' ? '待審核' : ex.status === 'rejected' ? '已駁回' : ex.status === 'resolved' ? '已結案' : '已核可'}）
                                                                 </div>
                                                                 <div className="text-[11px] text-gray-600 mt-1">
                                                                     處理方式：{resolutionActionLabel(ex.snapshot.proposal?.resolutionAction)}
@@ -2056,7 +2066,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                     </div>
 
                                                     {isAdminLike && (
-                                                        <div className="flex flex-col gap-2 flex-shrink-0">
+                                                        <div className="flex flex-wrap gap-2">
                                                             {ex.status === 'open' && (
                                                                 <>
                                                                     <Button size="sm" onClick={() => handleAckException(ex.id)}>
@@ -2075,11 +2085,11 @@ function AuthenticatedOrderWorkView({ user }) {
                                                         </div>
                                                     )}
 
-                                                    {(!isAdminLike && canDispatcherPropose) && (
-                                                        <div className="flex flex-col gap-2 flex-shrink-0">
+                                                    {canProposeOrderChange && (
+                                                        <div className="flex flex-wrap gap-2">
                                                             {ex.status === 'open' && String(ex?.type) !== 'order_change' && (
                                                                 <Button size="sm" variant="secondary" onClick={() => openProposalModal(ex)}>
-                                                                    填處理
+                                                                    填寫處理方式
                                                                 </Button>
                                                             )}
                                                         </div>

@@ -45,10 +45,10 @@ async function exchange(pool, ticket, nonce) {
         const mapping = (await client.query('SELECT * FROM erp_staff_identities WHERE erp_user_id=$1', [identity.userId])).rows[0];
         if (mapping && mapping.entity_id !== identity.entityId) throw invalid();
         if (mapping) {
-            user = (await client.query('UPDATE users SET name=$1, role=$2 WHERE id=$3 RETURNING id,username,name,role', [identity.name, identity.role, mapping.wms_user_id])).rows[0];
+            user = (await client.query('UPDATE users SET name=$1, role=$2 WHERE id=$3 RETURNING id,username,name,role,management_scope', [identity.name, identity.role, mapping.wms_user_id])).rows[0];
         } else {
             // Non-password account with an immutable ERP identity; never bind by display name.
-            user = (await client.query('INSERT INTO users(username,password,name,role) VALUES($1,$2,$3,$4) RETURNING id,username,name,role', ['erp:'+identity.userId, '!erp-'+crypto.randomBytes(32).toString('hex'), identity.name, identity.role])).rows[0];
+            user = (await client.query('INSERT INTO users(username,password,name,role) VALUES($1,$2,$3,$4) RETURNING id,username,name,role,management_scope', ['erp:'+identity.userId, '!erp-'+crypto.randomBytes(32).toString('hex'), identity.name, identity.role])).rows[0];
             await client.query('INSERT INTO erp_staff_identities(erp_user_id,entity_id,wms_user_id) VALUES($1,$2,$3)', [identity.userId,identity.entityId,user.id]);
         }
         await client.query('COMMIT');
@@ -61,7 +61,7 @@ async function resolveUser(pool, claims) {
     if (typeof claims.erpSession !== 'string' || !/^[a-f0-9]{64}$/.test(claims.erpSession)) throw invalid();
     const identity = validateIdentity(await callErp('inspect', { session: claims.erpSession }));
     if (identity.userId !== claims.erpSubject) throw invalid();
-    const row = (await pool.query('SELECT u.id,u.username,u.name,u.role FROM erp_staff_identities e JOIN users u ON u.id=e.wms_user_id WHERE e.erp_user_id=$1 AND e.entity_id=$2 AND u.id=$3', [identity.userId,identity.entityId,claims.id])).rows[0];
+    const row = (await pool.query('SELECT u.id,u.username,u.name,u.role,u.management_scope FROM erp_staff_identities e JOIN users u ON u.id=e.wms_user_id WHERE e.erp_user_id=$1 AND e.entity_id=$2 AND u.id=$3', [identity.userId,identity.entityId,claims.id])).rows[0];
     if (!row || row.role !== identity.role) throw invalid();
     return { ...row, erpSubject: identity.userId, erpOrigin: config().origin, personalPaths: identity.personalPaths || [], permissions: identity.permissions || [], entityId:identity.entityId };
 }

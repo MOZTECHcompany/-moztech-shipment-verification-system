@@ -25,6 +25,13 @@ describe('ERP work sessions', () => {
     global.fetch.mockRejectedValue(new Error('network failure'));
     await expect(resolveUser({}, {id:7,erpSubject:'staff',erpSession:'a'.repeat(64)})).rejects.toMatchObject({status:503});
   });
+  test('ERP sessions preserve the database management scope instead of widening an order administrator',async()=>{
+    global.fetch.mockResolvedValue({ok:true,json:async()=>({...valid,role:'admin',permissions:['wms_admin']})});
+    const pool={query:jest.fn().mockResolvedValue({rows:[{id:7,role:'admin',management_scope:'orders'}]})};
+    const user=await resolveUser(pool,{id:7,erpSubject:'staff',erpSession:'a'.repeat(64)});
+    expect(user.management_scope).toBe('orders');
+    expect(pool.query.mock.calls[0][0]).toContain('u.management_scope');
+  });
   test('rejects malformed tickets before contacting ERP or database',async()=>{
     await expect(exchange({},'bad','bad')).rejects.toThrow();
     expect(global.fetch).not.toHaveBeenCalled();

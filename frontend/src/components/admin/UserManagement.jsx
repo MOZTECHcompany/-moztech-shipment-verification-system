@@ -1,3 +1,4 @@
+import {managementRoleLabel} from '@/utils/managementScope';
 // frontend/src/components/admin/UserManagement.jsx
 // 使用者管理頁面 - Apple 風格現代化版本
 
@@ -19,6 +20,7 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
         name: user?.name || '',
         password: '',
         role: user?.role || 'picker',
+        management_scope: user?.management_scope || (user ? 'all' : 'orders'),
     });
     const [isSaving, setIsSaving] = useState(false);
     const isEditMode = !!user;
@@ -85,8 +87,9 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
                     autoComplete="new-password"
                 />
                 <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">角色</label>
+                    <label htmlFor="user-role" className="block text-sm font-semibold text-gray-700 mb-2">角色</label>
                     <select
+                        id="user-role"
                         name="role"
                         value={formData.role}
                         onChange={handleChange}
@@ -96,11 +99,24 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
                         <option value="packer">裝箱員</option>
                             <option value="dispatcher">拋單員</option>
                         {isSuperAdminActor && <option value="admin">管理員</option>}
+                        {user?.role === 'superadmin' && <option value="superadmin">最高管理員</option>}
                     </select>
                     {!isSuperAdminActor && (
                         <p className="mt-2 text-xs text-gray-500">只有最高管理員可以建立/指派管理員角色</p>
                     )}
                 </div>
+                {isSuperAdminActor && formData.role === 'admin' && <div>
+                    <label htmlFor="management-scope" className="block mb-2 text-sm font-semibold">管理員分工</label>
+                    <select id="management-scope" name="management_scope" value={formData.management_scope} onChange={handleChange} className="w-full rounded-xl border px-4 py-3">
+                        <option value="orders">訂單管理員</option>
+                        <option value="warehouse">倉儲管理員</option>
+                        <option value="all">跨部門管理員（訂單＋倉儲）</option>
+                    </select>
+                    <p className="mt-2 text-sm text-slate-600">{formData.management_scope === 'orders'
+                        ? '可拋單、提出訂單異動及填寫例外處理；核准與倉儲作業由倉儲管理員負責。'
+                        : '可拋單、提出訂單異動、填寫例外處理，並負責核准與倉儲作業。'}</p>
+                    <p className="mt-2 text-sm text-slate-600">兩邊管理員都會收到異動明細與警示；通知不會自動核准異動。</p>
+                </div>}
             </form>
         </Modal>
     );
@@ -131,7 +147,7 @@ export function UserManagement({ currentUser }) {
     const handleOpenModal = (user = null) => {
         const actorRole = (currentUser?.role || '').toLowerCase();
         const targetRole = (user?.role || '').toLowerCase();
-        if (user && targetRole === 'superadmin' && actorRole !== 'superadmin') {
+        if (user && ['admin','superadmin'].includes(targetRole) && actorRole !== 'superadmin') {
             toast.error('權限不足', { description: '管理員不可編輯最高管理員帳號' });
             return;
         }
@@ -145,12 +161,13 @@ export function UserManagement({ currentUser }) {
     };
 
     const handleSaveUser = async (formData) => {
+        if (currentUser?.role !== 'superadmin') { formData = {...formData}; delete formData.management_scope; }
         const isEdit = !!editingUser;
         const apiCall = isEdit
             ? apiClient.put(`/api/admin/users/${editingUser.id}`, formData)
             : apiClient.post('/api/admin/create-user', formData);
 
-        const promise = toast.promise(apiCall, {
+        toast.promise(apiCall, {
             loading: isEdit ? '正在更新使用者...' : '正在建立使用者...',
             success: (response) => {
                 fetchUsers(); // 重新整理列表
@@ -160,7 +177,7 @@ export function UserManagement({ currentUser }) {
         });
         
         // 抛出错误以便 Modal 知道操作是否成功
-        return promise;
+        return apiCall;
     };
     
     const handleDeleteUser = (user) => {
@@ -279,13 +296,13 @@ export function UserManagement({ currentUser }) {
                                                         {((user.role || '').toLowerCase() === 'picker') && <UserIcon className="h-3 w-3" />}
                                                         {((user.role || '').toLowerCase() === 'packer') && <UserIcon className="h-3 w-3" />}
                                                         {((user.role || '').toLowerCase() === 'dispatcher') && <UserIcon className="h-3 w-3" />}
-                                                        {roleMap[(user.role || '').toLowerCase()]?.label || user.role}
+                                                        {managementRoleLabel(user)}
                                                     </Badge>
                                                 </TD>
                                                 <TD className="text-xs text-gray-600">{new Date(user.created_at).toLocaleDateString('zh-TW')}</TD>
                                                 <TD className="text-right">
                                                     <div className="flex justify-end gap-2">
-                                                        {((user.role || '').toLowerCase() !== 'superadmin' || (currentUser?.role || '').toLowerCase() === 'superadmin') && (
+                                                        {(!['admin','superadmin'].includes((user.role || '').toLowerCase()) || (currentUser?.role || '').toLowerCase() === 'superadmin') && (
                                                             <>
                                                                 <Button variant="secondary" size="xs" className="gap-1" onClick={() => handleOpenModal(user)}>
                                                                     <Edit className="h-3 w-3" /> 編輯
@@ -311,7 +328,7 @@ export function UserManagement({ currentUser }) {
                     </Card>
                 )}
 
-                <UserFormModal user={editingUser} open={isModalOpen} onClose={handleCloseModal} onSave={handleSaveUser} currentUser={currentUser} />
+                {isModalOpen && <UserFormModal key={editingUser?.id || 'new'} user={editingUser} open onClose={handleCloseModal} onSave={handleSaveUser} currentUser={currentUser} />}
             </div>
         );
 }

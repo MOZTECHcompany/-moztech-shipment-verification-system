@@ -1,3 +1,5 @@
+import * as managementScope from '../src/utils/managementScope.js';
+import * as orderChangePresentation from '../src/utils/orderChangePresentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -13,7 +15,7 @@ const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
 
 // Execute the real component event handlers with controlled hooks and transport.
 // Child components and DOM rendering are omitted; no application server is started.
-function workView({ role = 'picker', deferRead = false, initialData } = {}) {
+function workView({ role = 'picker', deferRead = false, initialData, managementScope: userManagementScope, exceptions = [] } = {}) {
     const order = { id: 1, status: role === 'picker' ? 'picking' : 'packing', picker_id: 1, packer_id: 1 };
     const fixture = initialData || { order, items: [{ id: 11, quantity: 100, picked_quantity: 0, packed_quantity: 0, barcode: 'ITEM' }], instances: [] };
     const states = [fixture, false, ''];
@@ -50,6 +52,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
             return promise;
         },
         get: url => {
+            if (url.endsWith('/exceptions')) return Promise.resolve({ data: { items: exceptions } });
             if (!deferRead || url !== '/api/orders/1/work-snapshot') return Promise.resolve({ data: fixture });
             let resolve;
             const pending = new Promise(done => { resolve = done; });
@@ -62,6 +65,8 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         off: (name, callback) => { offCalls.push([name, callback]); }
     };
     const imports = {
+        '@/utils/managementScope': managementScope,
+        '@/utils/orderChangePresentation': orderChangePresentation,
         react,
         'react-router-dom': { useParams: () => ({ orderId: '1' }), useNavigate: () => noop },
         sonner: { toast: { warning: (...args) => warnings.push(args), error: noop, success: noop, info: noop } },
@@ -85,7 +90,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
     });
     function render() {
         stateCursor = 0; refCursor = 0; effects.length = 0;
-        const shell = module.exports.OrderWorkView({ user: { id: 1, role } });
+        const shell = module.exports.OrderWorkView({ user: { id: 1, role, management_scope: userManagementScope } });
         return typeof shell.type === 'function' ? shell.type(shell.props) : shell;
     }
     function find(tree, predicate) {
@@ -502,4 +507,32 @@ test('account or role changes remount the order view instead of reusing its snap
     const first = view.boundary({ id: 1, role: 'picker' }).props.key;
     assert.notEqual(view.boundary({ id: 2, role: 'picker' }).props.key, first);
     assert.notEqual(view.boundary({ id: 1, role: 'admin' }).props.key, first);
+});
+
+
+test('order-only administrators cannot scan or adjust even if an old snapshot names them as stage owner', async () => {
+    const view = workView({ role: 'admin', managementScope: 'orders' });
+    assert.equal(view.input().props.disabled, true);
+    view.type('ITEM'); view.enter(); await settle();
+    assert.equal(view.posts.length, 0);
+    const card = view.find(view.render(), node => typeof node.type === 'function' && node.type.name === 'QuantityItemCard');
+    assert.equal(card.props.onUpdate('ITEM', 'pack', 1, 11), false);
+    assert.equal(view.posts.length, 0);
+});
+
+
+test('pending source-line changes show their own quantity while approved history keeps the applied result', async () => {
+    const pending = { id: 8, type: 'order_change', status: 'open', snapshot: { baselineItems: [{ barcode: 'SAME', quantity: 5 }], proposal: { items: [{ orderItemId: 11, barcode: 'SAME', productName: 'Changed source A', quantityChange: 1, noSn: true }] } } };
+    const applied = { id: 9, type: 'order_change', status: 'ack', snapshot: { proposal: pending.snapshot.proposal, applyResult: { changesApplied: [{ barcode: 'SAME', orderItemId: 11, previousTotalQuantity: 2, newTotalQuantity: 3 }] } } };
+    const fixture = sourceFixture(); fixture.items[0].quantity = 2;
+    const view = workView({ role: 'admin', initialData: fixture, exceptions: [pending, applied] });
+    view.render(); view.effects.find(callback => callback.toString().includes('fetchOrderExceptions(orderId)') && !callback.toString().includes('active_sessions_update'))();
+    await settle();
+    const text = node => Array.isArray(node) ? node.map(text).join(' ') : node == null || typeof node === 'boolean' ? '' : typeof node === 'object' ? text(node.props?.children || []) : String(node);
+    const content = text(view.render());
+    assert.match(content, /蝦皮 · A · 000123/);
+    assert.equal((content.match(/2→3/g) || []).length, 2);
+    assert.doesNotMatch(content, /5→6/);
+    fixture.items[0].quantity = 99;
+    assert.match(text(view.render()), /2→3/);
 });

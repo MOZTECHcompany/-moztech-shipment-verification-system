@@ -1,3 +1,4 @@
+import {isWarehouseAdmin,isOrderManager} from '@/utils/managementScope';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Box, Camera, Check, CheckCheck, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
@@ -16,7 +17,7 @@ const actionClass = 'inline-flex min-h-[44px] items-center justify-center gap-2 
 
 export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions = [], order, items, instances = [], isFocusMode, toggleFocusMode }) {
   const stage = statusIndex[order.status];
-  const canManageDefect = ['admin', 'superadmin'].includes(user?.role)
+  const canManageDefect = isWarehouseAdmin(user)
     || (user?.role === 'dispatcher' && Number(order.imported_by_user_id) === Number(user.id));
   const metrics = [
     { label: '品項完成度', value: stats.packedSkus, total: stats.totalSkus },

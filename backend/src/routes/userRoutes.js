@@ -8,7 +8,7 @@ const { authorizeAdmin } = require('../middleware/auth');
 const { pool } = require('../config/database');
 
 // 所有用戶路由都需要管理員權限
-router.use(authorizeAdmin);
+router.use(authorizeAdmin, require('../utils/managementScope').warehouseOnly);
 
 /**
  * POST /api/users
@@ -16,13 +16,14 @@ router.use(authorizeAdmin);
  */
 router.post('/', async (req, res, next) => {
     try {
-        const { username, password, name, role } = req.body;
+        const { username, password, name, role, management_scope } = req.body;
 
         if (!username || !password || !name || !role) {
             return res.status(400).json({ message: '請提供完整的用戶資訊' });
         }
 
         const normalizedRole = role ? String(role).trim().toLowerCase() : null;
+        if (management_scope !== undefined && (req.user?.role !== 'superadmin' || !['all','orders','warehouse'].includes(management_scope))) return res.status(403).json({message:'管理員分工僅能由系統管理員設定'});
         const actorRole = req.user?.role;
 
         // 只有最高管理員可以新增/指定管理員（admin/superadmin）
@@ -30,7 +31,7 @@ router.post('/', async (req, res, next) => {
             return res.status(403).json({ message: '只有最高管理員可以新增管理員' });
         }
 
-        const user = await userService.createUser({ username, password, name, role: normalizedRole });
+        const user = await userService.createUser({ username, password, name, role: normalizedRole, management_scope });
         
         res.status(201).json({ 
             message: '用戶創建成功',
@@ -79,7 +80,8 @@ router.get('/:userId', async (req, res, next) => {
  */
 router.put('/:userId', async (req, res, next) => {
     try {
-        const { name, role, password } = req.body;
+        const { name, role, password, management_scope } = req.body;
+        if (management_scope !== undefined && (req.user?.role !== 'superadmin' || !['all','orders','warehouse'].includes(management_scope))) return res.status(403).json({message:'管理員分工僅能由系統管理員設定'});
         const actorRole = req.user?.role;
         const targetUserId = req.params.userId;
 
@@ -92,7 +94,7 @@ router.put('/:userId', async (req, res, next) => {
         const targetRole = targetResult.rows[0].role ? String(targetResult.rows[0].role).trim().toLowerCase() : null;
 
         // 管理員不得編輯最高管理員
-        if (targetRole === 'superadmin' && actorRole !== 'superadmin') {
+        if (['superadmin','admin'].includes(targetRole) && actorRole !== 'superadmin') {
             return res.status(403).json({ message: '無法編輯最高管理員帳號' });
         }
 
@@ -103,7 +105,7 @@ router.put('/:userId', async (req, res, next) => {
             return res.status(403).json({ message: '只有最高管理員可以設定管理員角色' });
         }
 
-        const user = await userService.updateUser(targetUserId, { name, role: normalizedRole, password });
+        const user = await userService.updateUser(targetUserId, { name, role: normalizedRole, password, management_scope });
         
         res.json({ 
             message: '用戶更新成功',
@@ -132,7 +134,7 @@ router.delete('/:userId', async (req, res, next) => {
         }
 
         const targetRole = targetResult.rows[0].role ? String(targetResult.rows[0].role).trim().toLowerCase() : null;
-        if (targetRole === 'superadmin' && actorRole !== 'superadmin') {
+        if (['superadmin','admin'].includes(targetRole) && actorRole !== 'superadmin') {
             return res.status(403).json({ message: '無法刪除最高管理員帳號' });
         }
 

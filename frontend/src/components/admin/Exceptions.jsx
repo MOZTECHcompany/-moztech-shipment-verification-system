@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {isDeletionRequest} from '@/utils/orderChangePresentation';
+import {isWarehouseAdmin} from '@/utils/managementScope';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AlertTriangle, Search, ArrowRight } from 'lucide-react';
+import { AlertTriangle, Search, ArrowRight, SlidersHorizontal, ChevronDown } from 'lucide-react';
 
 import apiClient from '@/api/api';
 import { socket } from '@/api/socket';
@@ -15,6 +17,8 @@ const typeLabel = (type) => {
     under_scan: '少掃',
     sn_replace: 'SN更換',
     other: '其他',
+    order_change: '訂單異動',
+    order_delete: '刪除申請',
   };
   return map[type] || type;
 };
@@ -23,6 +27,24 @@ const statusLabel = (status) => {
   const map = { open: '待核可', ack: '已核可', resolved: '已結案', rejected: '已駁回' };
   return map[status] || status;
 };
+
+const orderStatusLabels = {
+  pending: '待揀貨', picking: '揀貨中', picked: '待裝箱',
+  packing: '裝箱中', completed: '已完成', voided: '已作廢',
+};
+const emptyFilters = { q: '', orderStatus: '', type: '', createdBy: '', ackBy: '', resolvedBy: '', overdueOnly: false };
+const pageSize = 100;
+
+function FilterSelect({ id, label, value, onChange, children }) {
+  return <div className="min-w-0">
+    <label htmlFor={id} className="block text-sm font-semibold text-gray-700 mb-2.5">{label}</label>
+    <select id={id} value={value} onChange={(event) => onChange(event.target.value)}
+      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-4 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <option value="">全部</option>
+      {children}
+    </select>
+  </div>;
+}
 
 const statusVariant = (status) => {
   if (status === 'open') return 'warning';
@@ -77,9 +99,29 @@ function renderSnBlock(label, snText) {
   );
 }
 
-export function Exceptions() {
+export function Exceptions({user}) {
+  const canReview=isWarehouseAdmin(user);
   const [tab, setTab] = useState('open');
-  const [q, setQ] = useState('');
+  const [filters, setFilters] = useState(() => ({ ...emptyFilters, type: new URLSearchParams(window.location.search).get('type') || '' }));
+  const [draft, setDraft] = useState(filters);
+  const [peopleOpen, setPeopleOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [listError, setListError] = useState('');
+  const requestSequence = useRef(0);
+  const setFilter = (key, value) => setDraft((previous) => ({ ...previous, [key]: value }));
+  const hasUnappliedFilters = JSON.stringify(draft) !== JSON.stringify(filters);
+  const hasFilters = Object.entries(filters).some(([key, value]) => value && (key !== 'overdueOnly' || tab === 'open'));
+  const applyFilters = (event) => {
+    event.preventDefault();
+    setPage(1);
+    setFilters({ ...draft, q: draft.q.trim() });
+    setDraft((previous) => ({ ...previous, q: previous.q.trim() }));
+  };
+  const clearFilters = () => {
+    setDraft({ ...emptyFilters });
+    setFilters({ ...emptyFilters });
+    setPage(1);
+  };
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [slaMinutes, setSlaMinutes] = useState(30);
@@ -99,13 +141,6 @@ export function Exceptions() {
   const [attachmentPreviewMime, setAttachmentPreviewMime] = useState('');
 
   const [users, setUsers] = useState([]);
-  const [createdBy, setCreatedBy] = useState('');
-  const [ackBy, setAckBy] = useState('');
-  const [resolvedBy, setResolvedBy] = useState('');
-  const [type, setType] = useState('');
-  const [orderStatus, setOrderStatus] = useState('');
-  const [overdueOnly, setOverdueOnly] = useState(false);
-
   const overdueCount = useMemo(() => (items || []).filter((x) => x?.is_overdue).length, [items]);
 
   const [prevOverdueCount, setPrevOverdueCount] = useState(0);
@@ -123,34 +158,39 @@ export function Exceptions() {
   }, []);
 
   const fetchList = useCallback(async () => {
+    const requestId = ++requestSequence.current;
     try {
       setLoading(true);
+      setListError('');
       const res = await apiClient.get('/api/admin/exceptions', {
         params: {
           status: tab,
-          q: q || undefined,
-          createdBy: createdBy || undefined,
-          ackBy: ackBy || undefined,
-          resolvedBy: resolvedBy || undefined,
-          type: type || undefined,
-          orderStatus: orderStatus || undefined,
-          overdue: tab === 'open' && overdueOnly ? 1 : undefined,
-          page: 1,
-          limit: 100,
+          q: filters.q || undefined,
+          createdBy: filters.createdBy || undefined,
+          ackBy: filters.ackBy || undefined,
+          resolvedBy: filters.resolvedBy || undefined,
+          type: filters.type || undefined,
+          orderStatus: filters.orderStatus || undefined,
+          overdue: tab === 'open' && filters.overdueOnly ? 1 : undefined,
+          page,
+          limit: pageSize,
         },
       });
+      if (requestId !== requestSequence.current) return;
       setItems(res.data?.items || []);
       setSlaMinutes(res.data?.meta?.slaMinutes || 30);
     } catch (err) {
-      toast.error('載入例外總覽失敗', { description: err.response?.data?.message || err.message });
+      if (requestId !== requestSequence.current) return;
+      setListError('無法載入案件，請重新整理或稍後重試。');
       setItems([]);
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
-  }, [tab, q, createdBy, ackBy, resolvedBy, type, orderStatus, overdueOnly]);
+  }, [tab, filters, page]);
 
   useEffect(() => {
     fetchList();
+    return () => { requestSequence.current += 1; };
   }, [fetchList]);
 
   // 即時提醒：有新例外建立/狀態變更時，自動刷新清單
@@ -188,8 +228,8 @@ export function Exceptions() {
   useEffect(() => {
     if (tab !== 'open') return;
     if (overdueCount > prevOverdueCount) {
-      toast.warning('有例外逾時未核可', {
-        description: `目前逾時 ${overdueCount} 筆（SLA ${slaMinutes} 分鐘）`,
+      toast.warning('有案件等待審核過久', {
+        description: `本頁有 ${overdueCount} 筆已等待超過 ${slaMinutes} 分鐘`,
         duration: 4000,
       });
     }
@@ -278,6 +318,12 @@ export function Exceptions() {
     }
   }, [ackNote, closeDetail, detailRow?.id, detailRow?.order_id, fetchList]);
 
+  const submitReject = async () => {
+    if(!ackNote.trim()){toast.error('請填寫駁回原因');return;}
+    try{await apiClient.patch(`/api/orders/${detailRow.order_id}/exceptions/${detailRow.id}/reject`,{note:ackNote.trim()});toast.success('已駁回');closeDetail();fetchList();}
+    catch(error){toast.error(error.response?.data?.message || '駁回失敗');}
+  };
+
   const submitResolve = useCallback(async () => {
     if (!detailRow?.order_id || !detailRow?.id) return;
     try {
@@ -295,12 +341,12 @@ export function Exceptions() {
 
   return (
     <div className="min-h-screen bg-transparent pb-20">
-      <div className="p-6 md:p-8 lg:p-10 max-w-[1600px] mx-auto">
+      <div className="p-4 md:p-6 lg:p-8 max-w-[1600px] mx-auto">
         <PageHeader
           title="例外總覽"
-          description={`SLA（時限）：待核可 超過 ${slaMinutes} 分鐘未核可需處理${tab === 'open' ? `（目前逾時 ${overdueCount} 筆）` : ''}`}
+          description={canReview ? '查看異動與異常申請，確認內容後核可、駁回或結案。' : '查看異動與異常申請，追蹤主管的審核結果。'}
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button as={Link} to="/admin" variant="secondary">
                 返回管理中心
               </Button>
@@ -311,182 +357,119 @@ export function Exceptions() {
           }
         />
 
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-4">
-            <Card className="border-0 glass-panel">
-              <CardHeader>
-                <CardTitle className="text-base">狀態</CardTitle>
-                <CardDescription>依狀態分頁</CardDescription>
-              </CardHeader>
-              <CardContent className="flex gap-2 flex-wrap">
-                <Button variant={tab === 'open' ? 'primary' : 'secondary'} onClick={() => setTab('open')}>待核可</Button>
-                <Button variant={tab === 'ack' ? 'primary' : 'secondary'} onClick={() => setTab('ack')}>已核可</Button>
-                <Button variant={tab === 'resolved' ? 'primary' : 'secondary'} onClick={() => setTab('resolved')}>已結案</Button>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 glass-panel mt-6">
-              <CardHeader>
-                <CardTitle className="text-base">搜尋</CardTitle>
-                <CardDescription>支援訂單號或訂單 ID</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Input
-                  label={null}
-                  name="q"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="例如：A12345 或 1001"
-                  icon={Search}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') fetchList();
-                  }}
-                />
-                <Button variant="primary" className="w-full" onClick={fetchList} disabled={loading}>
-                  搜尋
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 glass-panel mt-6">
-              <CardHeader>
-                <CardTitle className="text-base">篩選</CardTitle>
-                <CardDescription>依任務狀態 / 類型 / 人員</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">任務狀態（訂單狀態）</label>
-                  <select
-                    value={orderStatus}
-                    onChange={(e) => setOrderStatus(e.target.value)}
-                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
-                  >
-                    <option value="">全部</option>
-                    <option value="pending">pending</option>
-                    <option value="picking">picking</option>
-                    <option value="picked">picked</option>
-                    <option value="packing">packing</option>
-                    <option value="completed">completed</option>
-                    <option value="voided">voided</option>
-                  </select>
+        <div className="mt-6 space-y-5">
+          <Card>
+            <CardContent>
+              <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 pb-4">
+                <span className="text-sm font-semibold text-gray-700">審核進度</span>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="審核進度">
+                  {['open', 'ack', 'rejected', 'resolved'].map((status) => (
+                    <Button key={status} size="sm" aria-pressed={tab === status}
+                      variant={tab === status ? 'primary' : 'secondary'}
+                      onClick={() => { setTab(status); setPage(1); }}>
+                      {statusLabel(status)}
+                    </Button>
+                  ))}
                 </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">例外類型</label>
-                  <select
-                    value={type}
-                    onChange={(e) => setType(e.target.value)}
-                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
-                  >
-                    <option value="">全部</option>
-                    <option value="stockout">缺貨</option>
-                    <option value="damage">破損</option>
-                    <option value="over_scan">多掃</option>
-                    <option value="under_scan">少掃</option>
-                    <option value="sn_replace">SN更換</option>
-                    <option value="other">其他</option>
-                  </select>
+              </div>
+              <form onSubmit={applyFilters} aria-label="查詢案件" className="pt-4 space-y-4">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <h2 className="text-base font-semibold text-gray-900">查詢條件</h2>
+                  <p className="text-xs text-gray-500">只篩選清單，不會修改訂單。</p>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">建立者</label>
-                  <select
-                    value={createdBy}
-                    onChange={(e) => setCreatedBy(e.target.value)}
-                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
-                  >
-                    <option value="">全部</option>
-                    {(users || []).map((u) => (
-                      <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-4">
+                  <Input label="訂單號碼或 ID" name="exception-search" value={draft.q}
+                    onChange={(event) => setFilter('q', event.target.value)}
+                    placeholder="輸入訂單號碼或 ID" icon={Search} />
+                  <FilterSelect id="exception-order-status" label="訂單作業進度" value={draft.orderStatus} onChange={(value) => setFilter('orderStatus', value)}>
+                    {Object.entries(orderStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </FilterSelect>
+                  <FilterSelect id="exception-type" label="申請類型" value={draft.type} onChange={(value) => setFilter('type', value)}>
+                    {['order_change', 'order_delete', 'stockout', 'damage', 'over_scan', 'under_scan', 'sn_replace', 'other'].map((value) => <option key={value} value={value}>{typeLabel(value)}</option>)}
+                  </FilterSelect>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">核可者</label>
-                  <select
-                    value={ackBy}
-                    onChange={(e) => setAckBy(e.target.value)}
-                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
-                  >
-                    <option value="">全部</option>
-                    {(users || []).map((u) => (
-                      <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
-                    ))}
-                  </select>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <Button type="button" size="sm" variant="ghost" leadingIcon={SlidersHorizontal} trailingIcon={ChevronDown}
+                      aria-expanded={peopleOpen} aria-controls="exception-people-filters" onClick={() => setPeopleOpen((open) => !open)}>
+                      人員篩選{[draft.createdBy, draft.ackBy, draft.resolvedBy].filter(Boolean).length > 0 ? `（${[draft.createdBy, draft.ackBy, draft.resolvedBy].filter(Boolean).length}）` : ''}
+                    </Button>
+                    {tab === 'open' && <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <input type="checkbox" checked={draft.overdueOnly} onChange={(event) => setFilter('overdueOnly', event.target.checked)} className="w-4 h-4 rounded border-gray-300" />
+                      只看等待超過 {slaMinutes} 分鐘
+                    </label>}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {hasUnappliedFilters && <span className="text-xs text-amber-700" role="status">條件已變更，請按查詢</span>}
+                    <Button type="button" size="sm" variant="secondary" onClick={clearFilters}>清除條件</Button>
+                    <Button type="submit" size="sm" leadingIcon={Search}>查詢</Button>
+                  </div>
                 </div>
+                {peopleOpen && <div id="exception-people-filters" className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-gray-100 pt-4">
+                  {[['createdBy', '申請人'], ['ackBy', '核可人'], ['resolvedBy', '結案人']].map(([key, label]) => (
+                    <FilterSelect key={key} id={`exception-${key}`} label={label} value={draft[key]} onChange={(value) => setFilter(key, value)}>
+                      {users.map((person) => <option key={person.id} value={person.id}>{person.name || person.username || person.id}</option>)}
+                    </FilterSelect>
+                  ))}
+                </div>}
+              </form>
+            </CardContent>
+          </Card>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2.5">結案者</label>
-                  <select
-                    value={resolvedBy}
-                    onChange={(e) => setResolvedBy(e.target.value)}
-                    className="w-full font-medium outline-none transition-all duration-200 bg-white/50 backdrop-blur-sm border border-gray-200/60 rounded-xl px-4 py-3.5 text-gray-900"
-                  >
-                    <option value="">全部</option>
-                    {(users || []).map((u) => (
-                      <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {tab === 'open' && (
-                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={overdueOnly}
-                      onChange={(e) => setOverdueOnly(e.target.checked)}
-                      className="w-4 h-4 rounded border-gray-300"
-                    />
-                    只看逾時
-                  </label>
-                )}
-
-                <div className="flex gap-2">
-                  <Button variant="secondary" className="flex-1" onClick={() => {
-                    setCreatedBy('');
-                    setAckBy('');
-                    setResolvedBy('');
-                    setType('');
-                    setOrderStatus('');
-                    setOverdueOnly(false);
-                  }} disabled={loading}>
-                    清除
-                  </Button>
-                  <Button variant="primary" className="flex-1" onClick={fetchList} disabled={loading}>
-                    套用
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="lg:col-span-8">
-            <Card className="border-0 glass-panel">
-              <CardHeader>
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <AlertTriangle size={18} className="text-orange-600" />
-                  清單
+                  {statusLabel(tab)}案件
                 </CardTitle>
-                <CardDescription>可快速核可 / 結案</CardDescription>
-              </CardHeader>
-              <CardContent>
+                <span className="text-xs text-gray-500" role="status">{loading ? '查詢中…' : listError ? '載入失敗' : `第 ${page} 頁 · 本頁 ${items.length} 筆`}</span>
+              </div>
+              <CardDescription>{tab === 'open' ? (canReview ? '點選「查看並審核」，確認申請內容後再決定。' : '點選「查看詳情」追蹤申請；由倉儲主管審核。') : tab === 'ack' ? '確認處理完成後，可開啟案件結案。' : '查看申請內容與處理紀錄。'}</CardDescription>
+              {hasFilters && <div className="flex flex-wrap gap-2 pt-2 text-xs text-gray-600" aria-label="已套用條件">
+                {filters.q && <Badge variant="neutral">訂單：{filters.q}</Badge>}
+                {filters.orderStatus && <Badge variant="neutral">{orderStatusLabels[filters.orderStatus] || '其他作業進度'}</Badge>}
+                {filters.type && <Badge variant="neutral">{typeLabel(filters.type)}</Badge>}
+                {[['createdBy', '申請人'], ['ackBy', '核可人'], ['resolvedBy', '結案人']].map(([key, label]) => filters[key] && <Badge key={key} variant="neutral">{label}：{users.find((person) => String(person.id) === String(filters[key]))?.name || filters[key]}</Badge>)}
+                {tab === 'open' && filters.overdueOnly && <Badge variant="warning">等待超過 {slaMinutes} 分鐘</Badge>}
+              </div>}
+            </CardHeader>
+            <CardContent>
+              <div aria-busy={loading}>
+                {!loading && !listError && items.length > 0 && <>
+                <div className="space-y-3 md:hidden">
+                  {items.map((row) => <article key={row.id} className="rounded-xl border border-gray-200 p-4 space-y-3">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <Link to={`/order/${row.order_id}`} className="font-bold text-blue-700 break-words">{row.voucher_number || `#${row.order_id}`}</Link>
+                      <Badge variant={statusVariant(row.status)}>{statusLabel(row.status)}</Badge>
+                    </div>
+                    <p className="text-sm text-gray-600">{row.customer_name} · {orderStatusLabels[row.order_status] || '其他作業進度'}</p>
+                    <p className="text-sm font-semibold">{isDeletionRequest(row) ? '刪除訂單' : typeLabel(row.type)}{row.is_overdue && row.status === 'open' ? ' · 等待超時' : ''}</p>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap break-words line-clamp-3">{row.reason_text}</p>
+                    <p className="text-xs text-gray-500">{row.created_by_name || '-'} · {formatTs(row.created_at)} · 附件 {row.attachment_count || 0}</p>
+                    <Button size="sm" className="w-full" onClick={() => openDetail(row)}>
+                      {canReview && row.status === 'open' ? '查看並審核' : canReview && row.status === 'ack' ? '查看並結案' : '查看詳情'}
+                    </Button>
+                  </article>)}
+                </div>
+                <div className="hidden md:block">
                 <Table>
                   <THead>
                     <TH>訂單</TH>
-                    <TH>例外</TH>
-                    <TH>狀態</TH>
-                    <TH>原因</TH>
-                    <TH>建立</TH>
+                    <TH>申請類型／時間</TH>
+                    <TH>審核進度</TH>
+                    <TH>申請原因</TH>
+                    <TH>申請人</TH>
                     <TH>附件</TH>
                     <TH className="text-right">操作</TH>
                   </THead>
                   <TBody>
-                    {(items || []).map((row) => (
+                    {(!loading && !listError ? items : []).map((row) => (
                       <TR key={row.id} className={row.is_overdue ? 'bg-amber-50/40' : ''}>
                         <TD>
                           <div className="font-bold text-gray-900">{row.voucher_number || `#${row.order_id}`}</div>
                           <div className="text-xs text-gray-500">{row.customer_name || ''}</div>
+                          <div className="mt-1 text-xs text-gray-500">{orderStatusLabels[row.order_status] || '其他作業進度'}</div>
                           <div className="mt-1">
                             <Link to={`/order/${row.order_id}`} className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline">
                               開啟訂單 <ArrowRight size={12} />
@@ -494,14 +477,14 @@ export function Exceptions() {
                           </div>
                         </TD>
                         <TD>
-                          <div className="font-bold">{typeLabel(row.type)}</div>
+                          <div className="font-bold">{isDeletionRequest(row) ? '刪除訂單' : typeLabel(row.type)}</div>
                           <div className="text-xs text-gray-500">{formatTs(row.created_at)}</div>
                         </TD>
                         <TD>
                           <div className="flex items-center gap-2 flex-wrap">
                             <Badge variant={statusVariant(row.status)}>{statusLabel(row.status)}</Badge>
                             {row.is_overdue && row.status === 'open' && (
-                              <Badge variant="warning">逾時</Badge>
+                              <Badge variant="warning">等待超時</Badge>
                             )}
                           </div>
                         </TD>
@@ -516,58 +499,52 @@ export function Exceptions() {
                         </TD>
                         <TD className="text-right">
                           <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="secondary" onClick={() => openDetail(row)} disabled={loading}>
-                              查看
+                            <Button size="sm" variant={canReview && ['open', 'ack'].includes(row.status) ? 'primary' : 'secondary'} className="whitespace-nowrap" onClick={() => openDetail(row)} disabled={loading}>
+                              {canReview && row.status === 'open' ? '查看並審核' : canReview && row.status === 'ack' ? '查看並結案' : '查看詳情'}
                             </Button>
-                            {row.status === 'open' && (
-                              <Button size="sm" onClick={() => openDetail(row)} disabled={loading}>
-                                核可
-                              </Button>
-                            )}
-                            {row.status === 'ack' && (
-                              <Button size="sm" onClick={() => openDetail(row)} disabled={loading}>
-                                結案
-                              </Button>
-                            )}
                           </div>
                         </TD>
                       </TR>
                     ))}
-                    {!loading && (items || []).length === 0 && (
-                      <TR>
-                        <TD colSpan={7} className="text-center text-gray-500 py-10">
-                          目前沒有資料
-                        </TD>
-                      </TR>
-                    )}
-                    {loading && (
-                      <TR>
-                        <TD colSpan={7} className="text-center text-gray-500 py-10">
-                          載入中...
-                        </TD>
-                      </TR>
-                    )}
                   </TBody>
                 </Table>
-              </CardContent>
-            </Card>
-          </div>
+                </div>
+                </>}
+                {!loading && !listError && items.length === 0 && <div className="text-center text-gray-500 px-4 py-10">
+                  <p className="font-semibold text-gray-800">{hasFilters ? '沒有符合條件的案件' : `目前沒有${statusLabel(tab)}案件`}</p>
+                  <p className="text-sm mt-1">{hasFilters ? '請調整查詢條件，或清除條件查看全部。' : page > 1 ? '請返回上一頁查看案件。' : '可切換上方審核進度，查看其他案件。'}</p>
+                  {hasFilters && <Button size="sm" variant="secondary" className="mt-4" onClick={clearFilters}>清除條件，查看全部</Button>}
+                </div>}
+                {listError && <div className="px-4 py-10 text-center">
+                  <p role="alert" className="text-sm text-red-700">{listError}</p>
+                  <Button size="sm" variant="secondary" className="mt-3" onClick={fetchList}>重試</Button>
+                </div>}
+                {loading && <div className="text-center text-gray-500 py-10">正在查詢案件…</div>}
+              </div>
+              {(page > 1 || items.length === pageSize) && <div className="mt-4 flex flex-wrap justify-end items-center gap-3">
+                <Button size="sm" variant="secondary" disabled={loading || page === 1} onClick={() => setPage((current) => current - 1)}>上一頁</Button>
+                <span className="text-sm text-gray-600">第 {page} 頁</span>
+                <Button size="sm" variant="secondary" disabled={loading || !!listError || items.length < pageSize} onClick={() => setPage((current) => current + 1)}>下一頁</Button>
+              </div>}
+            </CardContent>
+          </Card>
         </div>
       </div>
 
       <Modal
         open={detailOpen}
         onClose={closeDetail}
-        title="例外詳情"
+        title="申請詳情"
         footer={
           <>
             <Button variant="secondary" onClick={closeDetail}>關閉</Button>
-            {detailRow?.status === 'open' && (
-              <Button onClick={submitAck}>
-                核可
-              </Button>
+            {canReview && detailRow?.status === 'open' && (
+              <>
+              <Button variant="danger" onClick={submitReject}>駁回</Button>
+              <Button onClick={submitAck}>{isDeletionRequest(detailRow) ? '核准刪除並作廢' : '核可'}</Button>
+              </>
             )}
-            {detailRow?.status === 'ack' && (
+            {canReview && detailRow?.status === 'ack' && (
               <Button onClick={submitResolve}>
                 結案
               </Button>
@@ -586,7 +563,7 @@ export function Exceptions() {
                   <div className="text-xs text-gray-500 mt-0.5">{detailRow.customer_name || ''}</div>
                   <div className="mt-2 flex items-center gap-2 flex-wrap">
                     <Badge variant={statusVariant(detailRow.status)}>{statusLabel(detailRow.status)}</Badge>
-                    <Badge variant="neutral">{typeLabel(detailRow.type)}</Badge>
+                    <Badge variant="neutral">{isDeletionRequest(detailRow) ? '刪除訂單' : typeLabel(detailRow.type)}</Badge>
                     <Badge variant="neutral">附件 {detailRow.attachment_count || 0}</Badge>
                   </div>
                 </div>
@@ -600,9 +577,15 @@ export function Exceptions() {
               <div className="text-sm text-gray-800 mt-3 whitespace-pre-wrap break-words">{detailRow.reason_text}</div>
             </div>
 
-            {detailRow?.snapshot?.proposal && (
+            {detailRow.status !== 'open' && <div className="rounded-xl bg-gray-50 p-3 text-sm text-gray-700 space-y-1">
+              {detailRow.ack_at && <p>核可：{detailRow.ack_by_name || '主管'} · {formatTs(detailRow.ack_at)}{detailRow.ack_note ? ` · ${detailRow.ack_note}` : ''}</p>}
+              {detailRow.rejected_at && <p>駁回：{detailRow.rejected_by_name || '主管'} · {formatTs(detailRow.rejected_at)}{detailRow.rejected_note ? ` · ${detailRow.rejected_note}` : ''}</p>}
+              {detailRow.resolved_at && <p>結案：{detailRow.resolved_by_name || '主管'} · {formatTs(detailRow.resolved_at)}{detailRow.resolution_note ? ` · ${detailRow.resolution_note}` : ''}</p>}
+            </div>}
+            {isDeletionRequest(detailRow) && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">核准後訂單將作廢並停止出貨，品項、SN、留言與異動紀錄全部保留。</div>}
+            {!isDeletionRequest(detailRow) && detailRow?.snapshot?.proposal && (
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                <div className="text-sm font-bold text-gray-900">拋單員處理內容（待審核）</div>
+                <div className="text-sm font-bold text-gray-900">異動內容（{detailRow.status==='open'?'待審核':detailRow.status==='rejected'?'已駁回':'已核可'}）</div>
                 {String(detailRow?.type) === 'order_change' && Array.isArray(detailRow.snapshot.proposal?.items) ? (
                   <>
                     <div className="text-sm text-gray-700 mt-2 whitespace-pre-wrap break-words">異動原因：{detailRow.snapshot.proposal?.note || '-'}</div>
@@ -648,9 +631,9 @@ export function Exceptions() {
               </div>
             )}
 
-            {detailRow?.status === 'open' && (
+            {canReview && detailRow?.status === 'open' && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">核可備註（可選）</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">審核備註（駁回時必填）</label>
                 <textarea
                   value={ackNote}
                   onChange={(e) => setAckNote(e.target.value)}
@@ -660,7 +643,7 @@ export function Exceptions() {
               </div>
             )}
 
-            {detailRow?.status === 'ack' && (
+            {canReview && detailRow?.status === 'ack' && (
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">處置類型（必填）</label>

@@ -111,12 +111,15 @@ async function getTaskPage(pool, user, query, view) {
             SELECT * FROM selected ${after}
             ORDER BY _mine DESC, _pin DESC, _urgent DESC, _at ASC, id ASC LIMIT ${limit}
         ), enriched AS (
-        SELECT page.*, COALESCE(page.imported_by_user_id, page_import.user_id) AS _imported_by_user_id, picker.name AS picker_name, packer.name AS packer_name,
+        SELECT page.*,
+            EXISTS(SELECT 1 FROM order_exceptions e WHERE e.order_id=page.id AND e.type='order_change' AND e.status='open') AS change_pending,
+            EXISTS(SELECT 1 FROM order_exceptions e WHERE e.order_id=page.id AND e.type='order_change' AND e.status='open' AND e.snapshot->'proposal'->>'action'='delete_order') AS deletion_pending,
+            COALESCE(page.imported_by_user_id, page_import.user_id) AS _imported_by_user_id, picker.name AS picker_name, packer.name AS packer_name,
             CASE WHEN page.status = 'picking' THEN picker.name WHEN page.status = 'packing' THEN packer.name ELSE NULL END AS current_user,
             CASE WHEN page.status IN ('pending','picking') THEN 'pick' WHEN page.status IN ('picked','packing') THEN 'pack' ELSE 'done' END AS task_type,
             COALESCE(comments.total_comments, 0) AS total_comments, COALESCE(comments.urgent_comments, 0) AS urgent_comments,
             COALESCE(comments.unread_comments, 0) AS unread_comments,
-            (SELECT json_build_object('content', c.content, 'user_name', u.name, 'priority', c.priority, 'created_at', c.created_at)
+            (SELECT json_build_object('content', c.content, 'user_name', u.name, 'priority', c.priority, 'created_at', c.created_at AT TIME ZONE 'UTC')
                 FROM task_comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.order_id = page.id ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS latest_comment
         FROM page
         LEFT JOIN LATERAL (SELECT user_id FROM operation_logs WHERE $2 != 'dispatcher' AND order_id = page.id AND action_type = 'import' ORDER BY created_at DESC, id DESC LIMIT 1) page_import ON TRUE

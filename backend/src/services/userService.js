@@ -9,7 +9,7 @@ class UserService {
     /**
      * 創建新用戶
      */
-    async createUser({ username, password, name, role }) {
+    async createUser({ username, password, name, role, management_scope = 'all' }) {
         try {
             // 檢查用戶名是否已存在
             const existing = await pool.query(
@@ -26,8 +26,8 @@ class UserService {
 
             // 插入新用戶
             const result = await pool.query(
-                'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4) RETURNING id, username, name, role, created_at',
-                [username, hashedPassword, name, role]
+                'INSERT INTO users (username, password, name, role, management_scope) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, name, role, management_scope, created_at',
+                [username, hashedPassword, name, role, role === 'admin' ? management_scope : 'all']
             );
 
             logger.info(`新用戶已創建: ${username} (${role})`);
@@ -45,7 +45,7 @@ class UserService {
     async getAllUsers() {
         try {
             const result = await pool.query(
-                'SELECT id, username, name, role, created_at FROM users ORDER BY created_at DESC'
+                'SELECT id, username, name, role, management_scope, created_at FROM users ORDER BY created_at DESC'
             );
             return result.rows;
         } catch (error) {
@@ -60,7 +60,7 @@ class UserService {
     async getUserById(userId) {
         try {
             const result = await pool.query(
-                'SELECT id, username, name, role, created_at FROM users WHERE id = $1',
+                'SELECT id, username, name, role, management_scope, created_at FROM users WHERE id = $1',
                 [userId]
             );
 
@@ -78,7 +78,7 @@ class UserService {
     /**
      * 更新用戶
      */
-    async updateUser(userId, { name, role, password }) {
+    async updateUser(userId, { name, role, password, management_scope }) {
         try {
             const fields = [];
             const values = [];
@@ -94,6 +94,10 @@ class UserService {
                 values.push(role);
             }
 
+            if (management_scope !== undefined) {
+                fields.push(`management_scope = $${paramIndex++}`); values.push(role && role !== 'admin' ? 'all' : management_scope);
+            }
+
             if (password) {
                 const hashedPassword = await bcrypt.hash(password, 10);
                 fields.push(`password = $${paramIndex++}`);
@@ -105,7 +109,7 @@ class UserService {
             }
 
             values.push(userId);
-            const query = `UPDATE users SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, username, name, role`;
+            const query = `UPDATE users SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, username, name, role, management_scope`;
 
             const result = await pool.query(query, values);
 

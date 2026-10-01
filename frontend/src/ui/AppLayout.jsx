@@ -1,3 +1,5 @@
+import {managementRoleLabel} from '@/utils/managementScope';
+import OrderReviewAlerts from '@/components/OrderReviewAlerts';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ArrowLeft, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
@@ -74,12 +76,13 @@ export function AppLayout({ user, onLogout, children }) {
         <header className="corely-topbar">
           <span className="text-sm font-medium text-slate-600">{section}</span>
           {user && <div className="ml-auto flex min-w-0 items-center gap-3">
-            <span className="hidden text-xs text-slate-500 sm:block">{roleLabels[user.role] || '作業人員'}</span>
+            <span className="hidden text-xs text-slate-500 sm:block">{managementRoleLabel(user)}</span>
             <span className="max-w-32 truncate text-sm font-medium" title={user.name || user.username}>{user.name || user.username}</span>
             <button type="button" onClick={onLogout} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-100" aria-label={user?.erpSubject ? '離開作業' : '登出'}><LogOut size={16} aria-hidden="true" /><span className="hidden sm:inline">{user?.erpSubject ? '離開作業' : '登出'}</span></button>
           </div>}
         </header>
         <EnvironmentBanner className="sticky top-0 z-30 border-b sm:top-16" />
+        <OrderReviewAlerts key={user?.id} user={user} />
         {offline && <div role="status" className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><WifiOff className="mt-0.5 shrink-0" size={17} /><span>網路已離線。請恢復連線並核對操作結果後，再繼續掃碼。</span></div>}
         <main id="main-content" tabIndex={-1} data-layout-content className="corely-main safe-bottom">
           <ErrorBoundary key={location.pathname}>

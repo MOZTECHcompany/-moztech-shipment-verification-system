@@ -2,7 +2,7 @@ const clean=value=>String(value??'').trim();
 const pick=(value,keys)=>Object.fromEntries(keys.filter(k=>Object.hasOwn(value||{},k)).map(k=>[k,value[k]]));
 function safeSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))throw Object.assign(new Error('轉檔設定格式無效'),{status:400});
- const value=pick(input,['shopifyShop','salesExportMode','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','date','batchSequence','batchNumber','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','summaryNote']);
+ const value=pick(input,['apiConnectionId','shopifyShop','salesExportMode','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','date','batchSequence','batchNumber','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','summaryNote']);
  const booleans=new Set(['erpResponsibilityConfirmed','taxConfirmed','erpCurrencyConfirmed','includeTestOrders','bundleZeroConfirmed','discountAllocationConfirmed','barcodeConfirmed','confirmed','erpConfirmed','nonStock']);
  function validate(record){
   for(const [name,v] of Object.entries(record)){

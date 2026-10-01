@@ -1,6 +1,8 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    marketplace_batch_notices: ['id','intake_id','stage','actor_id','actor_name','actor_role','created_at'],
+    marketplace_batch_notice_recipients: ['notice_id','user_id','seen_at'],
     marketplace_warehouse_flows: ['intake_id','erp_receipt','prepick_counts','prepick_completed_at'],
     marketplace_warehouse_events: ['intake_id','action','actor_id'],
     marketplace_warehouse_commands: ['actor_id','command_id','request_hash','response'],
@@ -11,11 +13,13 @@ const requiredColumns = {
     marketplace_work_order_links: ['intake_order_id', 'order_id', 'linked_at'],
     warehouse_import_batches: ['id', 'voucher_number', 'created_by', 'created_at'],
     wms_claim_commands: ['user_id', 'command_id', 'request_hash', 'order_id', 'stage', 'response', 'created_at'],
+    order_change_notices: ['id', 'order_id', 'actor_id', 'payload', 'created_at'],
+    order_change_notice_recipients: ['notice_id', 'user_id', 'acknowledged_at'],
     wms_scan_commands: ['user_id', 'command_id', 'order_id', 'request_hash', 'response', 'created_at'],
     wms_logistics_shipments: ['id', 'account_id', 'environment', 'merchant_id', 'logistics_id', 'status', 'checked_at'],
     wms_logistics_events: ['id', 'dedupe_key', 'shipment_id', 'evidence'],
     wms_logistics_expected_returns: ['id', 'shipment_id', 'status'],
-    users: ['id', 'username', 'password', 'name', 'role', 'created_at'],
+    users: ['management_scope', 'id', 'username', 'password', 'name', 'role', 'created_at'],
     orders: ['warehouse_hold', 'id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'import_batch_id', 'source_order_number', 'source_platform', 'source_store', 'work_barcode'],
     order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'source_order_number', 'source_platform', 'source_store', 'source_line_id'],
     order_item_instances: ['id', 'order_item_id', 'serial_number', 'status', 'created_at', 'updated_at'],

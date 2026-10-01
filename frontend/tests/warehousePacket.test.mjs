@@ -1,3 +1,4 @@
+import * as scope from '../src/utils/managementScope.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -11,6 +12,7 @@ const source=await fs.readFile(new URL('../src/components/WarehouseRelease.jsx',
 const {code}=await transform(source,{loader:'jsx',format:'cjs'}),module={exports:{}};
 vm.runInNewContext(code,{module,exports:module.exports,require:name=>{
  if(name==='@/api/api.js')return {};
+ if(name==='@/utils/managementScope')return scope;
  if(name==='@/ui')return {Button:()=>null};
  if(name==='./OrderBarcode')return {OrderBarcode:({value,label})=>React.createElement('span',{'data-barcode':value},label)};
  if(name==='react-to-print')return {useReactToPrint:()=>()=>{}};

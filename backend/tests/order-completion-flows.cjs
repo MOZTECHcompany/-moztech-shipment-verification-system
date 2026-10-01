@@ -43,9 +43,11 @@ module.exports = async ({ t, api, ok, pool, users, observedEvents }) => {
         assert.equal(pack.order.status, 'packing');
         assert.equal(pack.instances.filter(i => i.status === 'packed').length, 1);
     });
-    await t.test('admin self-import auto-approval also recomputes completion', async () => {
+    await t.test('admin self-import requires review before recomputing completion', async () => {
         const id = await fixture({ importer: 'admin' });
-        ok(await change(id, 'admin'), 201);
+        const requested = ok(await change(id, 'admin'), 201);
+        assert.equal(requested.item.status,'open');
+        ok(await api('admin', 'PATCH', `/api/orders/${id}/exceptions/${requested.id}/ack`, {}));
         assert.equal((await snapshot(id)).order.status, 'picked');
         assert.equal((await pool.query('SELECT status FROM order_exceptions WHERE order_id=$1', [id])).rows[0].status, 'ack');
     });
@@ -55,7 +57,9 @@ module.exports = async ({ t, api, ok, pool, users, observedEvents }) => {
         ok(await api('admin', 'PATCH', `/api/orders/${id}/exceptions/${exception.id}/ack`, {}));
         assert.equal((await snapshot(id)).order.status, 'picking');
         const picked = await fixture({ status: 'picked', warranty: 0, importer: 'admin' });
-        ok(await change(picked, 'admin', 'ADDITIONAL', 1), 201);
+        const addition = ok(await change(picked, 'admin', 'ADDITIONAL', 1), 201);
+        assert.equal((await snapshot(picked)).order.status,'picked');
+        ok(await api('admin','PATCH',`/api/orders/${picked}/exceptions/${addition.id}/ack`,{}));
         assert.equal((await snapshot(picked)).order.status, 'picking');
     });
     await t.test('approval cannot advance empty or inconsistent SN orders, bypass exceptions or ship automatically', async () => {
@@ -64,7 +68,9 @@ module.exports = async ({ t, api, ok, pool, users, observedEvents }) => {
             if (variant === 'missing-sn') await pool.query('DELETE FROM order_item_instances WHERE id=(SELECT i.id FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id WHERE oi.order_id=$1 LIMIT 1)', [id]);
             if (variant === 'already-packed') await pool.query("UPDATE order_item_instances SET status='packed' WHERE order_item_id IN (SELECT id FROM order_items WHERE order_id=$1)", [id]);
             if (variant === 'other-exception') ok(await api('picker', 'POST', `/api/orders/${id}/exceptions`, { type: 'other', reasonText: 'Synthetic unresolved issue' }), 201);
-            ok(await change(id, 'admin'), 201);
+            const requested = ok(await change(id, 'admin'), 201);
+        assert.equal(requested.item.status,'open');
+        ok(await api('admin', 'PATCH', `/api/orders/${id}/exceptions/${requested.id}/ack`, {}));
             const after = await snapshot(id);
             assert.equal(after.order.status, ['empty', 'missing-sn'].includes(variant) ? 'picking' : 'picked', variant);
             assert.equal(after.order.completed_at, null);

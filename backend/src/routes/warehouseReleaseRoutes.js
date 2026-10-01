@@ -1,5 +1,5 @@
 const express=require('express');
-const {readFlow,mutateFlow,manager}=require('../services/warehouseRelease');
+const {readFlow,mutateFlow,manager,warehouseManager}=require('../services/warehouseRelease');
 const {validId}=require('../services/marketplaceBatchManagement');
 const shippingFields=['recipient','phone','address','postalCode','method','storeName','storeCode','trackingNumber','note'];
 function warehouseShipping(value){
@@ -27,8 +27,8 @@ function createWarehouseReleaseRouter({pool}){
   res.set('Cache-Control','private, no-store').json({batches:rows});
  }));
  router.get('/staff',handle(async(req,res)=>{
-  if(!manager(req.user))return res.status(403).json({message:'無指派權限'});
-  res.json({staff:(await pool.query("SELECT id,name,role FROM users WHERE role IN ('picker','packer','admin','superadmin') ORDER BY name,id")).rows});
+  if(!warehouseManager(req.user))return res.status(403).json({message:'無指派權限'});
+  res.json({staff:(await pool.query("SELECT id,name,role FROM users WHERE role IN ('picker','packer','superadmin') OR (role='admin' AND management_scope IN ('all','warehouse')) ORDER BY name,id")).rows});
  }));
  router.get('/receipt-format',handle(async(req,res)=>{
   if(!manager(req.user))return res.status(403).json({message:'無轉檔權限'});
@@ -38,11 +38,12 @@ function createWarehouseReleaseRouter({pool}){
  router.get('/:id',handle(async(req,res)=>{
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
   const data=await readFlow(pool,req.params.id);
+  if(!manager(req.user)&&data.flow?.prepick_owner_id!==req.user.id)return res.status(403).json({message:'未指派此批預揀任務'});
   // Staff see physical work and responsibility; accounting evidence stays with dispatch/admin.
   res.set('Cache-Control','private, no-store').json(publicWarehouseData(data,req.user));
  }));
  router.post('/:id/:action',handle(async(req,res)=>{
-  const result=await mutateFlow(pool,req.params.id,req.params.action,req.body||{},req.user);
+  const result=await mutateFlow(pool,req.params.id,req.params.action,req.body||{},req.user,req.app.get('io'));
   if(req.params.action==='complete'&&!result.reused){
    const data=await readFlow(pool,req.params.id);
    for(const o of data.orders)req.app.get('io')?.emit('new_task',{id:o.order_id,status:o.status,task_type:'pick',work_barcode:o.work_barcode,source_order_number:o.source_order_number,source_platform:o.source_platform,source_store:o.source_store,import_batch_id:data.flow.import_batch_id});

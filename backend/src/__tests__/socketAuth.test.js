@@ -63,8 +63,8 @@ test.each([
 test('verified token uses current DB identity/role and only then receives existing company events', async () => {
     const socket = client({ token: signed(), id: 999, role: 'superadmin' });
     const connected = event(socket, 'connect'); socket.connect(); await connected;
-    expect(latestSocket.data.user).toEqual(account);
-    expect(pool.query).toHaveBeenCalledWith({ text: 'SELECT id, username, name, role FROM users WHERE id = $1', values: [7], query_timeout: 5000 });
+    expect(latestSocket.data.user).toEqual({ ...account, management_scope: 'all' });
+    expect(pool.query).toHaveBeenCalledWith({ text: 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1', values: [7], query_timeout: 5000 });
     const received = event(socket, 'new_task');
     io.emit('new_task', { id: 42 });
     expect(await received).toEqual({ id: 42 });
