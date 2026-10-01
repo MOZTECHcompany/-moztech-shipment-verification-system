@@ -44,6 +44,27 @@ test('currently shipped or cancelled orders never normalize back to pending ship
     assert.equal(result.verification.orders[0].fulfillmentStatus === 'fulfilled' || result.verification.orders[0].cancelled, true);
   }
 });
+test('mixed paid and cancelled orders keep a clear exclusion without requiring cancelled delivery details', async () => {
+  const { parseUnifiedMarketplace, prepareUnifiedMarketplace } = await import('../src/services/unifiedMarketplace.mjs');
+  const source = rows(), cancelled = payload();
+  Object.assign(cancelled.data.order, { order_number: 'TST000002', progress_status: 'cancelled', name: '', phone: '', address: '' });
+  const line = [...source[1]]; line[0] = 'TST000002'; source.push(line);
+  const result = await verifyOneShopRows(source, options(payload(), { fetchImpl: async url => response(new URL(url).pathname.endsWith('/TST000002') ? cancelled : payload()) }));
+  assert.equal(result.verification.orders[1].excluded, true); assert.equal(result.verification.orders[1].exclusionReason, '已取消訂單');
+  const prepared = prepareUnifiedMarketplace(parseUnifiedMarketplace(result.rows).parsed, {});
+  assert.equal(prepared.parsed.orders.length, 1); assert.equal(prepared.parsed.summary.totalQuantity, 2); assert.equal(prepared.parsed.summary.totalMinor, 186000);
+  assert.deepEqual(prepared.choices[1], { eligible: false, reason: '已取消訂單', number: 'TST000002' });
+});
+test('cancelled orders still verify exact identity and money; undocumented payment states are rejected', async () => {
+  const missing = payload(); missing.data.order.progress_status = 'cancelled'; missing.data.cart.total_price = null;
+  await fails(verifyOneShopRows(rows(), options(missing)), 'ONESHOP_MONEY_INVALID');
+  const wrong = payload(); wrong.data.order.progress_status = 'cancelled'; wrong.data.order.shop_url = 'https://other.1shop.tw';
+  await fails(verifyOneShopRows(rows(), options(wrong)), 'ONESHOP_SHOP_MISMATCH');
+  for (const status of ['failed', 'expired', 'unknown-vendor-status']) {
+    const current = payload(); current.data.order.progress_status = 'cancelled'; current.data.order.payment_status = status;
+    await fails(verifyOneShopRows(rows(), options(current)), 'ONESHOP_STATUS_REVIEW_REQUIRED');
+  }
+});
 test('edited products, quantities and line prices require a fresh export', async () => {
   for (const mutate of [p => { p.data.cart.products[0].sku = '4711299271342'; }, p => { p.data.cart.products[0].quantity = 1; p.data.cart.products[0].line_total = 890; }, p => { p.data.cart.products[0].per_cost = 900; p.data.cart.products[0].line_total = 1800; }]) {
     const current = payload(); mutate(current); await fails(verifyOneShopRows(rows(), options(current)), 'ONESHOP_ORDER_CHANGED');

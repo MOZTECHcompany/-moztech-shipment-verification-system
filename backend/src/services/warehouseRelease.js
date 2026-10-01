@@ -42,7 +42,7 @@ async function mutateFlow(pool,id,action,body,user,io){
  if(!['enable','confirm-barcode','confirm-sales','confirm-return','print','assign','scan','reset-product','complete'].includes(action))throw fail('操作無效',400);
  if(['enable','confirm-barcode','confirm-sales','confirm-return','print','assign','reset-product'].includes(action)&&!manager(user))throw fail('此操作需要拋單員或管理員',403);
  if(['print','assign','reset-product'].includes(action)&&!warehouseManager(user))throw fail('此操作需要倉儲主管',403);
- if(['scan','complete'].includes(action)&&!['picker','packer','admin','superadmin'].includes(user.role))throw fail('此操作需要預揀人員',403);
+ if(['scan','complete'].includes(action)&&!(['picker','packer'].includes(user.role)||warehouseManager(user)))throw fail('此操作需要預揀人員',403);
  const events=deferredEvents(io);
  const db=await pool.connect();let open=false,commit=false,tainted=false;
  try{

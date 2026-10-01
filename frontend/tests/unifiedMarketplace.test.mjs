@@ -46,6 +46,14 @@ test('SHOPLINE explicit aliases normalize ordinary orders, no guessing on missin
  const result=buildUnifiedConversion(source.rows,config(parsed));assert.equal(result.output.ok,true);assert.equal(result.output.rows[0][13],'SHOPLINE');assert.match(result.output.rows[0][15],/^SL-/);
  delete row['訂單合計'];assert.throws(()=>parseUnifiedMarketplace(table([row])),/SHOPLINE.*缺少/);
 });
+test('SHOPLINE file mode never treats failed or expired COD as eligible pending payment',()=>{
+ const row={'訂單號碼':'SL-PAID','商品貨號':'0001','商品名稱':'合成商品','數量':'1','單價':'100','付款狀態':'已付款','送貨狀態':'備貨中','付款方式':'信用卡','訂單狀態':'已確認','訂單小計':'100','運費':'0','優惠折扣':'0','訂單合計':'100'};
+ const rows=[row,...['付款失敗','付款已逾期'].map((status,index)=>({...row,'訂單號碼':'SL-FAILED-'+index,'付款狀態':status,'付款方式':'貨到付款'})),{...row,'訂單號碼':'SL-CANCELLED','訂單狀態':'已取消'}];
+ const {parsed}=parseUnifiedMarketplace(table(rows)),result=prepareUnifiedMarketplace(parsed,config(parsed));
+ assert.equal(result.output.ok,true);assert.deepEqual(result.parsed.orders.map(order=>order.sourceOrderNumber),['SL-PAID']);
+ assert.deepEqual(result.choices.filter(choice=>!choice.eligible).map(choice=>choice.reason),['付款失敗','付款期限已過','已取消訂單']);
+ assert.equal(result.output.summary.physicalQuantity,1);assert.equal(result.output.summary.ecountTotalMinor,10000);
+});
 test('unknown SHOPLINE bundle structure blocks instead of double counting parent and children',()=>{
  const row={'訂單號碼':'SL','商品貨號':'0001','商品名稱':'合成套組','數量':'1','單價':'100','付款狀態':'已付款','送貨狀態':'待出貨','付款方式':'信用卡','訂單狀態':'已確認','訂單小計':'100','運費':'0','優惠折扣':'0','訂單合計':'100','商品類型':'組合商品'};
  const {parsed}=parseUnifiedMarketplace(table([row]));assert.equal(prepareUnifiedMarketplace(parsed,config(parsed)).output.ok,false);

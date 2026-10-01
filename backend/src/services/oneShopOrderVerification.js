@@ -105,6 +105,14 @@ function verifyOrder(source, sourceItems, data, options) {
   const subtotalMinor = money(cart.sub_total, number), shippingMinor = money(cart.logistic_fee, number), feeMinor = money(cart.payment_fee, number), totalMinor = money(cart.total_price, number);
   if (money(order.total_price, number) !== totalMinor || apiItems.reduce((sum, item) => sum + item.netMinor, 0) !== subtotalMinor || subtotalMinor + shippingMinor + feeMinor !== totalMinor) fail('ONESHOP_TOTAL_MISMATCH', '1Shop 商品、運費、手續費與總額無法完整核對', number);
   if (source.financial.subtotalMinor !== subtotalMinor || source.financial.shippingMinor !== shippingMinor || source.financial.feeMinor !== feeMinor || source.financial.totalMinor !== totalMinor) fail('ONESHOP_ORDER_CHANGED', '1Shop 訂單金額或運費已變更，請重新匯出此訂單', number);
+  // The exact account origin, order identity, known status and complete amounts
+  // are verified above. Cancelled orders never need a usable shipping address.
+  if (order.progress_status === 'cancelled') {
+    const values = { 訂單狀態: state, 金流狀態: payment, 物流狀態: fulfillment, 金流: paymentMethod };
+    const evidence = { number, id: number, paymentStatus: order.payment_status === 'paid' ? 'paid' : 'pending', fulfillmentStatus: fulfillment === '已出貨' ? 'fulfilled' : 'unfulfilled', cancelled: true, excluded: true, exclusionReason: '已取消訂單', currency: 'TWD', subtotalMinor, shippingMinor, feeMinor, totalMinor, items: aggregate(apiItems, number).map(([itemSku, value]) => ({ sku: itemSku, ...value })), shippingSource: 'excluded-current-order' };
+    evidence.fingerprint = hash({ ...evidence, paymentMethod, progressStatus: order.progress_status, logisticStatus: order.logistic_status });
+    return { evidence, values };
+  }
   const logistics = Object.fromEntries(['logistic', 'name', 'phone', 'country', 'zip_code', 'county_and_city', 'area', 'address', 'address_oversea', 'cvs_store_id', 'cvs_store_name', 'cvs_store_address', 'logistics_shipping_no'].map(key => [key, checkedString(order[key], number)]));
   const pickup = ['uni', 'uni_freeze', 'fami', 'fami_freeze', 'hilife', 'hilife_freeze', 'ezship'].includes(order.logistic);
   const address = pickup ? logistics.cvs_store_address : [logistics.county_and_city, logistics.area, logistics.address || logistics.address_oversea].filter(Boolean).join(' ');

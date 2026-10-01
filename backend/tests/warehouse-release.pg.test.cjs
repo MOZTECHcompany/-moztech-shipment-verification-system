@@ -106,6 +106,23 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   assert.equal(heldScan.status,409);assert.match(heldScan.data.message,/預揀/);
   await pool.query("UPDATE orders SET status='pending',picker_id=NULL WHERE id=$1",[heldId]);
  });
+ await t.test('assigned warehouse admin loses prepick permission when scope changes to orders',async()=>{
+  await pool.query("UPDATE users SET management_scope='warehouse' WHERE id=$1",[users.admin]);
+  try{
+   ok(await action('admin','print',{kind:'all'}));
+   ok(await action('admin','assign',{assigneeId:users.admin}));
+   const before=ok(await api('admin','GET',path)).flow;
+   await pool.query("UPDATE users SET management_scope='orders' WHERE id=$1",[users.admin]);
+   const p=data.products[0];
+   assert.equal((await action('admin','scan',{productKey:p.key,barcode:p.barcode,quantity:1})).status,403);
+   assert.equal((await action('admin','complete')).status,403);
+   const after=ok(await api('admin','GET',path)).flow;
+   assert.equal(after.prepick_owner_id,users.admin);
+   assert.deepEqual(after.prepick_counts,before.prepick_counts);
+   assert.equal(after.prepick_completed_at,null);
+   assert.equal((await pool.query('SELECT COUNT(*)::int n FROM orders WHERE warehouse_hold')).rows[0].n,2);
+  }finally{await pool.query("UPDATE users SET management_scope='all' WHERE id=$1",[users.admin]);}
+ });
  await t.test('print ownership, assignment and scan receipt are persistent',async()=>{
   assert.equal((await action('dispatcher','print',{kind:'orders'})).status,403);assert.equal((await action('ordersAdmin','print',{kind:'all'})).status,403);
   await action('admin','print',{kind:'prepick'}).then(ok);await action('admin','print',{kind:'orders'}).then(ok);

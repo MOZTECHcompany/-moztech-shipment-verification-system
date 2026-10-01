@@ -120,8 +120,7 @@ function verifyOrder(source, sourceItems, order, expectedId) {
   if (order.parent_order_id || order.split_at || order.child_order_ids?.length || order.combined_to_order_id || order.combined_from_order_ids?.length || order.return_from_order_id || ['exchange', 'return'].includes(order.type)) fail('SHOPLINE_SPLIT_REVIEW_REQUIRED', 'SHOPLINE 訂單有拆單、合單或退換貨，請先核對來源明細', number);
   const payment = order.order_payment, delivery = order.order_delivery;
   if (!payment || !delivery || ['refunding', 'refunded', 'partially_refunded'].includes(payment.status) || (source.financial.refundedMinor ?? 0) > 0) fail('SHOPLINE_REFUND_REVIEW_REQUIRED', 'SHOPLINE 訂單有退款或付款資料不完整，請先核對', number);
-  if (['failed', 'expired'].includes(payment.status)) fail('SHOPLINE_PAYMENT_REVIEW_REQUIRED', 'SHOPLINE 付款失敗或逾期，請先核對付款狀態', number);
-  const paymentStatus = { temp: '未付款', pending: '未付款', failed: '付款失敗', expired: '付款失敗', completed: '已付款' }[payment.status];
+  const paymentStatus = { temp: '未付款', pending: '未付款', failed: '付款失敗', expired: '付款已逾期', completed: '已付款' }[payment.status];
   const fulfillmentStatus = { pending: '備貨中', shipping: '已出貨', shipped: '已出貨', arrived: '已出貨', collected: '已出貨' }[delivery.status];
   const state = { pending: '處理中', confirmed: '已確認', completed: '已完成', cancelled: '已取消' }[order.status];
   if (!paymentStatus || !fulfillmentStatus || !state || order.status === 'completed' && delivery.status === 'pending' || ['failed', 'expired', 'returning', 'returned', 'store_closed', 'returning_store_closed'].includes(delivery.delivery_status)) fail('SHOPLINE_STATUS_REVIEW_REQUIRED', 'SHOPLINE 付款或配送狀態待核對', number);
@@ -156,6 +155,16 @@ function verifyOrder(source, sourceItems, order, expectedId) {
   if (!paymentMethod) fail('SHOPLINE_PAYMENT_REVIEW_REQUIRED', 'SHOPLINE 付款方式無法核對', number);
   const shipping = order.delivery_address, logistics = order.delivery_data;
   const values = { 訂單狀態: state, 付款狀態: paymentStatus, 送貨狀態: fulfillmentStatus, 付款方式: paymentMethod };
+  const exclusionReason = order.status === 'cancelled' ? '已取消訂單' : payment.status === 'failed' ? '付款失敗' : payment.status === 'expired' ? '付款期限已過' : '';
+  for (const value of [payment.updated_at, delivery.updated_at]) if (value != null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value)))) fail('SHOPLINE_RESPONSE_INVALID', 'SHOPLINE 付款或物流更新時間格式無效', number);
+  const finish = shippingSource => {
+    const evidence = { number, id: order.id, updatedAt: order.updated_at, paymentUpdatedAt: payment.updated_at || null, deliveryUpdatedAt: delivery.updated_at || null, cancelled: order.status === 'cancelled', paymentStatus: { completed: 'paid', failed: 'failed', expired: 'expired' }[payment.status] || 'pending', fulfillmentStatus: delivery.status === 'pending' ? 'unfulfilled' : 'fulfilled', currency: 'TWD', subtotalMinor: netMinor, shippingMinor, totalMinor, discountMinor: subtotalMinor - netMinor, items: items.map(({ id: lineId, sku: itemSku, quantity: count, netMinor: amount }) => ({ id: lineId, sku: itemSku, quantity: count, netMinor: amount })), shippingSource, ...(exclusionReason ? { excluded: true, exclusionReason } : {}) };
+    evidence.fingerprint = hash({ ...evidence, values });
+    return { evidence, values };
+  };
+  // Identity, status and all money checks above still apply. A proven excluded
+  // order needs no current shipping address because it cannot create warehouse work.
+  if (exclusionReason) return finish('excluded-current-order');
   let shippingSource = 'source-file';
   if (!shipping || typeof shipping !== 'object' || Array.isArray(shipping)) fail('SHOPLINE_SHIPPING_REVIEW_REQUIRED', 'SHOPLINE 收件資料未完整回傳，請先核對', number);
   if (shipping && typeof shipping === 'object' && !Array.isArray(shipping)) {
@@ -174,10 +183,7 @@ function verifyOrder(source, sourceItems, order, expectedId) {
   if (method) values.送貨方式 = method;
   if (delivery.remark != null) values.出貨備註 = checkedString(delivery.remark, number);
   if (!values.收件人 || !values.收件人電話號碼 || !values.完整地址 && delivery.delivery_type !== 'store_pickup') fail('SHOPLINE_SHIPPING_REVIEW_REQUIRED', 'SHOPLINE 收件人、電話或地址未完整回傳，請先核對', number);
-  for (const value of [payment.updated_at, delivery.updated_at]) if (value != null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value)))) fail('SHOPLINE_RESPONSE_INVALID', 'SHOPLINE 付款或物流更新時間格式無效', number);
-  const evidence = { number, id: order.id, updatedAt: order.updated_at, paymentUpdatedAt: payment.updated_at || null, deliveryUpdatedAt: delivery.updated_at || null, cancelled: order.status === 'cancelled', paymentStatus: payment.status === 'completed' ? 'paid' : 'pending', fulfillmentStatus: delivery.status === 'pending' ? 'unfulfilled' : 'fulfilled', currency: 'TWD', subtotalMinor: netMinor, shippingMinor, totalMinor, discountMinor: subtotalMinor - netMinor, items: items.map(({ id: lineId, sku: itemSku, quantity: count, netMinor: amount }) => ({ id: lineId, sku: itemSku, quantity: count, netMinor: amount })), shippingSource };
-  evidence.fingerprint = hash({ ...evidence, values });
-  return { evidence, values };
+  return finish(shippingSource);
 }
 
 async function verifyShoplineRows(rows, options = {}) {

@@ -134,11 +134,46 @@ test('file mode remains available until a profile explicitly selects the bound A
   await fails(verify(rows(), { apiConnectionId: 'another' }), 'SHOPLINE_CONNECTION_INVALID');
   const result = await verify(rows(), { apiConnectionId: 'onemorefuture' }); assert.equal(result.verification.connectionId, 'onemorefuture');
 });
-test('failed or expired COD payment cannot become eligible pending payment', async () => {
+test('failed or expired COD payment remains explicitly excluded instead of blocking the whole file', async () => {
+  const { parseUnifiedMarketplace, prepareUnifiedMarketplace } = await import('../src/services/unifiedMarketplace.mjs');
   for (const status of ['failed', 'expired']) {
     const current = order(); current.order_payment.status = status; current.order_payment.payment_type = 'cash_on_delivery';
-    await fails(verifyShoplineRows(rows(), options(current)), 'SHOPLINE_PAYMENT_REVIEW_REQUIRED');
+    const result = await verifyShoplineRows(rows(), options(current));
+    assert.equal(result.verification.orders[0].paymentStatus, status);
+    assert.equal(result.verification.orders[0].excluded, true);
+    const prepared = prepareUnifiedMarketplace(parseUnifiedMarketplace(result.rows).parsed, {});
+    assert.equal(prepared.parsed.orders.length, 0);
+    assert.deepEqual(prepared.choices, [{ eligible: false, reason: status === 'failed' ? '付款失敗' : '付款期限已過', number: '#' + NUMBER }]);
   }
+});
+test('mixed paid, failed, expired and cancelled API orders retain only the paid shipment', async () => {
+  const { parseUnifiedMarketplace, prepareUnifiedMarketplace } = await import('../src/services/unifiedMarketplace.mjs');
+  const source = rows(), currentOrders = [order()];
+  for (const [index, state] of ['failed', 'expired', 'cancelled'].entries()) {
+    const current = order(), number = NUMBER + (index + 1), actualId = '608faafe3985d70013d8932' + index;
+    Object.assign(current, { id: actualId, order_number: number, delivery_address: null });
+    if (state === 'cancelled') current.status = state;
+    else { current.order_payment.status = state; current.order_payment.payment_type = 'cash_on_delivery'; }
+    currentOrders.push(current); const line = [...source[1]]; line[0] = '#' + number; source.push(line);
+  }
+  const result = await verifyShoplineRows(source, options(order(), { fetchImpl: async url => {
+    const path = new URL(url).pathname;
+    return response(path === '/v1/token/info' ? { merchant: { _id: MERCHANT, handle: 'onemorefuture' } } : path === '/v1/orders' ? list(currentOrders.map(current => ({ id: current.id, order_number: current.order_number }))) : currentOrders.find(current => path === '/v1/orders/' + current.id));
+  } }));
+  const prepared = prepareUnifiedMarketplace(parseUnifiedMarketplace(result.rows).parsed, {});
+  assert.equal(prepared.parsed.orders.length, 1); assert.equal(prepared.parsed.summary.totalQuantity, 2); assert.equal(prepared.parsed.summary.totalMinor, 170000);
+  assert.deepEqual(prepared.choices.filter(choice => !choice.eligible).map(choice => choice.reason), ['付款失敗', '付款期限已過', '已取消訂單']);
+  assert.equal(result.verification.orders.filter(current => current.excluded).length, 3);
+});
+test('excluded API states still require exact identity, known payment status and complete amounts', async () => {
+  for (const status of ['failed', 'expired', 'completed']) {
+    const current = order(); current.status = 'cancelled'; current.order_payment.status = status; current.total = null;
+    await fails(verifyShoplineRows(rows(), options(current)), 'SHOPLINE_MONEY_INVALID');
+  }
+  const unknown = order(); unknown.status = 'cancelled'; unknown.order_payment.status = 'unknown-vendor-status';
+  await fails(verifyShoplineRows(rows(), options(unknown)), 'SHOPLINE_STATUS_REVIEW_REQUIRED');
+  const wrong = order(); wrong.status = 'cancelled'; wrong.id = LINE;
+  await fails(verifyShoplineRows(rows(), options(wrong)), 'SHOPLINE_ORDER_MISMATCH');
 });
 test('missing current delivery cannot silently retain stale recipient details', async () => {
   for (const change of [p => { p.delivery_address = null; }, p => { p.delivery_address.recipient_phone = ''; }, p => { delete p.delivery_address.address_1; delete p.delivery_address.address_2; delete p.delivery_address.city; }]) {
