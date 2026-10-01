@@ -84,6 +84,16 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(verification)settingsInput.shopifyShop=verification.shop;
   const current=parseUnifiedMarketplace(verifiedRows);
   const raw=deliveryForOrders(current.source,current.parsed);
+  // A cancelled order may have no remaining product rows. Keep its current
+  // order-level evidence visible without reviving any removed CSV products.
+  for(const order of verification?.orders||[]){
+   if(raw.orders.some(o=>o.sourceOrderNumber===order.number))continue;
+   if(order.currentQuantity!==0)throw fail(`${order.number}：Shopify 商品明細未完整解析`,'SHOPIFY_RESPONSE_INVALID');
+   raw.orders.push({sourcePlatform:'Shopify',sourceOrderNumber:order.number,currentQuantity:0,
+    paymentStatus:order.paymentStatus,fulfillmentStatus:order.fulfillmentStatus,cancelled:order.cancelled===true,
+    paymentMethod:'',shipping:{},financial:{subtotalMinor:order.subtotalMinor,totalMinor:order.totalMinor,shippingMinor:order.shippingMinor,
+     discountMinor:order.discountMinor,taxMinor:0,refundedMinor:0,outstandingMinor:order.outstandingMinor,feeMinor:null}});
+  }
   // Determine eligibility before resolving products; removed and fulfilled
   // items cannot create new catalog exceptions for this shipment.
   const eligible=prepareUnifiedMarketplace(raw,settingsInput).parsed;

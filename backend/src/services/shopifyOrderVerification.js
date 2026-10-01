@@ -213,7 +213,7 @@ function normalizeOrder(source, order) {
       'Lineitem fulfillment status': item.unfulfilledQuantity === 0 ? 'fulfilled' : 'pending',
     };
   });
-  const evidence = { number: name, id: source.id, updatedAt: order.updatedAt, edited: order.edited === true, currency, fulfillmentStatus: fulfillment, paymentStatus: order.displayFinancialStatus.toLowerCase(), currentQuantity, remainingQuantity,
+  const evidence = { number: name, id: source.id, updatedAt: order.updatedAt, edited: order.edited === true, cancelled: Boolean(order.cancelledAt), cancelledAt: order.cancelledAt || null, currency, fulfillmentStatus: fulfillment, paymentStatus: order.displayFinancialStatus.toLowerCase(), currentQuantity, remainingQuantity,
     subtotalMinor: subtotal, shippingMinor: amounts.currentShippingPriceSet, discountMinor: amounts.currentTotalDiscountsSet, totalMinor: amounts.currentTotalPriceSet, outstandingMinor: amounts.totalOutstandingSet, receivedMinor: amounts.totalReceivedSet,
     removedLineIds: items.filter(item => item.currentQuantity === 0).map(item => item.id),
     items: lineValues.map(({ item, sku, barcode, netMinor }) => ({ id: item.id, sku, quantity: item.currentQuantity, unfulfilledQuantity: item.unfulfilledQuantity, netMinor, ...(barcode ? { barcode, barcodeSource: 'shopify-variant' } : {}) })),

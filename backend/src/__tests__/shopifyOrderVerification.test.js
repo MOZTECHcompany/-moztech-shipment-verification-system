@@ -48,6 +48,19 @@ test('paid fulfilled edited order stays fulfilled, with actual received and outs
   expect(result.verification.orders[0]).toMatchObject({ remainingQuantity: 0, receivedMinor: 89000, outstandingMinor: 0 });
 });
 
+test('cancelled order with zero current quantities retains exclusion evidence without restoring CSV products or money', async () => {
+  const current = order({ cancelledAt: '2026-10-01T10:18:37Z', updatedAt: '2026-10-01T10:18:37Z', displayFinancialStatus: 'VOIDED', currentSubtotalLineItemsQuantity: 0, currentSubtotalPriceSet: bag('0.00'), currentTotalPriceSet: bag('0.00'), totalOutstandingSet: bag('0.00') });
+  for (const line of current.lineItems.nodes) { line.currentQuantity = 0; line.unfulfilledQuantity = 0; line.priceAfterAllDiscountsBeforeTaxesSet = bag('0.00'); }
+  const result = await run(editedRows(), current);
+  expect(objects(result.rows)).toEqual([]);
+  expect(result.verification.orders).toHaveLength(1);
+  expect(result.verification.orders[0]).toMatchObject({ number: '#154230', cancelled: true, cancelledAt: '2026-10-01T10:18:37Z', paymentStatus: 'voided', fulfillmentStatus: 'unfulfilled', currentQuantity: 0, remainingQuantity: 0, subtotalMinor: 0, shippingMinor: 0, totalMinor: 0, outstandingMinor: 0, receivedMinor: 0, items: [] });
+  expect(result.verification.orders[0].removedLineIds).toHaveLength(2);
+  const second = await run(editedRows(), current);
+  expect(second.verification.fingerprint).toBe(result.verification.fingerprint);
+  expect(JSON.stringify(result.verification)).not.toMatch(/CSV receiver|CSV phone|CSV address|test-secret/);
+});
+
 test('current shipping recipient/address replaces historical CSV, including cleared second address; evidence contains no PII', async () => {
   const current = order({ shippingAddress: { name: 'API receiver', phone: 'API phone', address1: 'API address', address2: '', city: 'API city', zip: '00123', province: 'API province', provinceCode: 'API-P', country: 'Taiwan', countryCodeV2: 'TW', company: null }, shippingLines: { nodes: [{ title: '宅配(新竹物流)' }], pageInfo: { hasNextPage: false } } });
   const result = await run(editedRows(), current);

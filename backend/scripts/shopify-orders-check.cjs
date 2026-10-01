@@ -19,7 +19,7 @@ async function main(){
  const raw=parseUnifiedMarketplace(verified.rows).parsed;
  const result=prepareUnifiedMarketplace(raw,{currency:'TWD',taxMode:'erp_inclusive',taxType:'11'});
  console.log(JSON.stringify({shop:verified.verification.shop,apiVersion:verified.verification.apiVersion,checkedAt:verified.verification.checkedAt,
-  orders:raw.orders.map(o=>({number:o.sourceOrderNumber,total:o.financial.totalMinor/100,fulfillment:o.fulfillmentStatus,eligible:result.choices.find(c=>c.number===o.sourceOrderNumber)?.eligible})),
+  orders:verified.verification.orders.map(o=>({number:o.number,total:o.totalMinor/100,fulfillment:o.fulfillmentStatus,cancelled:o.cancelled===true,eligible:result.choices.find(c=>c.number===o.number)?.eligible===true})),
   items:raw.items.map(i=>({order:i.sourceOrderNumber,sku:i.sku,quantity:i.quantity,amount:i.lineSubtotalMinor/100}))},null,2));
 }
 main().catch(e=>{console.error(JSON.stringify({code:e.code||'SHOPIFY_CHECK_FAILED',message:e.message}));process.exitCode=1;});

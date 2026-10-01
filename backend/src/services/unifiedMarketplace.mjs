@@ -188,6 +188,7 @@ export function parseUnifiedMarketplace(input) {
 }
 
 function canShip(order,settings){
+  if(order.currentQuantity===0)return {eligible:false,reason:order.cancelled?'Shopify 已取消訂單':'Shopify 商品已全部移除'};
   if(order.cancelled||order.fulfillmentStatus!=='unfulfilled'||(order.financial.refundedMinor??0)>0||!['paid','pending'].includes(order.paymentStatus))return {eligible:false,reason:'已出貨、取消、退款或狀態不明'};
   if(order.paymentStatus==='paid')return {eligible:true,reason:'已付款／未出貨'};
   const cod=/貨到付款|貨到收款|取貨付款|cash\s*on\s*delivery|\bcod\b/i.test(order.paymentMethod)||(order.sourcePlatform==='Shopify'&&t(order.paymentMethod).toLowerCase()==='custom');

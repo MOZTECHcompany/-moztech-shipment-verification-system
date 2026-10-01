@@ -4,7 +4,7 @@ const order=extra=>({Name:'#154230',Id:'7624215101596','Financial Status':'pendi
 const profile={id:2,platform:'Shopify',store:'墨子科技 官網',settings:{store:'墨子科技 官網',customerCode:'00063',customerName:'墨子科技 官網',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,shippingSku:{erpSku:'00001',name:'運費',nonStock:true,confirmed:true}}};
 function harness(profiles=[profile],extra={}){
  const pool={query:jest.fn().mockResolvedValue({rows:profiles}),connect:jest.fn()};
- const verifyShopify=jest.fn(async rows=>({rows,verification:{shop:'www-omfuture.myshopify.com',orders:[{items:[{sku:'4711299272493',barcode:'4711299272493'}]}]}}));
+ const verifyShopify=jest.fn(async rows=>({rows,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[{sku:'4711299272493',barcode:'4711299272493'}]}]}}));
  const resolveProducts=jest.fn(async skus=>({sync:{source_note:'ECOUNT reference'},products:Object.fromEntries(skus.map(sku=>[sku,{status:'matched',matches:[{erp_sku:sku,product_name:'ERP 商品',spec:'完整規格',barcode:'',active:true}]}]))}));
  return {pool,verifyShopify,resolveProducts,prepare:createMarketplacePreparation({pool,verifyShopify,resolveProducts,...extra})};
 }
@@ -54,4 +54,14 @@ test('verified Shopify domain selects only its bound store and persists that bin
  const h=harness([bound,other]);const result=await h.prepare({rows:table([order()])});
  expect(result.settings.customerCode).toBe('00063');expect(result.settings.shopifyShop).toBe('www-omfuture.myshopify.com');
  await expect(h.prepare({rows:table([order()]),profileId:'3'})).rejects.toMatchObject({code:'STORE_PROFILE_INVALID'});
+});
+test('cancelled zero-current Shopify order remains visible as excluded audit without restoring CSV products',async()=>{
+ const h=harness();const rows=table([order()]);h.verifyShopify.mockResolvedValueOnce({rows:[rows[0]],verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:0,cancelled:true,paymentStatus:'voided',fulfillmentStatus:'unfulfilled',subtotalMinor:0,totalMinor:0,shippingMinor:0,discountMinor:0,outstandingMinor:0,items:[]}]}});
+ const r=await h.prepare({rows});expect(r.raw.orders[0]).toMatchObject({sourceOrderNumber:'#154230',cancelled:true,financial:{totalMinor:0}});
+ expect(r.choices).toEqual([{number:'#154230',eligible:false,reason:'Shopify 已取消訂單'}]);expect(r.output.ok).toBe(false);expect(r.parsed.items).toEqual([]);expect(r.raw.items).toEqual([]);expect(h.resolveProducts).toHaveBeenCalledWith([]);
+});
+test('a cancelled empty order does not remove a different valid current shipment in the same CSV',async()=>{
+ const h=harness();const active=table([order()]);const source=table([order(),order({Name:'#154195',Id:'7621155160220'})]);
+ h.verifyShopify.mockResolvedValueOnce({rows:active,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[]},{number:'#154195',currentQuantity:0,cancelled:true,paymentStatus:'voided',fulfillmentStatus:'unfulfilled',subtotalMinor:0,totalMinor:0,shippingMinor:0,discountMinor:0,outstandingMinor:0,items:[]}]}});
+ const r=await h.prepare({rows:source});expect(r.output.ok).toBe(true);expect(r.output.summary.physicalQuantity).toBe(1);expect(r.output.summary.ecountTotalMinor).toBe(89000);expect(r.parsed.orders.map(o=>o.sourceOrderNumber)).toEqual(['#154230']);expect(r.raw.orders.map(o=>o.sourceOrderNumber)).toEqual(['#154230','#154195']);expect(r.choices[1]).toMatchObject({eligible:false,number:'#154195',reason:'Shopify 已取消訂單'});
 });
