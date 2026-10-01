@@ -13,6 +13,12 @@ import { marketplaceOrderSheets, parseMarketplaceWorksheet } from '../../utils/m
 const inputClass = 'mt-1 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 disabled:bg-slate-100';
 const sectionClass = 'rounded-xl border border-slate-200 bg-white p-4 sm:p-6';
 const cell = 'px-3 py-3 text-left align-top';
+const paymentLabels = { paid: '已付款', pending: '待付款', refunded: '已退款', partially_refunded: '部分退款', partially_paid: '部分付款', authorized: '已授權', voided: '已作廢', expired: '已過期', unknown: '待核對' };
+const fulfillmentLabels = { unfulfilled: '未出貨', fulfilled: '已出貨', partial: '部分出貨', partially_fulfilled: '部分出貨', cancelled: '已取消', unknown: '待核對' };
+const statusLabel = (raw, normalized, labels) => {
+  const value = String(raw || normalized || '').trim();
+  return labels[value.toLowerCase()] || value || '待核對';
+};
 const money = value => value == null ? '未提供' : value % 100 === 0 ? (value / 100).toLocaleString('zh-TW') : formatMinor(value);
 const orderMessage = (error, message) => {
   const orderNumber = String(error.response?.data?.orderNumber || '').trim();
@@ -288,9 +294,9 @@ function ConverterPage({ user }) {
         return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName} <span className="text-sm text-slate-500">{item.sku}</span></p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="ECOUNT 品項編碼" readOnly={masterMatched} value={mapped.erpSku || item.sku} onChange={event => mapping(item.sku, 'erpSku', event.target.value)} /><Field label="ECOUNT 品項名稱" readOnly={masterMatched} value={mapped.erpName || item.productName} onChange={event => mapping(item.sku, 'erpName', event.target.value)} /></div>{!masterMatched && <Check checked={mapped.confirmed} onChange={value => mapping(item.sku, 'confirmed', value)}>確認 ECOUNT 品項</Check>}</div>;
       })}</div></fieldset>{previewDirty && <Button className="mt-3" variant="secondary" disabled={locked} onClick={() => refreshPreview()}>核對商品</Button>}</details>}
       <details className={sectionClass}><summary className="cursor-pointer font-semibold">訂單明細{raw.orders.length > prepared.parsed.summary.orderCount ? `・排除 ${raw.orders.length - prepared.parsed.summary.orderCount} 筆` : ''}</summary>
-        <div className="mt-4 overflow-x-auto"><table className="w-full text-sm" aria-label="來源訂單與金額"><thead className="bg-slate-50"><tr>{['商城訂單', '付款／出貨狀態', '商品金額', '運費', '訂單總額', '本批處理'].map(value => <th key={value} className={cell}>{value}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{raw.orders.map(order => {
+        <div className="mt-4 overflow-x-auto"><table className="min-w-[880px] w-full text-sm" aria-label="來源訂單與金額"><thead className="bg-slate-50"><tr>{['商城訂單', '付款／出貨狀態', '商品金額', '運費', '訂單總額', '本批處理'].map(value => <th key={value} className={`${cell} whitespace-nowrap`}>{value}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{raw.orders.map(order => {
           const choice = prepared.choices.find(value => value.number === order.sourceOrderNumber);
-          return <tr key={order.sourceOrderNumber}><td className={`${cell} font-medium`}>{order.sourceOrderNumber}</td><td className={cell}>{order.rawPaymentStatus}／{order.rawFulfillmentStatus}</td><td className={cell}>{money(order.financial.subtotalMinor)}</td><td className={cell}>{money(order.financial.shippingMinor)}</td><td className={cell}>{money(order.financial.totalMinor)}</td><td className={cell}>{choice?.eligible ? '納入' : '排除'} · {choice?.reason}</td></tr>;
+          return <tr key={order.sourceOrderNumber}><td className={`${cell} font-medium`}>{order.sourceOrderNumber}</td><td className={`${cell} whitespace-nowrap`}>{statusLabel(order.rawPaymentStatus, order.paymentStatus, paymentLabels)}／{order.cancelled ? '已取消' : statusLabel(order.rawFulfillmentStatus, order.fulfillmentStatus, fulfillmentLabels)}</td><td className={cell}>{money(order.financial.subtotalMinor)}</td><td className={cell}>{money(order.financial.shippingMinor)}</td><td className={cell}>{money(order.financial.totalMinor)}</td><td className={cell}>{choice?.eligible ? '納入' : '排除'} · {choice?.reason}</td></tr>;
         })}</tbody></table></div>
       </details>
       <details className={sectionClass}><summary className="cursor-pointer font-semibold">進階設定與核對表</summary><fieldset disabled={locked}>
