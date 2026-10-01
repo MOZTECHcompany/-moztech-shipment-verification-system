@@ -7,7 +7,7 @@ const require=createRequire(import.meta.url);
 const {reconcileSales,HEADERS}=require('../../backend/src/services/erpSalesReceipt.js');
 function fixture(quantities=[45,45,45,45,45,45,45,45,45,45],platform='Shopify'){
  const settings={salesExportMode:ECOUNT_GROUPED_MODE,store:'STORE',customerCode:'00020',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-GROUP-0917',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,skuMappings:{SKU:{erpSku:'NEW0012',erpName:'Product',barcode:'0123456789012',confirmed:true,barcodeConfirmed:true}},shippingSku:{erpSku:'SHIP',confirmed:true,nonStock:true}};
- const items=quantities.map((quantity,n)=>({sourceOrderNumber:`O${String(n).padStart(3,'0')}`,sourceLineId:`L${n}`,sku:'SKU',productName:'Product',quantity,lineSubtotalMinor:quantity*(10000+n)}));
+ const items=quantities.map((quantity,n)=>({sourceOrderNumber:`O${String(n).padStart(3,'0')}`,sourceLineId:`L${n}`,sku:'SKU',productName:'Product',quantity,lineSubtotalMinor:quantity*(10000+n*100)}));
  const orders=items.map(i=>({sourcePlatform:platform,sourceOrderNumber:i.sourceOrderNumber,paymentStatus:'paid',fulfillmentStatus:'unfulfilled',financial:{totalMinor:i.lineSubtotalMinor,shippingMinor:0,currency:'TWD'}}));
  const parsed={issues:[],items,orders,summary:{orderCount:orders.length}};
  const out=buildEcountRows(parsed,settings);assert.equal(out.ok,true,JSON.stringify(out.issues));
@@ -38,7 +38,7 @@ test('450 across ten orders exports 200/200/50 with exact gross, stable allocati
   assert.deepEqual(view.rows.map(r=>r[19]),[200,200,50]);assert.equal(file.headers.length,27);
   assert.equal(view.financials.grossMinor,record.orders.reduce((s,o)=>s+o.financial.totalMinor,0));
   assert.equal(view.financials.netMinor+view.financials.taxMinor,view.financials.grossMinor);
-  assert.ok(view.rows.every(r=>r[17]===''&&r[12]===record.batchNumber&&r[15].startsWith('AG-')));
+  assert.ok(view.rows.every(r=>r[17]===''&&r[12]===record.batchNumber&&r[15].startsWith('AG-')&&Number.isInteger(r[23])&&Number.isInteger(r[24])));
   const sourceTotals=new Map();for(const l of view.salesLayout.lines)for(const a of l.allocations){const s=sourceTotals.get(a.identity[3])||[0,0];s[0]+=a.quantity;s[1]+=a.sourceGrossMinor;sourceTotals.set(a.identity[3],s);}
   for(const i of record.items)assert.deepEqual(sourceTotals.get(i.sourceLineId),[i.quantity,i.lineSubtotalMinor]);
   assert.equal(JSON.stringify(record),before);
@@ -61,6 +61,27 @@ test('preserves ERP variant suffix, stock/nonstock separation, and saved legacy 
  assert.equal(v.salesLayout.lines.filter(l=>!l.physical).length,1);
  const old=fixture([1,2]);delete old.settings.salesExportMode;delete old.salesLayout;assert.equal(buildEcountUploadTable(old).rows.length,2);
  const trace=savedBatchTables(record,'prepick').find(t=>t.name==='彙總銷貨對照');assert.ok(trace);assert.equal(trace.rows.length,4);
+});
+test('grouped sales preserve source shipping rows for save and ERP logistics omits nonstock without creating warehouse products',async()=>{
+ const r=fixture([1,2]);
+ for(const o of r.orders){o.financial.shippingMinor=8000;o.financial.totalMinor+=8000;}
+ const out=buildEcountRows({items:r.items,orders:r.orders,issues:[],summary:{}},r.settings),record={...r,...out};
+ assert.equal(out.ok,true,JSON.stringify(out.issues));
+ for(const o of r.orders){
+  const physicalIds=new Set(r.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).map(i=>i.sourceLineId));
+  const nonstock=out.rows.filter(row=>row[12]===o.sourceOrderNumber&&!physicalIds.has(row[15]));
+  assert.equal(nonstock.length,1);assert.equal(nonstock[0][11],'SHIP');assert.equal(nonstock[0][19],1);
+ }
+ const grouped=prepareEcountFinancials(record);
+ assert.equal(grouped.rows.length,2);assert.equal(grouped.salesLayout.lines.filter(l=>!l.physical)[0].quantity,2);
+ const complete=receipt(record),sales=await reconcileSales(complete,stored(record));
+ assert.equal(sales.receipt.lines.length,2);assert.equal(sales.parsed.workOrders.length,2);
+ assert.ok(sales.parsed.workOrders.every(o=>o.items.length===1&&o.items[0].productCode==='NEW0012'));
+ const warehouse=[complete[0],...complete.slice(1).filter(row=>row[9]!=='SHIP')];
+ const logistics=await reconcileSales(warehouse,stored(record),{logistics:true});
+ assert.equal(logistics.parsed.workOrders.reduce((n,o)=>n+o.items.reduce((s,i)=>s+i.quantity,0),0),3);
+ assert.ok(logistics.parsed.workOrders.every(o=>o.items.every(i=>i.productCode!=='SHIP')));
+ await assert.rejects(()=>reconcileSales(warehouse,stored(record)),/全部商品與運費明細/);
 });
 test('modified layout, unknown mode and incompatible source data fail closed',()=>{
  const r=fixture();r.salesLayout.lines[0].allocations[0].quantity++;assert.throws(()=>buildEcountUploadTable(r),/對照不一致/);

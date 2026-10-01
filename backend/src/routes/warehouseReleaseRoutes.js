@@ -1,6 +1,19 @@
 const express=require('express');
 const {readFlow,mutateFlow,manager}=require('../services/warehouseRelease');
 const {validId}=require('../services/marketplaceBatchManagement');
+const shippingFields=['recipient','phone','address','postalCode','method','storeName','storeCode','trackingNumber','note'];
+function warehouseShipping(value){
+ if(!value||typeof value!=='object'||Array.isArray(value))return {};
+ return Object.fromEntries(shippingFields.filter(key=>typeof value[key]==='string'&&value[key].trim()).map(key=>[key,value[key].replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'').trim().slice(0,1000)]));
+}
+function publicWarehouseData(data,user){
+ const {snapshot,...batch}=data.batch;
+ const sourceOrders=new Map((snapshot?.orders||[]).map(o=>[JSON.stringify([o.sourcePlatform||batch.source_platform,o.sourceOrderNumber]),o]));
+ const orders=data.orders.map(({financial,nonstock_items,...o})=>({...o,shipping:warehouseShipping(sourceOrders.get(JSON.stringify([o.source_platform,o.source_order_number]))?.shipping)}));
+ const flow=!manager(user)&&data.flow?.erp_receipt?{...data.flow,erp_receipt:{vouchers:data.flow.erp_receipt.vouchers}}:data.flow;
+ const events=manager(user)?data.events:data.events.map(({details,...e})=>e);
+ return {...data,batch:{...batch,handler:snapshot?.handler,projectOwner:snapshot?.settings?.projectOwner,salesOwner:snapshot?.settings?.salesOwner},orders,flow,events};
+}
 function createWarehouseReleaseRouter({pool}){
  const router=express.Router();
  const handle=fn=>async(req,res,next)=>{try{await fn(req,res);}catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}};
@@ -26,12 +39,7 @@ function createWarehouseReleaseRouter({pool}){
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
   const data=await readFlow(pool,req.params.id);
   // Staff see physical work and responsibility; accounting evidence stays with dispatch/admin.
-  const {snapshot,...batch}=data.batch;
-  data.batch={...batch,handler:snapshot.handler,projectOwner:snapshot.settings.projectOwner,salesOwner:snapshot.settings.salesOwner};
-  data.orders=data.orders.map(({financial,nonstock_items,...o})=>o);
-  if(!manager(req.user)&&data.flow?.erp_receipt)data.flow.erp_receipt={vouchers:data.flow.erp_receipt.vouchers};
-  if(!manager(req.user))data.events=data.events.map(({details,...e})=>e);
-  res.set('Cache-Control','private, no-store').json(data);
+  res.set('Cache-Control','private, no-store').json(publicWarehouseData(data,req.user));
  }));
  router.post('/:id/:action',handle(async(req,res)=>{
   const result=await mutateFlow(pool,req.params.id,req.params.action,req.body||{},req.user);
@@ -44,4 +52,4 @@ function createWarehouseReleaseRouter({pool}){
  }));
  return router;
 }
-module.exports={createWarehouseReleaseRouter};
+module.exports={createWarehouseReleaseRouter,publicWarehouseData};

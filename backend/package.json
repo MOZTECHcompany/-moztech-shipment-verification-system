@@ -10,7 +10,8 @@
     "migrate": "node migrations/run.js",
     "retention": "node src/maintenance/retention.js",
     "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --coverage=false",
-    "test:workflow": "node --test tests/warehouse-parity.pg.test.cjs"
+    "test:workflow": "node --test tests/warehouse-parity.pg.test.cjs",
+    "shopify:check": "node scripts/shopify-orders-check.cjs"
   },
   "keywords": [
     "wms",

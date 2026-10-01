@@ -1,4 +1,4 @@
-import { productIdentifierIssue, parseMarketplaceRows, parseMoneyMinor, buildEcountRows, buildMarketplaceAuditRows, buildPrepickRows } from './marketplaceIntake.mjs';
+import { productIdentifierIssue, parseMarketplaceRows, parseMoneyMinor, buildEcountRows, buildMarketplaceAuditRows, buildPrepickRows, normalizeMarketplaceSettings } from './marketplaceIntake.mjs';
 
 export const MARKETPLACE_ROLES = ['dispatcher', 'admin', 'superadmin'];
 export const TEST_ORDER_NUMBERS = ['TST6091550133', 'TST6091550109'];
@@ -6,8 +6,8 @@ const t = value => value == null ? '' : String(value).trim();
 const norm = value => t(value).replace(/^\uFEFF/, '').replace(/\s+/g, ' ').toLowerCase();
 const fail = message => { throw Object.assign(new Error(message), { status: 400, code: 'MARKETPLACE_INVALID' }); };
 const addIssue = (code, message, orderNumber) => ({ code, message, orderNumber, severity: 'error' });
-const ONE_FIELDS = ['訂單編號','建立日期','訂單狀態','名稱','產品SKU','產品','產品數量','數量(單品/組合/任選)','單價','小計','訂單金額(不含金/物流手續費)','訂單金流手續費','訂單運費','總計金額','金流','金流狀態','金流備註','物流狀態','銷售頁名稱','銷售頁編號前綴','來源明細號'];
-const SHOPIFY_FIELDS = ['Name','Id','Created at','Financial Status','Fulfillment Status','Currency','Subtotal','Shipping','Taxes','Total','Discount Amount','Refunded Amount','Outstanding Balance','Payment Method','Cancelled at','Lineitem quantity','Lineitem name','Lineitem price','Lineitem sku','Lineitem discount','Lineitem id','Lineitem requires shipping'];
+const ONE_FIELDS = ['訂單編號','建立日期','訂單狀態','名稱','產品SKU','產品','產品數量','數量(單品/組合/任選)','單價','小計','訂單金額(不含金/物流手續費)','訂單金流手續費','訂單運費','總計金額','金流','金流狀態','金流備註','物流狀態','銷售頁名稱','銷售頁編號前綴','來源明細號','顧客','顧客電話','電話國碼','物流','物流備註','運送地址','方便收貨時間','運送超商','超商代號','門市名稱','託運單號'];
+const SHOPIFY_FIELDS = ['Name','Id','Created at','Financial Status','Fulfillment Status','Currency','Subtotal','Shipping','Taxes','Total','Discount Amount','Refunded Amount','Outstanding Balance','Payment Method','Cancelled at','Lineitem quantity','Lineitem name','Lineitem price','Lineitem sku','Lineitem discount','Lineitem id','Lineitem requires shipping','Lineitem fulfillment status','Shipping Name','Shipping Phone','Shipping Street','Shipping Address1','Shipping Address2','Shipping City','Shipping Zip','Shipping Province','Shipping Country','Shipping Company','Shipping Method'];
 // SHOPLINE's report columns are selectable. These are explicit aliases, not
 // fuzzy matches; missing/ambiguous money columns stop conversion.
 const SL_FIELDS = {
@@ -19,6 +19,8 @@ const SL_FIELDS = {
   '貨幣':['貨幣','幣別'], '退款金額':['退款金額'], '商品折扣金額':['商品折扣金額'],
   '訂單日期':['訂單日期'], '商品明細編號':['商品明細編號'], '商品類型':['商品類型'],
   '商品結帳價':['商品結帳價'], '已退款金額':['已退款金額'],
+  ...Object.fromEntries(['收件人','完整地址','收件人電話號碼','送貨方式','出貨備註','門市名稱','送貨編號','全家服務編號 / 7-11 店號'].map(k=>[k,[k]])),
+  '郵政編號（如適用)':['郵政編號（如適用)','郵政編號（如適用）'],
   ...Object.fromEntries(['全單折扣金額','折抵購物金分攤','點數折現分攤','自訂折扣合計','折抵購物金','點數折現','附加費','訂單標籤','合作夥伴','推薦代碼','選項','加購品類型'].map(k=>[k,[k]])),
 };
 const SL_REQUIRED = ['訂單號碼','商品貨號','商品名稱','數量','單價','付款狀態','送貨狀態','付款方式','訂單狀態','訂單小計','運費','優惠折扣','訂單合計'];
@@ -221,7 +223,6 @@ export function prepareUnifiedMarketplace(raw,settings={}){
     if(remaining<0||netShipping<0||netShipping>f.shippingMinor){parsed.issues.push(addIssue('UNRESOLVED_DISCOUNT','商品折扣或運費折抵無法由來源總額核對，請確認平台報表欄位',order.sourceOrderNumber));continue;}
     if((f.taxMinor??0)!==0){parsed.issues.push(addIssue('SOURCE_TAX_ALLOCATION','來源另列稅額，須先核對各商品稅別與分攤；本次不自行改寫含稅價格',order.sourceOrderNumber));continue;}
     if(remaining>0||netShipping!==f.shippingMinor){
-      if(!settings.discountAllocationConfirmed){parsed.issues.push(addIssue('ALLOCATION_CONFIRMATION','請確認訂單剩餘折扣按商品折後金額比例分攤，並依訂單總額核對運費折抵',order.sourceOrderNumber));continue;}
       try{
         const discounts=remaining?allocate(remaining,items,items.map(i=>i.lineSubtotalMinor)):items.map(()=>0);
         items.forEach((i,index)=>{i.sourceLineSubtotalMinor=i.lineSubtotalMinor;i.allocatedDiscountMinor=discounts[index];i.lineSubtotalMinor-=discounts[index];});
@@ -231,10 +232,10 @@ export function prepareUnifiedMarketplace(raw,settings={}){
     parsed.issues=parsed.issues.filter(i=>i.orderNumber!==order.sourceOrderNumber||!['DISCOUNT_ALLOCATION_REQUIRED','SHIPPING_DISCOUNT_ALLOCATION_REQUIRED'].includes(i.code));
   }
   parsed.summary=summarize(parsed);
-  const effective={...settings,pendingTestAcknowledged:true};
+  const effective=normalizeMarketplaceSettings(parsed,{...settings,pendingTestAcknowledged:true,discountAllocationConfirmed:!parsed.issues.some(i=>['UNRESOLVED_DISCOUNT','SOURCE_TAX_ALLOCATION','ALLOCATION_FAILED'].includes(i.code))});
   const output=buildEcountRows(parsed,effective);
-  const prepick=buildPrepickRows({...parsed,issues:parsed.issues.filter(i=>i.code!=='ALLOCATION_CONFIRMATION')},{...effective,preview:true});
-  return {parsed,choices,output,prepick,audit:buildMarketplaceAuditRows(raw,settings)};
+  const prepick=buildPrepickRows(parsed,{...effective,preview:true});
+  return {parsed,choices,output,prepick,audit:buildMarketplaceAuditRows(raw,effective),effectiveSettings:effective};
 }
 
 export function buildUnifiedConversion(rows,settings){

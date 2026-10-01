@@ -1,4 +1,4 @@
-const FIELDS=['projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
+const FIELDS=['shopifyShop','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
 const fail=message=>{throw Object.assign(new Error(message),{status:400});};
 function profileSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))fail('店鋪設定格式無效');
@@ -9,6 +9,7 @@ function profileSettings(input){
   if(key.endsWith('Confirmed')){if(typeof value!=='boolean')fail('確認欄位格式無效');result[key]=value;}
   else{if(typeof value!=='string'||value.length>100||/[\u0000-\u001f\u007f]/.test(value))fail('店鋪欄位格式無效');result[key]=value.trim();}
  }
+ if(result.shopifyShop&&!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(result.shopifyShop))fail('Shopify 店鋪網域格式無效');
  if(!result.store||!result.customerCode||!result.warehouseCode)fail('請填寫店鋪、銷貨客戶編碼及倉庫');
  if(result.currency!=='TWD'||result.taxMode!=='erp_inclusive'||result.taxType!=='11'||result.taxConfirmed!==true)fail('請確認 TWD 及 ECOUNT 含稅計價設定');
  if((result.erpStaffCode||result.erpProjectCode)&&result.erpResponsibilityConfirmed!==true)fail('請確認 ECOUNT 承辦人及專案編碼');

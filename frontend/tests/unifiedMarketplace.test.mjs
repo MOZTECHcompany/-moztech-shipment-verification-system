@@ -20,7 +20,7 @@ test('discount and free shipping preserve source values and exactly match ECOUNT
  const r=item({Subtotal:'70',Shipping:'10',Total:'70','Discount Amount':'40'});
  const result=run([r]);assert.equal(result.output.ok,true);assert.equal(result.output.rows.length,1);assert.equal(result.output.rows[0][21],70);
  assert.equal(result.parsed.orders[0].financial.sourceShippingMinor,1000);assert.equal(result.parsed.orders[0].financial.shippingMinor,0);assert.equal(result.parsed.items[0].allocatedDiscountMinor,3000);
- assert.equal(run([r],{discountAllocationConfirmed:false}).output.ok,false);
+ const automatic=run([r],{discountAllocationConfirmed:false,taxConfirmed:false});assert.equal(automatic.output.ok,true);assert.equal(automatic.effectiveSettings.discountAllocationConfirmed,true);assert.equal(automatic.effectiveSettings.taxConfirmed,true);assert.ok(!automatic.output.issues.some(i=>i.code==='ALLOCATION_CONFIRMATION'));
 });
 test('remaining order discount is proportionally allocated after known line discounts, stable on reorder',()=>{
  const common={Subtotal:'140',Total:'140','Discount Amount':'60'};

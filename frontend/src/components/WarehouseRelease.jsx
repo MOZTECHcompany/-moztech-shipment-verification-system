@@ -77,7 +77,21 @@ export function WarehousePaper({data,kind}){
  const head=<><h1 style={{fontSize:22}}>Corely WMS · {kind==='orders'?'訂單作業明細':'預揀總表'}</h1><p>{batch.batch_number} · {batch.source_platform} · {batch.source_store}</p><p>領單人：{flow?.print_owner_name||'未領單'} · 預揀：{flow?.prepick_owner_name||'待指派'}</p><p>ERP 回匯單號：{flow?.erp_receipt?.vouchers?.join('、')||'尚未核對'}</p></>;
  const td={padding:8,border:'1px solid #777',verticalAlign:'top'};
  const table=items=><table style={{width:'100%',borderCollapse:'collapse',marginTop:16}}><thead><tr>{['品項／商品','商品條碼','數量'].map(h=><th key={h} style={td}>{h}</th>)}</tr></thead><tbody>{items.map((i,n)=><tr key={n}><td style={td}>{i.productCode}<br/>{i.productName}{i.snCount>0&&<p style={{fontWeight:700}}>須核對 {i.snCount} 組 SN</p>}</td><td style={{...td,width:'45%'}}><OrderBarcode value={i.barcode} label="商品條碼"/></td><td style={td}>{i.quantity}</td></tr>)}</tbody></table>;
- return <div style={{fontFamily:'sans-serif',fontSize:'11pt'}}>{kind==='prepick'?<section>{head}{table(products)}<p>預揀人員：____________　核對日期：____________</p></section>:orders.map(o=><section className="work-sheet" key={o.id}>{head}<h2 style={{fontSize:20,margin:'16px 0'}}>商城訂單：{o.source_order_number}</h2><OrderBarcode value={o.work_barcode} label="掃此工作條碼認領揀貨／裝箱"/>{table(o.expected_items)}<p>揀貨核對完成：____________　裝箱二次核對：____________</p></section>)}</div>;
+ return <div style={{fontFamily:'sans-serif',fontSize:'11pt'}}>{kind==='prepick'?<section>{head}{table(products)}<p>預揀人員：____________　核對日期：____________</p></section>:orders.map(o=><section className="work-sheet" key={o.id}>{head}<h2 style={{fontSize:20,margin:'16px 0'}}>商城訂單：{o.source_order_number}</h2><OrderBarcode value={o.work_barcode} label="掃此工作條碼認領揀貨／裝箱"/><ShippingDetails shipping={o.shipping}/>{table(o.expected_items)}<p>揀貨核對完成：____________　裝箱二次核對：____________</p></section>)}</div>;
+}
+
+function ShippingDetails({shipping={}}){
+ const contact=[shipping.recipient,shipping.phone].filter(Boolean).join(' · ');
+ const address=[shipping.postalCode,shipping.address].filter(Boolean).join(' ');
+ const delivery=[shipping.method,shipping.storeName,shipping.storeCode].filter(Boolean).join(' · ');
+ if(![contact,address,delivery,shipping.trackingNumber,shipping.note].some(Boolean))return null;
+ return <div style={{marginTop:12,lineHeight:1.5,breakInside:'avoid'}}>
+  {contact&&<p style={{margin:'3px 0'}}>收件：{contact}</p>}
+  {address&&<p style={{margin:'3px 0'}}>地址：{address}</p>}
+  {delivery&&<p style={{margin:'3px 0'}}>配送：{delivery}</p>}
+  {shipping.trackingNumber&&<p style={{margin:'3px 0'}}>物流單號：{shipping.trackingNumber}</p>}
+  {shipping.note&&<p style={{margin:'3px 0',whiteSpace:'pre-wrap'}}>出貨備註：{shipping.note}</p>}
+ </div>;
 }
 
 function BarcodeConfirmation({product,disabled,onConfirm}){

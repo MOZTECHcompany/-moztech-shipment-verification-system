@@ -26,3 +26,16 @@ test('one print packet includes the whole prepick sheet and every independently 
  assert.equal((html.match(/data-barcode="000123"/g)||[]).length,76);
  assert.match(html,/ORDER-74/);assert.match(html,/150/);assert.match(html,/page-break-after:always/);
 });
+
+test('order papers show concise delivery information per order while the prepick total stays anonymous',()=>{
+ const data={batch:{batch_number:'WMS-SHIPPING',source_platform:'Shopify',source_store:'測試'},flow:{erp_receipt:{vouchers:['ERP-SHIPPING']}},orders:[{id:1,source_order_number:'DELIVERY-1',work_barcode:'WTDELIVERY1',shipping:{recipient:'收件甲',phone:'0900000000',address:'測試地址 1 號',postalCode:'00100',method:'超商取貨付款',storeName:'測試門市',storeCode:'000123',trackingNumber:'000456',note:'外盒 <請保留>'},expected_items:[{productCode:'SKU',productName:'商品',barcode:'000123',quantity:1}]},{id:2,source_order_number:'LEGACY-2',work_barcode:'WTLEGACY2',expected_items:[{productCode:'SKU',productName:'商品',barcode:'000123',quantity:1}]}],products:[{productCode:'SKU',productName:'商品',barcode:'000123',quantity:2}]};
+ const html=renderToStaticMarkup(React.createElement(module.exports.WarehousePaper,{data,kind:'all'}));
+ for(const value of ['收件：收件甲 · 0900000000','地址：00100 測試地址 1 號','配送：超商取貨付款 · 測試門市 · 000123','物流單號：000456','出貨備註：外盒 &lt;請保留&gt;'])assert.ok(html.includes(value),value);
+ assert.equal((html.match(/收件：/g)||[]).length,1);
+ assert.equal((html.match(/data-barcode="WT/g)||[]).length,2);
+ assert.equal((html.match(/data-barcode="000123"/g)||[]).length,3);
+ const prepick=renderToStaticMarkup(React.createElement(module.exports.WarehousePaper,{data,kind:'prepick'}));
+ assert.doesNotMatch(prepick,/收件甲|0900000000|測試地址|外盒/);
+ const legacy=renderToStaticMarkup(React.createElement(module.exports.WarehousePaper,{data:{...data,orders:[data.orders[1]]},kind:'orders'}));
+ assert.doesNotMatch(legacy,/收件：|地址：|配送：|物流單號：|出貨備註：/);
+});

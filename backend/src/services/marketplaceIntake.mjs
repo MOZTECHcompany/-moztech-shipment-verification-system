@@ -19,24 +19,25 @@ export function buildEcountUploadTable(record){
   return {headers:[...ECOUNT_UPLOAD_HEADERS],rows:corrected.rows.map(r=>indexes.map(i=>r[i])), financials:corrected.financials};
 }
 
-export const ECOUNT_FINANCIAL_VERSION = 'twd-vat5-line-v1';
+const LEGACY_FINANCIAL_VERSION = 'twd-vat5-line-v1';
+export const ECOUNT_FINANCIAL_VERSION = 'twd-vat5-line-whole-v2';
 export const ECOUNT_GROUPED_MODE = 'product-200-v1';
-export const ECOUNT_GROUPED_FINANCIAL_VERSION = 'twd-vat5-product-200-v1';
+export const ECOUNT_GROUPED_FINANCIAL_VERSION = 'twd-vat5-product-200-whole-v2';
 // An explicit grouped download can be rebuilt from an immutable older batch.
 // Its original rows remain available for already-posted ERP receipts.
 export function groupedSalesRecord(record){
   if(record.settings?.salesExportMode===ECOUNT_GROUPED_MODE)return record;
   if(record.settings?.salesExportMode&&!['order-lines-v1'].includes(record.settings.salesExportMode))throw Error('未知的銷貨彙總版本');
   const source=prepareEcountSourceFinancials(record);
-  const grouped={...record,rows:source.rows,settings:{...record.settings,salesExportMode:ECOUNT_GROUPED_MODE},summary:{...record.summary,financialVersion:ECOUNT_FINANCIAL_VERSION}};
+  const grouped={...record,rows:source.rows,settings:{...record.settings,salesExportMode:ECOUNT_GROUPED_MODE},summary:{...record.summary,financialVersion:source.financials.version}};
   delete grouped.salesLayout;
   const view=prepareEcountFinancials(grouped);
   return {...grouped,salesLayout:view.salesLayout};
 }
-export const ECOUNT_TAX_DESCRIPTION = 'TWD 含稅 5%；每列營業稅四捨五入至元，稅前金額＝含稅金額－稅額；單價顯示至小數兩位，以明細金額核對。';
+export const ECOUNT_TAX_DESCRIPTION = 'TWD 含稅 5%；訂單總額保留整元，商品分攤尾差按最大餘數分配至元，稅前金額及營業稅均為整元；單價顯示至小數兩位，以明細金額核對。';
 const safeInteger = n => {if(!Number.isSafeInteger(n)||n<0)throw Error('銷貨金額或數量超出安全範圍');return n;};
 const roundRatio = (n,d) => Number((BigInt(n)*2n+BigInt(d))/(BigInt(d)*2n));
-export function calculateInclusiveTax(grossMinor, quantity){
+function calculateLegacyInclusiveTax(grossMinor, quantity){
   safeInteger(grossMinor);safeInteger(quantity);
   if(!quantity)throw Error('銷貨數量必須大於零');
   // VAT included in gross is 5/105. Round the line tax to whole TWD,
@@ -45,13 +46,57 @@ export function calculateInclusiveTax(grossMinor, quantity){
   const netMinor = grossMinor-taxMinor;
   return {grossMinor,netMinor,taxMinor,netUnitMinor:roundRatio(netMinor,quantity)};
 }
+export function calculateInclusiveTax(grossMinor, quantity){
+  safeInteger(grossMinor);
+  if(grossMinor%100!==0)throw Error('TWD 銷貨明細須先完成整元分攤，不能改動訂單總額');
+  return calculateLegacyInclusiveTax(grossMinor,quantity);
+}
+
+// Currency is taken from the source or an explicit store profile. Tax 11 is
+// the supported inclusive-TWD mode; an incompatible explicit setting survives
+// normalization and is rejected, rather than silently replaced.
+export function normalizeMarketplaceSettings(parsed, settings={}){
+  const currencies=[...new Set((parsed.orders||[]).map(o=>text(o.financial?.currency)).filter(Boolean))];
+  const effective={...settings};
+  if(!text(effective.currency)&&currencies.length===1)effective.currency=currencies[0];
+  if(effective.currency==='TWD'&&currencies.every(c=>c==='TWD')){
+    if(!text(effective.taxMode))effective.taxMode='erp_inclusive';
+    if(!text(effective.taxType))effective.taxType='11';
+    if(effective.taxMode==='erp_inclusive'&&text(effective.taxType)==='11')effective.taxConfirmed=true;
+  }
+  return effective;
+}
+
+// Round only the allocation, never the order receipt. Source amounts remain
+// unchanged in the snapshot. Largest remainders receive the remaining dollars,
+// with a source-identity tie break that remains stable when rows are reordered.
+function wholeTwdSourceAmounts(record){
+  const amounts=new Map();
+  for(const order of record.orders||[]){
+    const total=safeInteger(order.financial?.totalMinor);
+    if(total%100!==0)throw Error(`訂單 ${order.sourceOrderNumber} 的 TWD 總額含小數，無法同時保留原總額與整元銷貨，請核對來源金額`);
+    const entries=(record.items||[]).filter(i=>i.sourceOrderNumber===order.sourceOrderNumber).map(i=>({id:i.sourceLineId,amount:safeInteger(i.kind==='bundle_component'?0:i.lineSubtotalMinor)}));
+    const shipping=order.financial?.shippingMinor??0;
+    if(shipping>0)entries.push({id:stableId([order.sourcePlatform,order.sourceOrderNumber,'shipping']),amount:safeInteger(shipping)});
+    if(!entries.length||sum(entries.map(e=>e.amount))!==total)throw Error(`銷貨金額與來源訂單 ${order.sourceOrderNumber} 不符`);
+    let remainder=total/100;
+    for(const entry of entries){entry.whole=Math.floor(entry.amount/100);entry.remainder=entry.amount%100;remainder-=entry.whole;}
+    const ranked=[...entries].sort((a,b)=>b.remainder-a.remainder||(a.id<b.id?-1:a.id>b.id?1:0));
+    for(const entry of ranked){if(!remainder)break;entry.whole++;remainder--;}
+    if(remainder)throw Error('銷貨整元分攤無法核對');
+    for(const entry of entries)amounts.set(JSON.stringify([order.sourcePlatform,order.sourceOrderNumber,entry.id]),entry.whole*100);
+  }
+  return amounts;
+}
 export function prepareEcountSourceFinancials(record){
   for(const item of record.items||[]){const problem=productIdentifierIssue(item.sku);if(problem)throw Error(problem);}
   const headers=record.headers||[], col=h=>headers.indexOf(h);
   const required=['交易類型','數量','單價(含稅)','單價','稅前價格','營業稅','商城訂單編號','平台','店鋪','來源明細號'];
   if(required.some(h=>col(h)<0)||!record.rows?.length)throw Error('銷貨金額核對欄位不完整');
-  if(record.summary?.financialVersion&&record.summary.financialVersion!==ECOUNT_FINANCIAL_VERSION)throw Error('未知的銷貨計稅版本，請核對原批次');
+  if(record.summary?.financialVersion&&![LEGACY_FINANCIAL_VERSION,ECOUNT_FINANCIAL_VERSION].includes(record.summary.financialVersion))throw Error('未知的銷貨計稅版本，請核對原批次');
   const legacy=!record.summary?.financialVersion;
+  const whole=record.summary?.financialVersion===ECOUNT_FINANCIAL_VERSION;
+  const amounts=whole?wholeTwdSourceAmounts(record):null;
   if(legacy&&(!record.orders?.length||record.settings?.currency!=='TWD'||record.settings?.taxType!=='11'||record.settings?.taxConfirmed!==true))throw Error('舊批次缺少原始訂單或稅制，無法安全重建稅額');
   const byOrder=new Map(), seen=new Set();
   let netTotal=0,taxTotal=0,grossTotal=0;
@@ -65,7 +110,11 @@ export function prepareEcountSourceFinancials(record){
     if(unit===null)throw Error('含稅單價不可空白');
     const grouped=record.settings?.salesExportMode===ECOUNT_GROUPED_MODE;
     let gross=safeInteger(unit*quantity);
-    if(grouped){
+    if(whole){
+      gross=amounts.get(JSON.stringify([identity[0],identity[2],identity[3]]));
+      safeInteger(gross);
+      if(unit!==roundRatio(gross,quantity))throw Error('來源含稅單價與成交金額不符');
+    }else if(grouped){
       const item=record.items?.find(i=>i.sourceOrderNumber===identity[2]&&i.sourceLineId===identity[3]);
       const order=record.orders?.find(o=>o.sourceOrderNumber===identity[2]&&o.sourcePlatform===identity[0]);
       gross=item?(item.kind==='bundle_component'?0:item.lineSubtotalMinor):order?.financial.shippingMinor;
@@ -73,7 +122,7 @@ export function prepareEcountSourceFinancials(record){
       if(!item&&identity[3]!==stableId([identity[0],identity[2],'shipping']))throw Error('彙總來源明細不明');
       if(unit!==roundRatio(gross,quantity))throw Error('來源含稅單價與成交金額不符');
     }
-    const f=calculateInclusiveTax(gross,quantity);
+    const f=(whole?calculateInclusiveTax:calculateLegacyInclusiveTax)(gross,quantity);
     if(!legacy&&(['單價','稅前價格','營業稅'].some(h=>parseMoneyMinor(get(h))!==({'單價':f.netUnitMinor,'稅前價格':f.netMinor,'營業稅':f.taxMinor}[h]))))throw Error('保存銷貨的稅前金額／營業稅不一致，請核對原批次');
     if(legacy){
       // Only repair the known blank/zero export defect. Never overwrite a
@@ -90,13 +139,14 @@ export function prepareEcountSourceFinancials(record){
     for(const o of record.orders){const key=JSON.stringify([o.sourcePlatform,record.settings.store,o.sourceOrderNumber]);if(byOrder.get(key)!==o.financial.totalMinor)throw Error(`銷貨金額與來源訂單 ${o.sourceOrderNumber} 不符`);}
   }
   if(record.summary?.ecountTotalMinor!==grossTotal||netTotal+taxTotal!==grossTotal)throw Error('銷貨稅前／稅額／含稅總額與批次不符');
-  return {rows,financials:{version:ECOUNT_FINANCIAL_VERSION,description:ECOUNT_TAX_DESCRIPTION,netMinor:netTotal,taxMinor:taxTotal,grossMinor:grossTotal,recalculatedLegacy:legacy}};
+  return {rows,financials:{version:whole?ECOUNT_FINANCIAL_VERSION:LEGACY_FINANCIAL_VERSION,description:whole?ECOUNT_TAX_DESCRIPTION:'TWD 含稅 5%；沿用原批次每列營業稅四捨五入至元及原始分攤。',netMinor:netTotal,taxMinor:taxTotal,grossMinor:grossTotal,recalculatedLegacy:legacy}};
 }
 
 // Source rows remain immutable and order-grained. Only the ERP view is grouped.
 // The saved allocation manifest connects each ERP segment to its source lines.
 export function prepareEcountFinancials(record){
   const source=prepareEcountSourceFinancials(record);
+  const whole=source.financials.version===ECOUNT_FINANCIAL_VERSION;
   const mode=record.settings?.salesExportMode;
   if(!mode||mode==='order-lines-v1')return source;
   if(mode!==ECOUNT_GROUPED_MODE)throw Error('未知的銷貨彙總版本');
@@ -125,8 +175,8 @@ export function prepareEcountFinancials(record){
     for(let offset=0;offset<g.quantity;offset+=200){
       const quantity=Math.min(200,g.quantity-offset);
       const portion=(amount,n,d)=>Number((BigInt(amount)*BigInt(n)*2n+BigInt(d))/(BigInt(d)*2n));
-      const grossMinor=portion(g.grossMinor,offset+quantity,g.quantity)-portion(g.grossMinor,offset,g.quantity);
-      const tax=calculateInclusiveTax(grossMinor,quantity),r=[...g.row],allocations=[];
+      const grossMinor=whole?(portion(g.grossMinor/100,offset+quantity,g.quantity)-portion(g.grossMinor/100,offset,g.quantity))*100:portion(g.grossMinor,offset+quantity,g.quantity)-portion(g.grossMinor,offset,g.quantity);
+      const tax=(whole?calculateInclusiveTax:calculateLegacyInclusiveTax)(grossMinor,quantity),r=[...g.row],allocations=[];
       let remaining=quantity;
       while(remaining){
         const s=g.sources[sourceIndex],take=Math.min(remaining,s.quantity-sourceUsed);
@@ -145,7 +195,7 @@ export function prepareEcountFinancials(record){
   if(record.salesLayout&&JSON.stringify(canonical(record.salesLayout))!==JSON.stringify(canonical(salesLayout)))throw Error('保存的銷貨彙總對照不一致，未產生下載檔');
   const grossMinor=sum(lines.map(l=>l.grossMinor)),netMinor=sum(lines.map(l=>l.netMinor)),taxMinor=sum(lines.map(l=>l.taxMinor));
   if(grossMinor!==source.financials.grossMinor||netMinor+taxMinor!==grossMinor)throw Error('彙總銷貨金額與原訂單總額不符');
-  return {rows,salesLayout,financials:{version:ECOUNT_GROUPED_FINANCIAL_VERSION,description:'同批商品彙總，每列最多 200 件；含稅金額按件數分攤尾差，每列營業稅四捨五入至元。單價為加權均價，明細稅前加稅額為核對金額。',netMinor,taxMinor,grossMinor,recalculatedLegacy:false}};
+  return {rows,salesLayout,financials:{version:whole?ECOUNT_GROUPED_FINANCIAL_VERSION:'twd-vat5-product-200-v1',description:whole?'同批商品彙總，每列最多 200 件；含稅金額按件數分攤至元，稅前金額及營業稅均為整元。單價為加權均價，明細稅前加稅額為核對金額。':'同批商品彙總，每列最多 200 件；保留原批次金額及計稅方式。',netMinor,taxMinor,grossMinor,recalculatedLegacy:false}};
 }
 
 const text = (value) => value == null ? '' : String(value).trim();
@@ -369,6 +419,7 @@ function mappingIssues(parsed, settings, requireBarcode = true) {
 }
 
 export function validateMarketplaceExport(parsed, settings = {}) {
+  settings=normalizeMarketplaceSettings(parsed,settings);
   const issues = [...(parsed.issues || []).filter((i) => i.severity === 'error'), ...mappingIssues(parsed, settings, false)];
   if(settings.salesExportMode&&!['order-lines-v1',ECOUNT_GROUPED_MODE].includes(settings.salesExportMode))issues.push(issue('EXPORT_MODE_INVALID','銷貨彙總設定無效'));
   if (!parsed.items?.length) issues.push(issue('EMPTY_INTAKE', '沒有可轉換的商品明細'));
@@ -385,6 +436,7 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   }
   for (const order of parsed.orders || []) {
     const context = { orderNumber: order.sourceOrderNumber };
+    if(Number.isSafeInteger(order.financial.totalMinor)&&order.financial.totalMinor%100!==0)issues.push(issue('TWD_TOTAL_FRACTION','TWD 訂單總額含小數，請核對來源；整元銷貨不能改動原訂單總額',context));
     if (order.cancelled || !['unfulfilled'].includes(order.fulfillmentStatus) || !['paid', 'pending'].includes(order.paymentStatus) || (order.financial.refundedMinor ?? 0) > 0) issues.push(issue('ORDER_NOT_ELIGIBLE', '取消、退款、已履行或狀態不明訂單不能由此測試轉檔出貨', context));
     if (order.paymentStatus !== 'paid' && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '請確認這是未付款訂單的限定測試，不代表已收款或正式放行', context));
     if (order.financial.currency && order.financial.currency !== settings.currency) issues.push(issue('CURRENCY_MISMATCH', '來源幣別與匯出設定不符', context));
@@ -418,16 +470,19 @@ export function buildMarketplaceAuditRows(parsed, settings = {}) {
 }
 
 export function buildEcountRows(parsed, settings = {}) {
+  settings=normalizeMarketplaceSettings(parsed,settings);
   const validation = validateMarketplaceExport(parsed, settings);
   const result = { ...validation, headers: [...ECOUNT_HEADERS], rows: [], reportHeaders: [...REPORT_HEADERS], reportRows: [], summary: { ...parsed.summary } };
   if (!validation.ok) return result;
+  let wholeAmounts;
+  try{wholeAmounts=wholeTwdSourceAmounts(parsed);}catch(e){result.ok=false;result.issues.push(issue('TWD_ALLOCATION_INVALID',e.message));return result;}
   const emitted = new Map();
   const rowFor = (order, item, mapping, amount, shipping = false) => {
+    amount=wholeAmounts.get(JSON.stringify([order.sourcePlatform,order.sourceOrderNumber,item.sourceLineId]));
     emitted.set(order.sourceOrderNumber, (emitted.get(order.sourceOrderNumber) || 0) + amount);
     const row = Array(27).fill('');
     const tax=calculateInclusiveTax(amount,item.quantity);
-    const put = { 0: settings.date.replaceAll('-', ''), 1: Number(settings.batchSequence), 2: text(settings.customerCode), 3: text(settings.customerName), 4:text(settings.erpStaffCode), 5:text(settings.erpProjectCode), 6: text(settings.warehouseCode), 7: text(settings.taxType), 8: text(settings.erpCurrencyCode), 10: text(settings.batchNumber), 11: text(mapping.erpSku), 12: order.sourceOrderNumber, 13: order.sourcePlatform, 14: text(settings.store), 15: item.sourceLineId, 16: text(mapping.erpName || mapping.name || item.productName), 18: text(mapping.spec), 19: item.quantity, 20:tax.netUnitMinor/100, 21:(amount/item.quantity)/100, 23:tax.netMinor/100, 24:tax.taxMinor/100, 25:text(settings.summaryNote) };
-    if(settings.salesExportMode===ECOUNT_GROUPED_MODE)put[21]=roundRatio(amount,item.quantity)/100;
+    const put = { 0: settings.date.replaceAll('-', ''), 1: Number(settings.batchSequence), 2: text(settings.customerCode), 3: text(settings.customerName), 4:text(settings.erpStaffCode), 5:text(settings.erpProjectCode), 6: text(settings.warehouseCode), 7: text(settings.taxType), 8: text(settings.erpCurrencyCode), 10: text(settings.batchNumber), 11: text(mapping.erpSku), 12: order.sourceOrderNumber, 13: order.sourcePlatform, 14: text(settings.store), 15: item.sourceLineId, 16: text(mapping.erpName || mapping.name || item.productName), 18: text(mapping.spec), 19: item.quantity, 20:tax.netUnitMinor/100, 21:roundRatio(amount,item.quantity)/100, 23:tax.netMinor/100, 24:tax.taxMinor/100, 25:text(settings.summaryNote) };
     for (const [index, value] of Object.entries(put)) row[Number(index)] = value;
     return row;
   };

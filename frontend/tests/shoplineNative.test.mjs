@@ -43,11 +43,11 @@ test('mismatched, negative, unknown or incomplete financial allocations cannot p
 test('native order-level conflict and ambiguous repeated item block; source attribution retained',()=>{
  const p=run([row({'訂單小計':200,'訂單合計':200}),row({'訂單小計':201,'訂單合計':200})]);assert.equal(p.output.ok,false);
  assert.equal(run([row({'訂單小計':200,'訂單合計':200}),row({'訂單小計':200,'訂單合計':200})]).output.ok,false);
- const a=run([row({'訂單標籤':'團購甲','合作夥伴':'PARTNER','收件人':'PRIVATE'})]);
- assert.equal(a.raw.orders[0].attribution.orderTags,'團購甲');assert.doesNotMatch(JSON.stringify(a.source),/PRIVATE/);
+ const a=run([row({'訂單標籤':'團購甲','合作夥伴':'PARTNER','收件人':'SHIPPING-RECIPIENT','信用卡號':'PRIVATE'})]);
+ assert.equal(a.raw.orders[0].attribution.orderTags,'團購甲');assert.match(JSON.stringify(a.source),/SHIPPING-RECIPIENT/);assert.doesNotMatch(JSON.stringify(a.source),/PRIVATE/);
 });
 test('ECOUNT online uploader maps all 27 columns by name and leaves canonical snapshots intact',()=>{
- const record=run([row()]).output;const before=JSON.stringify(record);
+ const conversion=run([row()]),record={...conversion.output,orders:conversion.parsed.orders,items:conversion.parsed.items,settings:conversion.effectiveSettings};const before=JSON.stringify(record);
  const upload=buildEcountUploadTable(record);assert.equal(upload.headers.length,27);
  assert.deepEqual(upload.headers.slice(23),['商城訂單編號','平台','店鋪','來源明細號']);
  assert.equal(upload.headers[15],'數量');assert.equal(upload.headers[17],'單價(含稅)');

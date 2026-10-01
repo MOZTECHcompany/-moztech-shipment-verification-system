@@ -151,8 +151,9 @@ test('pending acknowledgement is required and never changes source payment state
 test('cancelled, fulfilled and unknown payment orders are not eligible', () => {
   for (const extra of [{ '訂單狀態': '已取消' }, { '物流狀態': '已出貨' }, { '金流狀態': '處理中' }]) { const rows = oneRows().map((r) => ({ ...r, ...extra })); assert.ok(codes(validateMarketplaceExport(parse(rows), settings())).includes('ORDER_NOT_ELIGIBLE')); }
 });
-test('required settings cannot be replaced by placeholder currency/tax defaults', () => {
-  for (const key of ['store', 'customerCode', 'warehouseCode', 'batchSequence', 'batchNumber', 'date', 'currency', 'taxType', 'taxMode', 'taxConfirmed']) { const s = settings(); delete s[key]; assert.equal(buildEcountRows(parse(), s).ok, false, key); }
+test('required identity and explicit unknown-source currency remain mandatory while supported tax is automatic', () => {
+  for (const key of ['store', 'customerCode', 'warehouseCode', 'batchSequence', 'batchNumber', 'date', 'currency']) { const s = settings(); delete s[key]; assert.equal(buildEcountRows(parse(), s).ok, false, key); }
+  for(const key of ['taxType','taxMode','taxConfirmed']){const s=settings();delete s[key];assert.equal(buildEcountRows(parse(),s).ok,true,key);}
   const s = settings(); s.date = '2026-02-30'; assert.ok(codes(validateMarketplaceExport(parse(), s)).includes('DATE_REQUIRED'));
   s.erpCurrencyCode = 'TWD'; assert.ok(codes(validateMarketplaceExport(parse(), s)).includes('ERP_CURRENCY_REQUIRED'));
 });
@@ -161,9 +162,9 @@ test('batch sequence must be positive integer; TEST tracking number is bounded a
   for (const number of ['', 'REAL-20260101', 'TEST-1234567890123456']) { const s = settings(); s.batchNumber = number; assert.ok(codes(validateMarketplaceExport(parse(), s)).includes('BATCH_NUMBER_REQUIRED')); }
   assert.ok(buildEcountRows(parse(), settings()).rows.every((r) => r[10] === 'TEST-20260102-ABCD'));
 });
-test('two-decimal source amounts remain numeric Excel cells and roundtrip to exact cents', () => {
+test('fractional TWD order receipts stay visible in source audit and block whole-TWD sales without silent rounding', () => {
   const rows = oneRows(); rows[0]['單價'] = '129.29'; rows[0]['小計'] = '129.29'; rows[0]['訂單金額(不含金/物流手續費)'] = '428.29'; rows[0]['總計金額'] = '528.29';
-  const out = buildEcountRows(parse(rows), settings()); assert.equal(out.ok, true); assert.equal(out.rows[0][21], 129.29); assert.equal(parseMoneyMinor(out.rows[0][21]), 12929); assert.equal(out.reportRows[0][14], 528.29); assert.equal(out.summary.ecountTotalMinor, 142729);
+  const p=parse(rows),out = buildEcountRows(p, settings()); assert.equal(out.ok, false);assert.ok(codes(out).includes('TWD_TOTAL_FRACTION'));assert.deepEqual(out.rows,[]);assert.equal(p.orders[0].financial.totalMinor,52829);
 });
 test('nonzero source payment fee blocks export until separate accounting mapping exists', () => {
   const rows = oneRows(); rows[0]['訂單金流手續費'] = '10'; rows[0]['總計金額'] = '538'; assert.ok(codes(validateMarketplaceExport(parse(rows), settings())).includes('FEE_MAPPING_REQUIRED'));
@@ -172,7 +173,7 @@ test('nondivisible two-decimal unit prices fail rather than introducing rounding
   const p = parse(); p.items[0].quantity = 2; p.items[0].lineSubtotalMinor = 12901; assert.ok(codes(validateMarketplaceExport(p, settings())).includes('UNIT_PRICE_PRECISION'));
 });
 test('builder independently checks source-to-ECOUNT money roundtrip', () => {
-  const p = parse(); p.orders[0].financial.totalMinor += 1; const result = buildEcountRows(p, settings()); assert.equal(result.ok, false); assert.equal(result.rows.length, 0); assert.ok(codes(result).includes('ECOUNT_ROUNDTRIP_MISMATCH'));
+  const p = parse(); p.orders[0].financial.totalMinor += 100; const result = buildEcountRows(p, settings()); assert.equal(result.ok, false); assert.equal(result.rows.length, 0); assert.ok(codes(result).includes('TWD_ALLOCATION_INVALID'));
 });
 test('Shopify metadata continuation rows keep order money once and expose no contact data', () => {
   const p = parseShop(); assert.equal(p.summary.orderCount, 1); assert.equal(p.summary.itemCount, 2); assert.equal(p.summary.totalMinor, 52800); assert.equal(p.orders[0].financial.outstandingMinor, 52800); assert.doesNotMatch(JSON.stringify(p), /DO-NOT-RETURN/); assert.equal(p.issues.filter((i) => i.severity === 'error').length, 0);
