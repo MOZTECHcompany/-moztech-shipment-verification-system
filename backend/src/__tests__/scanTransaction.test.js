@@ -60,7 +60,7 @@ function singleClientDatabase({ status = 'picking', failSnapshot = false, failCo
                 state.order.status = q.includes("status = 'completed'") ? 'completed' : q.includes("status = 'packing'") ? 'packing' : 'picked';
                 return rows([]);
             }
-            if (q.startsWith('SELECT * FROM order_items')) {
+            if (q.includes('quantity * quantity_sign AS signed_quantity FROM order_items')) {
                 if (failSnapshot) throw new Error('snapshot unavailable');
                 return rows([state.item]);
             }

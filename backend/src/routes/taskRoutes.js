@@ -19,7 +19,7 @@ router.get('/tasks', async (req, res) => {
 
         const query = `
             SELECT 
-                o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                o.id, o.voucher_number, o.customer_name, o.status, o.document_type, p.name as picker_name,
                 (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
                 (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
                 COALESCE(o.is_urgent, FALSE) as is_urgent,
@@ -162,7 +162,7 @@ router.get('/tasks/completed', async (req, res) => {
 
         const query = `
             SELECT 
-                o.id, o.voucher_number, o.customer_name, o.status, p.name as picker_name,
+                o.id, o.voucher_number, o.customer_name, o.status, o.document_type, p.name as picker_name,
                 pk.name as packer_name,
                 o.updated_at as completed_at,
                 import_log.user_id as imported_by_user_id,

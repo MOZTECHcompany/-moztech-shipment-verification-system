@@ -43,7 +43,7 @@ function detailFixture({ status = 'packing', items = [], instances = [], openExc
                 if (failRefresh && orderReads === 2) throw new Error('refresh unavailable');
                 return rows([order]);
             }
-            if (sql.startsWith('SELECT * FROM order_items')) return rows(items);
+            if (sql.includes('quantity * quantity_sign AS signed_quantity FROM order_items')) return rows(items);
             if (sql.startsWith('SELECT i.*')) return rows(instances);
             if (sql.includes('AS has_open')) return rows([{ has_open: openException }]);
             if (sql.startsWith('UPDATE orders SET status')) {
@@ -122,7 +122,7 @@ test('detail locks the order before reading item progress and commits before not
     expect(next).not.toHaveBeenCalled();
     const queries = db.client.query.mock.calls.map(([sql]) => sql);
     const lockIndex = queries.findIndex(sql => sql.includes('FOR UPDATE OF o'));
-    const itemIndex = queries.findIndex(sql => sql.startsWith('SELECT * FROM order_items'));
+    const itemIndex = queries.findIndex(sql => sql.includes('quantity * quantity_sign AS signed_quantity FROM order_items'));
     expect(lockIndex).toBeGreaterThan(queries.indexOf('BEGIN'));
     expect(lockIndex).toBeLessThan(itemIndex);
     expect(queries.at(-1)).toBe('COMMIT');
@@ -174,7 +174,7 @@ function scanFixture({ status = 'packing', items, instances }) {
                 const log = { id: state.logs.length + 1, action_type: params[2], created_at: '2026-09-09T00:00:00Z' };
                 state.logs.push(log); return rows([log]);
             }
-            if (q.startsWith('SELECT * FROM order_items')) return rows(state.items);
+            if (q.includes('quantity * quantity_sign AS signed_quantity FROM order_items')) return rows(state.items);
             if (q.startsWith('SELECT i.*')) return rows(state.instances);
             if (q.startsWith('UPDATE orders SET status')) {
                 state.order.status = q.includes("status = 'completed'") ? 'completed' : 'picked'; return { rows: [], rowCount: 1 };

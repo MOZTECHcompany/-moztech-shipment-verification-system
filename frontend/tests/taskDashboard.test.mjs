@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import { filterTasks, canBatchPick, canBatchClaim, batchStagesForRole, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
+import * as signedOrder from '../src/utils/signedOrder.js';
 
 const source = await readFile(new URL('../src/components/TaskDashboard.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
@@ -76,6 +77,7 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
         '@/api/socket.js': { socket: { on: (name, callback) => listeners.set(name, callback), off: noop } },
         '@/utils/taskFilters': { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole },
         '@/utils/taskPage': { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage },
+        '@/utils/signedOrder': signedOrder,
         '@/utils/soundNotification.js': notifications,
         '@/utils/voiceNotification.js': notifications,
         '@/utils/desktopNotification.js': notifications,

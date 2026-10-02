@@ -302,7 +302,7 @@ router.get('/orders/:orderId', async (req, res, next) => {
             return res.status(404).json({ message: '找不到訂單' });
         }
         const order = orderResult.rows[0];
-        const itemsResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        const itemsResult = await client.query('SELECT *, quantity * quantity_sign AS signed_quantity FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
         const instancesResult = await client.query(
             'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id',
             [orderId]
@@ -471,7 +471,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 
-    const { voucherNumber, customerName, items, totalQuantity, serialCount } = parsed;
+    const { voucherNumber, customerName, items, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity } = parsed;
     const events = deferredEvents(req.app.get('io'));
     let client;
     let transactionOpen = false;
@@ -492,18 +492,17 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         await client.query("SELECT pg_advisory_xact_lock(hashtext('wms-order-import'), hashtext($1))", [voucherNumber]);
         const existingOrder = await client.query('SELECT id FROM orders WHERE voucher_number = $1', [voucherNumber]);
         if (existingOrder.rows.length) {
-            await client.query('ROLLBACK');
-            transactionOpen = false;
+            await client.query('ROLLBACK'); transactionOpen = false;
             return res.status(409).json({ code: 'IMPORT_ALREADY_EXISTS', message: `訂單 ${voucherNumber} 已存在，未重複建立`, voucherNumber, orderId: existingOrder.rows[0].id });
         }
-        const orderResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status) VALUES ($1, $2, $3) RETURNING id', [voucherNumber, customerName, 'pending']);
+        const orderResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status, document_type) VALUES ($1, $2, $3, $4) RETURNING id', [voucherNumber, customerName, 'pending', documentType]);
         orderId = orderResult.rows[0].id;
         const instanceItemIds = [];
         const serialValues = [];
         for (const item of items) {
             checkDeadline();
-            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-                [orderId, item.productCode, item.productName, item.quantity, item.barcode]);
+            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, quantity_sign) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+                [orderId, item.productCode, item.productName, Math.abs(item.quantity), item.barcode, Math.sign(item.quantity)]);
             for (const serial of item.serials) {
                 instanceItemIds.push(inserted.rows[0].id);
                 serialValues.push(serial);
@@ -514,7 +513,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) SELECT * FROM unnest($1::int[], $2::text[])', [instanceItemIds, serialValues]);
         }
         // Import attribution is still based on this log, so it is required and may not be swallowed.
-        const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount };
+        const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
         const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
             [req.user.id, orderId, 'import', JSON.stringify(details)]);
         events.emit('new_operation_log', {
@@ -523,13 +522,14 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             order_id: orderId, voucher_number: voucherNumber, customer_name: customerName,
             action_type: 'import', details
         });
-        events.emit('new_task', { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick', imported_by_user_id: req.user.id });
+        events.emit('new_task', { id: orderId, voucher_number: voucherNumber, customer_name: customerName, status: 'pending', task_type: 'pick', document_type: documentType, imported_by_user_id: req.user.id });
         checkDeadline();
         commitAttempted = true;
         await client.query('COMMIT');
         transactionOpen = false;
         events.publish();
-        return res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount });
+        return res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, operation: documentType, documentType,
+            orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount, signedTotalQuantity, positiveQuantity, negativeQuantity });
     } catch (error) {
         let notApplied = !transactionOpen && !commitAttempted;
         if (transactionOpen) {
@@ -540,11 +540,12 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             releaseError ||= error;
             return res.status(503).json({ code: 'IMPORT_RESULT_UNKNOWN', message: '匯入結果尚未確認，請先到作業看板核對訂單號碼，請勿直接重送', voucherNumber });
         }
-        logger.error('匯入訂單失敗:', { code: error.code, message: error.message });
+        if (!error.status || error.status >= 500) logger.error('匯入訂單失敗:', { code: error.code, message: error.message });
         const busy = error.code === '55P03' || error.code === '57014';
-        return res.status(busy ? 409 : 500).json({
-            code: 'IMPORT_NOT_APPLIED', voucherNumber,
-            message: busy ? '匯入暫時忙碌，本次未建立訂單，請稍後再試' : '本次匯入未完成且已取消，請確認檔案或稍後再試'
+        return res.status(busy ? 409 : error.status || 500).json({
+            code: error.status ? error.code || 'IMPORT_NOT_APPLIED' : 'IMPORT_NOT_APPLIED', voucherNumber,
+            ...(error.orderId ? { orderId: error.orderId } : {}),
+            message: busy ? '匯入暫時忙碌，本次未套用，請稍後再試' : error.status ? error.message : '本次匯入未完成且已取消，請確認檔案或稍後再試'
         });
     } finally {
         client?.release(releaseError);
@@ -770,6 +771,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                     SELECT
                         oi.id,
                         oi.quantity,
+                        oi.quantity_sign,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
                         COALESCE(oi.packed_quantity, 0) as packed_quantity
                     FROM order_items oi
@@ -785,6 +787,13 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                     [orderId, orderItemId, scanRaw]
                 );
             } else {
+                if (order.document_type === 'adjustment') {
+                    const directions = await trackedQuery(client, 'check_barcode_direction',
+                        'SELECT COUNT(DISTINCT quantity_sign)::int AS directions FROM order_items WHERE order_id=$1 AND barcode=$2', [orderId, scanRaw]);
+                    if (directions.rows[0]?.directions > 1) {
+                        throw Object.assign(new Error('此條碼同時有新增與沖正品項，請選擇對應品項列後核對'), { status: 409, reason: 'SIGNED_LINE_REQUIRED' });
+                    }
+                }
                 // 同一張訂單內可能有多行相同條碼，必須挑選「仍可更新」的那一行
                 // pick: picked_quantity + amount 需落在 [0, quantity]
                 // pack: packed_quantity + amount 需落在 [0, picked_quantity]
@@ -795,6 +804,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                     SELECT
                         oi.id,
                         oi.quantity,
+                        oi.quantity_sign,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
                         COALESCE(oi.packed_quantity, 0) as packed_quantity
                     FROM order_items oi
@@ -852,7 +862,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
 
         // These item/instance rows are also the response snapshot. Reuse them
         // for completion instead of maintaining a second SQL completion rule.
-        const updatedItemsResult = await trackedQuery(client, 'refresh_items', 'SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
+        const updatedItemsResult = await trackedQuery(client, 'refresh_items', 'SELECT *, quantity * quantity_sign AS signed_quantity FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
         const updatedInstancesResult = await trackedQuery(client, 'refresh_instances',
             'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
         const { allPicked, allPacked } = getOrderCompletion(updatedItemsResult.rows, updatedInstancesResult.rows);

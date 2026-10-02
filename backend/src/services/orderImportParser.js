@@ -31,6 +31,8 @@ function validateBarcode(value, cell, location) {
 function labelValue(data, labels) {
     for (const row of data.slice(0, 50)) for (let c = 0; c < Math.min(row.length, 50); c++) {
         const text = String(row[c] ?? '').trim();
+        // An original-order reference must never become the new voucher number.
+        if (/^(?:備註\s*[:：]\s*)?(?:原|沖正原)/.test(text)) continue;
         if (!labels.some(label => text.includes(label))) continue;
         const parts = text.split(/[:：]/);
         const value = parts.length > 1 ? parts.slice(1).join(':').trim() : String(row[c + 1] ?? '').trim();
@@ -93,7 +95,10 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
         if (row.length > IMPORT_LIMITS.sheetColumns) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetColumns} 欄`, 413);
         if (row.some(value => String(value ?? '').length > IMPORT_LIMITS.cellCharacters)) throw invalid('單一儲存格內容過長', 413);
     }
-    const fallback = index => String(data[index]?.[0] ?? '').split(/[:：]/).slice(1).join(':').trim();
+    const fallback = index => {
+        const text = String(data[index]?.[0] ?? '').trim();
+        return /^(?:備註\s*[:：]\s*)?(?:原|沖正原)/.test(text) ? '' : text.split(/[:：]/).slice(1).join(':').trim();
+    };
     const voucherNumber = labelValue(data, ['憑證號碼', '憑證號', '訂單編號', '訂單號碼', '訂單號', '單號', 'Voucher']) || fallback(1);
     const customerName = labelValue(data, ['客戶名稱', '客戶', '收貨人', 'Customer']) || fallback(2) || null;
     if (!voucherNumber) throw invalid('找不到訂單號碼（憑證號碼），請確認檔案含「憑證號碼：xxxx」或「訂單編號：xxxx」');
@@ -125,9 +130,9 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
             if (!barcode || !rawName || !rawQuantity) throw invalid('品項編碼、名稱與數量皆必填');
             const cellAddress = xlsx.utils.encode_cell({ r: index, c: barcodeIndex });
             validateBarcode(barcode, worksheet?.[cellAddress] || (typeof row[barcodeIndex] === 'number' ? { t: 'n', v: row[barcodeIndex] } : undefined), { sheet: sheetName, row: index + 1, cell: cellAddress });
-            const normalizedQuantity = /^\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(rawQuantity) ? rawQuantity.replace(/,/g, '') : rawQuantity;
+            const normalizedQuantity = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(rawQuantity) ? rawQuantity.replace(/,/g, '') : rawQuantity;
             const quantity = Number(normalizedQuantity);
-            if (!Number.isSafeInteger(quantity) || quantity <= 0) throw invalid('數量必須為正整數');
+            if (!Number.isSafeInteger(quantity) || quantity === 0) throw invalid('數量必須為非零整數，可填正數或負數');
             let productCode = modelIndex >= 0 ? String(row[modelIndex] ?? '').trim() : '';
             let productName = rawName;
             if (!productCode) {
@@ -137,12 +142,12 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
             productCode ||= barcode;
             if (!productName) throw invalid('品項名稱不可為空');
             if ([barcode, productCode, productName].some(value => value.length > 255)) throw invalid('品項編碼、型號與名稱不可超過 255 字');
-            const serials = parseSerials(summaryIndex >= 0 ? row[summaryIndex] : '', barcode, quantity, dedicatedSerialColumn);
+            const serials = parseSerials(summaryIndex >= 0 ? row[summaryIndex] : '', barcode, Math.abs(quantity), dedicatedSerialColumn);
             for (const serial of serials) {
                 if (seenSerials.has(serial)) throw invalid(`SN ${serial} 在其他品項已出現，請勿重複匯入`);
                 seenSerials.add(serial);
             }
-            totalQuantity += quantity;
+            totalQuantity += Math.abs(quantity);
             if (items.length >= IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
             if (seenSerials.size > IMPORT_LIMITS.serials) throw invalid(`每單最多 ${IMPORT_LIMITS.serials} 筆 SN`, 413);
             if (totalQuantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
@@ -153,7 +158,12 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
         }
     }
     if (!items.length) throw invalid('沒有可匯入的品項，未建立訂單');
-    return { voucherNumber, customerName, items, totalQuantity, serialCount: seenSerials.size };
+    const negativeQuantity = items.filter(item => item.quantity < 0).reduce((sum, item) => sum + Math.abs(item.quantity), 0);
+    const positiveQuantity = totalQuantity - negativeQuantity;
+    const signedTotalQuantity = positiveQuantity - negativeQuantity;
+    const documentType = negativeQuantity ? positiveQuantity ? 'adjustment' : 'reversal' : 'shipment';
+    return { voucherNumber, customerName, items, totalQuantity, serialCount: seenSerials.size,
+        documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
 }
 
 function parseOrderImport(buffer) {

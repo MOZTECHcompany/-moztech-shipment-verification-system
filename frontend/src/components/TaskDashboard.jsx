@@ -20,6 +20,7 @@ import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
 import TaskListFilters from './TaskListFilters';
 import { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole } from '@/utils/taskFilters';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
+import { signedDocumentLabel } from '@/utils/signedOrder';
 
 // Counts should stay readable while tasks refresh.
 function NumberTicker({ value }) {
@@ -150,6 +151,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusInfo.dot}`} />
                                     {statusInfo.text}
                                 </div>
+                                {signedDocumentLabel(task.document_type) && <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-800">{signedDocumentLabel(task.document_type)}</span>}
                                 {user?.role === 'dispatcher' && Number(task?.imported_by_user_id) === Number(user?.id) && (
                                     <div className="flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold px-2.5 py-1 rounded-full border border-white/30 shadow-sm bg-slate-50 text-gray-700">
                                         我的拋單

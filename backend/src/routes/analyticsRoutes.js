@@ -203,7 +203,8 @@ router.get('/analytics', authorizeAdmin, async (req, res) => {
                 oi.product_name,
                 oi.barcode,
                 oi.product_code,
-                SUM(oi.quantity) as total_quantity,
+                SUM(oi.quantity * oi.quantity_sign) as total_quantity,
+                SUM(oi.quantity) as verification_quantity,
                 COUNT(DISTINCT oi.order_id) as order_count
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id

@@ -56,7 +56,6 @@ test.each([
     ['empty items', makeRows([])],
     ['missing name', makeRows([['BAR', '', 1, '']])],
     ['fractional quantity', makeRows([['BAR', 'Name', 1.5, '']])],
-    ['negative quantity', makeRows([['BAR', 'Name', -1, '']])],
     ['partial SN list', makeRows([['BAR', 'Name', 2, 'SN:B19B52004735']])],
     ['duplicate SN within item', makeRows([['BAR', 'Name', 2, 'SN:B19B52004735 SN:B19B52004735']])],
     ['duplicate SN across items', makeRows([['BAR-A', 'Name', 1, 'SN:B19B52004735'], ['BAR-B', 'Name', 1, 'SN:B19B52004735']])],

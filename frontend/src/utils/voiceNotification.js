@@ -98,9 +98,9 @@ class VoiceNotification {
             return false;
         }
     }
-    speakScanSuccess(scannedCount, remainingCount, { type } = {}) {
+    speakScanSuccess(scannedCount, remainingCount, { type, direction } = {}) {
         // Zero remaining alone is not proof of a completed workflow (exceptions).
-        return this.speak(`${spokenStageLabel(type)}，${scannedCount}，剩 ${remainingCount}`, { type });
+        return this.speak(`${spokenStageLabel(type)}，${direction === 'reversal' ? '沖正，' : ''}${scannedCount}，剩 ${remainingCount}`, { type });
     }
     speakScanError({ type } = {}) { return this.speak(`${spokenStageLabel(type)}未完成，請確認`, { type }); }
     speakTaskComplete(type) { return this.speak(`${type ? spokenStageLabel(type) : ''}任務完成`, { type, critical: true }); }

@@ -248,6 +248,7 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
     }
     const order = orderResult.rows[0];
     if (order.status === 'voided') throw Object.assign(new Error('已作廢訂單不可異動'),{status:409});
+    if (order.document_type && order.document_type!=='shipment') throw Object.assign(new Error('此理貨單含 ERP 負數數量，請在 ERP 修正後匯入新的理貨單，不可直接改動品項數量'),{status:409});
     const originalStatus = normalizeOrderStatusForRollback(order.status);
 
     const changesApplied = [];

@@ -2,6 +2,7 @@ import {isWarehouseAdmin,isOrderManager} from '@/utils/managementScope';
 import React from 'react';
 import { Box, Camera, Check, CheckCheck, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
 import { ShippingLabel, PickingList } from './LabelPrinter';
+import { signedDocumentLabel } from '@/utils/signedOrder';
 
 const stages = [
   { label: '待揀貨', icon: Package },
@@ -29,6 +30,7 @@ export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCame
         <div className="min-w-0 flex-1">
           <p className="mb-1 text-xs font-semibold tracking-wider text-slate-500">出貨核對</p>
           <h1 className="break-all text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">{order.voucher_number}</h1>
+          {signedDocumentLabel(order.document_type) && <span className="mt-2 inline-flex rounded-lg bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-800">{signedDocumentLabel(order.document_type)}</span>}
           <p className="mt-1 break-words text-sm text-slate-600">{order.customer_name || '未指定客戶'}</p>
         </div>
         <span className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${order.status === 'voided' ? 'bg-red-50 text-red-700' : order.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel[order.status] || '狀態待確認'}</span>

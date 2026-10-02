@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import { createScanSubmission } from '../src/utils/scanSubmission.js';
 import * as orderWorkProgress from '../src/utils/orderWorkProgress.js';
+import * as signedOrder from '../src/utils/signedOrder.js';
 import * as scanDelta from '../src/utils/scanDelta.js';
 
 const source = await readFile(new URL('../src/components/OrderWorkView.jsx', import.meta.url), 'utf8');
@@ -72,6 +73,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         '@/api/socket': { socket },
         '@/utils/scanSubmission': { createScanSubmission },
         '@/utils/orderWorkProgress': orderWorkProgress,
+        '@/utils/signedOrder': signedOrder,
         '@/utils/scanDelta': scanDelta,
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
         '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, speakTaskComplete: type => spoken.push(['complete', type]) },
@@ -332,4 +334,41 @@ test('a scan response received after leaving the order does not play success or 
     await settle();
     assert.deepEqual(view.sounds, []);
     assert.equal(view.currentData().items[0].picked_quantity, 0);
+});
+
+for (const [role, countField, finalStatus] of [['picker', 'picked_quantity', 'picked'], ['packer', 'packed_quantity', 'completed']]) {
+    test(`${role} same barcode added and reversed rows need an explicit direction, then the last remaining row scans directly`, async () => {
+        const fixture = { order: { id: 1, status: role === 'picker' ? 'picking' : 'packing', document_type: 'adjustment', picker_id: 1, packer_id: 1 }, instances: [], items: [
+            { id: 11, barcode: 'SAME', quantity: 1, quantity_sign: -1, picked_quantity: role === 'packer' ? 1 : 0, packed_quantity: 0 },
+            { id: 12, barcode: 'SAME', quantity: 1, quantity_sign: 1, picked_quantity: role === 'packer' ? 1 : 0, packed_quantity: 0 },
+        ] };
+        const view = workView({ role, initialData: fixture });
+        view.type('SAME'); view.enter(); await settle();
+        assert.equal(view.posts.length, 0, 'Ambiguous direction must not silently choose the first row');
+        const dialog = view.find(view.render(), node => node.props?.role === 'dialog' && node.props?.['aria-label'] === '請選擇本次核對的品項');
+        assert.ok(dialog);
+        const reversed = view.find(dialog, node => node.type === 'button' && node.props.children.some(child => child?.props?.item?.quantity_sign === -1));
+        reversed.props.onClick(); await settle();
+        assert.equal(view.posts.length, 1);
+        assert.equal(view.posts[0].body.orderItemId, 11);
+        const first = structuredClone(fixture); first.items[0][countField] = 1;
+        view.posts[0].resolve({ data: first }); await settle();
+        view.type('SAME'); view.enter(); await settle();
+        assert.equal(view.posts.length, 2);
+        assert.equal(view.posts[1].body.orderItemId, 12, 'Only the remaining positive row may receive this scan');
+        const complete = structuredClone(first); complete.items[1][countField] = 1; complete.order.status = finalStatus;
+        view.posts[1].resolve({ data: complete }); await settle();
+        assert.equal(view.currentData().order.status, finalStatus);
+    });
+}
+
+test('ERP signed orders hide the quantity editor while preserving generic exception and scan operations', () => {
+    const view = workView({ role: 'superadmin', initialData: {
+        order: { id: 1, status: 'picking', document_type: 'reversal' }, instances: [],
+        items: [{ id: 11, barcode: 'RETURN', quantity: 1, quantity_sign: -1, picked_quantity: 0, packed_quantity: 0 }],
+    } });
+    assert.ok(view.input());
+    assert.equal(view.input().props.disabled, false);
+    assert.equal(view.find(view.render(), node => node.type === 'Button' && node.props.children.includes('申請異動')), undefined);
+    assert.ok(view.find(view.render(), node => node.type === 'Button' && node.props.children.includes('新增')));
 });

@@ -197,6 +197,53 @@ test('an incomplete success response is treated as uncertain rather than showing
     assert.equal(view.successes.length, 0);
 });
 
+test('mixed ERP signed import opens its own task and requires both units even when net quantity is zero', async () => {
+    const view = dashboard();
+    view.select(file('20261002-27.xlsx'));
+    view.posts[0].resolve({ status: 201, data: {
+        operation: 'adjustment', orderId: 27, voucherNumber: '2026/10/02 -27',
+        itemCount: 2, totalQuantity: 2, serialCount: 0,
+        signedTotalQuantity: 0, positiveQuantity: 1, negativeQuantity: 1,
+    } });
+    await view.settle();
+    const text = view.text(view.control('import-result'));
+    assert.match(text, /異動理貨單\s+2026\/10\/02 -27\s+已成功匯入/);
+    assert.match(text, /新增\s+1\s+件／沖正\s+1\s+件，共需核對\s+2\s+件/);
+    assert.doesNotMatch(text, /原单|原單|審核|新正數|總數量\s+0/);
+    assert.ok(view.find(view.render(), node => node.props?.to === '/order/27'));
+    assert.equal(view.control('import-file').props.disabled, false);
+});
+
+test('negative ERP document creates an independent reversal task without requesting an original order', async () => {
+    const view = dashboard();
+    view.select(file('negative.xlsx'));
+    view.posts[0].resolve({ status: 201, data: {
+        operation: 'reversal', orderId: 28, voucherNumber: 'REV-28',
+        itemCount: 1, totalQuantity: 3, serialCount: 0,
+        signedTotalQuantity: -3, positiveQuantity: 0, negativeQuantity: 3,
+    } });
+    await view.settle();
+    const text = view.text(view.control('import-result'));
+    assert.match(text, /沖正理貨單\s+REV-28\s+已成功匯入/);
+    assert.match(text, /新增\s+0\s+件／沖正\s+3\s+件，共需核對\s+3\s+件/);
+    assert.doesNotMatch(text, /原單|重新拋|再匯入|停止作業|審核/);
+    assert.ok(view.find(view.render(), node => node.props?.to === '/order/28'));
+    assert.equal(view.posts.length, 1);
+});
+
+test('a signed receipt using the zero net instead of work target is uncertain and never advertises task completion', async () => {
+    const view = dashboard();
+    view.select(file('mixed.xlsx'));
+    view.posts[0].resolve({ status: 201, data: {
+        operation: 'adjustment', orderId: 27, voucherNumber: 'MIXED-27',
+        itemCount: 2, totalQuantity: 0, signedTotalQuantity: 0, positiveQuantity: 1, negativeQuantity: 1,
+    } });
+    await view.settle();
+    assert.match(view.text(view.control('import-result')), /尚未確認匯入結果/);
+    assert.equal(view.successes.length, 0);
+    assert.equal(view.control('import-file').props.disabled, true);
+});
+
 test('leaving a pending import retains recovery metadata and late results never update unmounted UI', async () => {
     const view = dashboard();
     view.select(file('pending.xlsx'));

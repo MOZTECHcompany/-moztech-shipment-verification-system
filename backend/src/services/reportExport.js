@@ -2,12 +2,19 @@ const Papa = require('papaparse');
 const { dateRange } = require('../utils/queryLimits');
 const formatter = new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const time = date => date ? formatter.format(new Date(date)) : '';
-const fields = ['訂單編號', '訂單狀態', '出貨總件數', '揀貨人員', '裝箱人員', '出貨完成時間', '作廢人員', '作廢時間'];
+const fields = ['訂單編號', '訂單狀態', '出貨總件數', '揀貨人員', '裝箱人員', '出貨完成時間', '作廢人員', '作廢時間', '理貨單類型', '新增件數', '沖正件數', '核對總件數'];
 
-const reportSQL = `SELECT o.id, o.voucher_number, o.status, o.completed_at, o.updated_at,
-    COALESCE((SELECT SUM(quantity) FROM order_items WHERE order_id=o.id),0) AS total_quantity,
+const reportSQL = `SELECT o.id, o.voucher_number, o.status, o.document_type, o.completed_at, o.updated_at,
+    quantities.total_quantity, quantities.positive_quantity, quantities.negative_quantity, quantities.verification_quantity,
     activity.pickers, activity.packers, activity.void_user, activity.void_at
 FROM orders o
+LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(quantity * quantity_sign),0) AS total_quantity,
+        COALESCE(SUM(quantity) FILTER(WHERE quantity_sign=1),0) AS positive_quantity,
+        COALESCE(SUM(quantity) FILTER(WHERE quantity_sign=-1),0) AS negative_quantity,
+        COALESCE(SUM(quantity),0) AS verification_quantity
+    FROM order_items WHERE order_id=o.id
+) quantities ON TRUE
 LEFT JOIN LATERAL (
     SELECT string_agg(DISTINCT u.name, ', ' ORDER BY u.name) FILTER (WHERE ol.action_type='pick') AS pickers,
         string_agg(DISTINCT u.name, ', ' ORDER BY u.name) FILTER (WHERE ol.action_type='pack') AS packers,
@@ -25,7 +32,9 @@ ORDER BY o.updated_at DESC, o.completed_at DESC, o.id DESC`;
 function rowValues(o) {
     return [o.voucher_number, o.status === 'completed' ? '已完成' : '已作廢', o.total_quantity,
         o.pickers || '無紀錄', o.packers || '無紀錄', o.status === 'completed' ? time(o.completed_at) : '',
-        o.void_user || '', o.status === 'voided' ? time(o.void_at) : ''];
+        o.void_user || '', o.status === 'voided' ? time(o.void_at) : '',
+        ({shipment:'出貨單',reversal:'負數沖正單',adjustment:'正負異動單'}[o.document_type] || '出貨單'),
+        o.positive_quantity ?? o.total_quantity, o.negative_quantity ?? 0, o.verification_quantity ?? o.total_quantity];
 }
 function write(res, chunk) {
     if (res.destroyed) return Promise.reject(new Error('EXPORT_DISCONNECTED'));

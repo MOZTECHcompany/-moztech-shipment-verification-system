@@ -26,6 +26,13 @@ test('short confirmed quantities omit names and choose separate stage voices', (
     assert.deepEqual(spoken.map(v => v.voice.voiceURI), ['female-tw', 'male-tw', 'male-tw']);
     assert.ok(spoken.every(v => v.pitch === 1 && v.rate === 1));
 });
+test('negative line confirmation says reversal and preserves separate picking/packing voices', () => {
+    const { service, spoken } = voice();
+    service.speakScanSuccess(1, 1, { type: 'pick', direction: 'reversal' });
+    service.speakScanSuccess(1, 1, { type: 'pack', direction: 'reversal' });
+    assert.deepEqual(spoken.map(value => value.text), ['撿貨，沖正，1，剩 1', '裝箱，沖正，1，剩 1']);
+    assert.deepEqual(spoken.map(value => value.voice.voiceURI), ['female-tw', 'male-tw']);
+});
 test('zero remaining does not claim completion; explicit completion names the stage', () => {
     const { service, spoken } = voice();
     service.speakScanSuccess(5, 0, { type: 'pick' });

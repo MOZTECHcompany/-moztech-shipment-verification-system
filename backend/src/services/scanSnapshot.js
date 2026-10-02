@@ -5,15 +5,15 @@ const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
 // joined user names and SQL column order do not create false mismatches.
 function stateToken(order, items, instances) {
     return digest([
-        [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason],
-        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity]),
+        [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.document_type || 'shipment'],
+        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.quantity_sign ?? 1]),
         sorted(instances).map(i=>[i.id,i.order_item_id,i.serial_number,i.status])
     ]);
 }
 async function readLines(db, orderId) {
     const items = (await db.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId])).rows;
     const instances = (await db.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id',[orderId])).rows;
-    return {items,instances};
+    return {items:items.map(item=>({...item,signed_quantity:Number(item.quantity)*Number(item.quantity_sign ?? 1)})),instances};
 }
 function parseCommand(body, userId) {
     if (body.responseMode === undefined) return null;

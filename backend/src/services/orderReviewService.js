@@ -48,6 +48,7 @@ async function requestChange({ pool, io, orderId, user, reason, proposal, reques
     return transact(pool, io, async (db, events) => {
         const order = (await db.query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到訂單');
+        if (!deletion && order.document_type && order.document_type!=='shipment') throw fail(409, '此理貨單含 ERP 負數數量，請在 ERP 修正後匯入新的理貨單，不可直接改動品項數量');
         if (user.role === 'dispatcher') {
             const importer = (await db.query("SELECT user_id FROM operation_logs WHERE order_id=$1 AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1", [orderId])).rows[0];
             if (Number(importer?.user_id) !== Number(user.id)) throw fail(403, '僅可申請自己拋單的訂單異動');
@@ -86,6 +87,7 @@ async function reviewChange({ pool, io, orderId, exceptionId, user, decision, no
         if (!order || row?.type !== 'order_change') throw fail(404, '找不到異動申請');
         const deletion = isDeletionRequest(row);
         if (row.status !== 'open') throw fail(409, '此異動申請已審核，請重新整理');
+        if (decision==='approve' && !deletion && order.document_type && order.document_type!=='shipment') throw fail(409, '此理貨單含 ERP 負數數量，請在 ERP 修正後匯入新的理貨單，不可直接改動品項數量');
         if (decision === 'approve' && (order.status === 'voided' || (deletion && order.status === 'completed'))) throw fail(409, '訂單狀態已變更，請駁回此申請後重新確認');
         let item;
         if (decision === 'approve' && !deletion) {

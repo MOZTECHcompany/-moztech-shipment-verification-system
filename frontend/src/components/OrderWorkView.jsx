@@ -33,6 +33,8 @@ import { PersonalSoundControls } from './PersonalSoundControls';
 import { VoiceControls } from './VoiceControls';
 import ErrorBoundary from './ErrorBoundary';
 import DefectReportModal from './DefectReportModal';
+import { SignedOrderNotice, SignedQuantityBadge } from './SignedOrderNotice';
+import { signedQuantity, isSignedDocument, signedScanChoices, signedOrderReportRows } from '@/utils/signedOrder';
 
 // --- 小型组件 ---
 const ProgressBar = ({ value, max, colorClass = "bg-blue-500", height = "h-1.5" }) => {
@@ -76,7 +78,7 @@ const StatusBadge = ({ status }) => {
 };
 
 // --- SN模式的品项卡片 ---
-const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
+const SNItemCard = ({ item, instances, progress, stage, lineInfo, signedDocument }) => {
     const [expanded, setExpanded] = useState(false);
     
     const pickedCount = progress.picked;
@@ -105,6 +107,7 @@ const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
                             <span className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                                 {item.barcode}
                             </span>
+                            <SignedQuantityBadge item={item} showPositive={signedDocument} />
                             {lineInfo && (
                                 <span className="text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
                                     同條碼第 {lineInfo.index}/{lineInfo.total} 行
@@ -162,7 +165,7 @@ const SNItemCard = ({ item, instances, progress, stage, lineInfo }) => {
 };
 
 // --- 数量模式的品项卡片 ---
-const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progress, stage, lineInfo }) => {
+const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progress, stage, lineInfo, signedDocument }) => {
     const canAdjustPick = (user.role === 'picker' || isWarehouseAdmin(user)) && orderStatus === 'picking';
     const canAdjustPack = (user.role === 'packer' || isWarehouseAdmin(user)) && orderStatus === 'packing';
     const isComplete = progress.complete;
@@ -188,6 +191,7 @@ const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progr
                         <span className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                             {item.barcode}
                         </span>
+                        <SignedQuantityBadge item={item} showPositive={signedDocument} />
                         {lineInfo && (
                             <span className="text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
                                 同條碼第 {lineInfo.index}/{lineInfo.total} 行
@@ -343,6 +347,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const [itemSearch, setItemSearch] = useState('');
     const [lastAcceptedScan, setLastAcceptedScan] = useState(null);
     const [pendingScan, setPendingScan] = useState('');
+    const [signedScanChoice, setSignedScanChoice] = useState(null);
     const [loadError, setLoadError] = useState('');
     const mountedRef = useRef(true);
     const completedStagesRef = useRef(new Set());
@@ -637,7 +642,7 @@ function AuthenticatedOrderWorkView({ user }) {
     }, [exceptionsMeta?.responsibleRole, exceptionsMeta?.responsibleUserId, isDispatcher, user?.id]);
 
     const canProposeOrderChange = isAdminLike || isOrderManager(user) || canDispatcherPropose;
-    const orderChangeReady = !loading && !loadError
+    const orderChangeReady = !loading && !loadError && !isSignedDocument(currentOrderData.order)
         && String(currentOrderData.order?.id) === String(orderId);
 
     const resolutionActionLabel = (action) => {
@@ -1370,7 +1375,14 @@ function AuthenticatedOrderWorkView({ user }) {
                 const remaining = scanRows.reduce((sum, row) => sum + row.remaining, 0);
 
                 // 語音播報
-                if (!stageCompleted) voiceNotification.speakScanSuccess(totalScanned, remaining, { type });
+                if (!stageCompleted) {
+                    const changedInstance = response.data.instance || updatedSnapshot.instances.find(instance =>
+                        currentOrderData.instances.find(previous => previous.id === instance.id)?.status !== instance.status);
+                    const changedItem = response.data.item || updatedSnapshot.items.find(item =>
+                        Number(item.id) === Number(orderItemId || changedInstance?.order_item_id) ||
+                        item[type === 'pick' ? 'picked_quantity' : 'packed_quantity'] !== currentOrderData.items.find(previous => previous.id === item.id)?.[type === 'pick' ? 'picked_quantity' : 'packed_quantity']);
+                    voiceNotification.speakScanSuccess(totalScanned, remaining, { type, ...(changedItem?.quantity_sign === -1 ? { direction: 'reversal' } : {}) });
+                }
 
                 toast.success(`掃描成功: ${scanValue}`, { id: `scan-success-${orderId}`, duration: 1300 });
             } catch (err) {
@@ -1448,7 +1460,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const handleScan = (rawValue = barcodeInput) => {
         const scanValue = String(rawValue ?? '').trim();
         if (!scanValue) return false;
-        if (scanNeedsReview) return false;
+        if (scanNeedsReview || signedScanChoice) return false;
         // Consume each scanner Enter exactly once, including rejected/busy submissions.
         // A camera result must not erase unrelated keyboard input.
         setBarcodeInput(current => current.trim() === scanValue ? '' : current);
@@ -1498,7 +1510,13 @@ function AuthenticatedOrderWorkView({ user }) {
                 setRejectedScan({ value: scanValue, retryable: false });
                 return false;
             }
-            const accepted = updateItemState(scanValue, operationType, 1);
+            const choices = signedScanChoices(currentOrderData, scanValue, operationType);
+            if (choices?.length > 1) {
+                setSignedScanChoice({ scanValue, type: operationType, items: choices });
+                setShowCameraScanner(false);
+                return true;
+            }
+            const accepted = updateItemState(scanValue, operationType, 1, choices?.length === 1 ? choices[0].id : undefined);
             return accepted;
         } else {
             const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
@@ -1578,21 +1596,7 @@ function AuthenticatedOrderWorkView({ user }) {
         const toastId = toast.loading('正在產生出貨明細…');
         try {
             const XLSX = await import('xlsx');
-            const serialsByItem = new Map();
-            for (const instance of snapshot.instances) {
-                const serials = serialsByItem.get(instance.order_item_id) || [];
-                serials.push(instance.serial_number);
-                serialsByItem.set(instance.order_item_id, serials);
-            }
-            const data = snapshot.items.map(item => ({
-                '國際條碼': item.barcode,
-                '品項型號': item.product_code,
-                '品項名稱': item.product_name,
-                '應出數量': item.quantity,
-                '已揀數量(計數)': item.picked_quantity,
-                '已裝箱數量(計數)': item.packed_quantity,
-                'SN列表': (serialsByItem.get(item.id) || []).join(', ')
-            }));
+            const data = signedOrderReportRows(snapshot);
             const worksheet = XLSX.utils.json_to_sheet(data);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, '出貨報告');
@@ -1680,6 +1684,8 @@ function AuthenticatedOrderWorkView({ user }) {
                     />
                   </ErrorBoundary>
                 )}
+
+                <SignedOrderNotice order={currentOrderData.order} items={currentOrderData.items} />
 
                 {currentOrderData.order && <WorkstationBar
                     orderId={orderId} user={user} voucher={currentOrderData.order.voucher_number}
@@ -1816,7 +1822,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                             新增
                                         </Button>
 
-                                        {canProposeOrderChange && (
+                                        {canProposeOrderChange && !isSignedDocument(currentOrderData.order) && (
                                             <Button
                                                 size="sm"
                                                 disabled={hasOpenOrderChange || !orderChangeReady}
@@ -2070,9 +2076,9 @@ function AuthenticatedOrderWorkView({ user }) {
                                             return (
                                                 <div key={item.id}>
                                                     {hasSN ? (
-                                                        <SNItemCard item={item} instances={itemInstances} progress={progress} stage={stage} lineInfo={lineInfo} />
+                                                        <SNItemCard item={item} instances={itemInstances} progress={progress} stage={stage} lineInfo={lineInfo} signedDocument={isSignedDocument(currentOrderData.order)} />
                                                     ) : (
-                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} />
+                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} signedDocument={isSignedDocument(currentOrderData.order)} />
                                                     )}
                                                 </div>
                                             );
@@ -2133,6 +2139,21 @@ function AuthenticatedOrderWorkView({ user }) {
                     voucherNumber={currentOrderData.order?.voucher_number}
                     onSuccess={() => fetchOrderDetails(orderId)}
                 />
+
+                <Modal open={!!signedScanChoice} onClose={() => setSignedScanChoice(null)} title="請選擇本次核對的品項" footer={<Button variant="secondary" onClick={() => setSignedScanChoice(null)}>取消</Button>}>
+                    <section role="dialog" aria-label="請選擇本次核對的品項">
+                    <p className="mb-3 text-sm text-slate-600">這個條碼同時有新增與沖正品項。</p>
+                    <div className="space-y-2">{signedScanChoice?.items.map(item => <button key={item.id} type="button" className="flex min-h-14 w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-blue-500 hover:bg-blue-50" onClick={() => {
+                        const choice = signedScanChoice;
+                        setSignedScanChoice(null);
+                        updateItemState(choice.scanValue, choice.type, 1, item.id);
+                        barcodeInputRef.current?.focus();
+                    }}>
+                        <span className="min-w-0 break-words text-sm font-semibold">{item.product_name}</span>
+                        <SignedQuantityBadge item={item} showPositive />
+                    </button>)}</div>
+                    </section>
+                </Modal>
 
                 <Modal
                     open={createExceptionOpen}

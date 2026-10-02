@@ -8,6 +8,8 @@ import { format } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { OrderBarcode } from './OrderBarcode';
+import { printedQuantity, isSignedDocument, signedDocumentLabel } from '@/utils/signedOrder';
+import { SignedOrderPrintSummary } from './SignedOrderNotice';
 
 // 出貨標籤組件
 export function ShippingLabel({ order, items, className, variant = 'default' }) {
@@ -38,7 +40,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                     {/* 公司標題 */}
                     <div className="text-center mb-6" style={{ borderBottom: '3px solid #000', paddingBottom: '10px' }}>
                         <h1 style={{ fontSize: '24pt', fontWeight: 'bold', marginBottom: '5px' }}>Corely AI</h1>
-                        <p style={{ fontSize: '10pt' }}>出貨標籤 SHIPPING LABEL</p>
+                        <p style={{ fontSize: '10pt' }}>{signedDocumentLabel(order.document_type) || '出貨標籤 SHIPPING LABEL'}</p>
                     </div>
 
                     {/* 訂單資訊 */}
@@ -62,6 +64,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                     </div>
 
                     <div style={{ margin: '12px 0 20px' }}><OrderBarcode value={order.voucher_number} /></div>
+                    <SignedOrderPrintSummary order={order} items={items} />
 
                     {/* 商品摘要 */}
                     <div>
@@ -83,7 +86,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                                             <div style={{ fontSize: '9pt', color: '#666' }}>條碼: {item.barcode}</div>
                                         </td>
                                         <td style={{ textAlign: 'center', fontSize: '14pt', fontWeight: 'bold' }}>
-                                            {item.quantity}
+                                            {printedQuantity(item, order)}
                                         </td>
                                     </tr>
                                 ))}
@@ -103,7 +106,7 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
                         <table style={{ width: '100%' }}>
                             <tbody>
                                 <tr>
-                                    <td style={{ fontWeight: 'bold', fontSize: '12pt' }}>總件數:</td>
+                                    <td style={{ fontWeight: 'bold', fontSize: '12pt' }}>{isSignedDocument(order) ? '核對件數:' : '總件數:'}</td>
                                     <td style={{ textAlign: 'right', fontSize: '16pt', fontWeight: 'bold' }}>
                                         {items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)} 件
                                     </td>
@@ -185,9 +188,11 @@ export function PickingList({ order, items, className, variant = 'default' }) {
                 <div ref={componentRef} className="p-8" style={{ width: '100%', padding: '4mm', boxSizing: 'border-box', fontSize: '12pt' }}>
                     {/* 標題 */}
                     <div className="text-center mb-6" style={{ borderBottom: '4px solid #000', paddingBottom: '15px' }}>
-                        <h1 style={{ fontSize: '28pt', fontWeight: 'bold', marginBottom: '5px' }}>揀貨作業單</h1>
+                        <h1 style={{ fontSize: '28pt', fontWeight: 'bold', marginBottom: '5px' }}>{signedDocumentLabel(order.document_type) || '揀貨作業單'}</h1>
                         <p style={{ fontSize: '12pt' }}>PICKING LIST</p>
                     </div>
+
+                    <SignedOrderPrintSummary order={order} items={items} />
 
                     {/* 訂單資訊 */}
                     <div style={{ marginBottom: '20px', backgroundColor: '#f5f5f5', padding: '15px', borderRadius: '8px' }}>
@@ -279,7 +284,7 @@ export function PickingList({ order, items, className, variant = 'default' }) {
                                                     fontSize: '14pt',
                                                     fontWeight: 'bold'
                                                 }}>
-                                                    {item.quantity}
+                                                    {printedQuantity(item, order)}
                                                 </td>
                                                 <td style={{ padding: '12px', textAlign: 'center' }}>
                                                     <div style={{ 
@@ -313,7 +318,7 @@ export function PickingList({ order, items, className, variant = 'default' }) {
                             <tbody>
                                 <tr>
                                     <td style={{ width: '70%', fontSize: '14pt', fontWeight: 'bold' }}>
-                                        ✓ 總件數:
+                                        ✓ {isSignedDocument(order) ? '核對件數:' : '總件數:'}
                                     </td>
                                     <td style={{ fontSize: '18pt', fontWeight: 'bold', textAlign: 'right' }}>
                                         {items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)} 件

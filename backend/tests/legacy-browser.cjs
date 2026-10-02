@@ -505,8 +505,87 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await mobile.screenshot({ path: output + '/mobile-defect.png', fullPage: false });
             await mobile.getByRole('button', { name: '關閉新品不良異動', exact: true }).click();
         });
+        await step('browser: mixed ERP signed import, task badges, prints and Excel retain -1/+1 while both stages verify two units', async () => {
+            const signedVoucher = prefix + '-SIGNED';
+            const book = xlsx.utils.book_new();
+            xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([
+                ['憑證號碼', signedVoucher], ['客戶名稱', 'ERP signed UI fixture'],
+                ['品項編碼', '品項名稱', '數量', 'SN'],
+                ['4711299274640', 'UI 沖正商品', -1, ''], ['4711299274633', 'UI 新增商品', 1, ''],
+            ]), '理貨單');
+            await dispatcher.goto(webBase + '/admin');
+            const receipt = await response(dispatcher, '/api/orders/import', 'POST', () => dispatcher.locator('[data-testid="import-file"]').setInputFiles({ name: 'signed-ui.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx.write(book, { type: 'buffer', bookType: 'xlsx' }) }));
+            const result = await receipt.json(); cleanupOrders.push(result.orderId);
+            assert.equal(result.operation, 'adjustment'); assert.equal(result.signedTotalQuantity, 0); assert.equal(result.totalQuantity, 2);
+            await dispatcher.getByText(`異動理貨單 ${signedVoucher} 已成功匯入`, { exact: true }).waitFor();
+            assert.match(await dispatcher.locator('[data-testid="import-result"]').innerText(), /新增 1 件／沖正 1 件，共需核對 2 件/);
+            await dispatcher.goto(webBase + '/tasks');
+            await Promise.all([dispatcher.waitForResponse(r => new URL(r.url()).searchParams.get('q') === signedVoucher), dispatcher.getByLabel('查找任務', { exact: true }).fill(signedVoucher)]);
+            await dispatcher.getByText('異動理貨單', { exact: true }).waitFor();
+            await admin.goto(webBase + '/order/' + result.orderId);
+            await admin.getByRole('status', { name: '理貨單異動數量' }).waitFor();
+            await admin.getByText('-1 件 · 沖正', { exact: true }).waitFor();
+            await admin.getByText('+1 件 · 新增', { exact: true }).waitFor();
+            assert.equal(await admin.getByRole('button', { name: '申請異動', exact: true }).count(), 0);
+            await admin.evaluate(() => window.scrollTo(0, 0));
+            await admin.screenshot({ path: output + '/signed-order-desktop.png', fullPage: false });
+            await admin.setViewportSize({ width: 390, height: 844 });
+            assert.ok(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+            await admin.screenshot({ path: output + '/signed-order-mobile.png', fullPage: false });
+            await admin.setViewportSize({ width: 1440, height: 1100 });
+            const printsBefore = await admin.evaluate(() => window.__wmsPrints.length);
+            for (const [index, name] of ['列印出貨標籤', '列印揀貨單'].entries()) {
+                await admin.getByRole('button', { name, exact: true }).click();
+                await admin.waitForFunction(count => window.__wmsPrints.length === count, printsBefore + index + 1);
+                const printed = await admin.evaluate(index => window.__wmsPrints[index], printsBefore + index);
+                assert.ok(printed.text.includes('-1')); assert.ok(printed.text.includes('+1'));
+                assert.ok(printed.text.includes('新增 1 件／沖正 1 件')); assert.ok(printed.text.includes('核對件數'));
+            }
+            const [download] = await Promise.all([admin.waitForEvent('download'), admin.getByRole('button', { name: '匯出出貨明細', exact: true }).click()]);
+            const exported = xlsx.read(fs.readFileSync(await download.path()), { type: 'buffer' });
+            const rows = xlsx.utils.sheet_to_json(exported.Sheets[exported.SheetNames[0]]);
+            assert.deepEqual(rows.map(row => row['應出數量']), [-1, 1]);
+            assert.deepEqual(rows.map(row => row['核對件數']), [1, 1]);
+            for (const role of ['picker', 'packer']) {
+                ok(await api(role, 'POST', `/api/orders/${result.orderId}/claim`));
+                const worker = await pageFor(role); await worker.goto(webBase + '/order/' + result.orderId);
+                const input = worker.locator('#order-scan-input'); await input.waitFor();
+                for (const [index, barcode] of ['4711299274640', '4711299274633'].entries()) {
+                    await worker.waitForFunction(() => !document.querySelector('button[aria-label="送出掃描"]')?.disabled);
+                    await input.fill(barcode);
+                    await response(worker, '/api/orders/update_item', 'POST', () => input.press('Enter'));
+                    const status = (await pool.query('SELECT status FROM orders WHERE id=$1', [result.orderId])).rows[0].status;
+                    assert.equal(status, index === 0 ? (role === 'picker' ? 'picking' : 'packing') : (role === 'picker' ? 'picked' : 'completed'));
+                }
+                await worker.close();
+            }
+        });
+        await step('browser: scanning the same barcode with opposite signed rows requires direction once and never scans the wrong row', async () => {
+            const voucher = prefix + '-SAME-SIGN', barcode = prefix + '-SAME-BAR';
+            const id = (await pool.query("INSERT INTO orders(voucher_number,customer_name,status,document_type) VALUES($1,'Signed direction fixture','pending','adjustment') RETURNING id", [voucher])).rows[0].id;
+            cleanupOrders.push(id);
+            const inserted = await pool.query("INSERT INTO order_items(order_id,product_code,product_name,barcode,quantity,quantity_sign) VALUES($1,'DIR','UI 同條碼沖正',$2,1,-1),($1,'DIR','UI 同條碼新增',$2,1,1) RETURNING id,quantity_sign", [id, barcode]);
+            const negativeId = inserted.rows.find(row => row.quantity_sign === -1).id, positiveId = inserted.rows.find(row => row.quantity_sign === 1).id;
+            for (const role of ['picker', 'packer']) {
+                ok(await api(role, 'POST', `/api/orders/${id}/claim`));
+                const worker = await pageFor(role); await worker.goto(webBase + '/order/' + id);
+                const input = worker.locator('#order-scan-input'); await input.waitFor();
+                await input.fill(barcode); await input.press('Enter');
+                const choice = worker.getByRole('dialog', { name: '請選擇本次核對的品項', exact: true });
+                await choice.waitFor();
+                const first = await response(worker, '/api/orders/update_item', 'POST', () => choice.getByRole('button').filter({ hasText: 'UI 同條碼沖正' }).click());
+                assert.equal(first.request().postDataJSON().orderItemId, negativeId);
+                await choice.waitFor({ state: 'hidden' });
+                await worker.waitForFunction(() => !document.querySelector('button[aria-label="送出掃描"]')?.disabled);
+                await input.fill(barcode);
+                const second = await response(worker, '/api/orders/update_item', 'POST', () => input.press('Enter'));
+                assert.equal(second.request().postDataJSON().orderItemId, positiveId);
+                assert.equal((await pool.query('SELECT status FROM orders WHERE id=$1', [id])).rows[0].status, role === 'picker' ? 'picked' : 'completed');
+                await worker.close();
+            }
+        });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 18 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 20 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

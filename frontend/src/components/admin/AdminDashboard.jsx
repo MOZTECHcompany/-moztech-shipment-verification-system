@@ -85,10 +85,15 @@ export function AdminDashboard({ user }) {
             if (response.status !== 201 || !data?.voucherNumber || !Number.isSafeInteger(data.orderId) || data.orderId <= 0) {
                 throw new Error('匯入回應不完整，請先核對作業看板。');
             }
+            if (['adjustment', 'reversal'].includes(data.operation)
+                && (![data.positiveQuantity, data.negativeQuantity, data.totalQuantity].every(value => Number.isSafeInteger(value) && value >= 0)
+                    || data.totalQuantity === 0 || data.totalQuantity !== data.positiveQuantity + data.negativeQuantity)) {
+                throw new Error('理貨單核對數量回應不完整，請先核對作業看板。');
+            }
             saveRecovery(recoveryKey, null);
             if (mounted.current) {
                 setImportState({ ...data, phase: 'success', fileName });
-                toast.success(`訂單「${data.voucherNumber}」已成功匯入`);
+                toast.success(`${data.operation === 'adjustment' ? '異動理貨單' : data.operation === 'reversal' ? '沖正理貨單' : '訂單'}「${data.voucherNumber}」已成功匯入`);
             }
         } catch (error) {
             const data = error.response?.data || {};
@@ -202,13 +207,13 @@ export function AdminDashboard({ user }) {
                                 {importState.phase === 'uploading' ? '正在處理訂單' : '選擇訂單檔案'}
                             </Button>
                             <input data-testid="import-file" type="file" ref={fileInputRef} onChange={handleExcelImport} disabled={importBlocked} accept=".xlsx,.xls,.csv" className="hidden" aria-label="訂單檔案" />
-                            <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援 .xlsx、.xls、.csv，最大 10 MiB<br />每單最多 5,000 列、1,000 個品項、10,000 筆 SN，總數量 50,000</p></details>
+                            <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援 .xlsx、.xls、.csv，最大 10 MiB<br />每單最多 5,000 列、1,000 個品項、10,000 筆 SN，總核對數量 50,000</p><p className="mt-2">支援負數沖正及正負混合的 ERP 理貨單，每次匯入會建立一筆獨立任務。新增與沖正品項都需核對。</p></details>
                         </div>
 
                         {importState.phase !== 'idle' && <div data-testid="import-result" role={['error', 'unknown'].includes(importState.phase) ? 'alert' : 'status'} aria-live="polite" className={`mt-4 rounded-xl border p-4 text-sm ${resultColor}`}>
                             <p className="mb-2 break-all text-xs opacity-80">{importState.fileName}</p>
                             {importState.phase === 'uploading' && <><p className="flex items-center gap-2 font-semibold"><Loader2 size={17} className="animate-spin" />正在驗證檔案並建立訂單</p><p className="mt-2 leading-6">請保持此頁開啟，完成前請勿重複上傳。</p></>}
-                            {importState.phase === 'success' && <><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={17} />訂單 {importState.voucherNumber} 已成功匯入</p><p className="mt-2">{importState.itemCount} 個品項 · 總數量 {importState.totalQuantity} · {importState.serialCount} 筆 SN</p></>}
+                            {importState.phase === 'success' && <><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={17} />{importState.operation === 'adjustment' ? '異動理貨單' : importState.operation === 'reversal' ? '沖正理貨單' : '訂單'} {importState.voucherNumber} 已成功匯入</p>{['adjustment', 'reversal'].includes(importState.operation) ? <p className="mt-2">新增 {importState.positiveQuantity} 件／沖正 {importState.negativeQuantity} 件，共需核對 {importState.totalQuantity} 件</p> : <p className="mt-2">{importState.itemCount} 個品項 · 總數量 {importState.totalQuantity} · {importState.serialCount} 筆 SN</p>}</>}
                             {importState.phase === 'duplicate' && <><p className="font-semibold">訂單 {importState.voucherNumber} 已存在，未重複建立</p><p className="mt-2 leading-6">請開啟既有訂單核對內容。若需修正訂單，請依現有管理流程處理。</p></>}
                             {importState.phase === 'error' && <div role="alert"><p className="font-semibold">{importState.reason === 'INVALID_BARCODE_FORMAT' ? '條碼格式異常，未建立訂單' : '匯入未完成，未建立訂單'}</p><p className="mt-2 whitespace-pre-wrap leading-6">{importState.message}</p><p className="mt-2">修正後可重新選擇檔案。</p></div>}
                             {importState.phase === 'unknown' && <><p className="flex items-center gap-2 font-semibold"><AlertTriangle size={17} />尚未確認匯入結果</p><p className="mt-2 leading-6">{importState.voucherNumber && `訂單 ${importState.voucherNumber}：`}請先到作業看板核對訂單是否已建立。連線中斷或等候逾時不代表匯入失敗，請勿直接重送。</p><p className="mt-2 leading-6">若訂單已存在，請繼續使用該訂單；確認沒有建立後，才重新選擇檔案。</p></>}
