@@ -26,6 +26,7 @@ const orderMessage = (error, message) => {
 };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const batchNumber = () => `WMS-${today().replaceAll('-', '')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)), value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+const barcodeConflictKey = conflict => conflict.fingerprint;
 const initialSettings = () => ({
   salesExportMode: ECOUNT_GROUPED_MODE, store: '', customerCode: '', customerName: '', warehouseCode: '003',
   date: today(), batchSequence: '1', batchNumber: batchNumber(), projectOwner: '', salesOwner: '',
@@ -53,6 +54,7 @@ function ConverterPage({ user }) {
   const [profiles, setProfiles] = useState([]), [profileId, setProfileId] = useState(''), [choosingStore, setChoosingStore] = useState(false), [storeSetupOpen, setStoreSetupOpen] = useState(false);
   const [dragging, setDragging] = useState(false), [catalog, setCatalog] = useState(null);
   const [workbook, setWorkbook] = useState(null), [selectedSheet, setSelectedSheet] = useState('');
+  const [barcodeChecks, setBarcodeChecks] = useState({});
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false);
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); };
@@ -76,12 +78,15 @@ function ConverterPage({ user }) {
       request.current++;
       setInput(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
+      setBarcodeChecks({});
       setAccess('denied'); showMessage('登入人員已變更，請重新登入。', 'error');
     };
     window.addEventListener('storage', check);
     return () => { mounted.current = false; request.current++; window.removeEventListener('storage', check); };
   }, []);
   const locked = busy || access !== 'ready';
+  const barcodeConflicts = prepared?.barcodeConflicts || [];
+  const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
   const matchingProfiles = profiles.filter(profile => profile.platform === input?.parsed.platform);
   const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason) : [];
@@ -89,6 +94,7 @@ function ConverterPage({ user }) {
     const groups = new Map();
     for (const issue of prepared?.output?.issues || []) {
       if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && emptyExclusions.length)) continue;
+      if (issue.code === 'BARCODE_MISMATCH' && barcodeBlocked) continue;
       const key = `${issue.code}:${issue.field || ''}`;
       if (!groups.has(key)) groups.set(key, { key, items: [] });
       groups.get(key).items.push(issue);
@@ -111,6 +117,7 @@ function ConverterPage({ user }) {
     setProfileId(data.profileId == null ? '' : String(data.profileId));
     if (data.profiles) setProfiles(data.profiles);
     setCatalog(data.catalog || null); setPreviewDirty(false);
+    setBarcodeChecks({});
   };
   const fetchPreview = async (rows, nextSettings, nextProfile, sequence) => {
     const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
@@ -125,6 +132,26 @@ function ConverterPage({ user }) {
     catch (error) {
       if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || '訂單核對失敗，請重試。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
+  };
+  const confirmBarcode = async conflict => {
+    if (locked || inFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentSession()) return;
+    const sequence = ++request.current;
+    inFlight.current = true; setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
+    try {
+      const response = await apiClient.post('/api/marketplace-intakes/barcode-confirmations', {
+        rows: input.source.rows, profileId, settings,
+        verificationFingerprint: prepared.verification?.currentFingerprint,
+        confirmation: { fingerprint: conflict.fingerprint, confirmed: true },
+      }, { timeout: 75000 });
+      if (!mounted.current || sequence !== request.current || !currentSession()) return;
+      if (response.data?.confirmed !== true) throw Error('商品對照未保存');
+      if (await fetchPreview(input.source.rows, settings, profileId, sequence)) showMessage('商品對照已保存');
+    } catch (error) {
+      if (mounted.current && sequence === request.current && currentSession()) showMessage(error.response?.data?.message || '商品對照未保存，請重新核對。', 'error');
+    } finally {
+      inFlight.current = false;
+      if (mounted.current && sequence === request.current) setBusy(false);
+    }
   };
   const update = (key, value) => {
     request.current++; setSaved(null); setPreviewDirty(true);
@@ -148,6 +175,7 @@ function ConverterPage({ user }) {
   const resetSource = () => {
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
+    setBarcodeChecks({});
   };
   const loadWorksheet = async (XLSX, book, sheetName, fileName, sequence) => {
     const result = parseMarketplaceWorksheet(XLSX, book, sheetName);
@@ -209,7 +237,7 @@ function ConverterPage({ user }) {
   };
   const download = async kind => {
     if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession()) return;
-    if (kind === 'ecount' && (!prepared.output.ok || catalogBlocked)) return;
+    if (kind === 'ecount' && (!prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
     if (kind === 'audit' && (!prepared.audit.ok || !prepared.prepick.ok)) return;
     inFlight.current = true; setBusy(true); showMessage('');
     try {
@@ -277,11 +305,11 @@ function ConverterPage({ user }) {
           <div><h2 className="text-lg font-semibold">{emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2><p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>
             {prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
           </div>
-          <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>
+          <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>
         </div>
         {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
-          : prepared.output.ok && !catalogBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
+          : prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
         {!previewDirty && (issueGroups.length > 0 || catalogBlocked || emptyExclusions.length > 0) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">{issueGroups.length || catalogBlocked ? '待處理' : '本批無可銷貨訂單'}</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
           {emptyExclusions.map(choice => <li key={choice.number}>{choice.number}：{choice.reason}</li>)}
           {catalogIssues.map(value => <li key={value}>{value}</li>)}
@@ -289,6 +317,31 @@ function ConverterPage({ user }) {
         </ul></div>}
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>
+      {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
+        const key = barcodeConflictKey(conflict);
+        const canConfirm = conflict.canConfirm === true;
+        return <div key={key} className="rounded-lg border border-slate-200 p-4">
+          <p className="font-medium">{conflict.sourceName || products.find(item => item.sku === conflict.sourceSku)?.productName || conflict.erpName}</p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <div><h3 className="text-sm font-medium">{conflict.platform} 商品</h3><dl className="mt-2 space-y-1 text-sm">
+              <div><dt className="inline text-slate-600">品號：</dt><dd className="inline break-all font-medium">{conflict.sourceSku}</dd></div>
+              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.sourceBarcode}</dd></div>
+            </dl></div>
+            <div><h3 className="text-sm font-medium">ECOUNT 商品</h3><dl className="mt-2 space-y-1 text-sm">
+              <div><dt className="inline text-slate-600">品號：</dt><dd className="inline break-all font-medium">{conflict.erpSku}</dd></div>
+              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.erpBarcode}</dd></div>
+              <div><dt className="inline text-slate-600">品名：</dt><dd className="inline">{conflict.erpName}</dd></div>
+              {conflict.spec && <div><dt className="inline text-slate-600">規格：</dt><dd className="inline">{conflict.spec}</dd></div>}
+            </dl></div>
+          </div>
+          <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
+            <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
+            <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
+          </fieldset>
+          {!canConfirm && profileId && <p className="mt-2 text-sm text-amber-950">{conflict.variantIds?.length > 1 ? '同貨號有多個版本，請核對商城商品設定' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>}
+          {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
+        </div>;
+      })}</div></section>}
       {(needsStore || storeSetupOpen || choosingStore) && <section className={sectionClass} aria-label="店鋪設定"><h2 className="font-semibold">{matchingProfiles.length ? '確認銷貨店鋪' : '首次店鋪設定'}</h2><fieldset disabled={locked}><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{settingsField('商城店鋪', 'store')}{settingsField('ECOUNT 銷貨客戶編碼', 'customerCode')}{settingsField('ECOUNT 客戶名稱', 'customerName')}</div></fieldset></section>}
       {unresolvedProducts.length > 0 && <details className={sectionClass} open><summary className="cursor-pointer font-semibold">待對照商品（{unresolvedProducts.length} 項）</summary><fieldset disabled={locked}><div className="mt-4 space-y-3">{unresolvedProducts.map(item => {
         const mapped = settings.skuMappings?.[item.sku] || {};

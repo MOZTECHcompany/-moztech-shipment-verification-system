@@ -24,7 +24,7 @@ const QUERY = `query WmsCurrentOrder($id: ID!, $after: String) {
         id name sku quantity currentQuantity unfulfilledQuantity requiresShipping taxable
         originalUnitPriceSet ${MONEY_SELECTION}
         priceAfterAllDiscountsBeforeTaxesSet ${MONEY_SELECTION}
-        variant { barcode }
+        variant { id barcode }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -174,8 +174,9 @@ function normalizeOrder(source, order) {
     const netMinor = money(item.priceAfterAllDiscountsBeforeTaxesSet, currency, '商品目前成交金額', name);
     const grossMinor = unitMinor * item.currentQuantity;
     if (!Number.isSafeInteger(grossMinor) || netMinor > grossMinor) fail('SHOPIFY_LINE_MONEY_INVALID', 'Shopify 商品成交金額與有效數量不一致', name);
-    const barcode = text(item.variant?.barcode);
-    return { item, sku, unitMinor, netMinor, grossMinor, barcode: barcode && barcode.length <= 100 && !/[\u0000-\u001f\u007f]/.test(barcode) && !/^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(barcode) ? barcode : '' };
+    const barcode = text(item.variant?.barcode), variantId = text(item.variant?.id);
+    if (variantId && !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(variantId)) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 商品版本無法核對', name);
+    return { item, sku, unitMinor, netMinor, grossMinor, variantId, barcode: barcode && barcode.length <= 100 && !/[\u0000-\u001f\u007f]/.test(barcode) && !/^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(barcode) ? barcode : '' };
   });
   const subtotal = lineValues.reduce((sum, item) => sum + item.netMinor, 0), gross = lineValues.reduce((sum, item) => sum + item.grossMinor, 0);
   if (!Number.isSafeInteger(subtotal) || !Number.isSafeInteger(gross) || subtotal !== amounts.currentSubtotalPriceSet || subtotal + amounts.currentShippingPriceSet !== amounts.currentTotalPriceSet) fail('SHOPIFY_TOTAL_MISMATCH', 'Shopify 有效商品、運費與目前總額不一致，須先核對', name);
@@ -216,7 +217,7 @@ function normalizeOrder(source, order) {
   const evidence = { number: name, id: source.id, updatedAt: order.updatedAt, edited: order.edited === true, cancelled: Boolean(order.cancelledAt), cancelledAt: order.cancelledAt || null, currency, fulfillmentStatus: fulfillment, paymentStatus: order.displayFinancialStatus.toLowerCase(), currentQuantity, remainingQuantity,
     subtotalMinor: subtotal, shippingMinor: amounts.currentShippingPriceSet, discountMinor: amounts.currentTotalDiscountsSet, totalMinor: amounts.currentTotalPriceSet, outstandingMinor: amounts.totalOutstandingSet, receivedMinor: amounts.totalReceivedSet,
     removedLineIds: items.filter(item => item.currentQuantity === 0).map(item => item.id),
-    items: lineValues.map(({ item, sku, barcode, netMinor }) => ({ id: item.id, sku, quantity: item.currentQuantity, unfulfilledQuantity: item.unfulfilledQuantity, netMinor, ...(barcode ? { barcode, barcodeSource: 'shopify-variant' } : {}) })),
+    items: lineValues.map(({ item, sku, barcode, variantId, netMinor }) => ({ id: item.id, sku, quantity: item.currentQuantity, unfulfilledQuantity: item.unfulfilledQuantity, netMinor, ...(variantId ? { variantId } : {}), ...(barcode ? { barcode, barcodeSource: 'shopify-variant' } : {}) })),
   };
   // Cover current delivery data without exposing addresses in evidence or logs.
   evidence.shippingSource = order.shippingAddress ? 'shopify-current' : 'source-csv';

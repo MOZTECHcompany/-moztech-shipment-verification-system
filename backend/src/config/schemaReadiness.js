@@ -1,6 +1,7 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    marketplace_product_mapping_reviews: ['id','store_profile_id','fingerprint','evidence','confirmed_by','confirmed_at','revoked_by','revoked_at'],
     marketplace_batch_notices: ['id','intake_id','stage','actor_id','actor_name','actor_role','created_at'],
     marketplace_batch_notice_recipients: ['notice_id','user_id','seen_at'],
     marketplace_warehouse_flows: ['intake_id','erp_receipt','prepick_counts','prepick_completed_at'],

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMarketplaceRows, parseMoneyMinor, formatMinor, validateMarketplaceExport, buildEcountRows, buildPrepickRows, buildMarketplaceAuditRows, ECOUNT_HEADERS } from '../src/utils/marketplaceIntake.mjs';
+import { parseMarketplaceRows, parseMoneyMinor, formatMinor, validateMarketplaceExport, buildEcountRows, buildPrepickRows, buildMarketplaceAuditRows, warehouseProductDetails, warehousePrepickDetails, ECOUNT_HEADERS } from '../src/utils/marketplaceIntake.mjs';
 
 // Entirely synthetic: no customer details or real order/item identifiers.
 const allow = ['TEST-A', 'TEST-B'];
@@ -144,6 +144,33 @@ test('shipping requires verified non-stock ERP item and never contributes prepic
 });
 test('prepick groups by SKU+verified barcode, retains source orders, category and bundle names', () => {
   const p = buildPrepickRows(parse(), settings()); const common = p.rows.find((r) => r[1] === '0001-02'); assert.equal(common[0], '合成分類'); assert.equal(common[6], 2); assert.match(common[7], /TEST-A.*TEST-B/); assert.match(common[8], /合成組合商品/);
+});
+test('prepick retains effective marketplace names and ERP specifications while ERP sales still use the ERP product name', () => {
+  const p=parse(),s=settings();
+  p.items[0].productName='保護貼 iPhone 18 Pro';
+  p.items[3].productName='iPhone 18 Pro 保護貼（附配件）';
+  s.skuMappings['0001-02'].erpName='ERP 保護貼';
+  s.skuMappings['0001-02'].spec='iPhone 18 Pro';
+  const before=structuredClone({p,s}),out=buildPrepickRows(p,s);
+  const row=out.rows.find(r=>r[1]==='0001-02');
+  assert.equal(row[4],'保護貼 iPhone 18 Pro\niPhone 18 Pro 保護貼（附配件）');
+  assert.equal(row[5],2);assert.equal(row[6],2);
+  assert.equal(row[out.headers.indexOf('ECOUNT品項名稱')],'ERP 保護貼');
+  assert.equal(row[out.headers.indexOf('規格')],'iPhone 18 Pro');
+  const sales=buildEcountRows(p,s).rows.filter(r=>r[11]==='0001-02');
+  assert.deepEqual(sales.map(r=>[r[16],r[18]]),[['ERP 保護貼','iPhone 18 Pro'],['ERP 保護貼','iPhone 18 Pro']]);
+  assert.deepEqual({p,s},before);
+});
+test('old prepick presentation is refreshed without changing saved identifiers, quantities or source traces', () => {
+  const saved={headers:['分類（對照設定）','來源SKU','ECOUNT品項編碼','已確認國際條碼','商品名稱','實體數量','商城訂單數','來源商城訂單','來源組合／分組','用途'],rows:[['未分類','NEW0001','NEW0001','0001','ERP 舊品名',450,10,'ORDER-A / ORDER-B','','預揀']]};
+  const items=[{sku:'NEW0001',productName:'API 查核後品名 iPhone Pro',rawProductName:'舊 CSV 品名'}],mappings={NEW0001:{erpName:'ERP 舊品名',spec:'iPhone Pro'}};
+  const before=structuredClone({saved,items,mappings}),updated=warehousePrepickDetails(saved,items,mappings);
+  assert.equal(updated.rows[0][4],'API 查核後品名 iPhone Pro');
+  assert.deepEqual(updated.rows[0].slice(0,4),saved.rows[0].slice(0,4));
+  assert.deepEqual(updated.rows[0].slice(5,10),saved.rows[0].slice(5,10));
+  assert.deepEqual(updated.rows[0].slice(10),['ERP 舊品名','iPhone Pro']);
+  assert.deepEqual({saved,items,mappings},before);
+  assert.deepEqual(warehouseProductDetails({productName:'  '},{erpName:'ERP 備用品名',spec:' Pro '}),{productName:'ERP 備用品名',erpName:'ERP 備用品名',spec:'Pro'});
 });
 test('pending acknowledgement is required and never changes source payment state', () => {
   const s = settings(); s.pendingTestAcknowledged = false; const p = parse(); assert.ok(codes(validateMarketplaceExport(p, s)).includes('PENDING_TEST_ACK_REQUIRED')); assert.equal(buildPrepickRows(p, s).ok, false); assert.ok(p.orders.every((o) => o.paymentStatus === 'pending'));

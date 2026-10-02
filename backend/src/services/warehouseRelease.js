@@ -11,8 +11,26 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const productKey=i=>JSON.stringify([i.productCode,i.barcode]);
 function products(orders){
  const result=new Map();
- for(const o of orders)for(const i of o.expected_items){const key=productKey(i);if(!result.has(key))result.set(key,{key,productCode:i.productCode,productName:i.productName,barcode:i.barcode,quantity:0});result.get(key).quantity+=i.quantity;}
- return [...result.values()].sort((a,b)=>a.productCode.localeCompare(b.productCode));
+ for(const o of orders)for(const i of o.expected_items){const key=productKey(i);if(!result.has(key))result.set(key,{key,productCode:i.productCode,barcode:i.barcode,quantity:0,names:new Set(),specs:new Set()});const p=result.get(key);p.quantity+=i.quantity;if(i.productName)p.names.add(i.productName);if(i.spec)p.specs.add(i.spec);}
+ return [...result.values()].map(({names,specs,...p})=>({...p,productName:[...names].join('\n'),spec:[...specs].join('\n')})).sort((a,b)=>a.productCode.localeCompare(b.productCode));
+}
+async function warehouseOrderProductDetails(orders,snapshot={}){
+ const {warehouseProductDetails}=await import('./marketplaceIntake.mjs');
+ const sourceItems=new Map((snapshot?.items||[]).map(i=>[JSON.stringify([i.sourceOrderNumber,i.sourceLineId]),i]));
+ return orders.map(o=>({...o,expected_items:o.expected_items.map(i=>{
+  const source=sourceItems.get(JSON.stringify([o.source_order_number,i.sourceLineId]));
+  if(!source||(i.sourceSku&&i.sourceSku!==source.sku))return {...i};
+  const mapping=snapshot.settings?.skuMappings?.[source.sku]||{};
+  if(mapping.erpSku&&mapping.erpSku!==i.productCode)return {...i};
+  const details=warehouseProductDetails(source,mapping);
+  return {...i,productName:details.productName||i.productName,erpName:details.erpName||i.erpName||'',spec:details.spec||i.spec||''};
+ })}));
+}
+function marketplaceWorkItemName(item,expectedItems){
+ const expected=expectedItems.find(i=>i.sourceLineId===item.sourceLineId&&i.productCode===item.productCode);
+ const name=String(expected?.productName||item.productName||'').trim(),spec=String(expected?.spec||'').trim();
+ if(spec&&!name.includes(spec))return `${name} · ${spec}`;
+ return name;
 }
 async function enableFlow(db,id,actor){
  const linked=(await db.query('SELECT 1 FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE o.intake_id=$1 LIMIT 1',[id])).rowCount;
@@ -26,9 +44,10 @@ async function readFlow(db,id){
  if(!batch)throw fail('找不到批次',404);
  const flow=(await db.query(`SELECT f.*,p.name AS print_owner_name,u.name AS prepick_owner_name,c.name AS erp_confirmed_name FROM marketplace_warehouse_flows f
  LEFT JOIN users p ON p.id=f.print_owner_id LEFT JOIN users u ON u.id=f.prepick_owner_id LEFT JOIN users c ON c.id=f.erp_confirmed_by WHERE f.intake_id=$1`,[id])).rows[0]||null;
- const orders=(await db.query(`SELECT s.*,l.order_id,w.status,w.picker_id,w.packer_id,p.name AS picker_name,k.name AS packer_name
+ const storedOrders=(await db.query(`SELECT s.*,l.order_id,w.status,w.picker_id,w.packer_id,p.name AS picker_name,k.name AS packer_name
  FROM marketplace_intake_orders s LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=s.id LEFT JOIN orders w ON w.id=l.order_id
  LEFT JOIN users p ON p.id=w.picker_id LEFT JOIN users k ON k.id=w.packer_id WHERE s.intake_id=$1 ORDER BY s.id`,[id])).rows;
+ const orders=await warehouseOrderProductDetails(storedOrders,batch.snapshot);
  const snStats=(await db.query(`SELECT i.order_id,i.source_line_id,COUNT(s.id)::int AS sn_count FROM order_items i
  LEFT JOIN order_item_instances s ON s.order_item_id=i.id WHERE i.order_id=ANY($1::int[]) GROUP BY i.id`,[orders.filter(o=>o.order_id).map(o=>o.order_id)])).rows;
  const snMap=new Map(snStats.map(i=>[JSON.stringify([i.order_id,i.source_line_id]),i.sn_count]));
@@ -73,6 +92,7 @@ async function mutateFlow(pool,id,action,body,user,io){
   if(['confirm-sales','confirm-return'].includes(action)){
    if(action==='confirm-sales'&&body.savedSalesConfirmed!==true)throw fail('請確認這份檔案來自 ECOUNT 已儲存銷貨明細',400);
    await require('./marketplaceProductCatalog').verifyCatalogMappings(db,data.batch.snapshot.settings,[...new Set(data.batch.snapshot.items.map(i=>i.sku))]);
+   await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(db,data.batch.snapshot);
    const result=await reconcileSales(body.rows,{...data.batch,orders:data.orders},{logistics:action==='confirm-return'}).catch(e=>{throw fail(e.message,400);});
    if(f.erp_receipt){if(f.erp_receipt.fingerprint!==result.receipt.fingerprint)throw fail('此批已核對不同的 ERP 結果，請處理原單據差異，不可覆寫或重複建單');}
    else{
@@ -86,10 +106,10 @@ async function mutateFlow(pool,id,action,body,user,io){
      await db.query('INSERT INTO marketplace_work_order_links(intake_order_id,order_id) VALUES($1,$2)',[source.id,orderId]);
      for(const item of group.items){
       const itemId=(await db.query(`INSERT INTO order_items(order_id,product_code,product_name,quantity,barcode,source_order_number,source_platform,source_store,source_line_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,[orderId,item.productCode,item.productName,item.quantity,item.barcode,source.source_order_number,source.source_platform,source.source_store,item.sourceLineId])).rows[0].id;
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,[orderId,item.productCode,marketplaceWorkItemName(item,source.expected_items),item.quantity,item.barcode,source.source_order_number,source.source_platform,source.source_store,item.sourceLineId])).rows[0].id;
       for(const sn of item.serials)await db.query('INSERT INTO order_item_instances(order_item_id,serial_number) VALUES($1,$2)',[itemId,sn]);
      }
-     await db.query("INSERT INTO operation_logs(user_id,order_id,action_type,details) VALUES($1,$2,'import',$3)",[user.id,orderId,JSON.stringify({method:action==='confirm-return'?'erp_warehouse_return':'erp_sales_receipt',marketplaceIntakeId:Number(id),erpVouchers:result.receipt.vouchers,warehouseHold:true,sourceDetails:group.items.map(i=>({sourceLineId:i.sourceLineId,serials:i.serials,serialSource:i.serialSource,summary:i.sourceSummary}))})]);
+     await db.query("INSERT INTO operation_logs(user_id,order_id,action_type,details) VALUES($1,$2,'import',$3)",[user.id,orderId,JSON.stringify({method:action==='confirm-return'?'erp_warehouse_return':'erp_sales_receipt',marketplaceIntakeId:Number(id),erpVouchers:result.receipt.vouchers,warehouseHold:true,sourceDetails:group.items.map(i=>{const expected=source.expected_items.find(e=>e.sourceLineId===i.sourceLineId&&e.productCode===i.productCode);return {sourceLineId:i.sourceLineId,serials:i.serials,serialSource:i.serialSource,summary:i.sourceSummary,productName:marketplaceWorkItemName(i,source.expected_items),erpProductName:expected?.erpName||'',spec:expected?.spec||''};})})]);
     }
     await db.query('UPDATE marketplace_warehouse_flows SET erp_receipt=$2,erp_confirmed_by=$3,erp_confirmed_at=NOW(),import_batch_id=$4 WHERE intake_id=$1',[id,JSON.stringify(result.receipt),user.id,batchId]);
     await notifyMarketplaceBatch({db,events,intakeId:id,actorId:user.id,stage:'ready_for_print'});
@@ -149,4 +169,4 @@ async function mutateFlow(pool,id,action,body,user,io){
   throw e;
  }finally{db.release(tainted);}
 }
-module.exports={enableFlow,readFlow,mutateFlow,products,manager,warehouseManager};
+module.exports={enableFlow,readFlow,mutateFlow,products,warehouseOrderProductDetails,marketplaceWorkItemName,manager,warehouseManager};

@@ -507,6 +507,43 @@ export function buildEcountRows(parsed, settings = {}) {
   return result;
 }
 
+export function warehouseProductDetails(item = {}, mapping = {}) {
+  return {
+    productName: text(item.productName) || text(mapping.erpName || mapping.name),
+    erpName: text(mapping.erpName || mapping.name),
+    spec: text(mapping.spec),
+  };
+}
+
+// Old snapshots keep their quantities and identifiers. Only their warehouse
+// presentation is rebuilt from the effective order lines saved in that batch.
+export function warehousePrepickDetails(prepick, items = [], skuMappings = {}) {
+  const headers = [...(prepick?.headers || [])];
+  const skuIndex = headers.indexOf('來源SKU'), nameIndex = headers.indexOf('商品名稱');
+  if (skuIndex < 0 || nameIndex < 0) return prepick;
+  const addColumn = label => {
+    const existing = headers.indexOf(label);
+    return existing < 0 ? headers.push(label) - 1 : existing;
+  };
+  const erpNameIndex = addColumn('ECOUNT品項名稱'), specIndex = addColumn('規格');
+  const names = new Map();
+  for (const item of items) {
+    const sku = text(item.sku), name = text(item.productName);
+    if (!name) continue;
+    if (!names.has(sku)) names.set(sku, new Set());
+    names.get(sku).add(name);
+  }
+  const rows = (prepick.rows || []).map(row => {
+    const next = [...row], sku = text(row[skuIndex]);
+    const details = warehouseProductDetails({}, skuMappings[sku] || {});
+    next[nameIndex] = names.has(sku) ? [...names.get(sku)].join('\n') : text(row[nameIndex]) || details.productName;
+    next[erpNameIndex] = details.erpName;
+    next[specIndex] = details.spec;
+    return next;
+  });
+  return { ...prepick, headers, rows };
+}
+
 export function buildPrepickRows(parsed, settings = {}) {
   const preview = settings.preview === true;
   const issues = [...(parsed.issues || []).filter((i) => i.severity === 'error'), ...(preview ? [] : mappingIssues(parsed, settings))];
@@ -528,5 +565,5 @@ export function buildPrepickRows(parsed, settings = {}) {
     return [text(m.category) || '未分類', item.sku, text(m.erpSku), barcodeConfirmed ? text(m.barcode) : '', text(m.erpName || item.productName), quantity, orders.size, [...orders].sort().join(' / '), [...sourceGroups].join(' / '), preview ? `待核對${!text(m.barcode) || !barcodeConfirmed ? '；條碼未確認' : ''}；不是出貨授權或 ERP／WMS 匯入檔` : '測試預揀；不是 ECOUNT／WMS 匯入檔'];
   });
   result.summary = { ...result.summary, skuCount: result.rows.length, physicalQuantity: sum(result.rows.map((r) => r[5])) };
-  return result;
+  return warehousePrepickDetails(result, parsed.items, settings.skuMappings);
 }

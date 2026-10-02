@@ -23,8 +23,8 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
  }
  const ok=(r,status=200)=>{assert.equal(r.status,status,JSON.stringify(r.data));return r.data;};
  const headers=['Name','Financial Status','Fulfillment Status','Currency','Subtotal','Shipping','Taxes','Total','Discount Amount','Refunded Amount','Lineitem quantity','Lineitem name','Lineitem price','Lineitem sku','Lineitem discount','Payment Method'];
- const rows=[headers,['TEST-A','paid','unfulfilled','TWD','105','0','0','105','0','0','1','品項 A','105','0001','0','card'],['TEST-B','paid','unfulfilled','TWD','210','0','0','210','0','0','2','品項 A','105','0001','0','card']];
- const settings={store:'本機隔離',customerCode:'CUST',customerName:'客戶',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-RELEASE-0917',salesExportMode:'order-lines-v1',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'品項 A',barcode:'4711299273087',confirmed:true,barcodeConfirmed:true}},shippingSku:{}};
+ const rows=[headers,['TEST-A','paid','unfulfilled','TWD','105','0','0','105','0','0','1','商城品項 A（無貼膜神器）','105','0001','0','card'],['TEST-B','paid','unfulfilled','TWD','210','0','0','210','0','0','2','商城品項 A（無貼膜神器）','105','0001','0','card']];
+ const settings={store:'本機隔離',customerCode:'CUST',customerName:'客戶',warehouseCode:'003',date:'2026-09-17',batchSequence:'1',batchNumber:'TEST-RELEASE-0917',salesExportMode:'order-lines-v1',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,skuMappings:{'0001':{erpSku:'ERP-0001',erpName:'品項 A',spec:'MODEL-PRO',barcode:'4711299273087',confirmed:true,barcodeConfirmed:true}},shippingSku:{}};
  const saved=ok(await api('dispatcher','POST','/api/marketplace-intakes',{rows,settings}),201);
  await t.test('save commits one private supervisor notice while staff and order-only admins cannot read it',async()=>{
   const inbox=ok(await api('admin','GET','/api/marketplace-batch-notices'));assert.equal(inbox.total,1);assert.equal(inbox.notices[0].stage,'prepared');assert.equal(inbox.notices[0].intakeId,saved.id);
@@ -105,6 +105,19 @@ test('sales receipt to prepick to independent pick and pack', {skip:process.env.
   const heldScan=await api('picker','POST','/api/orders/update_item',{orderId:heldId,scanValue:'ABCD12345678',type:'pick'});
   assert.equal(heldScan.status,409);assert.match(heldScan.data.message,/預揀/);
   await pool.query("UPDATE orders SET status='pending',picker_id=NULL WHERE id=$1",[heldId]);
+ });
+ await t.test('marketplace work items retain the complete source name and ERP specification while sales and receipts stay unchanged',async()=>{
+  const items=(await pool.query('SELECT product_code,product_name,quantity,barcode FROM order_items WHERE order_id=ANY($1::int[]) ORDER BY order_id',[data.orders.map(o=>o.order_id)])).rows;
+  assert.deepEqual(items.map(i=>i.product_name),Array(2).fill('商城品項 A（無貼膜神器） · MODEL-PRO'));
+  assert.deepEqual(items.map(i=>i.quantity),[1,2]);
+  assert.ok(items.every(i=>i.product_code==='ERP-0001'&&i.barcode==='4711299273087'));
+  const snapshot=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[saved.id])).rows[0].snapshot;
+  assert.ok(snapshot.rows.every(r=>r[16]==='品項 A'&&r[18]==='MODEL-PRO'));
+  const trace=(await pool.query("SELECT details::jsonb AS details FROM operation_logs WHERE order_id=ANY($1::int[]) AND action_type='import' ORDER BY order_id",[data.orders.map(o=>o.order_id)])).rows;
+  assert.ok(trace.every(r=>r.details.sourceDetails[0].erpProductName==='品項 A'&&r.details.sourceDetails[0].spec==='MODEL-PRO'));
+  const savedReceipt=(await pool.query('SELECT erp_receipt FROM marketplace_warehouse_flows WHERE intake_id=$1',[saved.id])).rows[0].erp_receipt;
+  assert.equal(savedReceipt.financials.grossMinor,31500);
+  assert.deepEqual(savedReceipt.lines.map(l=>l.quantity),[1,2]);
  });
  await t.test('assigned warehouse admin loses prepick permission when scope changes to orders',async()=>{
   await pool.query("UPDATE users SET management_scope='warehouse' WHERE id=$1",[users.admin]);

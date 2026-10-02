@@ -41,3 +41,13 @@ test('order papers show concise delivery information per order while the prepick
  const legacy=renderToStaticMarkup(React.createElement(module.exports.WarehousePaper,{data:{...data,orders:[data.orders[1]]},kind:'orders'}));
  assert.doesNotMatch(legacy,/收件：|地址：|配送：|物流單號：|出貨備註：/);
 });
+
+test('warehouse papers retain full product variants and print ERP specifications beside the names',()=>{
+ const item={productCode:'NEW0001',productName:'保護貼 iPhone Pro（無貼膜神器）',spec:'iPhone Pro / Pro Plus',barcode:'0001',quantity:2,snCount:2};
+ const data={batch:{batch_number:'WMS-NAME',source_platform:'Shopify',source_store:'測試'},orders:[{id:1,source_order_number:'ORDER-1',work_barcode:'WTNAME1',expected_items:[item]}],products:[item]};
+ const html=renderToStaticMarkup(React.createElement(module.exports.WarehousePaper,{data,kind:'all'}));
+ assert.equal((html.match(/保護貼 iPhone Pro（無貼膜神器）/g)||[]).length,2);
+ assert.equal((html.match(/規格：iPhone Pro \/ Pro Plus/g)||[]).length,2);
+ assert.equal((html.match(/data-barcode="0001"/g)||[]).length,2);
+ assert.match(html,/須核對 2 組 SN/);
+});

@@ -9,6 +9,7 @@ const {safeSettings}=require('../services/marketplaceSettings');
 const {createMarketplacePreparation}=require('../services/marketplacePreparation');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
+const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
 function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool})}){
  const router=express.Router();
@@ -16,9 +17,20 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
  require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool);
  router.post('/preview',async(req,res,next)=>{try{
   const result=await prepareMarketplace(req.body||{});
-  const {sourceEvidence,...preview}=result;
+  const {sourceEvidence,barcodeReviewCandidates,...preview}=result;
   res.set('Cache-Control','private, no-store').json(preview);
  }catch(e){if(e.status)return res.status(e.status).json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber});next(e);}});
+ router.post('/barcode-confirmations',async(req,res,next)=>{try{
+  const requested=req.body?.confirmation;
+  if(requested?.confirmed!==true||typeof requested.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(requested.fingerprint))throw Object.assign(new Error('請先核對實物與 ECOUNT 品項'),{status:400,code:'BARCODE_CONFIRMATION_REQUIRED'});
+  const conversion=await prepareMarketplace(req.body||{},{refresh:true});
+  if(!conversion.profileId)throw Object.assign(new Error('請先選擇店鋪'),{status:400,code:'STORE_PROFILE_REQUIRED'});
+  if(!conversion.verification?.currentFingerprint||req.body.verificationFingerprint!==conversion.verification.currentFingerprint)throw Object.assign(new Error('商城訂單已更新，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
+  const candidate=conversion.barcodeReviewCandidates?.find(c=>c.fingerprint===requested.fingerprint);
+  if(!candidate)throw Object.assign(new Error('商品資料已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
+  const review=await confirmBarcodeReview(pool,candidate,req.user);
+  res.status(201).set('Cache-Control','private, no-store').json({confirmed:true,id:review.id,confirmedAt:review.confirmed_at});
+ }catch(e){if(e.status)return res.status(e.status).json({code:e.code,message:e.message});next(e);}});
  router.get('/',async(req,res,next)=>{try{
   res.set('Cache-Control','private, no-store').json(await listBatches(pool,req.query));
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
@@ -28,7 +40,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   if(!rows.rows.length)return res.status(404).json({message:'找不到轉檔批次'});
   let reviewWarning='';
   const snapshot=rows.rows[0].snapshot;
-  try{await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))]);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
+  try{await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))]);await verifySavedBarcodeReviews(pool,snapshot);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
   let financials=null,financialWarning='';
   try{financials=(await import('../services/marketplaceIntake.mjs')).prepareEcountFinancials(snapshot).financials;}catch(e){financialWarning=e.message;}
   res.set('Cache-Control','private, no-store').json({financials,financialWarning,...publicRecord(rows.rows[0]),handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
@@ -39,6 +51,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   if(!record)return res.status(404).json({message:'找不到轉檔批次'});
   if(['ecount','ecount-grouped'].includes(req.body?.kind)){
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))]);
+   await verifySavedBarcodeReviews(pool,record.snapshot);
    try{(await import('../services/marketplaceBatchFiles.mjs')).savedBatchTables(record.snapshot,req.body.kind);}catch(e){throw Object.assign(e,{status:400});}
   }
   require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id);
@@ -58,7 +71,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))]);
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows,...(verification?{currentFingerprint:verification.currentFingerprint}:{})});
-   const snapshot={handler:captureHandler(req.user),settings,sourceEvidence,summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
+   const snapshot={handler:captureHandler(req.user),settings,sourceEvidence,barcodeReviews:conversion.barcodeReviews||[],summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
     orders:parsed.orders.map(o=>({...o,sourceFinancial:raw.orders.find(r=>r.sourceOrderNumber===o.sourceOrderNumber)?.financial})),items:parsed.items,
     prepick:{headers:conversion.prepick.headers,rows:conversion.prepick.rows}};
    db=await pool.connect();await db.query('BEGIN');open=true;
@@ -74,7 +87,8 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    }
    const record=(await db.query('INSERT INTO marketplace_intakes(batch_number,source_platform,source_store,fingerprint,created_by,snapshot) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[clean(settings.batchNumber),source.platform,clean(settings.store),fingerprint,req.user.id,JSON.stringify(snapshot)])).rows[0];
    for(const order of parsed.orders){
-    const items=parsed.items.filter(i=>i.sourceOrderNumber===order.sourceOrderNumber).map(i=>({sourceLineId:i.sourceLineId,sourceSku:i.sku,productCode:clean(settings.skuMappings[i.sku].erpSku),productName:clean(settings.skuMappings[i.sku].erpName||i.productName),quantity:i.quantity,barcode:settings.skuMappings[i.sku].barcodeConfirmed===true?clean(settings.skuMappings[i.sku].barcode):'',groupName:i.groupName}));
+    const {warehouseProductDetails}=await import('../services/marketplaceIntake.mjs');
+    const items=parsed.items.filter(i=>i.sourceOrderNumber===order.sourceOrderNumber).map(i=>({sourceLineId:i.sourceLineId,sourceSku:i.sku,productCode:clean(settings.skuMappings[i.sku].erpSku),...warehouseProductDetails(i,settings.skuMappings[i.sku]),quantity:i.quantity,barcode:settings.skuMappings[i.sku].barcodeConfirmed===true?clean(settings.skuMappings[i.sku].barcode):'',groupName:i.groupName}));
     const physicalIds=new Set(items.map(i=>i.sourceLineId));
     const nonstock=output.rows.filter(r=>r[12]===order.sourceOrderNumber&&!physicalIds.has(r[15])).map(r=>({sourceLineId:r[15],productCode:r[11],quantity:r[19]}));
     await db.query('INSERT INTO marketplace_intake_orders(intake_id,source_platform,source_store,source_order_number,expected_items,nonstock_items,financial) VALUES($1,$2,$3,$4,$5,$6,$7)',[record.id,order.sourcePlatform,clean(settings.store),order.sourceOrderNumber,JSON.stringify(items),JSON.stringify(nonstock),JSON.stringify({source:raw.orders.find(r=>r.sourceOrderNumber===order.sourceOrderNumber).financial,ecount:order.financial})]);

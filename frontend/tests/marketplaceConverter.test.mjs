@@ -35,12 +35,13 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {} } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
     const storage = new Map([['wms_token', JSON.stringify('synthetic-token')], ['wms_user', JSON.stringify(user)]]);
     let cursor = 0, dirty = false, tree, mounted = true, lateUpdates = 0;
+    const confirmedBarcodes = new Set();
     const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
     const react = {
         createElement: (type, props, ...children) => ({ type, props: { ...props, ...(children.length ? { children } : {}) } }),
@@ -54,6 +55,11 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         if(url==='/api/marketplace-intakes/store-profiles')return {data:{id:9,platform:body.platform,store:body.settings.store,settings:body.settings}};
         if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}};
         if (denied) throw Error('Forbidden');
+        if (url === '/api/marketplace-intakes/barcode-confirmations') {
+            if (barcodeConfirmationError) throw Object.assign(Error(barcodeConfirmationError), {response:{data:{message:barcodeConfirmationError}}});
+            confirmedBarcodes.add(body.confirmation.fingerprint);
+            return {data:{confirmed:true}};
+        }
         if (url === '/api/marketplace-intakes/preview') {
             if (previewError) throw typeof previewError === 'string' ? Error(previewError) : Object.assign(Error(previewError.message), {response:{data:previewError}});
             const source = unified.parseUnifiedMarketplace(body.rows);
@@ -69,7 +75,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
                 effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || provided.barcodeConfirmed === true};
             }
             const prepared = unified.prepareUnifiedMarketplace(raw,effectiveSettings);
-            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification}}};
+            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:barcodeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         const built=unified.buildUnifiedConversion(body.rows,body.settings);
@@ -138,6 +144,83 @@ test('API preview failure never falls back to a locally exportable CSV', async (
     assert.equal(downloadSales(view), undefined);
     assert.ok(view.button('重新核對訂單'));
     assert.equal(view.downloads.length, 0);
+});
+
+const barcodeConflict = { fingerprint: 'specific-variant-barcode-review', platform: '1Shop', shop: 'Saved Store', sourceSku: '00123', sourceBarcode: 'NEW00123', erpSku: '00123', erpBarcode: '00123', erpName: 'ERP product without film tool', spec: 'iPhone X/Xs/11Pro', sourceName: '商城商品（無貼膜神器）', variantId: 'specific-variant', canConfirm: true };
+
+test('barcode conflict displays fixed source and ERP values without an automatic confirmation or sales bypass', async () => {
+    const view = await converter({barcodeConflicts:[barcodeConflict]}); await view.select(file());
+    assert.match(view.text(view.render()), /商品條碼待核對/);
+    assert.match(view.text(view.render()), /NEW00123/);
+    assert.match(view.text(view.render()), /商城商品（無貼膜神器）/);
+    assert.match(view.text(view.render()), /ERP product without film tool/);
+    assert.match(view.text(view.render()), /iPhone X\/Xs\/11Pro/);
+    assert.equal(downloadSales(view).props.disabled, true, 'conflicts block even an otherwise valid output');
+    assert.equal(view.button('保存商品對照').props.disabled, true);
+    assert.equal(view.all(node=>node.type==='input' && node.props.type==='checkbox' && node.props.checked).length, 0);
+    assert.equal(view.all(node=>node.type==='input' && ['00123','NEW00123'].includes(node.props.value)).length, 0, 'conflicting identifiers are not editable');
+    await view.button('保存商品對照').props.onClick();
+    await downloadSales(view).props.onClick();
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes/barcode-confirmations').length,0);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,0);
+    assert.equal(view.downloads.length,0);
+});
+
+test('explicit barcode confirmation saves only the server fingerprint and reruns the authoritative preview', async () => {
+    const view = await converter({barcodeConflicts:[barcodeConflict]}); await view.select(file());
+    await view.change('已核對實物與 ERP',true);
+    assert.equal(view.button('保存商品對照').props.disabled,false);
+    await view.button('保存商品對照').props.onClick(); view.render();
+    const saved = view.requests.find(request=>request.url==='/api/marketplace-intakes/barcode-confirmations');
+    assert.equal(saved.body.profileId,'1');
+    assert.equal(saved.body.verificationFingerprint,'verified-current-order-v1');
+    assert.deepEqual(JSON.parse(JSON.stringify(saved.body.confirmation)),{fingerprint:barcodeConflict.fingerprint,confirmed:true});
+    assert.equal(saved.body.sourceSku,undefined); assert.equal(saved.body.erpSku,undefined);
+    assert.match(JSON.stringify(saved.body.rows), /00123/);
+    assert.equal(previewCalls(view).length,2);
+    assert.doesNotMatch(view.text(view.render()), /商品條碼待核對/);
+    assert.match(view.text(view.render()), /商品對照已保存/);
+    assert.equal(downloadSales(view).props.disabled,false);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,0);
+});
+
+test('barcode confirmation requires a store and failure keeps sales blocked until a fresh preview', async () => {
+    const noStore = await converter({profiles:[],barcodeConflicts:[barcodeConflict]}); await noStore.select(file());
+    assert.match(noStore.text(noStore.render()), /請先選擇店鋪/);
+    await noStore.change('已核對實物與 ERP',true);
+    await noStore.button('保存商品對照').props.onClick();
+    assert.equal(noStore.requests.filter(request=>request.url==='/api/marketplace-intakes/barcode-confirmations').length,0);
+    assert.equal(downloadSales(noStore).props.disabled,true);
+
+    const failed = await converter({barcodeConflicts:[barcodeConflict],barcodeConfirmationError:'商品條碼已變更，請重新核對'}); await failed.select(file());
+    await failed.change('已核對實物與 ERP',true);
+    await failed.button('保存商品對照').props.onClick(); failed.render();
+    assert.match(failed.text(failed.render()), /商品條碼已變更/);
+    assert.equal(downloadSales(failed).props.disabled,true);
+    assert.equal(failed.button('保存商品對照').props.disabled,true);
+    assert.equal(failed.downloads.length,0);
+    await failed.button('重新核對').props.onClick(); failed.render();
+    assert.equal(failed.button('保存商品對照').props.disabled,true,'fresh preview requires a new physical confirmation');
+});
+
+test('new upload clears physical barcode confirmation and does not reuse another batch decision', async () => {
+    const view = await converter({barcodeConflicts:[barcodeConflict]}); await view.select(file());
+    await view.change('已核對實物與 ERP',true);
+    assert.equal(view.button('保存商品對照').props.disabled,false);
+    await view.select(file());
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(downloadSales(view).props.disabled,true);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes/barcode-confirmations').length,0);
+});
+
+test('multiple variants with one source code cannot be saved as a confirmed product', async () => {
+    const view = await converter({barcodeConflicts:[{...barcodeConflict,canConfirm:false,variantId:'',variantIds:['variant-a','variant-b']}]}); await view.select(file());
+    assert.match(view.text(view.render()), /同貨號有多個版本，請核對商城商品設定/);
+    await view.change('已核對實物與 ERP',true);
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    await view.button('保存商品對照').props.onClick();
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes/barcode-confirmations').length,0);
+    assert.equal(downloadSales(view).props.disabled,true);
 });
 
 test('per-order preview and save errors identify the order without duplicating an existing prefix', async () => {

@@ -10,7 +10,7 @@ const table = records => {
 const objects = rows => rows.slice(1).map(row => Object.fromEntries(rows[0].map((key, i) => [key, row[i]])));
 const source = (overrides = {}) => ({ Name: '#154230', Id: '7624215101596', 'Financial Status': 'pending', 'Fulfillment Status': 'unfulfilled', Currency: 'TWD', Subtotal: '1880.00', Shipping: '0.00', Taxes: '0.00', Total: '1880.00', 'Discount Amount': '0.00', 'Refunded Amount': '0.00', 'Outstanding Balance': '1880.00', 'Payment Method': 'custom', 'Shipping Method': '超商取貨', 'Shipping Name': 'CSV receiver', 'Shipping Phone': 'CSV phone', 'Shipping Address1': 'CSV address', 'Shipping Address2': 'CSV address 2', 'Lineitem sku': '4711299274749', 'Lineitem name': 'Removed product', 'Lineitem quantity': 1, 'Lineitem price': '990.00', 'Lineitem discount': '0.00', ...overrides });
 const editedRows = () => table([source(), source({ Id: '', 'Outstanding Balance': '', 'Lineitem sku': '4711299272493', 'Lineitem name': 'Current product', 'Lineitem price': '890.00' })]);
-const item = (overrides = {}) => ({ id: 'gid://shopify/LineItem/16493014253724', name: 'Current product', sku: '4711299272493', quantity: 1, currentQuantity: 1, unfulfilledQuantity: 1, requiresShipping: true, taxable: true, originalUnitPriceSet: bag('890.00'), priceAfterAllDiscountsBeforeTaxesSet: bag('890.00'), variant: { barcode: '4711299272493' }, ...overrides });
+const item = (overrides = {}) => ({ id: 'gid://shopify/LineItem/16493014253724', name: 'Current product', sku: '4711299272493', quantity: 1, currentQuantity: 1, unfulfilledQuantity: 1, requiresShipping: true, taxable: true, originalUnitPriceSet: bag('890.00'), priceAfterAllDiscountsBeforeTaxesSet: bag('890.00'), variant: { id: 'gid://shopify/ProductVariant/123', barcode: '4711299272493' }, ...overrides });
 const order = (overrides = {}) => ({ id: 'gid://shopify/Order/7624215101596', name: '#154230', updatedAt: '2026-10-01T09:00:00Z', createdAt: '2026-09-30T02:00:00Z', edited: true, cancelledAt: null, currencyCode: 'TWD', presentmentCurrencyCode: 'TWD', taxesIncluded: false, displayFinancialStatus: 'PENDING', displayFulfillmentStatus: 'UNFULFILLED', paymentGatewayNames: ['manual'], discountCodes: [], currentSubtotalLineItemsQuantity: 1, currentSubtotalPriceSet: bag('890.00'), currentShippingPriceSet: bag('0.00'), currentTotalDiscountsSet: bag('0.00'), currentTotalTaxSet: bag('0.00'), currentTotalPriceSet: bag('890.00'), totalOutstandingSet: bag('890.00'), totalReceivedSet: bag('0.00'), totalRefundedSet: bag('0.00'), currentTotalAdditionalFeesSet: null, currentTotalDutiesSet: null, totalTipReceivedSet: bag('0.00'), shippingAddress: null, shippingLines: { nodes: [{ title: '超商取貨' }], pageInfo: { hasNextPage: false } }, lineItems: { nodes: [item({ id: 'gid://shopify/LineItem/16493009993884', sku: '4711299274749', name: 'Removed product', currentQuantity: 0, unfulfilledQuantity: 0, originalUnitPriceSet: bag('990.00'), priceAfterAllDiscountsBeforeTaxesSet: bag('0.00') }), item()], pageInfo: { hasNextPage: false, endCursor: 'END' } }, ...overrides });
 const response = (current, responseShop = shop) => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ data: { shop: { myshopifyDomain: responseShop }, order: current } }) });
 const run = (rows = editedRows(), current = order(), options = {}) => verifyShopifyRows(rows, { shop, token, fetchImpl: jest.fn(async () => response(current)), ...options });
@@ -28,6 +28,8 @@ test('currentQuantity removes edited-away product; current money and exact platf
   expect(request).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'X-Shopify-Access-Token': token } });
   expect(JSON.parse(request.body).variables).toEqual({ id: 'gid://shopify/Order/7624215101596', after: null });
   expect(JSON.parse(request.body).query).toMatch(/^query WmsCurrentOrder/);
+  expect(JSON.parse(request.body).query).toMatch(/variant\s*\{\s*id\s+barcode\s*\}/);
+  expect(result.verification.orders[0].items[0]).toMatchObject({variantId:'gid://shopify/ProductVariant/123',barcode:'4711299272493',barcodeSource:'shopify-variant'});
   expect(JSON.parse(request.body).query).not.toMatch(/mutation|discountedTotalSet|discountAllocations/);
 });
 
@@ -76,6 +78,16 @@ test('current item price and quantity reductions reconcile exact product discoun
   const result = await run(editedRows(), current);
   expect(objects(result.rows)[0]).toMatchObject({ 'Lineitem sku': 'NEW0001232', 'Lineitem quantity': 2, 'Lineitem price': '100.00', 'Lineitem discount': '39.99', 'Discount Amount': '39.99', Total: '160.01' });
   expect(result.verification.orders[0].items[0]).not.toHaveProperty('barcode');
+  expect(result.verification.orders[0].items[0]).not.toHaveProperty('variantId');
+});
+
+test('current variant evidence preserves the full NEW barcode and variant identity', async () => {
+  const current = order({ lineItems:{nodes:[item({sku:'4711299270086',name:'無貼膜神器',variant:{id:'gid://shopify/ProductVariant/999',barcode:'NEW4711299270086'}})],pageInfo:{hasNextPage:false}} });
+  const result = await run(editedRows(),current);
+  expect(objects(result.rows)[0]['Lineitem sku']).toBe('4711299270086');
+  expect(result.verification.orders[0].items[0]).toMatchObject({sku:'4711299270086',variantId:'gid://shopify/ProductVariant/999',barcode:'NEW4711299270086'});
+  const changed = await run(editedRows(),{...current,lineItems:{nodes:[{...current.lineItems.nodes[0],variant:{id:'gid://shopify/ProductVariant/1000',barcode:'NEW4711299270086'}}],pageInfo:{hasNextPage:false}}});
+  expect(changed.verification.fingerprint).not.toBe(result.verification.fingerprint);
 });
 
 test('a removed non-shippable item does not block a current physical shipment', async () => {
@@ -116,6 +128,7 @@ test.each([
   ['foreign customer currency', 'SHOPIFY_CURRENCY_UNSUPPORTED', current => ({ ...current, presentmentCurrencyCode: 'USD' })],
   ['money bag currency mismatch', 'SHOPIFY_MONEY_INVALID', current => ({ ...current, currentTotalPriceSet: { shopMoney: { amount: '890.00', currencyCode: 'USD' } } })],
   ['scientific SKU', 'SHOPIFY_SKU_INVALID', current => ({ ...current, lineItems: { nodes: [item({ sku: '4.71E+12' })], pageInfo: { hasNextPage: false } } })],
+  ['invalid variant ID', 'SHOPIFY_RESPONSE_INVALID', current => ({ ...current, lineItems: { nodes: [item({ variant:{id:'gid://shopify/Product/123',barcode:'4711299272493'} })], pageInfo: { hasNextPage: false } } })],
   ['duplicate platform line ID', 'SHOPIFY_LINE_ID_INVALID', current => ({ ...current, lineItems: { nodes: [item(), item()], pageInfo: { hasNextPage: false } } })],
 ])('%s is blocked with an actionable code and no CSV fallback', async (...args) => {
   const [label, code, mutate, responseShop] = args;

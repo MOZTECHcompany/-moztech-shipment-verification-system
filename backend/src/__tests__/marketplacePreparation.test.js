@@ -1,10 +1,11 @@
 const {createMarketplacePreparation,selectProfile}=require('../services/marketplacePreparation');
+const {reviewEvidence}=require('../services/marketplaceBarcodeReviews');
 const table=rows=>{const headers=[...new Set(rows.flatMap(Object.keys))];return [headers,...rows.map(r=>headers.map(h=>r[h]??''))];};
 const order=extra=>({Name:'#154230',Id:'7624215101596','Financial Status':'pending','Fulfillment Status':'unfulfilled',Currency:'TWD',Subtotal:'890',Shipping:'0',Taxes:'0',Total:'890','Discount Amount':'0','Refunded Amount':'0','Outstanding Balance':'890','Payment Method':'custom','Lineitem quantity':'1','Lineitem name':'來源商品','Lineitem price':'890','Lineitem sku':'4711299272493','Lineitem discount':'0','Lineitem id':'16493014253724','Shipping Name':'收件人','Shipping Address1':'配送地址',...extra});
 const profile={id:2,platform:'Shopify',store:'墨子科技 官網',settings:{store:'墨子科技 官網',customerCode:'00063',customerName:'墨子科技 官網',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,shippingSku:{erpSku:'00001',name:'運費',nonStock:true,confirmed:true}}};
 function harness(profiles=[profile],extra={}){
- const pool={query:jest.fn().mockResolvedValue({rows:profiles}),connect:jest.fn()};
- const verifyShopify=jest.fn(async rows=>({rows,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[{sku:'4711299272493',barcode:'4711299272493'}]}]}}));
+ const pool={query:jest.fn(async sql=>({rows:sql.includes('marketplace_product_mapping_reviews')?[]:profiles})),connect:jest.fn()};
+ const verifyShopify=jest.fn(async rows=>({rows,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[{id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'}]}]}}));
  const resolveProducts=jest.fn(async skus=>({sync:{source_note:'ECOUNT reference'},products:Object.fromEntries(skus.map(sku=>[sku,{status:'matched',matches:[{erp_sku:sku,product_name:'ERP 商品',spec:'完整規格',barcode:'',active:true}]}]))}));
  return {pool,verifyShopify,resolveProducts,prepare:createMarketplacePreparation({pool,verifyShopify,resolveProducts,...extra})};
 }
@@ -33,9 +34,92 @@ test('removed historical items are not catalog-resolved; original source evidenc
  const h=harness();h.verifyShopify.mockResolvedValueOnce({rows:table([order()]),verification:{shop:'www-omfuture.myshopify.com',orders:[]}});
  const result=await h.prepare({rows:source});expect(h.resolveProducts).toHaveBeenCalledWith(['4711299272493']);expect(result.output.summary.physicalQuantity).toBe(1);expect(result.output.summary.ecountTotalMinor).toBe(89000);expect(JSON.stringify(result.sourceEvidence.rows)).toContain('4711299274749');
 });
-test('API barcode conflict with ERP or between current variants blocks output instead of inventing a barcode',async()=>{
- const h=harness();h.resolveProducts.mockResolvedValueOnce({products:{'4711299272493':{status:'matched',matches:[{erp_sku:'4711299272493',product_name:'ERP 商品',barcode:'OTHER'}]}}});
- await expect(h.prepare({rows:table([order()])})).rejects.toMatchObject({code:'BARCODE_MISMATCH'});
+function barcodeHarness(){
+ const h=harness();
+ h.identity={shop:'www-omfuture.myshopify.com',barcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/123'};
+ h.product={erp_sku:'4711299272493',product_name:'ERP 商品',spec:'完整規格',barcode:'4711299272493',active:true};
+ h.profiles=[profile];h.reviews=[];
+ h.pool.query.mockImplementation(async(sql,params)=>({rows:sql.includes('marketplace_product_mapping_reviews')?h.reviews.filter(r=>r.store_profile_id===params[0]&&params[1].includes(r.fingerprint)):h.profiles}));
+ h.verifyShopify.mockImplementation(async rows=>{
+  const records=rows.slice(1).map(r=>Object.fromEntries(rows[0].map((header,i)=>[header,r[i]])));
+  const orders=[...new Set(records.map(r=>r.Name))].map(number=>({number,currentQuantity:records.filter(r=>r.Name===number).reduce((n,r)=>n+Number(r['Lineitem quantity']),0),items:records.filter(r=>r.Name===number).map(r=>({id:r['Lineitem id'],sku:r['Lineitem sku'],barcode:h.identity.barcode,...(h.identity.variantId?{variantId:h.identity.variantId}:{})}))}));
+  return {rows,verification:{shop:h.identity.shop,orders}};
+ });
+ h.resolveProducts.mockImplementation(async skus=>({products:Object.fromEntries(skus.map(sku=>[sku,{status:'matched',matches:[h.product]}]))}));
+ h.saveReview=c=>{const record={id:17,store_profile_id:c.storeProfileId,fingerprint:c.fingerprint,evidence:reviewEvidence(c)};h.reviews.push(record);return record;};
+ return h;
+}
+test('API barcode conflict leaves a reviewable preview but blocks sales and prepick instead of inventing a barcode',async()=>{
+ const h=barcodeHarness(),r=await h.prepare({rows:table([order()])});
+ expect(r.output).toMatchObject({ok:false,rows:[]});expect(r.prepick).toMatchObject({ok:false,rows:[]});
+ expect(r.output.issues).toEqual(expect.arrayContaining([expect.objectContaining({code:'BARCODE_MISMATCH',sku:'4711299272493'})]));
+ expect(r.parsed.summary.totalQuantity).toBe(1);
+ expect(r.barcodeConflicts).toHaveLength(1);
+ expect(r.barcodeConflicts[0]).toMatchObject({storeProfileId:2,platform:'Shopify',shop:'www-omfuture.myshopify.com',sourceSku:'4711299272493',sourceBarcode:'NEW4711299272493',sourceName:'來源商品',variantId:'gid://shopify/ProductVariant/123',variantIds:['gid://shopify/ProductVariant/123'],erpSku:'4711299272493',erpBarcode:'4711299272493',erpName:'ERP 商品',spec:'完整規格',canConfirm:true});
+ expect(r.barcodeConflicts[0].fingerprint).toMatch(/^[a-f0-9]{64}$/);
+ expect(r.settings.skuMappings['4711299272493']).toMatchObject({erpSku:'4711299272493',barcode:'4711299272493',barcodeConfirmed:false});
+ expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test('an exact saved review is reused across orders while preserving NEW source barcode and physical ERP barcode',async()=>{
+ const h=barcodeHarness(),first=await h.prepare({rows:table([order()])});
+ const record=h.saveReview(first.barcodeConflicts[0]);
+ const second=await h.prepare({rows:table([order({Name:'#NEXT',Id:'7624215101597','Lineitem id':'16493014253725'})])},{refresh:true});
+ expect(second.output.ok).toBe(true);expect(second.prepick.ok).toBe(true);expect(second.barcodeConflicts).toEqual([]);
+ expect(second.barcodeReviews).toEqual([{id:record.id,fingerprint:record.fingerprint,evidence:record.evidence}]);
+ expect(second.settings.skuMappings['4711299272493']).toMatchObject({erpSku:'4711299272493',barcode:'4711299272493',barcodeConfirmed:true});
+ expect(second.sourceEvidence.verification.orders[0].items[0].barcode).toBe('NEW4711299272493');
+ expect(second.parsed.orders[0].sourceOrderNumber).toBe('#NEXT');
+ expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test('client mapping and a supplied review cannot bypass an unconfirmed barcode conflict',async()=>{
+ const h=barcodeHarness(),first=await h.prepare({rows:table([order()])});
+ const r=await h.prepare({rows:table([order()]),barcodeReviews:[{id:17,fingerprint:first.barcodeConflicts[0].fingerprint,evidence:reviewEvidence(first.barcodeConflicts[0])}],settings:{skuMappings:{'4711299272493':{erpSku:'NEW4711299272493',erpName:'任意品名',barcode:'NEW4711299272493',confirmed:true,barcodeConfirmed:true}}}},{refresh:true});
+ expect(r.output.ok).toBe(false);expect(r.prepick.ok).toBe(false);expect(r.barcodeReviews).toEqual([]);expect(r.barcodeConflicts).toHaveLength(1);
+ expect(r.settings.skuMappings['4711299272493']).toMatchObject({erpSku:'4711299272493',erpName:'ERP 商品',barcode:'4711299272493',barcodeConfirmed:false});
+});
+test.each([
+ ['store profile',h=>{h.profiles=[{...profile,id:3}];}],
+ ['Shopify domain',h=>{h.identity.shop='other-shop.myshopify.com';}],
+ ['current variant',h=>{h.identity.variantId='gid://shopify/ProductVariant/124';}],
+ ['API barcode',h=>{h.identity.barcode='NEW47112992724932';}],
+ ['ERP code',h=>{h.product.erp_sku='NEW4711299272493';}],
+ ['ERP barcode',h=>{h.product.barcode='47112992724932';}],
+ ['ERP name',h=>{h.product.product_name='另一版本 ERP 商品';}],
+ ['ERP specification',h=>{h.product.spec='另一型號規格';}],
+])('a saved review is not reused after the %s changes',async(label,change)=>{
+ const h=barcodeHarness(),first=await h.prepare({rows:table([order()])});h.saveReview(first.barcodeConflicts[0]);change(h);
+ const next=await h.prepare({rows:table([order()])},{refresh:true});
+ expect(next.output.ok).toBe(false);expect(next.prepick.ok).toBe(false);expect(next.barcodeReviews).toEqual([]);expect(next.barcodeConflicts).toHaveLength(1);
+ expect(next.barcodeConflicts[0].fingerprint).not.toBe(first.barcodeConflicts[0].fingerprint);
+});
+test('two eligible current variants with one SKU cannot be confirmed even when their barcodes are identical',async()=>{
+ const h=barcodeHarness();
+ const rows=table([order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780'}),order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem id':'16493014253725'})]);
+ h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',currentQuantity:2,items:[{id:'16493014253724',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/123'},{id:'16493014253725',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/124'}]}]}});
+ const r=await h.prepare({rows});expect(r.output.ok).toBe(false);expect(r.prepick.ok).toBe(false);expect(r.barcodeConflicts).toHaveLength(1);
+ expect(r.barcodeConflicts[0]).toMatchObject({variantId:'',variantIds:['gid://shopify/ProductVariant/123','gid://shopify/ProductVariant/124'],canConfirm:false});
+});
+test('missing current Shopify variant ID cannot produce a confirmable barcode conflict',async()=>{
+ const h=barcodeHarness();h.identity.variantId='';const r=await h.prepare({rows:table([order()])});
+ expect(r.output.ok).toBe(false);expect(r.prepick.ok).toBe(false);expect(r.barcodeConflicts[0]).toMatchObject({variantId:'',variantIds:[],canConfirm:false,sourceBarcode:'NEW4711299272493'});
+});
+test('one known variant cannot cover another eligible same-SKU line whose variant ID is missing',async()=>{
+ const h=barcodeHarness(),rows=table([order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780'}),order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem id':'16493014253725'})]);
+ h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',currentQuantity:2,items:[{id:'16493014253724',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/123'},{id:'16493014253725',sku:'4711299272493',barcode:h.identity.barcode}]}]}});
+ const r=await h.prepare({rows});expect(r.output.ok).toBe(false);expect(r.prepick.ok).toBe(false);expect(r.barcodeConflicts).toHaveLength(1);expect(r.barcodeConflicts[0].canConfirm).toBe(false);
+});
+test('a saved review cannot cover another eligible same-SKU line whose API barcode is missing',async()=>{
+ const h=barcodeHarness(),first=await h.prepare({rows:table([order()])});h.saveReview(first.barcodeConflicts[0]);
+ const rows=table([order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780'}),order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem id':'16493014253725'})]);
+ h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',currentQuantity:2,items:[{id:'16493014253724',sku:'4711299272493',barcode:h.identity.barcode,variantId:h.identity.variantId},{id:'16493014253725',sku:'4711299272493',variantId:h.identity.variantId}]}]}});
+ const r=await h.prepare({rows},{refresh:true});expect(r.output.ok).toBe(false);expect(r.prepick.ok).toBe(false);expect(r.barcodeReviews).toEqual([]);expect(r.barcodeConflicts).toHaveLength(1);
+ expect(r.barcodeConflicts[0]).toMatchObject({sourceBarcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/123',variantIds:['gid://shopify/ProductVariant/123'],canConfirm:false});
+});
+test('an excluded fulfilled order cannot add a different barcode or variant to the eligible same-SKU shipment',async()=>{
+ const h=barcodeHarness(),rows=table([order(),order({Name:'#FULFILLED',Id:'7624215101597','Lineitem id':'16493014253725','Fulfillment Status':'fulfilled'})]);
+ h.product.barcode='4711299272493';
+ h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',currentQuantity:1,items:[{id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'}]},{number:'#FULFILLED',currentQuantity:1,items:[{id:'16493014253725',sku:'4711299272493',barcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/124'}]}]}});
+ const r=await h.prepare({rows});expect(r.output.ok).toBe(true);expect(r.prepick.ok).toBe(true);expect(r.barcodeConflicts).toEqual([]);expect(r.parsed.summary.totalQuantity).toBe(1);expect(r.choices).toEqual(expect.arrayContaining([expect.objectContaining({number:'#FULFILLED',eligible:false})]));
 });
 test('conflicting shipping details block the batch and repeated blank continuation values remain valid',async()=>{
  const h=harness();const body={rows:table([order(),order({'Lineitem id':'16493014253725',Subtotal:'1780',Total:'1780','Shipping Address1':'不同地址'})])};

@@ -4,6 +4,7 @@ const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
 const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
 const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
 const {safeSettings}=require('./marketplaceSettings');
+const {barcodeReviewCandidate,readBarcodeReviews}=require('./marketplaceBarcodeReviews');
 const clean=value=>String(value??'').trim();
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=(message,code='MARKETPLACE_INVALID',status=400)=>Object.assign(new Error(message),{status,code});
@@ -114,28 +115,54 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const eligible=prepareUnifiedMarketplace(raw,settingsInput).parsed;
   const skus=[...new Set(eligible.items.map(i=>i.sku))];
   const catalog=await resolveProducts(skus);
-  const apiBarcodes=new Map();
+  const apiBarcodes=new Map(),apiVariants=new Map(),incompleteSources=new Set();
+  const eligibleLines=new Set(eligible.items.map(i=>JSON.stringify([i.sourceOrderNumber,i.sourceLineId])));
   for(const order of verification?.orders||[])for(const i of order.items||[]){
-   if(!skus.includes(i.sku)||!i.barcode)continue;
+   if(!skus.includes(i.sku))continue;
+   if(source.platform==='Shopify'&&!eligibleLines.has(JSON.stringify([order.number,i.id])))continue;
+   if(source.platform==='Shopify'&&(!i.variantId||!i.barcode))incompleteSources.add(i.sku);
+   if(i.variantId){if(!apiVariants.has(i.sku))apiVariants.set(i.sku,new Set());apiVariants.get(i.sku).add(i.variantId);}
+   if(!i.barcode)continue;
    if(apiBarcodes.has(i.sku)&&apiBarcodes.get(i.sku)!==i.barcode)throw fail(`商品 ${i.sku} 在 ${source.platform} 對應不同條碼，請核對商品設定`,'BARCODE_AMBIGUOUS');
    apiBarcodes.set(i.sku,i.barcode);
   }
+  const reviewCandidates=[];
+  for(const sku of skus){
+   const match=catalog.products?.[sku],p=match?.status==='matched'?match.matches[0]:null;
+   if(!p)continue;
+   const apiBarcode=apiBarcodes.get(sku),variantIds=[...(apiVariants.get(sku)||[])].sort();
+   if((p.barcode&&apiBarcode&&p.barcode!==apiBarcode)||variantIds.length>1){
+    const candidate=barcodeReviewCandidate({profileId:profile?.id,platform:source.platform,shop:verification?.shop||profile?.settings?.apiConnectionId||'',sourceSku:sku,sourceBarcode:apiBarcode||'',sourceName:[...new Set(eligible.items.filter(i=>i.sku===sku).map(i=>i.productName))].sort().join(' / '),variantIds,product:p});
+    reviewCandidates.push({...candidate,canConfirm:candidate.canConfirm&&!incompleteSources.has(sku)});
+   }
+  }
+  const reviews=reviewCandidates.length&&profile?await readBarcodeReviews(pool,profile.id,reviewCandidates.map(c=>c.fingerprint)):[];
+  const approved=new Map(reviews.map(r=>[r.fingerprint,r]));
+  const barcodeConflicts=reviewCandidates.filter(c=>!c.canConfirm||!approved.has(c.fingerprint));
+  const barcodeReviews=reviewCandidates.filter(c=>c.canConfirm&&approved.has(c.fingerprint)).map(c=>{
+   const review=approved.get(c.fingerprint);return {id:review.id,fingerprint:c.fingerprint,evidence:review.evidence};
+  });
   settingsInput.skuMappings={...settingsInput.skuMappings};
   for(const item of eligible.items){
    const match=catalog.products?.[item.sku],provided=settingsInput.skuMappings[item.sku]||{};
    if(match?.status==='matched'){
     const p=match.matches[0];
     const apiBarcode=apiBarcodes.get(item.sku);
-    if(p.barcode&&apiBarcode&&p.barcode!==apiBarcode)throw fail(`商品 ${item.sku} 的 ${source.platform} 與 ECOUNT 條碼不同，請先核對`,'BARCODE_MISMATCH');
-    settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,barcode:p.barcode||apiBarcode||provided.barcode||'',barcodeConfirmed:p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
+    const blocked=barcodeConflicts.some(c=>c.sourceSku===item.sku);
+    settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,barcode:p.barcode||apiBarcode||provided.barcode||'',barcodeConfirmed:blocked?false:p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
    }else if(!settingsInput.skuMappings[item.sku])settingsInput.skuMappings[item.sku]={erpSku:item.sku,erpName:item.productName,barcode:'',confirmed:false,barcodeConfirmed:false,category:''};
   }
   const settings=safeSettings(settingsInput);
   const prepared=prepareUnifiedMarketplace(raw,settings);
+  if(barcodeConflicts.length){
+   const issues=barcodeConflicts.map(c=>({code:'BARCODE_MISMATCH',severity:'error',sku:c.sourceSku,message:`商品 ${c.sourceSku} 的商城與 ECOUNT 對照待核對`}));
+   prepared.output={...prepared.output,ok:false,rows:[],issues:[...prepared.output.issues,...issues]};
+   prepared.prepick={...prepared.prepick,ok:false,rows:[],issues:[...prepared.prepick.issues,...issues]};
+  }
   if(prepared.parsed.items.length>1000||prepared.parsed.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
   if(prepared.parsed.orders.some(o=>!clean(o.sourceOrderNumber)||clean(o.sourceOrderNumber).length>100))throw fail('商城訂單號最多 100 字');
   if(clean(settings.store).length>100||clean(settings.customerCode).length>30||clean(settings.warehouseCode).length>30)throw fail('店鋪、客戶或倉庫欄位過長');
-  return {source,raw,...prepared,settings:prepared.effectiveSettings||settings,verification,catalog,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification}};
+  return {source,raw,...prepared,settings:prepared.effectiveSettings||settings,verification,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification}};
  };
 }
 module.exports={createMarketplacePreparation,deliveryForOrders,selectProfile};
