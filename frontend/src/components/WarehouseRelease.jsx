@@ -8,7 +8,7 @@ import {OrderBarcode} from './OrderBarcode';
 const box='rounded-2xl border border-slate-200 bg-white p-5';
 const input='min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-2';
 const labels={pending:'待揀貨',picking:'揀貨中',picked:'二次查核要裝箱',packing:'裝箱複檢中',completed:'裝箱完成',voided:'已作廢'};
-const actions={enable:'啟用流程','confirm-barcode':'確認商品實物條碼','confirm-sales':'銷貨核對通過','confirm-return':'理貨商品核對通過',print:'領單／重印',assign:'指派預揀','reset-product':'重設商品待重新清點',scan:'商品預揀查核',complete:'預揀完成，放行揀貨'};
+const actions={enable:'啟用流程','confirm-barcode':'確認商品實物條碼','confirm-sales':'銷貨核對通過','confirm-return':'理貨商品核對通過','shipping-update':'更新收件資料',print:'領單／重印',assign:'指派預揀','reset-product':'重設商品待重新清點',scan:'商品預揀查核',complete:'預揀完成，放行揀貨'};
 const time=v=>v?new Date(v).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'尚未完成';
 export default function WarehouseRelease({user,token}){
  const {intakeId}=useParams();

@@ -41,10 +41,12 @@ function sourceRows(rows,number){
  return [[...rows[0]],...selected];
 }
 const moneyFields=['subtotalMinor','shippingMinor','discountMinor','productDiscountMinor','shippingGrossMinor','shippingDiscountMinor','shippingCancellationMinor','totalMinor','outstandingMinor','receivedMinor'];
-function business(evidence){
+const splitMoneyFields=['productDiscountMinor','shippingGrossMinor','shippingDiscountMinor','shippingCancellationMinor'];
+function businessShape(evidence,legacy=false){
+ const requiredMoney=legacy?moneyFields.filter(key=>!splitMoneyFields.includes(key)):moneyFields;
  if(!evidence||typeof evidence.id!=='string'||!/^\d{1,25}$/.test(evidence.id)||!Array.isArray(evidence.items)||!evidence.items.length||
-  moneyFields.some(key=>!Number.isSafeInteger(evidence[key])||evidence[key]<0)||!Number.isSafeInteger(evidence.currentQuantity)||!Number.isSafeInteger(evidence.remainingQuantity)||
-  !Array.isArray(evidence.shippingLines)||!Array.isArray(evidence.removedLineIds))throw fail('原訂單商品與金額證據不完整，請由主管核對');
+  requiredMoney.some(key=>!Number.isSafeInteger(evidence[key])||evidence[key]<0)||!Number.isSafeInteger(evidence.currentQuantity)||!Number.isSafeInteger(evidence.remainingQuantity)||
+  !legacy&&!Array.isArray(evidence.shippingLines)||!Array.isArray(evidence.removedLineIds))throw fail('原訂單商品與金額證據不完整，請由主管核對');
  const items=evidence.items.map(item=>{
   if(typeof item.id!=='string'||!item.id||typeof item.sku!=='string'||!item.sku||!Number.isSafeInteger(item.quantity)||item.quantity<1||
    !Number.isSafeInteger(item.unfulfilledQuantity)||!Number.isSafeInteger(item.netMinor))throw fail('原訂單商品與金額證據不完整，請由主管核對');
@@ -53,8 +55,33 @@ function business(evidence){
  if(new Set(items.map(item=>item.id)).size!==items.length)throw fail('原訂單來源明細重複，請由主管核對');
  return {number:evidence.number,id:evidence.id,currency:evidence.currency,cancelled:evidence.cancelled,cancelledAt:evidence.cancelledAt,
   paymentStatus:evidence.paymentStatus,fulfillmentStatus:evidence.fulfillmentStatus,currentQuantity:evidence.currentQuantity,remainingQuantity:evidence.remainingQuantity,
-  ...Object.fromEntries(moneyFields.map(key=>[key,evidence[key]])),items,removedLineIds:[...evidence.removedLineIds].sort(),
-  shippingLines:evidence.shippingLines.map(line=>({id:line.id,removed:line.removed,originalMinor:line.originalMinor,currentMinor:line.currentMinor})).sort((a,b)=>a.id.localeCompare(b.id))};
+  ...Object.fromEntries(requiredMoney.map(key=>[key,evidence[key]])),items,removedLineIds:[...evidence.removedLineIds].sort(),
+  ...(!legacy?{shippingLines:evidence.shippingLines.map(line=>({id:line.id,removed:line.removed,originalMinor:line.originalMinor,currentMinor:line.currentMinor})).sort((a,b)=>a.id.localeCompare(b.id))}:{})};
+}
+function business(evidence){return businessShape(evidence);}
+function savedBusiness(verification,evidence,order,source,items){
+ if(verification.version==='shopify-current-v2')return business(evidence);
+ if(verification.version!=='shopify-current-v1'||[...splitMoneyFields,'shippingLines'].some(key=>Object.hasOwn(evidence,key)))throw fail('原訂單核對版本無法安全核對，請由主管處理');
+ const old=businessShape(evidence,true),financials=[order.financial,order.sourceFinancial,source.financial?.source,source.financial?.ecount];
+ const financialKeys=['subtotalMinor','shippingMinor','discountMinor','totalMinor','outstandingMinor'];
+ if(old.currency!=='TWD'||old.cancelled!==false||old.cancelledAt!==null||old.fulfillmentStatus!=='unfulfilled'||!['paid','pending'].includes(old.paymentStatus)||
+  old.currentQuantity<1||old.currentQuantity!==old.remainingQuantity||financials.some(financial=>!financial||financial.currency!=='TWD'||financial.taxMinor!==0||financial.refundedMinor!==0||financialKeys.some(key=>financial[key]!==old[key])))
+  throw fail('原訂單金額或狀態證據不一致','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
+ let gross=0,net=0,quantity=0;
+ for(const item of items){
+  if(!Number.isSafeInteger(item.unitPriceMinor)||item.unitPriceMinor<0||!Number.isSafeInteger(item.lineSubtotalMinor)||item.lineSubtotalMinor<0||
+   !Number.isSafeInteger(item.lineDiscountMinor)||item.lineDiscountMinor<0||!Number.isSafeInteger(item.quantity)||item.quantity<1)throw fail('原訂單缺少可核對的商品原價與折扣');
+  const lineGross=item.unitPriceMinor*item.quantity;
+  if(!Number.isSafeInteger(lineGross)||lineGross-item.lineSubtotalMinor!==item.lineDiscountMinor)throw fail('原訂單商品原價、折扣與金額不一致','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
+  gross+=lineGross;net+=item.lineSubtotalMinor;quantity+=item.quantity;
+ }
+ if(![gross,net,quantity,old.subtotalMinor+old.shippingMinor,old.outstandingMinor+old.receivedMinor].every(Number.isSafeInteger)||
+  net!==old.subtotalMinor||gross-net!==old.discountMinor||old.subtotalMinor+old.shippingMinor!==old.totalMinor||old.outstandingMinor+old.receivedMinor!==old.totalMinor||
+  quantity!==old.currentQuantity||old.items.some(item=>item.quantity!==item.unfulfilledQuantity))throw fail('原訂單商品與付款金額不一致','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
+ // v1 accepted only gross-minus-product-net == the complete order discount.
+ // Its saved item amounts therefore prove zero shipping discount. Historical
+ // shipping-line identities were never stored and are not fabricated here.
+ return {...old,productDiscountMinor:gross-net,shippingGrossMinor:old.shippingMinor,shippingDiscountMinor:0,shippingCancellationMinor:0};
 }
 function assertAvailable(context){
  const {flow,tasks,link,activity}=context;
@@ -81,7 +108,7 @@ function createMarketplaceShippingService({pool,verifyShopify=createShopifyOrder
   const items=(snapshot.items||[]).filter(item=>item.sourceOrderNumber===number);
   const expected=new Map((source.expected_items||[]).map(item=>[item.sourceLineId,item]));
   if(!items.length||expected.size!==items.length||items.some(item=>{const original=expected.get(item.sourceLineId);return !original||original.sourceSku!==item.sku||original.quantity!==item.quantity||original.productCode!==snapshot.settings.skuMappings?.[item.sku]?.erpSku;}))throw fail('原訂單商品或數量已變更','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
-  const oldBusiness=business(old[0]);
+  const oldBusiness=savedBusiness(verification,old[0],orders[0],source,items);
   if(orders[0].financial?.totalMinor!==oldBusiness.totalMinor||oldBusiness.items.length!==items.length||items.some(item=>{
    const original=oldBusiness.items.find(line=>line.id===item.sourceLineId);return !original||original.sku!==item.sku||original.quantity!==item.quantity||original.netMinor!==item.lineSubtotalMinor;
   }))throw fail('原訂單金額或商品證據不一致','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
@@ -102,8 +129,10 @@ function createMarketplaceShippingService({pool,verifyShopify=createShopifyOrder
   const rows=sourceRows(saved.batch.snapshot.sourceEvidence.rows,number);
   const result=await verifyShopify(rows),verification=result.verification,evidence=verification?.orders?.filter(order=>order.number===number);
   if(verification?.shop!==saved.verification.shop||evidence?.length!==1||verification.orders.length!==1)throw fail('Shopify 店鋪或原訂單身分已變更','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
+  if(verification.version!=='shopify-current-v2')throw fail('Shopify 目前核對證據版本不完整，請重新核對');
   const fresh=business(evidence[0]);
-  if(fresh.cancelled!==false||fresh.cancelledAt||fresh.fulfillmentStatus!=='unfulfilled'||fresh.currentQuantity!==fresh.remainingQuantity||!['paid','pending'].includes(fresh.paymentStatus)||hash(fresh)!==hash(saved.oldBusiness))
+  const compared={...fresh};if(saved.verification.version==='shopify-current-v1')delete compared.shippingLines;
+  if(fresh.cancelled!==false||fresh.cancelledAt||fresh.fulfillmentStatus!=='unfulfilled'||fresh.currentQuantity!==fresh.remainingQuantity||!['paid','pending'].includes(fresh.paymentStatus)||hash(compared)!==hash(saved.oldBusiness))
    throw fail('商品、數量、金額或訂單狀態已變更，請核對原銷貨單','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
   if(evidence[0].shippingSource!=='shopify-current')throw fail('Shopify 尚無可核對的收件資料，請先在商城修正');
   const currentRows=sourceRows(result.rows,number);

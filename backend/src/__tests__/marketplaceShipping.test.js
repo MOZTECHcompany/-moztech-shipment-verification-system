@@ -12,20 +12,23 @@ function evidence(){return {number,id:'7624215101596',updatedAt:'2026-10-05T08:0
  subtotalMinor:94300,shippingMinor:0,discountMinor:0,productDiscountMinor:0,shippingGrossMinor:0,shippingDiscountMinor:0,shippingCancellationMinor:0,totalMinor:94300,outstandingMinor:0,receivedMinor:94300,
  items:[{id:'gid://shopify/LineItem/100',sku:'4711299274237',quantity:1,unfulfilledQuantity:1,netMinor:94300,variantId:'gid://shopify/ProductVariant/123',barcode:'4711299274237'}],removedLineIds:[],
  shippingLines:[{id:'gid://shopify/ShippingLine/1',removed:false,originalMinor:0,currentMinor:0,title:'宅配'}],shippingSource:'shopify-current'};}
-async function harness(){
+async function harness({legacy=false}={}){
  const {parseUnifiedMarketplace,prepareUnifiedMarketplace}=await import('../services/unifiedMarketplace.mjs');
+ const original=legacy?record({Id:'7630287798428','Discount Amount':'47','Lineitem price':'990','Lineitem discount':'47','Lineitem id':'gid://shopify/LineItem/16504258101404'}):record();
+ const originalEvidence=legacy?{...evidence(),id:'7630287798428',discountMinor:4700,productDiscountMinor:4700,items:[{...evidence().items[0],id:'gid://shopify/LineItem/16504258101404',variantId:'gid://shopify/ProductVariant/45274780205212'}]}:evidence();
  const settings={store,shopifyShop:shop,customerCode:'00063',customerName:store,warehouseCode:'003',date:'2026-10-05',batchSequence:'1',batchNumber:'WMS-20261005-C1C3',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,discountAllocationConfirmed:true,
   skuMappings:{'4711299274237':{erpSku:'4711299274237',erpName:'ERP商品',barcode:'4711299274237',barcodeConfirmed:true,confirmed:true}},shippingSku:{erpSku:'00001',name:'運費',nonStock:true,confirmed:true}};
- const prepared=prepareUnifiedMarketplace(parseUnifiedMarketplace(table([record()])).parsed,settings);
+ const prepared=prepareUnifiedMarketplace(parseUnifiedMarketplace(table([original])).parsed,settings);
  const savedOrder={...prepared.parsed.orders[0],shipping:{recipient:'收件人',phone:'0900000000',address:'配送地址 台北市 TPE TW',postalCode:'100',method:'宅配'},sourceFinancial:structuredClone(prepared.parsed.orders[0].financial)};
  const snapshot={settings,summary:prepared.output.summary,headers:prepared.output.headers,rows:prepared.output.rows,reportRows:prepared.output.reportRows,
   salesLayout:{version:'unchanged-layout'},orders:[savedOrder,{sourceOrderNumber:'#OTHER',sourcePlatform:'Shopify',shipping:{phone:'OTHER'},financial:{totalMinor:100}}],items:prepared.parsed.items,
-  sourceEvidence:{rows:table([record(),record({Name:'#OTHER',Id:'7624215101597','Lineitem id':'gid://shopify/LineItem/101'})]),verification:{shop,platform:'Shopify',orders:[evidence()]}},barcodeReviews:[],prepick:{headers:prepared.prepick.headers,rows:prepared.prepick.rows}};
+  sourceEvidence:{rows:table([original,record({Name:'#OTHER',Id:'7624215101597','Lineitem id':'gid://shopify/LineItem/101'})]),verification:{version:legacy?'shopify-current-v1':'shopify-current-v2',shop,platform:'Shopify',orders:[structuredClone(originalEvidence)]}},barcodeReviews:[],prepick:{headers:prepared.prepick.headers,rows:prepared.prepick.rows}};
+ if(legacy)for(const key of ['productDiscountMinor','shippingGrossMinor','shippingDiscountMinor','shippingCancellationMinor','shippingLines'])delete snapshot.sourceEvidence.verification.orders[0][key];
  const state={batch:{id:19,batch_number:settings.batchNumber,source_platform:'Shopify',source_store:store,fingerprint:'original-batch-fingerprint',snapshot,archived_at:null},
-  source:{id:101,intake_id:19,source_platform:'Shopify',source_store:store,source_order_number:number,expected_items:[{sourceLineId:'gid://shopify/LineItem/100',sourceSku:'4711299274237',productCode:'4711299274237',quantity:1,barcode:'4711299274237'}],financial:{source:{totalMinor:94300},ecount:{totalMinor:94300}}},
+  source:{id:101,intake_id:19,source_platform:'Shopify',source_store:store,source_order_number:number,expected_items:[{sourceLineId:originalEvidence.items[0].id,sourceSku:'4711299274237',productCode:'4711299274237',quantity:1,barcode:'4711299274237'}],financial:{source:structuredClone(savedOrder.sourceFinancial),ecount:structuredClone(savedOrder.financial)}},
   profile:{id:2,platform:'Shopify',store,settings:structuredClone(settings)},flow:{intake_id:19,enabled_at:'2026-10-05',erp_confirmed_at:null,import_batch_id:null,printed_at:null,prepick_completed_at:null,prepick_owner_id:null,prepick_counts:{}},
   link:null,tasks:[],activity:{progress:false,history:false,labels:false,changes:false},commands:[],events:[],pending:[],lockedHook:null,commitError:false,auditError:false,
-  current:{rows:table([record({'Shipping Phone':'0901111111'})]),verification:{shop,orders:[{...evidence(),updatedAt:'2026-10-05T09:00:00Z',fingerprint:'api-after'}]}}};
+  current:{rows:table([{...original,'Shipping Phone':'0901111111'}]),verification:{version:'shopify-current-v2',shop,orders:[{...originalEvidence,updatedAt:'2026-10-05T09:00:00Z',fingerprint:'api-after'}]}}};
  async function query(sql,params=[]){
   if(sql==='BEGIN'){state.pending=[];return {rows:[]};}
   if(sql==='ROLLBACK'){state.pending=[];return {rows:[]};}
@@ -80,6 +83,75 @@ test('apply rechecks API and only changes the target shipping path, retaining st
  const sourceLock=statements.findIndex(sql=>sql.includes("'wms-marketplace-source'")),batchLock=statements.findIndex(sql=>sql.endsWith('FOR UPDATE')&&sql.includes('marketplace_intakes'));
  expect(sourceLock).toBeLessThan(batchLock);expect(h.state.commands).toHaveLength(1);
  const again=await h.service.apply(19,body,actor);expect(again.reused).toBe(true);expect(h.state.events).toHaveLength(1);expect(h.verify).toHaveBeenCalledTimes(2);
+});
+test('the saved v1 shape of #154319 proves its product discount and supports shipping-only preview and apply',async()=>{
+ const h=await harness({legacy:true}),before=beforeSale(h.state),source=structuredClone(h.state.source),old=h.state.batch.snapshot.sourceEvidence.verification.orders[0];
+ expect(old).toMatchObject({id:'7630287798428',subtotalMinor:94300,shippingMinor:0,discountMinor:4700,totalMinor:94300,outstandingMinor:0,receivedMinor:94300,
+  items:[{id:'gid://shopify/LineItem/16504258101404',quantity:1,unfulfilledQuantity:1,netMinor:94300,variantId:'gid://shopify/ProductVariant/45274780205212',barcode:'4711299274237'}]});
+ expect(old.shippingLines).toBeUndefined();expect(old.productDiscountMinor).toBeUndefined();
+ expect(h.state.batch.snapshot.items[0]).toMatchObject({unitPriceMinor:99000,lineDiscountMinor:4700,lineSubtotalMinor:94300});
+ const preview=await h.service.preview(19,{orderNumber:number},actor);
+ expect(preview).toMatchObject({changedFields:['phone'],currentShipping:{phone:'0901111111'}});expect(beforeSale(h.state)).toEqual(before);expect(h.pool.connect).not.toHaveBeenCalled();
+ expect(await h.service.apply(19,h.applyBody(preview),actor)).toMatchObject({updated:true,changedFields:['phone']});
+ expect(beforeSale(h.state)).toEqual(before);expect(h.state.source).toEqual(source);expect(h.state.events).toHaveLength(1);
+ expect(h.state.batch.snapshot.sourceEvidence.verification.version).toBe('shopify-current-v1');expect(h.state.batch.snapshot.sourceEvidence.verification.orders[0].shippingLines).toBeUndefined();
+});
+test.each([
+ ['missing original unit price',s=>{delete s.batch.snapshot.items[0].unitPriceMinor;}],
+ ['missing original line discount',s=>{delete s.batch.snapshot.items[0].lineDiscountMinor;}],
+ ['missing original net',s=>{delete s.batch.snapshot.items[0].lineSubtotalMinor;}],
+ ['inconsistent original gross',s=>{s.batch.snapshot.items[0].unitPriceMinor++;}],
+ ['inconsistent original line discount',s=>{s.batch.snapshot.items[0].lineDiscountMinor++;}],
+ ['missing saved core discount',s=>{delete s.batch.snapshot.sourceEvidence.verification.orders[0].discountMinor;}],
+ ['missing saved line identity',s=>{delete s.batch.snapshot.sourceEvidence.verification.orders[0].items[0].id;}],
+ ['missing removed-line evidence',s=>{delete s.batch.snapshot.sourceEvidence.verification.orders[0].removedLineIds;}],
+ ['missing source financial copy',s=>{delete s.source.financial.source;}],
+ ['missing order source financial copy',s=>{delete s.batch.snapshot.orders[0].sourceFinancial;}],
+ ['changed snapshot financial discount',s=>{s.batch.snapshot.orders[0].financial.discountMinor++;}],
+ ['changed snapshot source financial shipping',s=>{s.batch.snapshot.orders[0].sourceFinancial.shippingMinor++;}],
+ ['changed stored source financial subtotal',s=>{s.source.financial.source.subtotalMinor++;}],
+ ['changed stored ECOUNT financial total',s=>{s.source.financial.ecount.totalMinor++;}],
+ ['changed saved received amount',s=>{s.batch.snapshot.sourceEvidence.verification.orders[0].receivedMinor--;}],
+ ['changed saved tax',s=>{s.batch.snapshot.orders[0].financial.taxMinor=1;}],
+ ['changed saved refund',s=>{s.source.financial.source.refundedMinor=1;}],
+])('v1 %s stays blocked without API calls or financial writes',async(_label,change)=>{
+ const h=await harness({legacy:true});change(h.state);const before=structuredClone(h.state.batch);
+ await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({status:409});
+ expect(h.verify).not.toHaveBeenCalled();expect(h.pool.connect).not.toHaveBeenCalled();expect(h.state.batch).toEqual(before);expect(h.state.events).toEqual([]);expect(h.state.commands).toEqual([]);
+});
+test.each([
+ ['new shipping discount',e=>{e.shippingGrossMinor=1000;e.shippingDiscountMinor=1000;e.productDiscountMinor=3700;e.shippingLines[0].originalMinor=1000;}],
+ ['changed total discount',e=>{e.discountMinor++;e.productDiscountMinor++;}],
+ ['changed received amount',e=>{e.receivedMinor--;}],
+ ['changed line barcode',e=>{e.items[0].barcode='NEW4711299274237';}],
+])('v1 rejects current API %s even if the old snapshot lacks v2 fields',async(_label,change)=>{
+ const h=await harness({legacy:true}),before=structuredClone(h.state.batch);change(h.state.current.verification.orders[0]);
+ await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_BUSINESS_CHANGED',status:409});
+ expect(h.state.batch).toEqual(before);expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test.each([
+ ['unknown saved version',s=>{s.batch.snapshot.sourceEvidence.verification.version='shopify-current-v3';}],
+ ['missing saved version',s=>{delete s.batch.snapshot.sourceEvidence.verification.version;}],
+ ['partial saved v2',s=>{delete s.batch.snapshot.sourceEvidence.verification.orders[0].shippingGrossMinor;}],
+ ['v2 disguised as v1',s=>{s.batch.snapshot.sourceEvidence.verification.version='shopify-current-v1';}],
+])('%s cannot borrow legacy compatibility',async(_label,change)=>{
+ const h=await harness();change(h.state);
+ await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_NOT_AVAILABLE'});expect(h.verify).not.toHaveBeenCalled();expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test.each([
+ ['partial fresh v2',s=>{delete s.current.verification.orders[0].shippingGrossMinor;}],
+ ['unknown fresh version',s=>{s.current.verification.version='shopify-current-v3';}],
+ ['fresh v1',s=>{s.current.verification.version='shopify-current-v1';}],
+])('%s still blocks a legacy apply without any saved writes',async(_label,change)=>{
+ const h=await harness({legacy:true}),preview=await h.service.preview(19,{orderNumber:number},actor),before=structuredClone(h.state.batch);change(h.state);
+ await expect(h.service.apply(19,h.applyBody(preview),actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_NOT_AVAILABLE'});
+ expect(h.state.batch).toEqual(before);expect(h.state.events).toEqual([]);expect(h.state.commands).toEqual([]);expect(h.db.query.mock.calls.some(([sql])=>/^(?:UPDATE|INSERT|DELETE)/.test(sql))).toBe(false);
+});
+test('a successful legacy receipt replays under its command lock even after baseline loss and an API outage',async()=>{
+ const h=await harness({legacy:true}),preview=await h.service.preview(19,{orderNumber:number},actor),body=h.applyBody(preview),first=await h.service.apply(19,body,actor);
+ delete h.state.batch.snapshot.sourceEvidence;h.state.batch.archived_at='now';h.verify.mockRejectedValue(Error('API unavailable'));h.verify.mockClear();h.db.query.mockClear();
+ expect(await h.service.apply(19,body,actor)).toEqual({...first,reused:true});expect(h.verify).not.toHaveBeenCalled();expect(h.state.events).toHaveLength(1);expect(h.state.commands).toHaveLength(1);
+ const statements=h.db.query.mock.calls.map(([sql])=>sql);expect(statements.findIndex(sql=>sql.includes('pg_advisory_xact_lock'))).toBeLessThan(statements.findIndex(sql=>sql.startsWith('SELECT * FROM marketplace_warehouse_commands')));
 });
 test.each([
  ['order identity',e=>{e.id='7624215101597';}],['SKU',e=>{e.items[0].sku='OTHER';}],['line identity',e=>{e.items[0].id='OTHER';}],
