@@ -62,7 +62,7 @@ function ConverterPage({ user }) {
   const [workbook, setWorkbook] = useState(null), [selectedSheet, setSelectedSheet] = useState('');
   const [barcodeChecks, setBarcodeChecks] = useState({});
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
-  const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false);
+  const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); };
   const currentSession = () => batchSessionMatches(sessionStorage, actor.current, token.current);
   const loadRecords = async () => {
@@ -113,7 +113,8 @@ function ConverterPage({ user }) {
       : result?.status === 'ambiguous' ? [`${item.sku}：ECOUNT 有多個對應品項。`] : [];
   });
   const catalogBlocked = catalogIssues.length > 0;
-  const unresolvedProducts = products.filter(item => !settings.skuMappings?.[item.sku]?.confirmed || ['inactive', 'ambiguous'].includes(catalog?.products?.[item.sku]?.status));
+  const barcodeReviewSkus = new Set(barcodeConflicts.map(conflict => conflict.sourceSku));
+  const unresolvedProducts = products.filter(item => !barcodeReviewSkus.has(item.sku) && (!settings.skuMappings?.[item.sku]?.confirmed || ['inactive', 'ambiguous'].includes(catalog?.products?.[item.sku]?.status)));
   const raw = prepared?.raw || input?.parsed;
   const warnings = prepared?.output?.issues?.filter(issue => issue.severity === 'warning') || [];
   const applyPreview = data => {
@@ -139,8 +140,19 @@ function ConverterPage({ user }) {
       if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || '訂單核對失敗，請重試。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
   };
+  const selectBarcodeTarget = async (conflict, erpSku) => {
+    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || !currentSession()) return;
+    if (erpSku && !conflict.targetOptions?.some(option => option.erpSku === erpSku)) return;
+    const nextSettings = { ...settings, skuMappings: { ...settings.skuMappings, [conflict.sourceSku]: {
+      ...settings.skuMappings?.[conflict.sourceSku], erpSku, confirmed: false, barcodeConfirmed: false,
+    } } };
+    targetSelectionInFlight.current = true;
+    setBarcodeChecks({});
+    try { await refreshPreview(nextSettings, profileId); }
+    finally { targetSelectionInFlight.current = false; }
+  };
   const confirmBarcode = async conflict => {
-    if (locked || inFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentSession()) return;
+    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentSession()) return;
     const sequence = ++request.current;
     inFlight.current = true; setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
     try {
@@ -326,29 +338,31 @@ function ConverterPage({ user }) {
       {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
         const key = barcodeConflictKey(conflict);
         const canConfirm = conflict.canConfirm === true;
+        const chooseTarget = conflict.targetOptions?.length > 1;
+        const sourceBarcodeMissing = conflict.platform === 'Shopify' && conflict.reviewReason === 'SOURCE_BARCODE_MISSING';
         return <div key={key} className="rounded-lg border border-slate-200 p-4">
           <p className="font-medium">{conflict.sourceName || products.find(item => item.sku === conflict.sourceSku)?.productName || conflict.erpName}</p>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <div><h3 className="text-sm font-medium">{conflict.platform} 商品</h3><dl className="mt-2 space-y-1 text-sm">
               <div><dt className="inline text-slate-600">品號：</dt><dd className="inline break-all font-medium">{conflict.sourceSku}</dd></div>
-              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.sourceBarcode}</dd></div>
+              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.sourceBarcode || '未填條碼'}</dd></div>
             </dl></div>
-            <div><h3 className="text-sm font-medium">ECOUNT 商品</h3><dl className="mt-2 space-y-1 text-sm">
-              <div><dt className="inline text-slate-600">品號：</dt><dd className="inline break-all font-medium">{conflict.erpSku}</dd></div>
-              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.erpBarcode || '尚未登錄條碼'}</dd></div>
-              <div><dt className="inline text-slate-600">品名：</dt><dd className="inline">{conflict.erpName}</dd></div>
+            <div>{chooseTarget ? <Field label="ECOUNT 品項"><select className={inputClass} disabled={locked || previewDirty || !profileId} value={conflict.selectedErpSku || ''} onChange={event => selectBarcodeTarget(conflict, event.target.value)}><option value="">選擇品項</option>{conflict.targetOptions.map(option => <option key={option.erpSku} value={option.erpSku}>{option.erpSku} · {option.erpName}{option.spec ? ` · ${option.spec}` : ''}</option>)}</select></Field> : <h3 className="text-sm font-medium">ECOUNT 商品</h3>}<dl className="mt-2 space-y-1 text-sm">
+              <div><dt className="inline text-slate-600">品號：</dt><dd className="inline break-all font-medium">{conflict.erpSku || '尚未選擇'}</dd></div>
+              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.erpSku ? conflict.erpBarcode || '尚未登錄條碼' : '—'}</dd></div>
+              {conflict.erpName && <div><dt className="inline text-slate-600">品名：</dt><dd className="inline">{conflict.erpName}</dd></div>}
               {conflict.spec && <div><dt className="inline text-slate-600">規格：</dt><dd className="inline">{conflict.spec}</dd></div>}
             </dl></div>
           </div>
-          {conflict.relatedOrders?.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-slate-800">相關訂單（{new Set(conflict.relatedOrders.map(order => order.orderNumber)).size} 筆）</summary><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>訂單</th><th className={cell}>商品</th><th className={cell}>數量</th></tr></thead><tbody>{conflict.relatedOrders.map((order, index) => {
+          {conflict.relatedOrders?.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-slate-800">相關訂單（{new Set(conflict.relatedOrders.map(order => order.orderNumber)).size} 筆）</summary><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>訂單</th><th className={cell}>商品</th><th className={cell}>條碼</th><th className={cell}>數量</th></tr></thead><tbody>{conflict.relatedOrders.map((order, index) => {
             const url = shopifyOrderUrl(conflict, order);
-            return <tr key={`${order.orderNumber}:${order.sourceLineId || index}`} className="border-t border-slate-100"><td className={`${cell} whitespace-nowrap`}>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 underline">{order.orderNumber}</a> : order.orderNumber}</td><td className={cell}>{order.productName}</td><td className={`${cell} whitespace-nowrap`}>{order.quantity}</td></tr>;
+            return <tr key={`${order.orderNumber}:${order.sourceLineId || index}`} className="border-t border-slate-100"><td className={`${cell} whitespace-nowrap`}>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 underline">{order.orderNumber}</a> : order.orderNumber}</td><td className={cell}>{order.productName}</td><td className={`${cell} whitespace-nowrap`}>{order.barcode || '未填條碼'}</td><td className={`${cell} whitespace-nowrap`}>{order.quantity}</td></tr>;
           })}</tbody></table></div></details>}
           <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
             <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
           </fieldset>
-          {!canConfirm && profileId && <p className="mt-2 text-sm text-amber-950">商品版本或條碼資料不完整，請核對商城商品設定</p>}
+          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>}
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}

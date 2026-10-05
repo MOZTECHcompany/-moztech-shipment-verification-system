@@ -1,6 +1,9 @@
 const {createHash}=require('node:crypto');
-const {createReferenceReader,resolveProducts}=require('./marketplaceProductCatalog');
+const {createReferenceReader,exactReviewTargets}=require('./marketplaceProductCatalog');
 const readReference=createReferenceReader();
+// Only a successful server-side read of persisted reviews can authorize an
+// alternate ERP target. JSON sent by a client cannot reproduce this capability.
+const validatedReviewContexts=new WeakMap();
 const clean=value=>String(value??'').trim();
 const fail=(message,code='BARCODE_REVIEW_INVALID')=>Object.assign(new Error(message),{status:400,code});
 const scalar=(value,max=100)=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value);
@@ -35,6 +38,10 @@ function validEvidence(evidence){
  const candidate=barcodeReviewCandidate({profileId:evidence.storeProfileId,platform:evidence.platform,shop:evidence.shop,sourceSku:evidence.sourceSku,sourceBarcode:evidence.sourceBarcode,sourceName:evidence.sourceName,variantIds:evidence.variantIds,
   product:{erp_sku:evidence.erpSku,barcode:evidence.erpBarcode,product_name:evidence.erpName,spec:evidence.spec,active:true}});
  return candidate.canConfirm&&JSON.stringify(canonical(reviewEvidence(candidate)))===JSON.stringify(canonical(evidence));
+}
+function reviewMatchesCandidate(candidate,record){
+ return Boolean(record&&Number(record.store_profile_id)===candidate.storeProfileId&&validEvidence(record.evidence)&&
+  record.fingerprint===candidate.fingerprint&&fingerprint(record.evidence)===candidate.fingerprint);
 }
 function actorId(user){
  if(!validId(user?.id)||!['admin','dispatcher','superadmin'].includes(user?.role))throw Object.assign(new Error('沒有商品核對權限'),{status:403,code:'BARCODE_REVIEW_FORBIDDEN'});
@@ -81,7 +88,23 @@ function verifySnapshotSource(snapshot,evidence){
  if(!mapping||mapping.erpSku!==evidence.erpSku||mapping.barcode!==(evidence.erpBarcode||evidence.sourceBarcode)||mapping.barcodeConfirmed!==true)throw fail(`商品 ${evidence.sourceSku} 的已保存對照與核對紀錄不同`,'BARCODE_REVIEW_CHANGED');
 }
 
-async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference){
+function verifiedReviewTarget(context,settings,sku,product,products){
+ const verified=context&&validatedReviewContexts.get(context);
+ if(!verified||verified.settings!==settings||!product||product.active!==true)return false;
+ const evidence=verified.evidence.find(value=>value.sourceSku===sku&&value.erpSku===product.erp_sku);
+ const mapping=settings.skuMappings?.[sku];
+ const current=evidence&&Array.isArray(products)?exactReviewTargets(evidence.sourceSku,evidence.sourceBarcode,products):null;
+ return Boolean(evidence&&current&&!current.blocked&&current.targets.some(value=>value.erp_sku===product.erp_sku)&&mapping&&mapping.erpSku===evidence.erpSku&&mapping.barcode===(evidence.erpBarcode||evidence.sourceBarcode)&&mapping.barcodeConfirmed===true&&
+  product.barcode===evidence.erpBarcode&&product.product_name===evidence.erpName&&clean(product.spec)===evidence.spec);
+}
+function validatedCatalogContext(context,settings,products){
+ const verified=context&&validatedReviewContexts.get(context);
+ if(!verified||verified.settings!==settings||!Array.isArray(products))return false;
+ return verified.evidence.every(evidence=>verifiedReviewTarget(context,settings,evidence.sourceSku,
+  products.find(product=>product.erp_sku===evidence.erpSku),products));
+}
+
+async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference,{returnContext=false}={}){
  const reviews=snapshot?.barcodeReviews;
  if(reviews===undefined||Array.isArray(reviews)&&reviews.length===0)return;
  if(!Array.isArray(reviews)||reviews.length>1000||reviews.some(review=>!validId(review?.id)||!validFingerprint(review.fingerprint)||!validEvidence(review.evidence)||fingerprint(review.evidence)!==review.fingerprint))throw fail('已保存的商品核對紀錄無效');
@@ -95,9 +118,14 @@ async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference){
   const evidence=review.evidence,record=records.find(row=>Number(row.id)===Number(review.id));
   if(!record||record.fingerprint!==review.fingerprint||Number(record.store_profile_id)!==evidence.storeProfileId||!validEvidence(record.evidence)||fingerprint(record.evidence)!==review.fingerprint)throw fail(`商品 ${evidence.sourceSku} 的核對已撤銷或變更，請重新核對`,'BARCODE_REVIEW_CHANGED');
   verifySnapshotSource(snapshot,evidence);
-  const target=resolveProducts([evidence.sourceSku],reference.products)[evidence.sourceSku];
-  const product=target?.status==='matched'?target.matches[0]:null;
+  const targets=exactReviewTargets(evidence.sourceSku,evidence.sourceBarcode,reference.products);
+  const product=targets.targets.find(value=>value.erp_sku===evidence.erpSku);
   if(!product||product.active!==true||product.erp_sku!==evidence.erpSku||product.barcode!==evidence.erpBarcode||product.product_name!==evidence.erpName||clean(product.spec)!==evidence.spec)throw fail(`商品 ${evidence.sourceSku} 的 ECOUNT 對照已變更，請重新核對`,'BARCODE_REVIEW_CHANGED');
  }
+ if(returnContext){
+  const context=Object.freeze({});
+  validatedReviewContexts.set(context,{settings:snapshot.settings,evidence:reviews.map(review=>JSON.parse(JSON.stringify(review.evidence)))});
+  return context;
+ }
 }
-module.exports={barcodeReviewCandidate,reviewEvidence,readBarcodeReviews,confirmBarcodeReview,revokeBarcodeReview,verifySavedBarcodeReviews};
+module.exports={barcodeReviewCandidate,reviewEvidence,reviewMatchesCandidate,readBarcodeReviews,confirmBarcodeReview,revokeBarcodeReview,verifySavedBarcodeReviews,verifiedReviewTarget,validatedCatalogContext};

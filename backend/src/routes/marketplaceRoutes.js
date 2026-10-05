@@ -40,7 +40,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   if(!rows.rows.length)return res.status(404).json({message:'找不到轉檔批次'});
   let reviewWarning='';
   const snapshot=rows.rows[0].snapshot;
-  try{await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))]);await verifySavedBarcodeReviews(pool,snapshot);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
+  try{const reviewed=await verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))],undefined,reviewed);}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
   let financials=null,financialWarning='';
   try{financials=(await import('../services/marketplaceIntake.mjs')).prepareEcountFinancials(snapshot).financials;}catch(e){financialWarning=e.message;}
   res.set('Cache-Control','private, no-store').json({financials,financialWarning,...publicRecord(rows.rows[0]),handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
@@ -50,8 +50,8 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   const record=(await pool.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!record)return res.status(404).json({message:'找不到轉檔批次'});
   if(['ecount','ecount-grouped'].includes(req.body?.kind)){
-   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))]);
-   await verifySavedBarcodeReviews(pool,record.snapshot);
+   const reviewed=await verifySavedBarcodeReviews(pool,record.snapshot,undefined,{returnContext:true});
+   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))],undefined,reviewed);
    try{(await import('../services/marketplaceBatchFiles.mjs')).savedBatchTables(record.snapshot,req.body.kind);}catch(e){throw Object.assign(e,{status:400});}
   }
   require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id);
@@ -68,12 +68,13 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    const {parsed,output,source,raw,settings,verification,sourceEvidence}=conversion;
    if(!output.ok)throw Object.assign(new Error('請先修正轉檔問題'),{status:400,code:'MARKETPLACE_NOT_READY',issues:output.issues});
    if(verification&&req.body?.previewFingerprint!==verification.currentFingerprint)throw Object.assign(new Error(`${source.platform} 訂單已更新，請重新核對後下載`),{status:409,code:source.platform==='Shopify'?'SHOPIFY_PREVIEW_CHANGED':'MARKETPLACE_PREVIEW_CHANGED'});
-   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))]);
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows,...(verification?{currentFingerprint:verification.currentFingerprint}:{})});
    const snapshot={handler:captureHandler(req.user),settings,sourceEvidence,barcodeReviews:conversion.barcodeReviews||[],summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
     orders:parsed.orders.map(o=>({...o,sourceFinancial:raw.orders.find(r=>r.sourceOrderNumber===o.sourceOrderNumber)?.financial})),items:parsed.items,
     prepick:{headers:conversion.prepick.headers,rows:conversion.prepick.rows}};
+   const reviewed=await verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
+   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))],undefined,reviewed);
    db=await pool.connect();await db.query('BEGIN');open=true;
    await db.query("SET LOCAL lock_timeout='2000ms'");await db.query("SET LOCAL statement_timeout='10000ms'");
    for(const key of identity)await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-marketplace-source'),hashtext($1))",[JSON.stringify(key)]);

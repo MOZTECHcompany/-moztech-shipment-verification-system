@@ -35,7 +35,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -61,7 +61,9 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             return {data:{confirmed:true}};
         }
         if (url === '/api/marketplace-intakes/preview') {
+            if (previewWait) await previewWait(body);
             if (previewError) throw typeof previewError === 'string' ? Error(previewError) : Object.assign(Error(previewError.message), {response:{data:previewError}});
+            const activeConflicts = typeof barcodeConflicts === 'function' ? barcodeConflicts(body) : barcodeConflicts;
             const source = unified.parseUnifiedMarketplace(body.rows);
             const available = profiles.filter(profile => profile.platform === source.parsed.platform);
             const profile = body.profileId ? available.find(profile => String(profile.id) === String(body.profileId)) : available.length === 1 ? available[0] : null;
@@ -72,11 +74,15 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             for (const [sku, item] of Object.entries(products)) if (item.status === 'matched') {
                 const matched = item.matches[0];
                 const provided = effectiveSettings.skuMappings[sku] || {};
-                const apiBarcode = barcodeConflicts.find(conflict => conflict.sourceSku === sku)?.sourceBarcode;
+                const conflict = activeConflicts.find(conflict => conflict.sourceSku === sku);
+                const apiBarcode = conflict?.sourceBarcode;
+                const selectedTarget = conflict?.targetOptions?.find(option => option.erpSku === conflict.selectedErpSku);
                 effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || apiBarcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || !!apiBarcode || provided.barcodeConfirmed === true};
+                if (selectedTarget) effectiveSettings.skuMappings[sku] = {...effectiveSettings.skuMappings[sku],erpSku:selectedTarget.erpSku,erpName:selectedTarget.erpName,barcode:apiBarcode || selectedTarget.erpBarcode,confirmed:confirmedBarcodes.has(conflict.fingerprint),barcodeConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
+                else if (conflict?.targetOptions?.length > 1) effectiveSettings.skuMappings[sku] = {...provided,erpSku:'',erpName:'',barcode:'',confirmed:false,barcodeConfirmed:false};
             }
             const prepared = unified.prepareUnifiedMarketplace(raw,effectiveSettings);
-            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:barcodeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         const built=unified.buildUnifiedConversion(body.rows,body.settings);
@@ -235,8 +241,8 @@ const shopifyBarcodeConflict = {
     erpSku:'4711299274732',erpBarcode:'',erpName:'ERP 抗藍光保護貼',spec:'iPhone 6.3 18 Pro',sourceName:'iPhone 18 Pro 系列抗藍光保護貼',
     variantId:'',variantIds:['gid://shopify/ProductVariant/1001','gid://shopify/ProductVariant/1002'],reviewReason:'ERP_BARCODE_MISSING',
     relatedOrders:[
-        {orderNumber:'#REVIEW-1',orderId:'9001',sourceLineId:'line-1',variantId:'gid://shopify/ProductVariant/1001',productName:'iPhone 18 Pro 系列抗藍光保護貼',quantity:1},
-        {orderNumber:'#REVIEW-2',orderId:'gid://shopify/Order/9002',sourceLineId:'line-2',variantId:'gid://shopify/ProductVariant/1002',productName:'iPhone 18 Pro 抗藍光保護貼',quantity:2},
+        {orderNumber:'#REVIEW-1',orderId:'9001',sourceLineId:'line-1',variantId:'gid://shopify/ProductVariant/1001',productName:'iPhone 18 Pro 系列抗藍光保護貼',barcode:'4711299274732',quantity:1},
+        {orderNumber:'#REVIEW-2',orderId:'gid://shopify/Order/9002',sourceLineId:'line-2',variantId:'gid://shopify/ProductVariant/1002',productName:'iPhone 18 Pro 抗藍光保護貼',barcode:'4711299274732',quantity:2},
     ],
 };
 
@@ -254,7 +260,10 @@ test('valid multiple Shopify variants with a blank ERP barcode allow explicit re
         const row = view.find(details,node => node.type === 'tr' && view.text(node).includes(item.orderNumber));
         const cells = row.props.children.flat();
         assert.equal(view.text(cells[1]),item.productName);
-        assert.equal(view.text(cells[2]),String(item.quantity));
+        assert.equal(view.text(cells[2]),item.barcode);
+        assert.match(cells[2].props.className,/whitespace-nowrap/,'barcode stays readable on narrow screens; table scrolls horizontally');
+        assert.doesNotMatch(cells[2].props.className,/break-all/);
+        assert.equal(view.text(cells[3]),String(item.quantity));
     }
     const links = view.all(node => node.type === 'a' && node.props.href?.startsWith('https://example.myshopify.com/'));
     assert.deepEqual(links.map(link => link.props.href),['https://example.myshopify.com/admin/orders/9001','https://example.myshopify.com/admin/orders/9002']);
@@ -277,6 +286,121 @@ test('related order evidence never turns unvalidated shops or order identifiers 
         assert.equal(view.find(details,node => node.type === 'a'),undefined);
         assert.match(view.text(details),/#REVIEW-1/);
     }
+});
+
+const targetOptions = [
+    {erpSku:'00123',erpName:'ERP 原版保護貼',erpBarcode:'00123',spec:'無貼膜神器'},
+    {erpSku:'NEW00123',erpName:'ERP 新版保護貼',erpBarcode:'NEW00123',spec:'含貼膜神器'},
+];
+const targetConflict = body => {
+    const selectedErpSku = body.settings.skuMappings?.['00123']?.erpSku || '';
+    const target = targetOptions.find(option => option.erpSku === selectedErpSku);
+    return [{...barcodeConflict,fingerprint:`target-${selectedErpSku}`,targetOptions,selectedErpSku,
+        erpSku:target?.erpSku || '',erpName:target?.erpName || '',erpBarcode:target?.erpBarcode || '',spec:target?.spec || '',
+        canConfirm:!!target,reviewReason:'BARCODE_MISMATCH'}];
+};
+const targetSelector = view => view.all(node => node.type === 'select').find(node =>
+    view.find(node,child => child.type === 'option' && child.props.value === 'NEW00123'));
+
+test('ambiguous ERP targets require an exact choice and a new physical confirmation before saving', async () => {
+    const view = await converter({barcodeConflicts:targetConflict}); await view.select(file());
+    assert.equal(targetSelector(view).props.value,'');
+    const options = targetSelector(view).props.children.flat();
+    assert.equal(view.text(options[0]),'選擇品項');
+    assert.deepEqual(options.slice(1).map(option => view.text(option).replace(/\s+/g,' ')),[
+        '00123 · ERP 原版保護貼 · 無貼膜神器','NEW00123 · ERP 新版保護貼 · 含貼膜神器',
+    ]);
+    assert.match(view.text(view.render()),/請選擇 ECOUNT 品項/);
+    assert.doesNotMatch(view.text(view.render()),/待對照商品/,'the same unresolved target has one correction panel');
+    assert.equal(view.all(node => node.type === 'input' && node.props.value === '00123').length,0,'an unchosen target is never shown as a fixed product code');
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(downloadSales(view).props.disabled,true);
+    await view.change('ECOUNT 品項','NEW00123');
+    assert.equal(previewCalls(view).length,2);
+    const chosen = previewCalls(view)[1].body.settings.skuMappings['00123'];
+    assert.equal(chosen.erpSku,'NEW00123');
+    assert.equal(chosen.confirmed,false); assert.equal(chosen.barcodeConfirmed,false);
+    assert.equal(targetSelector(view).props.value,'NEW00123');
+    assert.equal(view.button('保存商品對照').props.disabled,true,'choosing a target does not attest physical identity');
+    assert.equal(view.all(node => node.type === 'input' && node.props.type === 'checkbox' && node.props.checked).length,0);
+    await view.change('已核對實物與 ERP',true);
+    assert.equal(view.button('保存商品對照').props.disabled,false);
+    await view.button('保存商品對照').props.onClick(); view.render();
+    const saved = view.requests.find(request => request.url === '/api/marketplace-intakes/barcode-confirmations');
+    assert.equal(saved.body.settings.skuMappings['00123'].erpSku,'NEW00123');
+    assert.equal(saved.body.confirmation.fingerprint,'target-NEW00123');
+    assert.equal(previewCalls(view).length,3);
+    assert.doesNotMatch(view.text(view.render()),/商品條碼待核對/);
+    assert.equal(downloadSales(view).props.disabled,false);
+    assert.equal(view.downloads.length,0); assert.equal(view.writes.length,0);
+});
+
+test('changing ERP target clears physical review and locks controls until the server preview finishes', async () => {
+    let release;
+    const view = await converter({barcodeConflicts:targetConflict,previewWait:body =>
+        body.settings.skuMappings?.['00123']?.erpSku === '00123' ? new Promise(resolve => { release=resolve; }) : undefined});
+    await view.select(file()); await view.change('ECOUNT 品項','NEW00123');
+    await view.change('已核對實物與 ERP',true);
+    assert.equal(view.button('保存商品對照').props.disabled,false);
+    const beforeRenderSelection = targetSelector(view).props.onChange;
+    const beforeRenderConfirmation = view.button('保存商品對照').props.onClick;
+    const pending = beforeRenderSelection({target:{value:'00123'}});
+    await beforeRenderSelection({target:{value:'NEW00123'}});
+    await beforeRenderConfirmation();
+    assert.equal(previewCalls(view).length,3,'the synchronous gate prevents stale callbacks before React rerenders');
+    view.render();
+    assert.equal(targetSelector(view).props.disabled,true);
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(downloadSales(view).props.disabled,true);
+    assert.equal(view.all(node => node.type === 'input' && node.props.type === 'checkbox' && node.props.checked).length,0);
+    const fieldset = view.all(node => node.type === 'fieldset').find(node => view.text(node).includes('已核對實物與 ERP'));
+    assert.equal(fieldset.props.disabled,true);
+    await view.button('保存商品對照').props.onClick();
+    await targetSelector(view).props.onChange({target:{value:'NEW00123'}});
+    assert.equal(previewCalls(view).length,3,'a second target selection cannot race the pending verification');
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-intakes/barcode-confirmations').length,0);
+    release(); await pending; view.render();
+    assert.equal(targetSelector(view).props.value,'00123');
+    assert.equal(targetSelector(view).props.disabled,false);
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(view.all(node => node.type === 'input' && node.props.type === 'checkbox' && node.props.checked).length,0);
+});
+
+test('target selection rejects identifiers outside the server options and respects a changed login', async () => {
+    const view = await converter({barcodeConflicts:targetConflict}); await view.select(file());
+    await targetSelector(view).props.onChange({target:{value:'FORGED-TARGET'}});
+    assert.equal(previewCalls(view).length,1);
+    view.storage.set('wms_token',JSON.stringify('different-session'));
+    await targetSelector(view).props.onChange({target:{value:'NEW00123'}});
+    assert.equal(previewCalls(view).length,1);
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-intakes/barcode-confirmations').length,0);
+});
+
+test('missing Shopify variant barcode identifies the affected order and offers a fresh check without a bypass', async () => {
+    let corrected = false;
+    const missing = {...shopifyBarcodeConflict,sourceBarcode:'',canConfirm:false,reviewReason:'SOURCE_BARCODE_MISSING',
+        relatedOrders:shopifyBarcodeConflict.relatedOrders.map((order,index) => ({...order,barcode:index ? order.barcode : '',barcodeMissing:index===0}))};
+    const view = await converter({profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:() => [corrected ? shopifyBarcodeConflict : missing]});
+    await view.select(file(shopifyBarcodeRows));
+    assert.match(view.text(view.render()),/Shopify 商品條碼未填，請補上後重新核對/);
+    assert.doesNotMatch(view.text(view.render()),/商品版本或條碼資料不完整|同貨號有多個版本/);
+    const details = view.all(node => node.type === 'details').find(node => view.text(node.props.children[0]).includes('相關訂單'));
+    const first = view.find(details,node => node.type === 'tr' && view.text(node).includes('#REVIEW-1'));
+    assert.match(view.text(first),/未填條碼/);
+    assert.equal(view.find(first,node => node.type === 'a').props.href,'https://example.myshopify.com/admin/orders/9001');
+    assert.equal(view.button('重新核對').props.disabled,false);
+    const fieldset = view.all(node => node.type === 'fieldset').find(node => view.text(node).includes('已核對實物與 ERP'));
+    assert.equal(fieldset.props.disabled,true);
+    await view.change('已核對實物與 ERP',true);
+    await view.button('保存商品對照').props.onClick();
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-intakes/barcode-confirmations').length,0);
+    assert.equal(downloadSales(view).props.disabled,true);
+    corrected=true;
+    await view.button('重新核對').props.onClick(); view.render();
+    assert.equal(previewCalls(view).length,2);
+    assert.doesNotMatch(view.text(view.render()),/Shopify 商品條碼未填/);
+    assert.equal(view.button('保存商品對照').props.disabled,true,'fresh API data still requires physical review');
+    assert.equal(view.all(node => node.type === 'input' && node.props.type === 'checkbox' && node.props.checked).length,0);
 });
 
 test('per-order preview and save errors identify the order without duplicating an existing prefix', async () => {

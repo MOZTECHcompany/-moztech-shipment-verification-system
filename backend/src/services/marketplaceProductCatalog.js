@@ -28,6 +28,14 @@ function resolveProducts(skus, products) {
   return [sku, { status: matches.length === 0 ? 'missing' : matches.length > 1 ? 'ambiguous' : matches[0].active ? 'matched' : 'inactive', matches }];
  }));
 }
+function exactReviewTargets(sourceSku, sourceBarcode, products) {
+ const keys = [...new Set([sourceSku, sourceBarcode].filter(Boolean))];
+ const resolved = resolveProducts(keys, products);
+ const blocked = keys.some(key => ['inactive', 'ambiguous'].includes(resolved[key].status));
+ const targets = blocked ? [] : [...new Map(keys.flatMap(key => resolved[key].matches)
+  .filter(product => product.active === true).map(product => [product.erp_sku, product])).values()];
+ return { resolved, blocked, targets };
+}
 async function lookupProducts(skus, reader = readReference) {
  const reference = await reader();
  return { sync: reference ? { product_count: reference.products.length, created_at: reference.capturedAt, source_note: reference.source } : null, products: resolveProducts(skus, reference?.products || []) };
@@ -43,18 +51,25 @@ function createProductRouter({ reader = readReference } = {}) {
  });
  return router;
 }
-async function verifyCatalogMappings(_pool, settings, skus = Object.keys(settings.skuMappings), reader = readReference) {
+async function verifyCatalogMappings(_pool, settings, skus = Object.keys(settings.skuMappings), reader = readReference, reviewedContext) {
  const {productIdentifierIssue}=await import('./marketplaceIntake.mjs');
  for(const sku of skus){const m=settings.skuMappings?.[sku];for(const value of [sku,m?.erpSku,m?.barcode]){const problem=productIdentifierIssue(value);if(problem)throw fail(problem);}}
  const reference = await reader();
- if (!reference) return;
+ if (!reference) {
+  if(reviewedContext)throw fail('目前無法核對已保存商品的 ECOUNT 主檔，請重新核對');
+  return;
+ }
+ if(reviewedContext&&!require('./marketplaceBarcodeReviews').validatedCatalogContext(reviewedContext,settings,reference.products))
+  throw fail('已保存商品的 ECOUNT 對照已變更，請重新核對');
  const resolved = resolveProducts(skus, reference.products);
  const byCode = new Map(reference.products.map(p => [p.erp_sku, p]));
  for (const [sku, r] of Object.entries(resolved)) {
   const m = settings.skuMappings?.[sku];
   if (r.status === 'inactive') throw fail(`商品 ${sku} 在 ECOUNT 主檔已中止使用，請先確認正確出貨品項`);
   if (r.status === 'ambiguous') throw fail(`商品 ${sku} 的品項編碼與條碼對應多個商品，請先釐清 ECOUNT 主檔`);
-  if (r.status === 'matched' && m?.erpSku !== r.matches[0].erp_sku) throw fail(`商品 ${sku} 應對應 ECOUNT ${r.matches[0].erp_sku}，不能改成其他相似編碼`);
+  if (r.status === 'matched' && m?.erpSku !== r.matches[0].erp_sku &&
+   !require('./marketplaceBarcodeReviews').verifiedReviewTarget(reviewedContext, settings, sku, byCode.get(m?.erpSku), reference.products))
+   throw fail(`商品 ${sku} 應對應 ECOUNT ${r.matches[0].erp_sku}，不能改成其他相似編碼`);
   // A manual mapping must still resolve to an active ERP item. A barcode is
   // valid for source lookup, but the exported item-code column needs ERP SKU.
   const target = byCode.get(m?.erpSku);
@@ -62,4 +77,4 @@ async function verifyCatalogMappings(_pool, settings, skus = Object.keys(setting
   if (!target.active) throw fail(`商品 ${sku} 對應的 ECOUNT 品項 ${target.erp_sku} 已中止使用，請先確認正確出貨品項`);
  }
 }
-module.exports = { createReferenceReader, resolveProducts, lookupProducts, createProductRouter, verifyCatalogMappings };
+module.exports = { createReferenceReader, resolveProducts, exactReviewTargets, lookupProducts, createProductRouter, verifyCatalogMappings };

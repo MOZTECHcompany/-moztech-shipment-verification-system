@@ -91,8 +91,8 @@ async function mutateFlow(pool,id,action,body,user,io){
   }
   if(['confirm-sales','confirm-return'].includes(action)){
    if(action==='confirm-sales'&&body.savedSalesConfirmed!==true)throw fail('請確認這份檔案來自 ECOUNT 已儲存銷貨明細',400);
-   await require('./marketplaceProductCatalog').verifyCatalogMappings(db,data.batch.snapshot.settings,[...new Set(data.batch.snapshot.items.map(i=>i.sku))]);
-   await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(db,data.batch.snapshot);
+   const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(db,data.batch.snapshot,undefined,{returnContext:true});
+   await require('./marketplaceProductCatalog').verifyCatalogMappings(db,data.batch.snapshot.settings,[...new Set(data.batch.snapshot.items.map(i=>i.sku))],undefined,reviewed);
    const result=await reconcileSales(body.rows,{...data.batch,orders:data.orders},{logistics:action==='confirm-return'}).catch(e=>{throw fail(e.message,400);});
    if(f.erp_receipt){if(f.erp_receipt.fingerprint!==result.receipt.fingerprint)throw fail('此批已核對不同的 ERP 結果，請處理原單據差異，不可覆寫或重複建單');}
    else{
