@@ -10,15 +10,29 @@ const control='min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 
 const textButton='inline-flex min-h-10 items-center gap-1 text-sm font-medium text-blue-700 hover:underline disabled:opacity-40';
 const initial={status:'active',platform:'',store:'',from:'',to:'',q:'',page:1};
 const dateTime=v=>new Date(v).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
+function OrderShipping({shipping,label='收件資料'}){
+ if(!shipping||typeof shipping!=='object'||Array.isArray(shipping))return null;
+ const value=key=>typeof shipping[key]==='string'?shipping[key].trim():'';
+ const fields=[['收件',[value('recipient'),value('phone')].filter(Boolean).join(' · ')],['地址',[value('postalCode'),value('address')].filter(Boolean).join(' ')],['配送',[value('method'),value('storeName'),value('storeCode')].filter(Boolean).join(' · ')],['物流單號',value('trackingNumber')],['備註',value('note')]].filter(([,content])=>content);
+ return fields.length?<dl className="mt-3 space-y-1 rounded-lg bg-slate-50 p-3 text-sm" aria-label={label}>{fields.map(([label,content])=><div key={label} className="flex gap-3"><dt className="w-16 shrink-0 text-slate-600">{label}</dt><dd className="min-w-0 whitespace-pre-wrap break-words text-slate-900">{content}</dd></div>)}</dl>:null;
+}
 export default function MarketplaceBatchManager({enabled,currentSession,refreshKey,user}){
  const [filters,setFilters]=useState(initial),[data,setData]=useState({intakes:[],facets:[],total:0,orders:0,pageSize:20});
  const [loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[detail,setDetail]=useState(null),[deleting,setDeleting]=useState(null),[revision,setRevision]=useState(0);
  const [fileLink,setFileLink]=useState(null);
- const detailRef=useRef(null);
- const [params,setParams]=useSearchParams();const selected=params.get('batch');
+ const [shippingReview,setShippingReview]=useState(null),[shippingStatus,setShippingStatus]=useState(null),[shippingBusy,setShippingBusy]=useState('');
+ const detailRef=useRef(null),orderRef=useRef(null);
+ const [params,setParams]=useSearchParams();const selected=params.get('batch'),focusedOrder=params.get('order');
  const alive=useRef(true),session=useRef(currentSession),pending=useRef(false),dialog=useRef(null);session.current=currentSession;
+ const shippingGeneration=useRef(0),shippingPending=useRef(null),shippingReviewRef=useRef(null),shippingContext=useRef('');
+ const shippingContextKey=JSON.stringify([enabled,selected,focusedOrder,user?.id,user?.role,refreshKey]);
+ shippingContext.current=shippingContextKey;shippingReviewRef.current=shippingReview;
  const valid=()=>alive.current&&session.current();
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
+ useEffect(()=>{
+  shippingGeneration.current++;setShippingReview(null);setShippingStatus(null);setShippingBusy('');
+  if(shippingPending.current!==null){shippingPending.current=null;pending.current=false;setBusy(false);}
+ },[shippingContextKey]);
  useEffect(()=>{if(!enabled){setData({intakes:[],facets:[],total:0,orders:0,pageSize:20});setDetail(null);setDeleting(null);}},[enabled]);
  useEffect(()=>{
   if(!enabled)return;let cancelled=false;setLoading(true);
@@ -35,10 +49,44 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   Promise.all([apiClient.get(`/api/marketplace-intakes/${encodeURIComponent(selected)}`),apiClient.get(`/api/warehouse-intakes/${encodeURIComponent(selected)}`)]).then(([r,w])=>{if(!cancelled&&valid())setDetail({...r.data,warehouseFlow:w.data.flow});}).catch(e=>{if(!cancelled&&valid())setNotice(e.response?.data?.message||'無法開啟批次明細。');});
   return()=>{cancelled=true;};
  },[enabled,selected,revision]);
- useEffect(()=>{if(detail)detailRef.current?.scrollIntoView({behavior:'smooth',block:'start'});},[detail]);
+ useEffect(()=>{if(detail)(detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)?orderRef.current:detailRef.current)?.scrollIntoView({behavior:'smooth',block:'start'});},[detail,focusedOrder]);
  useEffect(()=>{if(deleting)dialog.current?.showModal();else dialog.current?.close();},[deleting]);
  const filter=(key,value)=>setFilters(f=>({...f,[key]:value,...(key==='platform'?{store:''}:{}),page:1}));
- const closeDetail=()=>setParams(p=>{p.delete('batch');p.delete('view');return p;},{replace:true});
+ const closeDetail=()=>setParams(p=>{p.delete('batch');p.delete('view');p.delete('order');return p;},{replace:true});
+ const shippingCurrent=(context,generation)=>valid()&&shippingContext.current===context&&shippingGeneration.current===generation;
+ const shippingAction=async(orderNumber,review=null)=>{
+  if(!enabled||pending.current||!valid()||shippingContext.current!==shippingContextKey||!user?.id||!detail||String(detail.id)!==selected||detail.platform!=='Shopify'||!detail.orders.some(order=>order.sourceOrderNumber===orderNumber))return;
+  if(review&&(shippingReviewRef.current!==review||!review.changed||!shippingCurrent(review.context,review.generation)))return;
+  const context=shippingContextKey,generation=++shippingGeneration.current;
+  let receivedResponse=false;
+  shippingPending.current=generation;pending.current=true;setBusy(true);setShippingBusy(orderNumber);setShippingStatus(null);setFileLink(null);
+  if(!review)setShippingReview(null);
+  try{
+   const path=`/api/marketplace-intakes/${detail.id}/orders/${review?'shipping-update':'shipping-preview'}`;
+   const body=review?{orderNumber,previewFingerprint:review.previewFingerprint,commandId:review.commandId,expectedActorId:user.id}:{orderNumber};
+   const response=await apiClient.post(path,body,{timeout:75000});
+   receivedResponse=true;
+   if(!shippingCurrent(context,generation))return;
+   const result=response.data;
+   if(String(result?.intakeId)!==String(detail.id)||result?.orderNumber!==orderNumber)throw Error('收件資料回應不符，請重新查詢。');
+   if(review){
+    if(result.ok!==true||typeof result.updated!=='boolean')throw Error('收件資料保存結果未確認，請重新查詢。');
+    setShippingReview(null);setShippingStatus({context,orderNumber,message:'收件資料已更新'});setRevision(value=>value+1);
+   }
+   else{
+    const isShipping=value=>value&&typeof value==='object'&&!Array.isArray(value);
+    if(!isShipping(result.previousShipping)||!isShipping(result.currentShipping)||typeof result.changed!=='boolean'||(result.changed&&(typeof result.previewFingerprint!=='string'||!result.previewFingerprint)))throw Error('收件資料未完成核對，請重新查詢。');
+    if(result.changed)setShippingReview({...result,context,generation,commandId:crypto.randomUUID()});
+    else setShippingStatus({context,orderNumber,message:'收件資料已是最新'});
+   }
+  }catch(error){if(shippingCurrent(context,generation)){
+   const status=Number(error.response?.status);
+   const uncertain=review&&!receivedResponse&&(!error.response||status===408||(status>=500&&status<=599));
+   setShippingReview(uncertain?{...review,generation}:null);
+   setShippingStatus({context,orderNumber,error:true,message:error.response?.data?.message||(uncertain?'保存結果未確認，請重試。':error.message||'收件資料更新未完成，請重新查詢。')});
+  }}
+  finally{if(shippingPending.current===generation){shippingPending.current=null;pending.current=false;if(valid()){setBusy(false);setShippingBusy('');}}}
+ };
  const operate=async(record,action)=>{
   if(pending.current||!valid())return;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
   try{
@@ -102,7 +150,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
     <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold">{detail.platform} · {detail.store}</p><p className="mt-1 break-all text-sm text-slate-600">{detail.batchNumber} · {detail.orders.length} 筆訂單</p></div>{!detail.warehouseFlow?.erp_confirmed_at&&<Button disabled={busy||!!detail.reviewWarning||!!detail.financialWarning||!!salesWarning} onClick={()=>download(detail.id,'ecount-grouped')}>下載銷貨檔</Button>}</div>
     {detail.warehouseFlow?.erp_confirmed_at?<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-blue-50 p-4"><strong>理貨核對完成 · {detail.orders.length} 筆訂單</strong><Button as={Link} to={`/warehouse-intakes/${detail.id}`}>列印與預揀</Button></div>:!(detail.links||[]).some(link=>link.order_id)&&user&&<AdminDashboard key={`${user.id}:${detail.id}`} user={user} embedded batchId={detail.id} onMatched={()=>{if(valid())setRevision(v=>v+1);}}/>}
    </div>
-   <details className="mt-4"><summary className="cursor-pointer font-semibold">訂單、商品與金額</summary>
+   <details className="mt-4" open={detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)||undefined}><summary className="cursor-pointer font-semibold">訂單、商品與金額</summary>
    <p className="mt-2 break-all text-sm">{detail.batchNumber} · {detail.platform} · {detail.store}</p><p className="mt-1 text-xs text-slate-500">銷貨日期 {detail.settings.date} · 保存於 {dateTime(detail.createdAt)}{detail.archivedAt?` · 封存於 ${dateTime(detail.archivedAt)}`:''}</p>
    <p className="mt-2 text-sm">轉檔建立者：{detail.handler?.name||detail.handler?.username||'未記錄'}{detail.handler?.username?`（${detail.handler.username}）`:''}{detail.handler?.legacy?' · 依原建立者帳號查得':''}</p><p className="mt-2 text-sm">{detail.summary.orderCount} 筆訂單 · {detail.settings.currency} {formatMinor(detail.summary.ecountTotalMinor)}（訂單總額不代表已收款）</p>
    <p className="mt-2 text-sm">專案負責人：{detail.settings.projectOwner||'未指定'} · 業務負責人：{detail.settings.salesOwner||'未指定'}</p>
@@ -111,7 +159,17 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    {salesView&&<details className="my-4 rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer font-semibold">彙總銷貨（{salesView.rows.length} 列，每列最多 200 件）</summary><div className="mt-3 overflow-x-auto"><table className="min-w-[680px] w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['品項編碼','商品','數量','含稅均價','稅前金額','營業稅','含稅金額'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{salesView.rows.map(r=><tr key={r[15]} className="border-t border-slate-100"><td className="p-3">{r[11]}</td><td className="p-3">{r[16]}</td><td className="p-3 font-semibold">{r[19]}</td><td className="p-3">{r[21]}</td><td className="p-3">{r[23]}</td><td className="p-3">{r[24]}</td><td className="p-3">{((r[23]+r[24])).toFixed(2)}</td></tr>)}</tbody></table></div></details>}
    <details className="my-4 rounded-xl border border-slate-200 p-4" open={params.get('view')==='prepick'||undefined}><summary className="cursor-pointer font-semibold">預揀總表 · 商品合計</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['ERP 品項編碼','商品名稱','已確認條碼','總數量','訂單數'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{(detail.prepick?.rows||[]).map((r,i)=><tr key={i} className="border-t border-slate-100"><td className="p-3">{r[2]}</td><td className="p-3">{r[4]}</td><td className="p-3">{r[3]||'待確認'}</td><td className="p-3 font-semibold">{r[5]}</td><td className="p-3">{r[6]}</td></tr>)}</tbody></table></div></details>
    <div className="mt-3 flex flex-wrap gap-4">{[...new Map((detail.links||[]).filter(l=>l.import_batch_id).map(l=>[l.import_batch_id,l])).values()].map(l=><Link key={l.import_batch_id} className={textButton} to={`/batches/${l.import_batch_id}`}>理貨單 {l.voucher_number}：列印預揀／揀貨／裝箱明細</Link>)}</div>
-   <div className="mt-4 grid gap-3">{detail.orders.map((o,index)=><details key={o.sourceOrderNumber} className="rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer text-sm"><span className="mr-3 rounded bg-slate-100 px-2 py-1 text-slate-500">{index+1}</span><strong className="text-base">{o.sourceOrderNumber}</strong><span className="ml-4 text-slate-600">{detail.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).reduce((sum,i)=>sum+i.quantity,0)} 件 · {formatMinor(o.sourceFinancial?.totalMinor??o.financial.totalMinor)}</span></summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['來源貨號','ERP 品項','商品','確認條碼','數量'].map(h=><th className="p-2" key={h}>{h}</th>)}</tr></thead><tbody>{detail.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).map(i=>{const m=detail.settings.skuMappings[i.sku]||{};return <tr key={i.sourceLineId}><td className="p-2">{i.sku}</td><td className="p-2">{m.erpSku}</td><td className="p-2">{m.erpName||i.productName}</td><td className="p-2">{m.barcodeConfirmed?m.barcode:'待確認'}</td><td className="p-2">{i.quantity}</td></tr>;})}</tbody></table></div></details>)}</div>
+   <div className="mt-4 grid gap-3">{detail.orders.map((o,index)=>{
+    const review=shippingReview?.context===shippingContextKey&&shippingReview.orderNumber===o.sourceOrderNumber?shippingReview:null;
+    const status=shippingStatus?.context===shippingContextKey&&shippingStatus.orderNumber===o.sourceOrderNumber?shippingStatus:null;
+    const editableShipping=detail.platform==='Shopify'&&!detail.archivedAt&&!(detail.links||[]).some(link=>link.source_order_number===o.sourceOrderNumber&&link.order_id);
+    return <details key={o.sourceOrderNumber} ref={o.sourceOrderNumber===focusedOrder?orderRef:undefined} open={o.sourceOrderNumber===focusedOrder||undefined} aria-label={`商城訂單 ${o.sourceOrderNumber}`} className={`min-w-0 scroll-mt-4 rounded-xl border p-4 ${o.sourceOrderNumber===focusedOrder?'border-blue-500 ring-1 ring-blue-100':'border-slate-200'}`}>
+     <summary className="cursor-pointer text-sm"><span className="mr-3 rounded bg-slate-100 px-2 py-1 text-slate-500">{index+1}</span><strong className="text-base">{o.sourceOrderNumber}</strong><span className="ml-4 text-slate-600">{detail.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).reduce((sum,i)=>sum+i.quantity,0)} 件 · {formatMinor(o.sourceFinancial?.totalMinor??o.financial.totalMinor)}</span></summary>
+     {review?<div className="mt-3 rounded-lg border border-slate-200 p-3" aria-label="收件資料變更"><div className="grid gap-3 sm:grid-cols-2"><div><h4 className="text-sm font-semibold">已保存</h4><OrderShipping shipping={review.previousShipping} label="已保存收件資料"/></div><div><h4 className="text-sm font-semibold">Shopify 最新</h4><OrderShipping shipping={review.currentShipping} label="Shopify 最新收件資料"/></div></div><div className="mt-3 flex flex-wrap gap-3"><Button disabled={busy||!enabled} onClick={()=>shippingAction(o.sourceOrderNumber,review)}>{shippingBusy===o.sourceOrderNumber?'保存中…':'保存收件資料'}</Button><button className={textButton} disabled={busy||!enabled} onClick={()=>{if(valid()&&shippingReviewRef.current===review){shippingGeneration.current++;setShippingReview(null);}}}>取消</button></div></div>:<><OrderShipping shipping={o.shipping}/>{editableShipping&&<Button className="mt-3" variant="secondary" disabled={busy||!enabled} onClick={()=>shippingAction(o.sourceOrderNumber)}>{shippingBusy===o.sourceOrderNumber?'查詢中…':'更新收件資料'}</Button>}</>}
+     {status&&<p role={status.error?'alert':'status'} className={`mt-2 text-sm ${status.error?'text-amber-900':'text-slate-700'}`}>{status.message}</p>}
+     <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['來源貨號','ERP 品項','商品','確認條碼','數量'].map(h=><th className="p-2" key={h}>{h}</th>)}</tr></thead><tbody>{detail.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).map(i=>{const m=detail.settings.skuMappings[i.sku]||{};return <tr key={i.sourceLineId}><td className="p-2">{i.sku}</td><td className="p-2">{m.erpSku}</td><td className="p-2">{m.erpName||i.productName}</td><td className="p-2">{m.barcodeConfirmed?m.barcode:'待確認'}</td><td className="p-2">{i.quantity}</td></tr>;})}</tbody></table></div>
+    </details>;
+   })}</div>
    </details>
   </>}</section>}
   <dialog ref={dialog} className="w-[calc(100%-2rem)] max-w-lg rounded-2xl p-6 backdrop:bg-slate-900/40" aria-labelledby="delete-batch-title" onCancel={e=>{if(busy)e.preventDefault();else setDeleting(null);}}>

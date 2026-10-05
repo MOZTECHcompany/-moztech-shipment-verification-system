@@ -11,7 +11,7 @@ const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
 const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
-function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool})}){
+function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool})}){
  const router=express.Router();
  router.use(authorizeRoles('admin','dispatcher'));
  require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool);
@@ -31,6 +31,12 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   const review=await confirmBarcodeReview(pool,candidate,req.user);
   res.status(201).set('Cache-Control','private, no-store').json({confirmed:true,id:review.id,confirmedAt:review.confirmed_at});
  }catch(e){if(e.status)return res.status(e.status).json({code:e.code,message:e.message});next(e);}});
+ for(const [path,method] of [['shipping-preview','preview'],['shipping-update','apply']]){
+  router.post(`/:id/orders/${path}`,async(req,res,next)=>{try{
+   const result=await shippingService[method](req.params.id,req.body||{},req.user);
+   res.set('Cache-Control','private, no-store').json(result);
+  }catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message,orderNumber:req.body?.orderNumber});next(e);}});
+ }
  router.get('/',async(req,res,next)=>{try{
   res.set('Cache-Control','private, no-store').json(await listBatches(pool,req.query));
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
@@ -82,9 +88,9 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    if(existing){await db.query('ROLLBACK');open=false;return res.status(200).json({...publicRecord(existing),reused:true});}
    for(const key of identity){
     const previous=(await db.query('SELECT intake_id FROM marketplace_intake_orders WHERE source_platform=$1 AND source_store=$2 AND source_order_number=$3',key)).rows[0];
-    if(previous)throw Object.assign(new Error(`商城訂單 ${key[2]} 已保存於轉檔批次 #${previous.intake_id}，請開啟原批次，未重複轉銷貨`),{status:409,code:'MARKETPLACE_SOURCE_EXISTS'});
+    if(previous)throw Object.assign(new Error(`商城訂單 ${key[2]} 已保存於轉檔批次 #${previous.intake_id}，請開啟原批次，未重複轉銷貨`),{status:409,code:'MARKETPLACE_SOURCE_EXISTS',intakeId:previous.intake_id,orderNumber:key[2]});
     const legacy=(await db.query('SELECT id FROM orders WHERE source_platform=$1 AND source_store=$2 AND source_order_number=$3 LIMIT 1',key)).rows[0];
-    if(legacy)throw Object.assign(new Error(`商城訂單 ${key[2]} 已存在 WMS 工作單 #${legacy.id}，未再次轉銷貨`),{status:409,code:'MARKETPLACE_SOURCE_EXISTS'});
+    if(legacy)throw Object.assign(new Error(`商城訂單 ${key[2]} 已存在 WMS 工作單 #${legacy.id}，未再次轉銷貨`),{status:409,code:'MARKETPLACE_SOURCE_EXISTS',workOrderId:legacy.id,orderNumber:key[2]});
    }
    const record=(await db.query('INSERT INTO marketplace_intakes(batch_number,source_platform,source_store,fingerprint,created_by,snapshot) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[clean(settings.batchNumber),source.platform,clean(settings.store),fingerprint,req.user.id,JSON.stringify(snapshot)])).rows[0];
    for(const order of parsed.orders){
@@ -104,7 +110,9 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    if(commitAttempted)return res.status(503).json({code:'MARKETPLACE_RESULT_UNKNOWN',message:'保存結果尚未確認，請先重新讀取已保存批次，再以相同內容重試；不要改單號重送'});
    if(e.code==='23505')return res.status(409).json({code:'MARKETPLACE_ALREADY_EXISTS',message:'來源訂單或追蹤單號已存在，請查原批次，未重複保存'});
    if(['55P03','57014'].includes(e.code))return res.status(409).json({code:'MARKETPLACE_RETRY',message:'同一批訂單正在處理，請讀取已保存批次後重試'});
-   if(e.status)return res.status(e.status).json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber});
+   if(e.status)return res.status(e.status).json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber,
+    ...(e.code==='MARKETPLACE_SOURCE_EXISTS'&&validId(e.intakeId)?{intakeId:Number(e.intakeId)}:{}),
+    ...(e.code==='MARKETPLACE_SOURCE_EXISTS'&&validId(e.workOrderId)?{workOrderId:Number(e.workOrderId)}:{})});
    next(e);
   }finally{db?.release(tainted);}
  });

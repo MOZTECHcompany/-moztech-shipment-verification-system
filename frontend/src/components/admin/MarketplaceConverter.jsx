@@ -24,6 +24,14 @@ const orderMessage = (error, message) => {
   const orderNumber = String(error.response?.data?.orderNumber || '').trim();
   return orderNumber && !message.includes(orderNumber) ? `${orderNumber}：${message}` : message;
 };
+const originalOrderLink = data => {
+  if (data?.code !== 'MARKETPLACE_SOURCE_EXISTS' || typeof data.orderNumber !== 'string') return null;
+  const number = data.orderNumber.trim();
+  if (!number || number.length > 100 || /[\u0000-\u001f\u007f]/.test(number)) return null;
+  const validId = value => /^[1-9]\d{0,9}$/.test(String(value)) && Number(value) <= 2147483647;
+  if (validId(data.intakeId)) return `?batch=${data.intakeId}&order=${encodeURIComponent(number)}#batch-detail`;
+  return validId(data.workOrderId) ? `/order/${data.workOrderId}` : null;
+};
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const batchNumber = () => `WMS-${today().replaceAll('-', '')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)), value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 const barcodeConflictKey = conflict => conflict.fingerprint;
@@ -56,6 +64,7 @@ function ConverterPage({ user }) {
   const [prepared, setPrepared] = useState(null), [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false), [access, setAccess] = useState('loading');
   const [message, setMessage] = useState(''), [messageKind, setMessageKind] = useState('status');
+  const [existingOrderLink, setExistingOrderLink] = useState(null);
   const [records, setRecords] = useState([]), [saved, setSaved] = useState(null);
   const [profiles, setProfiles] = useState([]), [profileId, setProfileId] = useState(''), [choosingStore, setChoosingStore] = useState(false), [storeSetupOpen, setStoreSetupOpen] = useState(false);
   const [dragging, setDragging] = useState(false), [catalog, setCatalog] = useState(null);
@@ -63,7 +72,7 @@ function ConverterPage({ user }) {
   const [barcodeChecks, setBarcodeChecks] = useState({});
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
-  const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); };
+  const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); setExistingOrderLink(null); };
   const currentSession = () => batchSessionMatches(sessionStorage, actor.current, token.current);
   const loadRecords = async () => {
     const response = await apiClient.get('/api/marketplace-intakes');
@@ -296,6 +305,7 @@ function ConverterPage({ user }) {
           return;
         }
         showMessage(orderMessage(error, error.response?.data?.message || '保存或下載未完成，請查看已保存批次後重試。'), 'error');
+        setExistingOrderLink(originalOrderLink(error.response?.data));
       }
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
@@ -304,7 +314,7 @@ function ConverterPage({ user }) {
   return <main className="mx-auto max-w-7xl space-y-5 pb-8 text-slate-900" data-testid="marketplace-converter">
     <Link to="/admin" className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16} />返回出貨管理</Link>
     <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title="商城訂單轉檔" /><a href="#saved-batches" className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a></div>
-    {message && <p role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}>{message}</p>}
+    {message && <div role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}><p>{message}</p>{existingOrderLink && <Button as={Link} to={existingOrderLink} variant="secondary" className="mt-3" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>查看原訂單</Button>}</div>}
     <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300'}`} onDragOver={event => { event.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); selectFiles(Array.from(event.dataTransfer.files || [])); }} aria-label="商城訂單檔案區">
       <div className="flex flex-col items-center py-3 text-center"><UploadCloud size={32} className="mb-3 text-blue-600" /><h2 className="text-lg font-semibold">{dragging ? '放開檔案，開始核對' : '拖曳商城訂單到這裡'}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p>
         <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={() => fileRef.current?.click()}>{busy ? <Loader2 className="mr-2 animate-spin" size={18} /> : <FileSpreadsheet className="mr-2" size={18} />}{busy ? '核對中…' : name ? '更換訂單檔' : '選擇訂單檔'}</Button>

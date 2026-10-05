@@ -464,6 +464,49 @@ test('an order changed after preview refreshes totals without saving or download
     assert.equal(downloadSales(view).props.disabled,false,'only a completed fresh preview enables another explicit download');
 });
 
+test('duplicate saved source offers one direct original order link without another save or sales download', async () => {
+    const view = await converter({saveError:{code:'MARKETPLACE_SOURCE_EXISTS',message:'此訂單已保存',intakeId:19,orderNumber:'#SYN-ORIGINAL'}});
+    await view.select(file()); await downloadSales(view).props.onClick(); view.render();
+    const button = view.button('查看原訂單');
+    assert.ok(button); assert.equal(button.props.as,'Link');
+    assert.equal(button.props.to,'?batch=19&order=%23SYN-ORIGINAL#batch-detail');
+    assert.equal(view.all(node=>node.type==='Button' && view.text(node)==='查看原訂單').length,1);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,1);
+    assert.equal(view.requests.filter(request=>request.url.endsWith('/download-link')).length,0);
+    assert.equal(view.downloads.length,0);
+    let prevented=false;button.props.onClick({preventDefault(){prevented=true;}});assert.equal(prevented,false);
+    view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));
+    button.props.onClick({preventDefault(){prevented=true;}});assert.equal(prevented,true,'an old account callback cannot navigate');
+    view.listeners.get('storage')();assert.equal(view.button('查看原訂單'),undefined);
+});
+
+test('duplicate legacy work order uses its verified work order id while a new upload clears saved source context', async () => {
+    const view = await converter({saveError:{code:'MARKETPLACE_SOURCE_EXISTS',message:'此訂單已有工作單',workOrderId:37,orderNumber:'#SYN-LEGACY'}});
+    await view.select(file());await downloadSales(view).props.onClick();view.render();
+    assert.equal(view.button('查看原訂單').props.to,'/order/37');
+    await view.select(file(secondRows));
+    assert.equal(view.button('查看原訂單'),undefined);
+    assert.doesNotMatch(view.text(view.render()),/#SYN-LEGACY|此訂單已有工作單/);
+    assert.equal(view.downloads.length,0);
+});
+
+test('unstructured duplicate messages and invalid recovery identities never create a navigation link', async () => {
+    for(const payload of [
+        {message:'訂單已保存於批次 #19',intakeId:19,orderNumber:'#SYN'},
+        {code:'OTHER_FAILURE',intakeId:19,orderNumber:'#SYN'},
+        {code:'MARKETPLACE_SOURCE_EXISTS',intakeId:'19?batch=20',orderNumber:'#SYN'},
+        {code:'MARKETPLACE_SOURCE_EXISTS',intakeId:2147483648,orderNumber:'#SYN'},
+        {code:'MARKETPLACE_SOURCE_EXISTS',intakeId:19,orderNumber:''},
+        {code:'MARKETPLACE_SOURCE_EXISTS',workOrderId:0,orderNumber:'#SYN'},
+        {code:'MARKETPLACE_SOURCE_EXISTS',intakeId:19,orderNumber:'#SYN\n#OTHER'},
+    ]){
+        const view=await converter({saveError:{message:'無法保存',...payload}});
+        await view.select(file());await downloadSales(view).props.onClick();view.render();
+        assert.equal(view.button('查看原訂單'),undefined);
+        assert.equal(view.downloads.length,0);
+    }
+});
+
 test('multiple same-platform profiles require a store choice, excluding other platform profiles', async () => {
     const profiles = [storeProfile, {...storeProfile,id:2,store:'Second Store',settings:{...storeProfile.settings,store:'Second Store',customerCode:'00022'}}, {id:3,platform:'Shopify',store:'Other',settings:{store:'Other',customerCode:'WRONG'}}];
     const view = await converter({ profiles }); await view.select(file());
