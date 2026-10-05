@@ -1,6 +1,6 @@
 const { createHash } = require('node:crypto');
 
-const VERSION = 'shopify-current-v1';
+const VERSION = 'shopify-current-v2';
 const MAX_SOURCE_ROWS = 1000;
 const MAX_ORDERS = 250;
 const MAX_ORDER_LINES = 1000;
@@ -14,7 +14,10 @@ const QUERY = `query WmsCurrentOrder($id: ID!, $after: String) {
     displayFinancialStatus displayFulfillmentStatus paymentGatewayNames discountCodes
     currentSubtotalLineItemsQuantity
     shippingAddress { name phone address1 address2 city zip province provinceCode country countryCodeV2 company }
-    shippingLines(first: 50) { nodes { title } pageInfo { hasNextPage } }
+    shippingLines(first: 50, includeRemovals: true) {
+      nodes { id title isRemoved originalPriceSet ${MONEY_SELECTION} currentDiscountedPriceSet ${MONEY_SELECTION} }
+      pageInfo { hasNextPage }
+    }
     ${MONEY_FIELDS.map(name => `${name} ${MONEY_SELECTION}`).join('\n')}
     currentTotalAdditionalFeesSet ${MONEY_SELECTION}
     currentTotalDutiesSet ${MONEY_SELECTION}
@@ -130,7 +133,7 @@ async function readOrder(source, options, deadline) {
     if (current.id !== `gid://shopify/Order/${source.id}` || current.name !== source.name) fail('SHOPIFY_ORDER_MISMATCH', 'Shopify 訂單 ID 或編號與原始檔不一致', source.name);
     if (!current.updatedAt || Number.isNaN(Date.parse(current.updatedAt))) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 缺少訂單更新時間', source.name);
     if (!first) first = current;
-    else if (current.updatedAt !== first.updatedAt || hash(Object.fromEntries(MONEY_FIELDS.map(field => [field, current[field]]))) !== hash(Object.fromEntries(MONEY_FIELDS.map(field => [field, first[field]])))) fail('SHOPIFY_ORDER_CHANGED', 'Shopify 訂單在核對期間已修改，請重試', source.name);
+    else if (current.updatedAt !== first.updatedAt || hash([MONEY_FIELDS.map(field => current[field]), current.shippingLines]) !== hash([MONEY_FIELDS.map(field => first[field]), first.shippingLines])) fail('SHOPIFY_ORDER_CHANGED', 'Shopify 訂單在核對期間已修改，請重試', source.name);
     const connection = current.lineItems;
     if (!Array.isArray(connection?.nodes) || typeof connection?.pageInfo?.hasNextPage !== 'boolean') fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 商品明細未完整回傳', source.name);
     for (const item of connection.nodes) {
@@ -172,7 +175,8 @@ function normalizeOrder(source, order) {
   if (!order.cancelledAt && (remainingQuantity > 0 && remainingQuantity !== currentQuantity || fulfillment === 'fulfilled' && remainingQuantity !== 0 || fulfillment === 'unfulfilled' && remainingQuantity !== currentQuantity || !['fulfilled', 'unfulfilled'].includes(fulfillment))) fail('SHOPIFY_FULFILLMENT_REVIEW_REQUIRED', 'Shopify 訂單部分出貨或出貨狀態待核對，不可重新銷整單', name);
   const lineValues = active.map(item => {
     const sku = text(item.sku);
-    if (!sku || sku.length > 100 || /^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(sku) || /[\u0000-\u001f\u007f]/.test(sku)) fail('SHOPIFY_SKU_INVALID', 'Shopify 商品缺少完整貨號，請核對商品設定', name);
+    if (!sku) fail('SHOPIFY_SKU_INVALID', item.variant ? 'Shopify 目前商品未填貨號，請補上商品貨號後重新核對' : 'Shopify 自訂商品未填貨號，請改用正式商品後重新核對', name);
+    if (sku.length > 100 || /^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(sku) || /[\u0000-\u001f\u007f]/.test(sku)) fail('SHOPIFY_SKU_INVALID', 'Shopify 商品缺少完整貨號，請核對商品設定', name);
     if (!text(item.name) || text(item.name).length > 5000) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 商品名稱無法核對', name);
     const unitMinor = money(item.originalUnitPriceSet, currency, '商品原始單價', name);
     const netMinor = money(item.priceAfterAllDiscountsBeforeTaxesSet, currency, '商品目前成交金額', name);
@@ -184,7 +188,27 @@ function normalizeOrder(source, order) {
   });
   const subtotal = lineValues.reduce((sum, item) => sum + item.netMinor, 0), gross = lineValues.reduce((sum, item) => sum + item.grossMinor, 0);
   if (!Number.isSafeInteger(subtotal) || !Number.isSafeInteger(gross) || subtotal !== amounts.currentSubtotalPriceSet || subtotal + amounts.currentShippingPriceSet !== amounts.currentTotalPriceSet) fail('SHOPIFY_TOTAL_MISMATCH', 'Shopify 有效商品、運費與目前總額不一致，須先核對', name);
-  if (gross - subtotal !== amounts.currentTotalDiscountsSet) fail('SHOPIFY_DISCOUNT_REVIEW_REQUIRED', 'Shopify 商品與運費折扣尚無法完整核對', name);
+  const shippingConnection = order.shippingLines;
+  if (!Array.isArray(shippingConnection?.nodes) || typeof shippingConnection?.pageInfo?.hasNextPage !== 'boolean' || shippingConnection.pageInfo.hasNextPage || shippingConnection.nodes.length > 50) fail('SHOPIFY_SHIPPING_REVIEW_REQUIRED', 'Shopify 運費明細未完整回傳，請重新核對', name);
+  const shippingIds = new Set();
+  const shippingLines = shippingConnection.nodes.map(line => {
+    if (!/^gid:\/\/shopify\/ShippingLine\/\d+$/.test(line?.id) || shippingIds.has(line.id) || typeof line.isRemoved !== 'boolean' || typeof line.title !== 'string') fail('SHOPIFY_SHIPPING_REVIEW_REQUIRED', 'Shopify 運費明細無法核對，請重新核對', name);
+    shippingIds.add(line.id);
+    const originalMinor = money(line.originalPriceSet, currency, '運費原價', name);
+    const currentMinor = money(line.currentDiscountedPriceSet, currency, '目前運費', name);
+    if (currentMinor > originalMinor) fail('SHOPIFY_SHIPPING_REVIEW_REQUIRED', 'Shopify 運費折扣與原價不一致，請重新核對', name);
+    return { id: line.id, title: text(line.title), removed: line.isRemoved, originalMinor, currentMinor };
+  });
+  const activeShippingLines = shippingLines.filter(line => !line.removed);
+  const shippingGrossMinor = activeShippingLines.reduce((sum, line) => sum + line.originalMinor, 0);
+  const shippingNetMinor = activeShippingLines.reduce((sum, line) => sum + line.currentMinor, 0);
+  if (!Number.isSafeInteger(shippingGrossMinor) || !Number.isSafeInteger(shippingNetMinor) || shippingNetMinor !== amounts.currentShippingPriceSet) fail('SHOPIFY_SHIPPING_REVIEW_REQUIRED', 'Shopify 運費明細與目前運費不一致，請重新核對', name);
+  // A fully cancelled order can keep an original shipping charge with a zero
+  // current price. Its voided charge is not a discount or a sale to export.
+  const cancelledZero = Boolean(order.cancelledAt) && currentQuantity === 0 && subtotal === 0 && shippingNetMinor === 0 && amounts.currentTotalPriceSet === 0 && amounts.currentTotalDiscountsSet === 0;
+  const shippingCancellationMinor = cancelledZero ? shippingGrossMinor : 0;
+  const productDiscountMinor = gross - subtotal, shippingDiscountMinor = shippingGrossMinor - shippingNetMinor - shippingCancellationMinor;
+  if (!Number.isSafeInteger(productDiscountMinor + shippingDiscountMinor) || productDiscountMinor + shippingDiscountMinor !== amounts.currentTotalDiscountsSet) fail('SHOPIFY_DISCOUNT_REVIEW_REQUIRED', 'Shopify 商品與運費折扣尚無法完整核對', name);
   const sourceBase = Object.assign({}, ...source.records.slice().reverse());
   const shared = Object.fromEntries(Object.entries(sourceBase).filter(([key]) => !key.startsWith('Lineitem ')));
   // Blank continuation fields must not overwrite order-level delivery data.
@@ -198,8 +222,7 @@ function normalizeOrder(source, order) {
     }
     shared['Shipping Street'] = [address.address1, address.address2].filter(Boolean).join(' ');
   }
-  if (order.shippingLines?.pageInfo?.hasNextPage === true) fail('SHOPIFY_SHIPPING_REVIEW_REQUIRED', 'Shopify 配送方式超出核對上限', name);
-  const shippingTitles = Array.isArray(order.shippingLines?.nodes) ? [...new Set(order.shippingLines.nodes.map(line => text(line.title)).filter(Boolean))] : [];
+  const shippingTitles = [...new Set(activeShippingLines.map(line => line.title).filter(Boolean))];
   if (shippingTitles.length) shared['Shipping Method'] = shippingTitles.join(' / ');
   const gateways = Array.isArray(order.paymentGatewayNames) ? order.paymentGatewayNames.map(text).filter(Boolean) : [];
   let paymentMethod = gateways.join(' / ');
@@ -211,7 +234,9 @@ function normalizeOrder(source, order) {
     return { ...original, ...shared,
       Name: name, Id: source.id, 'Created at': order.createdAt, 'Financial Status': order.displayFinancialStatus.toLowerCase(), 'Fulfillment Status': fulfillment,
       Currency: currency, Subtotal: formatMoney(subtotal), Shipping: formatMoney(amounts.currentShippingPriceSet), Taxes: formatMoney(amounts.currentTotalTaxSet), Total: formatMoney(amounts.currentTotalPriceSet),
-      'Discount Code': Array.isArray(order.discountCodes) ? order.discountCodes.join(' / ') : '', 'Discount Amount': formatMoney(amounts.currentTotalDiscountsSet),
+      // Shipping is already net of shipping discounts; only product discounts
+      // belong in the parser's discount field. Keep the full split in evidence.
+      'Discount Code': Array.isArray(order.discountCodes) ? order.discountCodes.join(' / ') : '', 'Discount Amount': formatMoney(productDiscountMinor),
       'Refunded Amount': formatMoney(amounts.totalRefundedSet), 'Outstanding Balance': formatMoney(amounts.totalOutstandingSet), 'Payment Method': paymentMethod, 'Cancelled at': order.cancelledAt || '',
       'Lineitem id': item.id, 'Lineitem sku': sku, 'Lineitem name': text(item.name), 'Lineitem quantity': item.currentQuantity, 'Lineitem price': formatMoney(unitMinor),
       'Lineitem discount': formatMoney(grossMinor - netMinor), 'Lineitem requires shipping': item.requiresShipping, 'Lineitem taxable': item.taxable,
@@ -219,7 +244,7 @@ function normalizeOrder(source, order) {
     };
   });
   const evidence = { number: name, id: source.id, updatedAt: order.updatedAt, edited: order.edited === true, cancelled: Boolean(order.cancelledAt), cancelledAt: order.cancelledAt || null, currency, fulfillmentStatus: fulfillment, sourceFulfillmentStatus, paymentStatus: order.displayFinancialStatus.toLowerCase(), currentQuantity, remainingQuantity,
-    subtotalMinor: subtotal, shippingMinor: amounts.currentShippingPriceSet, discountMinor: amounts.currentTotalDiscountsSet, totalMinor: amounts.currentTotalPriceSet, outstandingMinor: amounts.totalOutstandingSet, receivedMinor: amounts.totalReceivedSet,
+    subtotalMinor: subtotal, shippingMinor: amounts.currentShippingPriceSet, discountMinor: amounts.currentTotalDiscountsSet, productDiscountMinor, shippingGrossMinor, shippingDiscountMinor, shippingCancellationMinor, shippingLines, totalMinor: amounts.currentTotalPriceSet, outstandingMinor: amounts.totalOutstandingSet, receivedMinor: amounts.totalReceivedSet,
     removedLineIds: items.filter(item => item.currentQuantity === 0).map(item => item.id),
     items: lineValues.map(({ item, sku, barcode, variantId, netMinor }) => ({ id: item.id, sku, quantity: item.currentQuantity, unfulfilledQuantity: item.unfulfilledQuantity, netMinor, ...(variantId ? { variantId } : {}), ...(barcode ? { barcode, barcodeSource: 'shopify-variant' } : {}) })),
   };
