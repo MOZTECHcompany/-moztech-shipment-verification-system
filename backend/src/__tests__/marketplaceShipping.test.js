@@ -99,6 +99,17 @@ test.each(['recipient','phone','address'])('missing API %s cannot borrow the sav
  for(const name of names)h.state.current.rows[1][headers.indexOf(name)]='';
  await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_NOT_AVAILABLE'});expect(h.pool.connect).not.toHaveBeenCalled();
 });
+test.each([['preview',''],['preview','   '],['apply',''],['apply','   ']])('%s rejects a blank Address1 (%p) even with current city and country',async(method,address1)=>{
+ const h=await harness(),body=method==='apply'?h.applyBody(await h.service.preview(19,{orderNumber:number},actor)):{orderNumber:number};
+ const before=structuredClone(h.state.batch),headers=h.state.current.rows[0];
+ h.state.current.rows[1][headers.indexOf('Shipping Address1')]=address1;
+ expect(h.state.current.rows[1][headers.indexOf('Shipping City')]).toBe('台北市');
+ expect(h.state.current.rows[1][headers.indexOf('Shipping Country')]).toBe('TW');
+ await expect(h.service[method](19,body,actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_NOT_AVAILABLE',status:409});
+ expect(h.state.batch).toEqual(before);expect(h.state.commands).toEqual([]);expect(h.state.events).toEqual([]);
+ expect(h.db.query.mock.calls.some(([sql])=>/^(?:UPDATE|INSERT|DELETE)/.test(sql))).toBe(false);
+ if(method==='preview')expect(h.pool.connect).not.toHaveBeenCalled();
+});
 test('missing current shippingAddress fails closed without using source CSV',async()=>{
  const h=await harness();h.state.current.verification.orders[0].shippingSource='source-csv';
  await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_NOT_AVAILABLE'});expect(h.pool.connect).not.toHaveBeenCalled();

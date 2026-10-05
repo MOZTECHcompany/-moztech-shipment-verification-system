@@ -106,6 +106,10 @@ function createMarketplaceShippingService({pool,verifyShopify=createShopifyOrder
   if(fresh.cancelled!==false||fresh.cancelledAt||fresh.fulfillmentStatus!=='unfulfilled'||fresh.currentQuantity!==fresh.remainingQuantity||!['paid','pending'].includes(fresh.paymentStatus)||hash(fresh)!==hash(saved.oldBusiness))
    throw fail('商品、數量、金額或訂單狀態已變更，請核對原銷貨單','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
   if(evidence[0].shippingSource!=='shopify-current')throw fail('Shopify 尚無可核對的收件資料，請先在商城修正');
+  const currentRows=sourceRows(result.rows,number);
+  if(['Shipping Name','Shipping Phone','Shipping Address1'].some(field=>{
+   const column=currentRows[0].indexOf(field);return column<0||!currentRows.slice(1).some(row=>clean(row[column]));
+  }))throw fail('Shopify 收件人、電話或地址不完整，請先在商城修正');
   const {parseUnifiedMarketplace}=await import('./unifiedMarketplace.mjs');
   const parsed=parseUnifiedMarketplace(result.rows);
   const delivered=deliveryForOrders(parsed.source,parsed.parsed).orders;
