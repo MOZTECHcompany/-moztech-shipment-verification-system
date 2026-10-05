@@ -27,6 +27,12 @@ const orderMessage = (error, message) => {
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const batchNumber = () => `WMS-${today().replaceAll('-', '')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)), value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 const barcodeConflictKey = conflict => conflict.fingerprint;
+const shopifyOrderUrl = (conflict, order) => {
+  if (conflict.platform !== 'Shopify') return null;
+  const shop = String(conflict.shop || '').trim().toLowerCase();
+  const id = String(order.orderId || '').match(/^(?:gid:\/\/shopify\/Order\/)?([0-9]{1,30})$/)?.[1];
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$/.test(shop) && id ? `https://${shop}/admin/orders/${id}` : null;
+};
 const initialSettings = () => ({
   salesExportMode: ECOUNT_GROUPED_MODE, store: '', customerCode: '', customerName: '', warehouseCode: '003',
   date: today(), batchSequence: '1', batchNumber: batchNumber(), projectOwner: '', salesOwner: '',
@@ -329,16 +335,20 @@ function ConverterPage({ user }) {
             </dl></div>
             <div><h3 className="text-sm font-medium">ECOUNT 商品</h3><dl className="mt-2 space-y-1 text-sm">
               <div><dt className="inline text-slate-600">品號：</dt><dd className="inline break-all font-medium">{conflict.erpSku}</dd></div>
-              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.erpBarcode}</dd></div>
+              <div><dt className="inline text-slate-600">條碼：</dt><dd className="inline break-all font-medium">{conflict.erpBarcode || '尚未登錄條碼'}</dd></div>
               <div><dt className="inline text-slate-600">品名：</dt><dd className="inline">{conflict.erpName}</dd></div>
               {conflict.spec && <div><dt className="inline text-slate-600">規格：</dt><dd className="inline">{conflict.spec}</dd></div>}
             </dl></div>
           </div>
+          {conflict.relatedOrders?.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-slate-800">相關訂單（{new Set(conflict.relatedOrders.map(order => order.orderNumber)).size} 筆）</summary><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>訂單</th><th className={cell}>商品</th><th className={cell}>數量</th></tr></thead><tbody>{conflict.relatedOrders.map((order, index) => {
+            const url = shopifyOrderUrl(conflict, order);
+            return <tr key={`${order.orderNumber}:${order.sourceLineId || index}`} className="border-t border-slate-100"><td className={`${cell} whitespace-nowrap`}>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 underline">{order.orderNumber}</a> : order.orderNumber}</td><td className={cell}>{order.productName}</td><td className={`${cell} whitespace-nowrap`}>{order.quantity}</td></tr>;
+          })}</tbody></table></div></details>}
           <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
             <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
           </fieldset>
-          {!canConfirm && profileId && <p className="mt-2 text-sm text-amber-950">{conflict.variantIds?.length > 1 ? '同貨號有多個版本，請核對商城商品設定' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>}
+          {!canConfirm && profileId && <p className="mt-2 text-sm text-amber-950">商品版本或條碼資料不完整，請核對商城商品設定</p>}
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}

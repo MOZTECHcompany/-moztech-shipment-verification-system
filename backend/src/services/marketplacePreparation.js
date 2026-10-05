@@ -133,7 +133,14 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    const apiBarcode=apiBarcodes.get(sku),variantIds=[...(apiVariants.get(sku)||[])].sort();
    if((p.barcode&&apiBarcode&&p.barcode!==apiBarcode)||variantIds.length>1){
     const candidate=barcodeReviewCandidate({profileId:profile?.id,platform:source.platform,shop:verification?.shop||profile?.settings?.apiConnectionId||'',sourceSku:sku,sourceBarcode:apiBarcode||'',sourceName:[...new Set(eligible.items.filter(i=>i.sku===sku).map(i=>i.productName))].sort().join(' / '),variantIds,product:p});
-    reviewCandidates.push({...candidate,canConfirm:candidate.canConfirm&&!incompleteSources.has(sku)});
+    const relatedOrders=eligible.items.filter(item=>item.sku===sku).map(item=>{
+     const order=verification?.orders?.find(order=>order.number===item.sourceOrderNumber);
+     const verified=order?.items?.find(line=>line.id===item.sourceLineId);
+     return {orderNumber:item.sourceOrderNumber,orderId:order?.id||'',sourceLineId:item.sourceLineId,
+      variantId:verified?.variantId||'',productName:item.productName,quantity:item.quantity};
+    });
+    reviewCandidates.push({...candidate,canConfirm:candidate.canConfirm&&!incompleteSources.has(sku),relatedOrders,
+     reviewReason:!p.barcode?'ERP_BARCODE_MISSING':variantIds.length>1?'MULTIPLE_VARIANTS':'BARCODE_MISMATCH'});
    }
   }
   const reviews=reviewCandidates.length&&profile?await readBarcodeReviews(pool,profile.id,reviewCandidates.map(c=>c.fingerprint)):[];

@@ -50,6 +50,40 @@ test('paid fulfilled edited order stays fulfilled, with actual received and outs
   expect(result.verification.orders[0]).toMatchObject({ remainingQuantity: 0, receivedMinor: 89000, outstandingMinor: 0 });
 });
 
+test.each(['IN_PROGRESS', 'OPEN', 'PENDING_FULFILLMENT'])('%s with every item unfulfilled remains eligible without restoring edited quantity or changing money', async sourceFulfillmentStatus => {
+  const current = order({ displayFinancialStatus: 'PAID', displayFulfillmentStatus: sourceFulfillmentStatus,
+    currentSubtotalLineItemsQuantity: 2, currentSubtotalPriceSet: bag('1780.00'), currentTotalPriceSet: bag('1780.00'), totalOutstandingSet: bag('0.00'), totalReceivedSet: bag('1780.00'),
+    lineItems: { nodes: [item({ id: 'gid://shopify/LineItem/1', currentQuantity: 0, unfulfilledQuantity: 0, originalUnitPriceSet: bag('990.00'), priceAfterAllDiscountsBeforeTaxesSet: bag('0.00') }), item({ quantity: 3, currentQuantity: 2, unfulfilledQuantity: 2, priceAfterAllDiscountsBeforeTaxesSet: bag('1780.00') })], pageInfo: { hasNextPage: false } } });
+  const result = await run(editedRows(), current);
+  expect(objects(result.rows)).toHaveLength(1);
+  expect(objects(result.rows)[0]).toMatchObject({ 'Fulfillment Status': 'unfulfilled', 'Financial Status': 'paid', 'Lineitem quantity': 2, 'Lineitem fulfillment status': 'pending', Subtotal: '1780.00', Total: '1780.00', 'Outstanding Balance': '0.00' });
+  expect(result.verification.orders[0]).toMatchObject({ sourceFulfillmentStatus, fulfillmentStatus: 'unfulfilled', currentQuantity: 2, remainingQuantity: 2, totalMinor: 178000, receivedMinor: 178000, outstandingMinor: 0, removedLineIds: ['gid://shopify/LineItem/1'] });
+  const { parseUnifiedMarketplace, prepareUnifiedMarketplace } = await import('../services/unifiedMarketplace.mjs');
+  expect(prepareUnifiedMarketplace(parseUnifiedMarketplace(result.rows).parsed).choices).toEqual([{ number: '#154230', eligible: true, reason: '已付款／未出貨' }]);
+});
+
+test.each(['IN_PROGRESS', 'OPEN', 'PENDING_FULFILLMENT'])('%s cannot export a whole order after any quantity has been fulfilled', async displayFulfillmentStatus => {
+  await expect(run(editedRows(), order({ displayFulfillmentStatus, currentSubtotalLineItemsQuantity: 2,
+    lineItems: { nodes: [item({ quantity: 2, currentQuantity: 2, unfulfilledQuantity: 1 })], pageInfo: { hasNextPage: false } } }))).rejects.toMatchObject({ code: 'SHOPIFY_FULFILLMENT_REVIEW_REQUIRED' });
+  await expect(run(editedRows(), order({ displayFulfillmentStatus,
+    lineItems: { nodes: [item({ unfulfilledQuantity: 0 })], pageInfo: { hasNextPage: false } } }))).rejects.toMatchObject({ code: 'SHOPIFY_FULFILLMENT_REVIEW_REQUIRED' });
+});
+
+test('processing status keeps COD pending separate from unpaid bank transfer eligibility', async () => {
+  const { parseUnifiedMarketplace, prepareUnifiedMarketplace } = await import('../services/unifiedMarketplace.mjs');
+  const current = order({ displayFulfillmentStatus: 'IN_PROGRESS' });
+  const cod = await run(editedRows(), current);
+  expect(objects(cod.rows)[0]).toMatchObject({ 'Financial Status': 'pending', 'Payment Method': 'custom', 'Outstanding Balance': '890.00' });
+  expect(cod.verification.orders[0]).toMatchObject({ paymentStatus: 'pending', outstandingMinor: 89000, receivedMinor: 0 });
+  expect(prepareUnifiedMarketplace(parseUnifiedMarketplace(cod.rows).parsed).choices[0]).toMatchObject({ eligible: true, reason: '貨到付款／未出貨' });
+  const bank = await run(table([source({ 'Payment Method': 'Bank Transfer' })]), { ...current, paymentGatewayNames: ['Bank Transfer'] });
+  expect(prepareUnifiedMarketplace(parseUnifiedMarketplace(bank.rows).parsed).choices[0]).toMatchObject({ eligible: false, reason: '未付款，且不是已辨識的貨到付款' });
+});
+
+test.each(['ON_HOLD', 'SCHEDULED', 'REQUEST_DECLINED', 'PARTIALLY_FULFILLED'])('%s is not released by the processing-status normalization', async displayFulfillmentStatus => {
+  await expect(run(editedRows(), order({ displayFulfillmentStatus }))).rejects.toMatchObject({ code: 'SHOPIFY_FULFILLMENT_REVIEW_REQUIRED' });
+});
+
 test('cancelled order with zero current quantities retains exclusion evidence without restoring CSV products or money', async () => {
   const current = order({ cancelledAt: '2026-10-01T10:18:37Z', updatedAt: '2026-10-01T10:18:37Z', displayFinancialStatus: 'VOIDED', currentSubtotalLineItemsQuantity: 0, currentSubtotalPriceSet: bag('0.00'), currentTotalPriceSet: bag('0.00'), totalOutstandingSet: bag('0.00') });
   for (const line of current.lineItems.nodes) { line.currentQuantity = 0; line.unfulfilledQuantity = 0; line.priceAfterAllDiscountsBeforeTaxesSet = bag('0.00'); }

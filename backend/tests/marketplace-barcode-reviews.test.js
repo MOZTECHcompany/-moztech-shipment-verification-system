@@ -30,10 +30,16 @@ describe('barcode review identity',()=>{
   expect(barcodeReviewCandidate({...input(),variantIds:[variantId,variantId]}).fingerprint).toBe(original.fingerprint);
  });
  test.each([
-  {profileId:null},{variantIds:[]},{variantIds:[variantId,'gid://shopify/ProductVariant/2']},{variantIds:['gid://shopify/LineItem/1']},
-  {sourceSku:'4.711299270086E+12'},{product:{...product,active:false}},{product:{...product,barcode:''}},
+  {profileId:null},{variantIds:[]},{variantIds:[variantId,'gid://shopify/LineItem/2']},{variantIds:['gid://shopify/LineItem/1']},
+  {sourceSku:'4.711299270086E+12'},{sourceBarcode:''},{product:{...product,active:false}},
  ])('cannot confirm an incomplete or unsafe pin: %j',change=>{
-  expect(barcodeReviewCandidate({...input(),...change}).canConfirm).toBe(false);
+ expect(barcodeReviewCandidate({...input(),...change}).canConfirm).toBe(false);
+ });
+ test('multiple current versions and an empty ERP barcode can be explicitly confirmed without inventing an ERP barcode',()=>{
+  const candidate=barcodeReviewCandidate({...input(),sourceBarcode:sku,variantIds:[variantId,'gid://shopify/ProductVariant/10002'],product:{...product,barcode:''}});
+  expect(candidate.canConfirm).toBe(true);expect(candidate.variantId).toBe('');
+  expect(candidate.variantIds).toEqual([variantId,'gid://shopify/ProductVariant/10002']);
+  expect(candidate.erpBarcode).toBe('');expect(candidate.sourceBarcode).toBe(sku);
  });
  test.each(['SHOPLINE','1Shop'])('%s cannot approve a barcode exception without a store identity',platform=>{
   const connection={...input(),platform,variantIds:[],shop:'known-platform-store'};
@@ -55,6 +61,31 @@ describe('persisted barcode review',()=>{
   expect(await readBarcodeReviews(pool,2,[candidate.fingerprint])).toEqual([]);
   expect(await readBarcodeReviews(pool,1,[candidate.fingerprint])).toHaveLength(1);
   await expect(verifySavedBarcodeReviews(pool,snapshot(first),async()=>reference())).resolves.toBeUndefined();
+ });
+ async function reviewedVersions(){
+  const erp={...product,barcode:''};
+  const candidate=barcodeReviewCandidate({...input(),sourceBarcode:sku,variantIds:[variantId,'gid://shopify/ProductVariant/10002'],product:erp});
+  const record=await confirmBarcodeReview(pool,candidate,actor),saved=snapshot(record);
+  const line=saved.sourceEvidence.verification.orders[0].items[0];line.barcode=sku;
+  saved.items.push({...saved.items[0],sourceLineId:'gid://shopify/LineItem/2'});
+  saved.sourceEvidence.verification.orders[0].items.push({...line,id:'gid://shopify/LineItem/2',variantId:'gid://shopify/ProductVariant/10002'});
+  return {record,saved,reference:{...reference(),products:[erp]}};
+ }
+ test('a persisted multi-version approval validates the source scan barcode while keeping the ERP master blank',async()=>{
+  const {record,saved,reference}=await reviewedVersions();
+  expect(record.evidence.erpBarcode).toBe('');expect(saved.settings.skuMappings[sku].barcode).toBe(sku);
+  await expect(verifySavedBarcodeReviews(pool,saved,async()=>reference)).resolves.toBeUndefined();
+ });
+ test.each(['unknownVersion','missingVersion','omittedVersion','missingBarcode','scanBarcode','filledErpBarcode','revoked'])('multi-version approval rejects a changed %s',async change=>{
+  const {record,saved,reference}=await reviewedVersions(),lines=saved.sourceEvidence.verification.orders[0].items;
+  if(change==='unknownVersion')lines[1].variantId='gid://shopify/ProductVariant/99999';
+  if(change==='missingVersion')delete lines[1].variantId;
+  if(change==='omittedVersion'){lines.pop();saved.items.pop();}
+  if(change==='missingBarcode')delete lines[1].barcode;
+  if(change==='scanBarcode')saved.settings.skuMappings[sku].barcode='OTHER';
+  if(change==='filledErpBarcode')reference.products[0].barcode=sku;
+  if(change==='revoked')await revokeBarcodeReview(pool,record.id,actor);
+  await expect(verifySavedBarcodeReviews(pool,saved,async()=>reference)).rejects.toMatchObject({status:400,code:'BARCODE_REVIEW_CHANGED'});
  });
  test('revocation blocks an already saved export and retains the old audit record',async()=>{
   const candidate=barcodeReviewCandidate(input()),first=await confirmBarcodeReview(pool,candidate,actor);

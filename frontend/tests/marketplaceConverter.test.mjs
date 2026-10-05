@@ -72,7 +72,8 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             for (const [sku, item] of Object.entries(products)) if (item.status === 'matched') {
                 const matched = item.matches[0];
                 const provided = effectiveSettings.skuMappings[sku] || {};
-                effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || provided.barcodeConfirmed === true};
+                const apiBarcode = barcodeConflicts.find(conflict => conflict.sourceSku === sku)?.sourceBarcode;
+                effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || apiBarcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || !!apiBarcode || provided.barcodeConfirmed === true};
             }
             const prepared = unified.prepareUnifiedMarketplace(raw,effectiveSettings);
             return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:barcodeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
@@ -213,14 +214,69 @@ test('new upload clears physical barcode confirmation and does not reuse another
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes/barcode-confirmations').length,0);
 });
 
-test('multiple variants with one source code cannot be saved as a confirmed product', async () => {
-    const view = await converter({barcodeConflicts:[{...barcodeConflict,canConfirm:false,variantId:'',variantIds:['variant-a','variant-b']}]}); await view.select(file());
-    assert.match(view.text(view.render()), /同貨號有多個版本，請核對商城商品設定/);
+test('incomplete source identity remains blocked without incorrectly blaming multiple valid versions', async () => {
+    const view = await converter({barcodeConflicts:[{...barcodeConflict,sourceBarcode:'',canConfirm:false,variantId:'',variantIds:['variant-a','variant-b']}]}); await view.select(file());
+    assert.match(view.text(view.render()), /商品版本或條碼資料不完整，請核對商城商品設定/);
+    assert.doesNotMatch(view.text(view.render()), /同貨號有多個版本/);
     await view.change('已核對實物與 ERP',true);
     assert.equal(view.button('保存商品對照').props.disabled,true);
     await view.button('保存商品對照').props.onClick();
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes/barcode-confirmations').length,0);
     assert.equal(downloadSales(view).props.disabled,true);
+});
+
+const shopifyBarcodeRows = [
+    ['Name','Lineitem quantity','Lineitem sku','Lineitem name','Lineitem price','Financial Status','Fulfillment Status','Currency','Subtotal','Shipping','Taxes','Total','Discount Amount','Refunded Amount'],
+    ['#REVIEW-1',1,'4711299274732','iPhone 18 Pro 系列抗藍光保護貼',100,'paid','unfulfilled','TWD',100,0,0,100,0,0],
+    ['#REVIEW-2',2,'4711299274732','iPhone 18 Pro 抗藍光保護貼',100,'paid','unfulfilled','TWD',200,0,0,200,0,0],
+];
+const shopifyBarcodeConflict = {
+    ...barcodeConflict, platform:'Shopify',shop:'example.myshopify.com',sourceSku:'4711299274732',sourceBarcode:'4711299274732',
+    erpSku:'4711299274732',erpBarcode:'',erpName:'ERP 抗藍光保護貼',spec:'iPhone 6.3 18 Pro',sourceName:'iPhone 18 Pro 系列抗藍光保護貼',
+    variantId:'',variantIds:['gid://shopify/ProductVariant/1001','gid://shopify/ProductVariant/1002'],reviewReason:'ERP_BARCODE_MISSING',
+    relatedOrders:[
+        {orderNumber:'#REVIEW-1',orderId:'9001',sourceLineId:'line-1',variantId:'gid://shopify/ProductVariant/1001',productName:'iPhone 18 Pro 系列抗藍光保護貼',quantity:1},
+        {orderNumber:'#REVIEW-2',orderId:'gid://shopify/Order/9002',sourceLineId:'line-2',variantId:'gid://shopify/ProductVariant/1002',productName:'iPhone 18 Pro 抗藍光保護貼',quantity:2},
+    ],
+};
+
+test('valid multiple Shopify variants with a blank ERP barcode allow explicit review and show the exact related orders', async () => {
+    const profile = {...storeProfile,platform:'Shopify'};
+    const view = await converter({profiles:[profile],barcodeConflicts:[shopifyBarcodeConflict],resolved:{products:{'4711299274732':{status:'matched',matches:[{erp_sku:'4711299274732',product_name:'ERP 抗藍光保護貼',barcode:'',spec:'iPhone 6.3 18 Pro'}]}}}});
+    await view.select(file(shopifyBarcodeRows));
+    assert.match(view.text(view.render()), /尚未登錄條碼/);
+    assert.doesNotMatch(view.text(view.render()), /同貨號有多個版本|商品版本或條碼資料不完整/);
+    const details = view.all(node => node.type === 'details').find(node => /相關訂單（\s*2\s*筆）/.test(view.text(node.props.children[0])));
+    assert.ok(details); assert.ok(!details.props.open, 'source evidence is available on demand');
+    const rows = view.all(node => node.type === 'tr').filter(row => view.text(row).includes('#REVIEW-'));
+    assert.equal(rows.length,4, 'two evidence rows and two ordinary source order rows');
+    for (const item of shopifyBarcodeConflict.relatedOrders) {
+        const row = view.find(details,node => node.type === 'tr' && view.text(node).includes(item.orderNumber));
+        const cells = row.props.children.flat();
+        assert.equal(view.text(cells[1]),item.productName);
+        assert.equal(view.text(cells[2]),String(item.quantity));
+    }
+    const links = view.all(node => node.type === 'a' && node.props.href?.startsWith('https://example.myshopify.com/'));
+    assert.deepEqual(links.map(link => link.props.href),['https://example.myshopify.com/admin/orders/9001','https://example.myshopify.com/admin/orders/9002']);
+    assert.ok(links.every(link => link.props.target === '_blank' && link.props.rel === 'noopener noreferrer'));
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(downloadSales(view).props.disabled,true);
+    await view.change('已核對實物與 ERP',true);
+    assert.equal(view.button('保存商品對照').props.disabled,false);
+    await view.button('保存商品對照').props.onClick(); view.render();
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-intakes/barcode-confirmations').length,1);
+    assert.equal(downloadSales(view).props.disabled,false);
+});
+
+test('related order evidence never turns unvalidated shops or order identifiers into links', async () => {
+    for (const [shop,orderId,platform] of [['example.myshopify.com.evil.test','9001','Shopify'],['example.myshopify.com','9001/../../','Shopify'],['https://example.myshopify.com','9001','Shopify'],['example.myshopify.com','9001','1Shop']]) {
+        const conflict = {...shopifyBarcodeConflict,shop,platform,relatedOrders:[{...shopifyBarcodeConflict.relatedOrders[0],orderId}]};
+        const view = await converter({barcodeConflicts:[conflict]}); await view.select(file());
+        const details = view.all(node => node.type === 'details').find(node => view.text(node.props.children[0]).includes('相關訂單'));
+        assert.ok(details);
+        assert.equal(view.find(details,node => node.type === 'a'),undefined);
+        assert.match(view.text(details),/#REVIEW-1/);
+    }
 });
 
 test('per-order preview and save errors identify the order without duplicating an existing prefix', async () => {

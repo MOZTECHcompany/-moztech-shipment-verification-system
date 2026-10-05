@@ -55,6 +55,17 @@ describe('fresh server barcode confirmation route',()=>{
   expect(stored).toHaveLength(1);expect(stored[0].confirmed_by).toBe(1);
   await assertNoOperationalWrites();
  });
+ test('a dispatcher can physically confirm multiple exact versions with an empty ERP barcode without stock or batch writes',async()=>{
+  const original=candidate(),current=barcodeReviewCandidate({profileId:1,platform:original.platform,shop:original.shop,
+   sourceSku,sourceBarcode:sourceSku,sourceName:original.sourceName,variantIds:[...original.variantIds,'gid://shopify/ProductVariant/10002'],
+   product:{erp_sku:original.erpSku,barcode:'',product_name:original.erpName,spec:original.spec,active:true}});
+  const fresh=prepare({barcodeReviewCandidates:[current],barcodeConflicts:[current]}),input=body();input.confirmation.fingerprint=current.fingerprint;
+  const response=await request(appFor(pool,fresh)).post('/api/marketplace-intakes/barcode-confirmations').send(input);
+  expect(response.status).toBe(201);expect(response.body.confirmed).toBe(true);
+  const stored=(await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows[0];
+  expect(stored.evidence.erpBarcode).toBe('');expect(stored.evidence.sourceBarcode).toBe(sourceSku);
+  expect(stored.evidence.variantIds).toHaveLength(2);await assertNoOperationalWrites();
+ });
  test.each(['picker','packer','viewer',null])('unauthorized role %s cannot read fresh platform data or confirm',async role=>{
   const fresh=prepare(),app=appFor(pool,fresh,role?{id:2,role}:undefined);
   // Explicitly clear identity for the anonymous case (the helper defaults to dispatcher).

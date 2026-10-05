@@ -164,7 +164,11 @@ function normalizeOrder(source, order) {
   if (active.some(item => !item.requiresShipping)) fail('SHOPIFY_NONSHIPPING_REVIEW_REQUIRED', '訂單含非出貨品項，請確認 ECOUNT 非庫存品項對照', name);
   const currentQuantity = active.reduce((sum, item) => sum + item.currentQuantity, 0), remainingQuantity = active.reduce((sum, item) => sum + item.unfulfilledQuantity, 0);
   if (quantity(order.currentSubtotalLineItemsQuantity, name) !== currentQuantity) fail('SHOPIFY_QUANTITY_INVALID', 'Shopify 商品有效數量與訂單總數不一致', name);
-  const fulfillment = text(order.displayFulfillmentStatus).toLowerCase();
+  const sourceFulfillmentStatus = text(order.displayFulfillmentStatus);
+  const rawFulfillment = sourceFulfillmentStatus.toLowerCase();
+  const processing = ['in_progress', 'open', 'pending_fulfillment'].includes(rawFulfillment);
+  const whollyUnfulfilled = currentQuantity > 0 && active.every(item => item.unfulfilledQuantity === item.currentQuantity);
+  const fulfillment = processing && whollyUnfulfilled ? 'unfulfilled' : rawFulfillment;
   if (!order.cancelledAt && (remainingQuantity > 0 && remainingQuantity !== currentQuantity || fulfillment === 'fulfilled' && remainingQuantity !== 0 || fulfillment === 'unfulfilled' && remainingQuantity !== currentQuantity || !['fulfilled', 'unfulfilled'].includes(fulfillment))) fail('SHOPIFY_FULFILLMENT_REVIEW_REQUIRED', 'Shopify 訂單部分出貨或出貨狀態待核對，不可重新銷整單', name);
   const lineValues = active.map(item => {
     const sku = text(item.sku);
@@ -214,7 +218,7 @@ function normalizeOrder(source, order) {
       'Lineitem fulfillment status': item.unfulfilledQuantity === 0 ? 'fulfilled' : 'pending',
     };
   });
-  const evidence = { number: name, id: source.id, updatedAt: order.updatedAt, edited: order.edited === true, cancelled: Boolean(order.cancelledAt), cancelledAt: order.cancelledAt || null, currency, fulfillmentStatus: fulfillment, paymentStatus: order.displayFinancialStatus.toLowerCase(), currentQuantity, remainingQuantity,
+  const evidence = { number: name, id: source.id, updatedAt: order.updatedAt, edited: order.edited === true, cancelled: Boolean(order.cancelledAt), cancelledAt: order.cancelledAt || null, currency, fulfillmentStatus: fulfillment, sourceFulfillmentStatus, paymentStatus: order.displayFinancialStatus.toLowerCase(), currentQuantity, remainingQuantity,
     subtotalMinor: subtotal, shippingMinor: amounts.currentShippingPriceSet, discountMinor: amounts.currentTotalDiscountsSet, totalMinor: amounts.currentTotalPriceSet, outstandingMinor: amounts.totalOutstandingSet, receivedMinor: amounts.totalReceivedSet,
     removedLineIds: items.filter(item => item.currentQuantity === 0).map(item => item.id),
     items: lineValues.map(({ item, sku, barcode, variantId, netMinor }) => ({ id: item.id, sku, quantity: item.currentQuantity, unfulfilledQuantity: item.unfulfilledQuantity, netMinor, ...(variantId ? { variantId } : {}), ...(barcode ? { barcode, barcodeSource: 'shopify-variant' } : {}) })),

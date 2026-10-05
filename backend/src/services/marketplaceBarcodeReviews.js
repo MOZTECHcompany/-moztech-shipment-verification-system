@@ -24,9 +24,9 @@ function barcodeReviewCandidate({profileId,platform,shop,sourceSku,sourceBarcode
  const shopify=evidence.platform==='Shopify';
  const canConfirm=Boolean(evidence.storeProfileId&&['Shopify','SHOPLINE','1Shop'].includes(evidence.platform)&&
   Boolean(evidence.shop)&&scalar(evidence.shop,255)&&(!shopify||/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(evidence.shop))&&
-  (!shopify||variants.length===1&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(variants[0]))&&
+  (!shopify||variants.length>0&&variants.every(value=>/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value)))&&
   variants.length<=1000&&variants.every(value=>scalar(value,255))&&identifier(evidence.sourceSku)&&identifier(evidence.sourceBarcode)&&
-  identifier(evidence.erpSku)&&identifier(evidence.erpBarcode)&&scalar(evidence.sourceName,5000)&&scalar(evidence.erpName,5000)&&scalar(evidence.spec,5000)&&product?.active===true);
+  identifier(evidence.erpSku)&&(evidence.erpBarcode===''||identifier(evidence.erpBarcode))&&scalar(evidence.sourceName,5000)&&scalar(evidence.erpName,5000)&&scalar(evidence.spec,5000)&&product?.active===true);
  return {...evidence,fingerprint:fingerprint(evidence),canConfirm};
 }
 
@@ -75,10 +75,10 @@ function verifySnapshotSource(snapshot,evidence){
  const lineIds=new Set(lines.map(item=>item.sourceLineId));
  const verified=(verification.orders||[]).flatMap(order=>order.items||[]).filter(item=>item.sku===evidence.sourceSku&&lineIds.has(item.id));
  if(!lines.length||verified.length!==lineIds.size||new Set(verified.map(item=>item.id)).size!==lineIds.size||verified.some(item=>clean(item.barcode)!==evidence.sourceBarcode)||
-  (evidence.platform==='Shopify'&&verified.some(item=>clean(item.variantId)!==evidence.variantId))||
+  (evidence.platform==='Shopify'&&verified.some(item=>!evidence.variantIds.includes(clean(item.variantId))))||
   JSON.stringify([...new Set(verified.map(item=>clean(item.variantId)).filter(Boolean))].sort())!==JSON.stringify(evidence.variantIds))throw fail(`商品 ${evidence.sourceSku} 的來源版本或條碼已變更`,'BARCODE_REVIEW_CHANGED');
  const mapping=snapshot.settings?.skuMappings?.[evidence.sourceSku];
- if(!mapping||mapping.erpSku!==evidence.erpSku||mapping.barcode!==evidence.erpBarcode||mapping.barcodeConfirmed!==true)throw fail(`商品 ${evidence.sourceSku} 的已保存對照與核對紀錄不同`,'BARCODE_REVIEW_CHANGED');
+ if(!mapping||mapping.erpSku!==evidence.erpSku||mapping.barcode!==(evidence.erpBarcode||evidence.sourceBarcode)||mapping.barcodeConfirmed!==true)throw fail(`商品 ${evidence.sourceSku} 的已保存對照與核對紀錄不同`,'BARCODE_REVIEW_CHANGED');
 }
 
 async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference){

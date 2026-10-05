@@ -92,12 +92,30 @@ test.each([
  expect(next.output.ok).toBe(false);expect(next.prepick.ok).toBe(false);expect(next.barcodeReviews).toEqual([]);expect(next.barcodeConflicts).toHaveLength(1);
  expect(next.barcodeConflicts[0].fingerprint).not.toBe(first.barcodeConflicts[0].fingerprint);
 });
-test('two eligible current variants with one SKU cannot be confirmed even when their barcodes are identical',async()=>{
+test('two eligible versions with the same barcode and blank ERP barcode require explicit approval, then retain quantities and money',async()=>{
  const h=barcodeHarness();
- const rows=table([order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780'}),order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem id':'16493014253725'})]);
- h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',currentQuantity:2,items:[{id:'16493014253724',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/123'},{id:'16493014253725',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/124'}]}]}});
+ h.identity.barcode='4711299272493';h.product.barcode='';
+ const rows=table([order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem name':'完整商品頁面一 iPhone 18 Pro'}),order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem id':'16493014253725','Lineitem name':'完整商品頁面二 iPhone 18 Pro'})]);
+ h.verifyShopify.mockResolvedValue({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',id:'7624215101596',currentQuantity:2,items:[{id:'16493014253724',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/123'},{id:'16493014253725',sku:'4711299272493',barcode:h.identity.barcode,variantId:'gid://shopify/ProductVariant/124'}]}]}});
  const r=await h.prepare({rows});expect(r.output.ok).toBe(false);expect(r.prepick.ok).toBe(false);expect(r.barcodeConflicts).toHaveLength(1);
- expect(r.barcodeConflicts[0]).toMatchObject({variantId:'',variantIds:['gid://shopify/ProductVariant/123','gid://shopify/ProductVariant/124'],canConfirm:false});
+ expect(r.barcodeConflicts[0]).toMatchObject({variantId:'',variantIds:['gid://shopify/ProductVariant/123','gid://shopify/ProductVariant/124'],erpBarcode:'',canConfirm:true,reviewReason:'ERP_BARCODE_MISSING',relatedOrders:[
+  {orderNumber:'#154230',orderId:'7624215101596',sourceLineId:'16493014253724',variantId:'gid://shopify/ProductVariant/123',productName:'完整商品頁面一 iPhone 18 Pro',quantity:1},
+  {orderNumber:'#154230',orderId:'7624215101596',sourceLineId:'16493014253725',variantId:'gid://shopify/ProductVariant/124',productName:'完整商品頁面二 iPhone 18 Pro',quantity:1},
+ ]});
+ h.saveReview(r.barcodeConflicts[0]);
+ const confirmed=await h.prepare({rows},{refresh:true});
+ expect(confirmed.output.ok).toBe(true);expect(confirmed.prepick.ok).toBe(true);expect(confirmed.barcodeConflicts).toEqual([]);
+ expect(confirmed.parsed.summary.totalQuantity).toBe(2);expect(confirmed.output.summary.ecountTotalMinor).toBe(178000);
+ expect(confirmed.settings.skuMappings['4711299272493']).toMatchObject({erpSku:'4711299272493',barcode:'4711299272493',barcodeConfirmed:true});
+ expect(confirmed.barcodeReviews[0].evidence.erpBarcode).toBe('');expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test('same-SKU current versions with different actual barcodes cannot be grouped or physically approved',async()=>{
+ const h=barcodeHarness(),rows=table([order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780'}),order({Subtotal:'1780',Total:'1780','Outstanding Balance':'1780','Lineitem id':'16493014253725'})]);
+ h.verifyShopify.mockResolvedValue({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',items:[
+  {id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'},
+  {id:'16493014253725',sku:'4711299272493',barcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/124'},
+ ]}]}});
+ await expect(h.prepare({rows})).rejects.toMatchObject({code:'BARCODE_AMBIGUOUS'});expect(h.reviews).toEqual([]);
 });
 test('missing current Shopify variant ID cannot produce a confirmable barcode conflict',async()=>{
  const h=barcodeHarness();h.identity.variantId='';const r=await h.prepare({rows:table([order()])});
