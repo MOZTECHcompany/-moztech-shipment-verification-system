@@ -229,6 +229,9 @@ const shippingQuery='batch=19&order=%23SYN-ORIGINAL&shipping=refresh';
 test('original-order refresh mode previews exactly once without sales downloads, other orders, or batch-wide workflow',async()=>{
  const view=await manager({params:shippingQuery});
  assert.equal(posts(view).length,1);assert.ok(posts(view)[0].url.endsWith('/shipping-preview'));
+ const card=view.order(),table=view.find(card,node=>node.type==='table');assert.match(table.props.className,/min-w-\[560px\]/);
+ assert.match(view.find(card,node=>node.type==='div'&&node.props.children?.includes(table)).props.className,/overflow-x-auto/);
+ assert.match(view.find(table,node=>node.type==='td'&&view.text(node)==='Local product A').props.className,/min-w-32/);
  assert.ok(view.order());assert.equal(view.order('#SYN-OTHER'),undefined);
  assert.match(view.text(view.render()),/原訂單資料.*Shopify 最新/s);
  assert.doesNotMatch(view.text(view.render()),/下載銷貨檔|其他下載|彙總銷貨|預揀總表|銷貨日期|本批出貨流程|商城已保存批次/);
