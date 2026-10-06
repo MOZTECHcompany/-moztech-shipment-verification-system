@@ -7,6 +7,7 @@ const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex
 const clean=value=>String(value??'').trim();
 const {safeSettings}=require('../services/marketplaceSettings');
 const {createMarketplacePreparation}=require('../services/marketplacePreparation');
+const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
 const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
@@ -17,7 +18,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
  require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool);
  router.post('/preview',async(req,res,next)=>{try{
   const result=await prepareMarketplace(req.body||{});
-  const {sourceEvidence,barcodeReviewCandidates,...preview}=result;
+  const {sourceEvidence,sourceClassification,barcodeReviewCandidates,...preview}=result;
   res.set('Cache-Control','private, no-store').json(preview);
  }catch(e){if(e.status)return res.status(e.status).json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber});next(e);}});
  router.post('/barcode-confirmations',async(req,res,next)=>{try{
@@ -72,20 +73,33 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   try{
    const conversion=await prepareMarketplace(req.body||{},{refresh:true});
    const {parsed,output,source,raw,settings,verification,sourceEvidence}=conversion;
-   if(!output.ok)throw Object.assign(new Error('請先修正轉檔問題'),{status:400,code:'MARKETPLACE_NOT_READY',issues:output.issues});
    if(verification&&req.body?.previewFingerprint!==verification.currentFingerprint)throw Object.assign(new Error(`${source.platform} 訂單已更新，請重新核對後下載`),{status:409,code:source.platform==='Shopify'?'SHOPIFY_PREVIEW_CHANGED':'MARKETPLACE_PREVIEW_CHANGED'});
+   const allReimports=parsed?.orders?.length===0&&conversion.reimports?.length>0&&raw.orders.length===conversion.reimports.length;
+   if(!output.ok&&!allReimports)throw Object.assign(new Error('請先修正轉檔問題'),{status:400,code:'MARKETPLACE_NOT_READY',issues:output.issues});
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows,...(verification?{currentFingerprint:verification.currentFingerprint}:{})});
    const snapshot={handler:captureHandler(req.user),settings,sourceEvidence,barcodeReviews:conversion.barcodeReviews||[],summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
     orders:parsed.orders.map(o=>({...o,sourceFinancial:raw.orders.find(r=>r.sourceOrderNumber===o.sourceOrderNumber)?.financial})),items:parsed.items,
     prepick:{headers:conversion.prepick.headers,rows:conversion.prepick.rows}};
-   const reviewed=await verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
-   await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))],undefined,reviewed);
+   if(!allReimports){
+    const reviewed=await verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
+    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,settings,[...new Set(parsed.items.map(i=>i.sku))],undefined,reviewed);
+   }
    db=await pool.connect();await db.query('BEGIN');open=true;
    await db.query("SET LOCAL lock_timeout='2000ms'");await db.query("SET LOCAL statement_timeout='10000ms'");
-   for(const key of identity)await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-marketplace-source'),hashtext($1))",[JSON.stringify(key)]);
+   const lockedIdentity=conversion.sourceClassification?.identities?.length?conversion.sourceClassification.identities:identity;
+   for(const key of [...lockedIdentity].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))))await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-marketplace-source'),hashtext($1))",[JSON.stringify(key)]);
+   if(source.platform==='Shopify'&&conversion.sourceClassification){
+    const profiles=(await db.query('SELECT id,platform,store,settings,updated_at FROM marketplace_store_profiles WHERE id=$1 FOR SHARE',[conversion.profileId||0])).rows;
+    const current=await classifyMarketplaceReimports({db,platform:source.platform,store:clean(settings.store),raw,verification,profile:profiles[0]||null,verifiedRows:conversion.sourceClassification.verifiedRows});
+    if(current.fingerprint!==conversion.sourceClassification.fingerprint)throw Object.assign(new Error('原訂單或新單範圍已更新，請重新核對後下載'),{status:409,code:'SHOPIFY_PREVIEW_CHANGED'});
+   }
+   if(allReimports){await db.query('ROLLBACK');open=false;return res.status(200).set('Cache-Control','private, no-store').json({newOrderCount:0,reimports:conversion.reimports,salesDownloadAllowed:false});}
    const existing=(await db.query('SELECT * FROM marketplace_intakes WHERE fingerprint=$1',[fingerprint])).rows[0];
-   if(existing){await db.query('ROLLBACK');open=false;return res.status(200).json({...publicRecord(existing),reused:true});}
+   if(existing){
+    if(source.platform==='Shopify'&&conversion.sourceClassification)throw Object.assign(new Error('已保存批次與原訂單關聯待核對，未再次提供銷貨檔'),{status:409,code:'MARKETPLACE_REIMPORT_UNAVAILABLE'});
+    await db.query('ROLLBACK');open=false;return res.status(200).json({...publicRecord(existing),reused:true});
+   }
    for(const key of identity){
     const previous=(await db.query('SELECT intake_id FROM marketplace_intake_orders WHERE source_platform=$1 AND source_store=$2 AND source_order_number=$3',key)).rows[0];
     if(previous)throw Object.assign(new Error(`商城訂單 ${key[2]} 已保存於轉檔批次 #${previous.intake_id}，請開啟原批次，未重複轉銷貨`),{status:409,code:'MARKETPLACE_SOURCE_EXISTS',intakeId:previous.intake_id,orderNumber:key[2]});
@@ -104,7 +118,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    await notifyMarketplaceBatch({db,events,intakeId:record.id,actorId:req.user.id,stage:'prepared'});
    commitAttempted=true;await db.query('COMMIT');open=false;
    events.publish();
-   res.status(201).json(publicRecord(record));
+   res.status(201).json({...publicRecord(record),newOrderCount:parsed.orders.length,reimports:conversion.reimports||[],salesDownloadAllowed:true});
   }catch(e){
    if(open)try{await db.query('ROLLBACK');}catch{e.status=503;tainted=true;}
    if(commitAttempted)return res.status(503).json({code:'MARKETPLACE_RESULT_UNKNOWN',message:'保存結果尚未確認，請先重新讀取已保存批次，再以相同內容重試；不要改單號重送'});

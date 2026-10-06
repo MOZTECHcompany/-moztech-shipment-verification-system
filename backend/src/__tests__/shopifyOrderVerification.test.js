@@ -85,6 +85,18 @@ test.each(['ON_HOLD', 'SCHEDULED', 'REQUEST_DECLINED', 'PARTIALLY_FULFILLED'])('
   await expect(run(editedRows(), order({ displayFulfillmentStatus }))).rejects.toMatchObject({ code: 'SHOPIFY_FULFILLMENT_REVIEW_REQUIRED' });
 });
 
+test('a consistent explicit partial fulfillment remains visible and is excluded from new sales', async () => {
+  const current=order({displayFulfillmentStatus:'PARTIALLY_FULFILLED',currentSubtotalLineItemsQuantity:2,
+    currentSubtotalPriceSet:bag('1780.00'),currentTotalPriceSet:bag('1780.00'),totalOutstandingSet:bag('1780.00'),
+    lineItems:{nodes:[item({quantity:2,currentQuantity:2,unfulfilledQuantity:1,priceAfterAllDiscountsBeforeTaxesSet:bag('1780.00')})],pageInfo:{hasNextPage:false}}});
+  const result=await run(editedRows(),current);
+  expect(result.verification.orders[0]).toMatchObject({fulfillmentStatus:'partially_fulfilled',currentQuantity:2,remainingQuantity:1});
+  const {parseUnifiedMarketplace,prepareUnifiedMarketplace}=await import('../services/unifiedMarketplace.mjs');
+  const prepared=prepareUnifiedMarketplace(parseUnifiedMarketplace(result.rows).parsed);
+  expect(prepared.parsed.orders).toEqual([]);expect(prepared.parsed.items).toEqual([]);expect(prepared.output.rows).toEqual([]);
+  expect(prepared.choices[0]).toMatchObject({eligible:false});
+});
+
 test('cancelled order with zero current quantities retains exclusion evidence without restoring CSV products or money', async () => {
   const current = order({ cancelledAt: '2026-10-01T10:18:37Z', updatedAt: '2026-10-01T10:18:37Z', displayFinancialStatus: 'VOIDED', currentSubtotalLineItemsQuantity: 0, currentSubtotalPriceSet: bag('0.00'), currentTotalPriceSet: bag('0.00'), totalOutstandingSet: bag('0.00') });
   for (const line of current.lineItems.nodes) { line.currentQuantity = 0; line.unfulfilledQuantity = 0; line.priceAfterAllDiscountsBeforeTaxesSet = bag('0.00'); }

@@ -4,7 +4,7 @@ const table=rows=>{const headers=[...new Set(rows.flatMap(Object.keys))];return 
 const order=extra=>({Name:'#154230',Id:'7624215101596','Financial Status':'pending','Fulfillment Status':'unfulfilled',Currency:'TWD',Subtotal:'890',Shipping:'0',Taxes:'0',Total:'890','Discount Amount':'0','Refunded Amount':'0','Outstanding Balance':'890','Payment Method':'custom','Lineitem quantity':'1','Lineitem name':'來源商品','Lineitem price':'890','Lineitem sku':'4711299272493','Lineitem discount':'0','Lineitem id':'16493014253724','Shipping Name':'收件人','Shipping Address1':'配送地址',...extra});
 const profile={id:2,platform:'Shopify',store:'墨子科技 官網',settings:{store:'墨子科技 官網',customerCode:'00063',customerName:'墨子科技 官網',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,shippingSku:{erpSku:'00001',name:'運費',nonStock:true,confirmed:true}}};
 function harness(profiles=[profile],extra={}){
- const pool={query:jest.fn(async sql=>({rows:sql.includes('marketplace_product_mapping_reviews')?[]:profiles})),connect:jest.fn()};
+ const pool={query:jest.fn(async sql=>({rows:sql.includes('marketplace_store_profiles')?profiles:[]})),connect:jest.fn()};
  const verifyShopify=jest.fn(async rows=>({rows,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[{id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'}]}]}}));
  const resolveProducts=jest.fn(async skus=>({sync:{source_note:'ECOUNT reference'},products:Object.fromEntries(skus.map(sku=>[sku,{status:'matched',matches:[{erp_sku:sku,product_name:'ERP 商品',spec:'完整規格',barcode:'',active:true}]}]))}));
  return {pool,verifyShopify,resolveProducts,prepare:createMarketplacePreparation({pool,verifyShopify,resolveProducts,...extra})};
@@ -39,7 +39,7 @@ function barcodeHarness(){
  h.identity={shop:'www-omfuture.myshopify.com',barcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/123'};
  h.product={erp_sku:'4711299272493',product_name:'ERP 商品',spec:'完整規格',barcode:'4711299272493',active:true};
  h.profiles=[profile];h.reviews=[];
- h.pool.query.mockImplementation(async(sql,params)=>({rows:sql.includes('marketplace_product_mapping_reviews')?h.reviews.filter(r=>r.store_profile_id===params[0]&&params[1].includes(r.fingerprint)):h.profiles}));
+ h.pool.query.mockImplementation(async(sql,params)=>({rows:sql.includes('marketplace_product_mapping_reviews')?h.reviews.filter(r=>r.store_profile_id===params[0]&&params[1].includes(r.fingerprint)):sql.includes('marketplace_store_profiles')?h.profiles:[]}));
  h.verifyShopify.mockImplementation(async rows=>{
   const records=rows.slice(1).map(r=>Object.fromEntries(rows[0].map((header,i)=>[header,r[i]])));
   const orders=[...new Set(records.map(r=>r.Name))].map(number=>({number,currentQuantity:records.filter(r=>r.Name===number).reduce((n,r)=>n+Number(r['Lineitem quantity']),0),items:records.filter(r=>r.Name===number).map(r=>({id:r['Lineitem id'],sku:r['Lineitem sku'],barcode:h.identity.barcode,...(h.identity.variantId?{variantId:h.identity.variantId}:{})}))}));

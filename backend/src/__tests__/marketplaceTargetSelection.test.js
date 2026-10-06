@@ -17,7 +17,7 @@ function harness(){
    h.reviews.push(record);return {rows:[record]};
   }
   if(sql.includes('marketplace_product_mapping_reviews'))return {rows:sql.includes('store_profile_id=$1')?h.reviews.filter(row=>row.store_profile_id===params[0]&&params[1].includes(row.fingerprint)&&!row.revoked_at):h.reviews.filter(row=>params[0].includes(row.id)&&!row.revoked_at)};
-  return {rows:[profile]};
+  return {rows:sql.includes('marketplace_store_profiles')?[profile]:[]};
  })};
  h.verify=jest.fn(async rows=>({rows,verification:{shop:'moztech.myshopify.com',orders:[{number:'#154230',id:'7624215101596',currentQuantity:2,items:[{id:'16493014253724',sku,barcode:newSku,variantId:variant}]}]}}));
  h.resolve=jest.fn(async keys=>({products:resolveProducts(keys,h.products)}));

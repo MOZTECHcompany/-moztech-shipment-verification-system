@@ -198,6 +198,38 @@ test.each(['printed_at','prepick_completed_at','prepick_owner_id'])('batch %s bl
  const h=await harness();h.state.flow[field]=1;
  await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_BUSY'});
 });
+test('a linked pending target can update its contact after sibling batch printing and prepick',async()=>{
+ const h=await harness();h.state.link={intake_order_id:101,order_id:41};h.state.tasks=[{id:41,status:'pending',picker_id:null,packer_id:null,completed_at:null}];
+ h.state.flow={...h.state.flow,erp_confirmed_at:'now',import_batch_id:17,printed_at:'now',prepick_completed_at:'now',prepick_owner_id:8,prepick_counts:{OTHER:50}};
+ const before=beforeSale(h.state),preview=await h.service.preview(19,{orderNumber:number},actor);
+ expect(await h.service.apply(19,h.applyBody(preview),actor)).toMatchObject({updated:true,changedFields:['phone']});
+ expect(beforeSale(h.state)).toEqual(before);expect(h.state.tasks[0].status).toBe('pending');
+});
+test.each(['prepick','sibling shipping'])('a concurrent %s change does not invalidate a different pending target contact',async(change)=>{
+ const h=await harness();h.state.link={intake_order_id:101,order_id:41};h.state.tasks=[{id:41,status:'pending',picker_id:null,packer_id:null,completed_at:null}];
+ h.state.flow.erp_confirmed_at='now';h.state.flow.import_batch_id=17;
+ const preview=await h.service.preview(19,{orderNumber:number},actor);
+ h.state.lockedHook=state=>{
+  if(change==='prepick'){state.flow.printed_at='now';state.flow.prepick_owner_id=8;state.flow.prepick_completed_at='now';state.flow.prepick_counts={OTHER:50};}
+  else state.batch.snapshot.orders[1].shipping.phone='SIBLING UPDATED';
+ };
+ expect(await h.service.apply(19,h.applyBody(preview),actor)).toMatchObject({updated:true});
+ expect(h.state.batch.snapshot.orders[0].shipping.phone).toBe('0901111111');expect(h.state.events).toHaveLength(1);
+});
+test.each(['claim','scan','label','ERP link','ERP confirmation date'])('a concurrent target %s still blocks the shipping update without writes',async(change)=>{
+ const h=await harness();h.state.link={intake_order_id:101,order_id:41};h.state.tasks=[{id:41,status:'pending',picker_id:null,packer_id:null,completed_at:null}];
+ h.state.flow.erp_confirmed_at=new Date('2026-10-06T01:00:00Z');h.state.flow.import_batch_id=17;
+ const preview=await h.service.preview(19,{orderNumber:number},actor);
+ h.state.lockedHook=state=>{
+  if(change==='claim')state.tasks[0].picker_id=8;
+  if(change==='scan')state.activity.progress=true;
+  if(change==='label')state.activity.labels=true;
+  if(change==='ERP link')state.flow.import_batch_id=18;
+  if(change==='ERP confirmation date')state.flow.erp_confirmed_at=new Date('2026-10-06T02:00:00Z');
+ };
+ await expect(h.service.apply(19,h.applyBody(preview),actor)).rejects.toMatchObject({status:409});
+ expect(h.state.events).toEqual([]);expect(h.state.commands).toEqual([]);expect(h.db.query.mock.calls.some(([sql])=>/^(UPDATE|INSERT|DELETE)\b/.test(sql))).toBe(false);
+});
 test('a deleted linked task and a claimed pending task both fail closed',async()=>{
  const deleted=await harness();deleted.state.link={intake_order_id:101,order_id:null};await expect(deleted.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_BUSY'});
  const claimed=await harness();claimed.state.link={intake_order_id:101,order_id:41};claimed.state.tasks=[{id:41,status:'pending',picker_id:7}];await expect(claimed.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({code:'MARKETPLACE_SHIPPING_BUSY'});

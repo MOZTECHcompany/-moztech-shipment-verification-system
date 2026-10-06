@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
 import { Button, PageHeader } from '../../ui';
 import apiClient from '@/api/api.js';
@@ -32,6 +32,12 @@ const originalOrderLink = data => {
   if (validId(data.intakeId)) return `?batch=${data.intakeId}&order=${encodeURIComponent(number)}#batch-detail`;
   return validId(data.workOrderId) ? `/order/${data.workOrderId}` : null;
 };
+const reimportLink = order => {
+  const link = originalOrderLink({ ...order, code: 'MARKETPLACE_SOURCE_EXISTS' });
+  const refresh = link?.startsWith('?batch=') && order.state === 'pending' && order.canUpdateShipping === true;
+  return { link: refresh ? link.replace('#batch-detail', '&shipping=refresh#batch-detail') : link, refresh };
+};
+const reimportStates = { pending: '待出貨', completed: '已出貨', warehouse_completed: '裝箱完成', partial: '部分出貨', cancelled: '已取消', voided: '已作廢', in_progress: '作業中', needs_review: '待核對' };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const batchNumber = () => `WMS-${today().replaceAll('-', '')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)), value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 const barcodeConflictKey = conflict => conflict.fingerprint;
@@ -60,6 +66,7 @@ export function MarketplaceConverter({ user }) {
   return <ConverterPage user={user} />;
 }
 function ConverterPage({ user }) {
+  const [params, setParams] = useSearchParams();
   const [input, setInput] = useState(null), [settings, setSettings] = useState(initialSettings), [name, setName] = useState('');
   const [prepared, setPrepared] = useState(null), [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false), [access, setAccess] = useState('loading');
@@ -74,6 +81,10 @@ function ConverterPage({ user }) {
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); setExistingOrderLink(null); };
   const currentSession = () => batchSessionMatches(sessionStorage, actor.current, token.current);
+  const clearReimportFocus = () => {
+    if (params.get('shipping') !== 'refresh') return;
+    setParams(current => { for (const key of ['batch', 'order', 'view', 'shipping']) current.delete(key); return current; }, { replace: true });
+  };
   const loadRecords = async () => {
     const response = await apiClient.get('/api/marketplace-intakes');
     if (!mounted.current || !currentSession()) return false;
@@ -104,11 +115,14 @@ function ConverterPage({ user }) {
   const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
   const matchingProfiles = profiles.filter(profile => profile.platform === input?.parsed.platform);
-  const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason) : [];
+  const reimports = prepared?.reimports || [];
+  const reimportNumbers = new Set(reimports.map(order => order.orderNumber));
+  const onlyReimports = reimports.length > 0 && prepared.parsed.summary.orderCount === 0;
+  const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason && !reimportNumbers.has(choice.number)) : [];
   const issueGroups = useMemo(() => {
     const groups = new Map();
     for (const issue of prepared?.output?.issues || []) {
-      if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && emptyExclusions.length)) continue;
+      if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && (emptyExclusions.length || reimports.length))) continue;
       if (issue.code === 'BARCODE_MISMATCH' && barcodeBlocked) continue;
       const key = `${issue.code}:${issue.field || ''}`;
       if (!groups.has(key)) groups.set(key, { key, items: [] });
@@ -142,6 +156,7 @@ function ConverterPage({ user }) {
   };
   const refreshPreview = async (nextSettings = settings, nextProfile = profileId) => {
     if (locked || inFlight.current || !input || !currentSession()) return;
+    clearReimportFocus();
     const sequence = ++request.current;
     setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
     try { await fetchPreview(input.source.rows, nextSettings, nextProfile, sequence); }
@@ -162,6 +177,7 @@ function ConverterPage({ user }) {
   };
   const confirmBarcode = async conflict => {
     if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentSession()) return;
+    clearReimportFocus();
     const sequence = ++request.current;
     inFlight.current = true; setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
     try {
@@ -181,10 +197,12 @@ function ConverterPage({ user }) {
     }
   };
   const update = (key, value) => {
+    clearReimportFocus();
     request.current++; setSaved(null); setPreviewDirty(true);
     setSettings(current => ({ ...current, [key]: value, ...(['erpStaffCode', 'erpProjectCode'].includes(key) ? { erpResponsibilityConfirmed: false } : {}) }));
   };
   const mapping = (sku, key, value) => {
+    clearReimportFocus();
     request.current++; setSaved(null); setPreviewDirty(true);
     setSettings(current => ({ ...current, skuMappings: { ...current.skuMappings, [sku]: {
       ...current.skuMappings[sku], [key]: value,
@@ -200,6 +218,7 @@ function ConverterPage({ user }) {
     setChoosingStore(false); await refreshPreview(next, String(profile.id));
   };
   const resetSource = () => {
+    clearReimportFocus();
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
     setBarcodeChecks({});
@@ -264,7 +283,7 @@ function ConverterPage({ user }) {
   };
   const download = async kind => {
     if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession()) return;
-    if (kind === 'ecount' && (!prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
+    if (kind === 'ecount' && (!prepared.parsed.orders.length || !prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
     if (kind === 'audit' && (!prepared.audit.ok || !prepared.prepick.ok)) return;
     inFlight.current = true; setBusy(true); showMessage('');
     try {
@@ -274,6 +293,13 @@ function ConverterPage({ user }) {
           ...(prepared.verification?.currentFingerprint ? { previewFingerprint: prepared.verification.currentFingerprint } : {}),
         }, { timeout: 75000 });
         if (!mounted.current || !currentSession()) return;
+        if (response.data?.salesDownloadAllowed === false || response.data?.newOrderCount === 0) {
+          setSaved(null);
+          const sequence = ++request.current;
+          setPreviewDirty(true);
+          if (await fetchPreview(input.source.rows, settings, profileId, sequence)) showMessage('訂單已保存，請查看原訂單。');
+          return;
+        }
         setSaved(response.data);
         const link = await apiClient.post(`/api/marketplace-intakes/${response.data.id}/download-link`, { kind: 'ecount' }, { withCredentials: true });
         if (!mounted.current || !currentSession()) return;
@@ -330,10 +356,10 @@ function ConverterPage({ user }) {
         {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store} · {profile.settings.customerCode}</option>)}</select></Field></div>
           : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><h2 className="text-lg font-semibold">{emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2><p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>
+          <div><h2 className="text-lg font-semibold">{reimports.length ? `已保存 ${reimports.length} 筆 · 新增 ${prepared.parsed.summary.orderCount} 筆` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{!onlyReimports && <p className="mt-2 text-sm text-slate-700">{reimports.length ? `新單 ${prepared.parsed.summary.totalQuantity} 件商品 · ` : ''}含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
             {prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
           </div>
-          <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>
+          {!onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reimports.length ? '下載新單銷貨檔' : '下載銷貨檔'}</Button>}
         </div>
         {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
@@ -345,6 +371,10 @@ function ConverterPage({ user }) {
         </ul></div>}
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>
+      {reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
+        const { link, refresh } = reimportLink(order);
+        return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>{refresh ? '更新原訂單' : '查看原訂單'}</Button>}</div>;
+      })}</div></section>}
       {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
         const key = barcodeConflictKey(conflict);
         const canConfirm = conflict.canConfirm === true;
@@ -376,19 +406,20 @@ function ConverterPage({ user }) {
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}
-      {(needsStore || storeSetupOpen || choosingStore) && <section className={sectionClass} aria-label="店鋪設定"><h2 className="font-semibold">{matchingProfiles.length ? '確認銷貨店鋪' : '首次店鋪設定'}</h2><fieldset disabled={locked}><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{settingsField('商城店鋪', 'store')}{settingsField('ECOUNT 銷貨客戶編碼', 'customerCode')}{settingsField('ECOUNT 客戶名稱', 'customerName')}</div></fieldset></section>}
+      {!onlyReimports && (needsStore || storeSetupOpen || choosingStore) && <section className={sectionClass} aria-label="店鋪設定"><h2 className="font-semibold">{matchingProfiles.length ? '確認銷貨店鋪' : '首次店鋪設定'}</h2><fieldset disabled={locked}><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{settingsField('商城店鋪', 'store')}{settingsField('ECOUNT 銷貨客戶編碼', 'customerCode')}{settingsField('ECOUNT 客戶名稱', 'customerName')}</div></fieldset></section>}
       {unresolvedProducts.length > 0 && <details className={sectionClass} open><summary className="cursor-pointer font-semibold">待對照商品（{unresolvedProducts.length} 項）</summary><fieldset disabled={locked}><div className="mt-4 space-y-3">{unresolvedProducts.map(item => {
         const mapped = settings.skuMappings?.[item.sku] || {};
         const masterMatched = catalog?.products?.[item.sku]?.status === 'matched';
         return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName} <span className="text-sm text-slate-500">{item.sku}</span></p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="ECOUNT 品項編碼" readOnly={masterMatched} value={mapped.erpSku || item.sku} onChange={event => mapping(item.sku, 'erpSku', event.target.value)} /><Field label="ECOUNT 品項名稱" readOnly={masterMatched} value={mapped.erpName || item.productName} onChange={event => mapping(item.sku, 'erpName', event.target.value)} /></div>{!masterMatched && <Check checked={mapped.confirmed} onChange={value => mapping(item.sku, 'confirmed', value)}>確認 ECOUNT 品項</Check>}</div>;
       })}</div></fieldset>{previewDirty && <Button className="mt-3" variant="secondary" disabled={locked} onClick={() => refreshPreview()}>核對商品</Button>}</details>}
-      <details className={sectionClass}><summary className="cursor-pointer font-semibold">訂單明細{raw.orders.length > prepared.parsed.summary.orderCount ? `・排除 ${raw.orders.length - prepared.parsed.summary.orderCount} 筆` : ''}</summary>
+      <details className={sectionClass}><summary className="cursor-pointer font-semibold">訂單明細{raw.orders.length - reimports.length > prepared.parsed.summary.orderCount ? `・排除 ${raw.orders.length - reimports.length - prepared.parsed.summary.orderCount} 筆` : ''}</summary>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[880px] w-full text-sm" aria-label="來源訂單與金額"><thead className="bg-slate-50"><tr>{['商城訂單', '付款／出貨狀態', '商品金額', '運費', '訂單總額', '本批處理'].map(value => <th key={value} className={`${cell} whitespace-nowrap`}>{value}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{raw.orders.map(order => {
           const choice = prepared.choices.find(value => value.number === order.sourceOrderNumber);
-          return <tr key={order.sourceOrderNumber}><td className={`${cell} font-medium`}>{order.sourceOrderNumber}</td><td className={`${cell} whitespace-nowrap`}>{statusLabel(order.rawPaymentStatus, order.paymentStatus, paymentLabels)}／{order.cancelled ? '已取消' : statusLabel(order.rawFulfillmentStatus, order.fulfillmentStatus, fulfillmentLabels)}</td><td className={cell}>{money(order.financial.subtotalMinor)}</td><td className={cell}>{money(order.financial.shippingMinor)}</td><td className={cell}>{money(order.financial.totalMinor)}</td><td className={cell}>{choice?.eligible ? '納入' : '排除'} · {choice?.reason}</td></tr>;
+          const reimport = reimports.find(value => value.orderNumber === order.sourceOrderNumber);
+          return <tr key={order.sourceOrderNumber}><td className={`${cell} font-medium`}>{order.sourceOrderNumber}</td><td className={`${cell} whitespace-nowrap`}>{statusLabel(order.rawPaymentStatus, order.paymentStatus, paymentLabels)}／{order.cancelled ? '已取消' : statusLabel(order.rawFulfillmentStatus, order.fulfillmentStatus, fulfillmentLabels)}</td><td className={cell}>{money(order.financial.subtotalMinor)}</td><td className={cell}>{money(order.financial.shippingMinor)}</td><td className={cell}>{money(order.financial.totalMinor)}</td><td className={cell}>{reimport ? `已保存 · ${reimportStates[reimport.state] || '待核對'}` : `${choice?.eligible ? '納入' : '排除'} · ${choice?.reason || ''}`}</td></tr>;
         })}</tbody></table></div>
       </details>
-      <details className={sectionClass}><summary className="cursor-pointer font-semibold">進階設定與核對表</summary><fieldset disabled={locked}>
+      {!onlyReimports && <details className={sectionClass}><summary className="cursor-pointer font-semibold">進階設定與核對表</summary><fieldset disabled={locked}>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{!needsStore && !storeSetupOpen && !choosingStore && <>{settingsField('商城店鋪', 'store')}{settingsField('ECOUNT 銷貨客戶編碼', 'customerCode')}{settingsField('ECOUNT 客戶名稱', 'customerName')}</>}{settingsField('發貨倉庫編碼', 'warehouseCode')}{settingsField('銷貨日期', 'date', { type: 'date' })}{settingsField('批次追蹤號', 'batchNumber', { maxLength: 20 })}{settingsField('專案負責人', 'projectOwner')}{settingsField('業務負責人', 'salesOwner')}{settingsField('ECOUNT 承辦人編碼', 'erpStaffCode')}{settingsField('ECOUNT 專案編碼', 'erpProjectCode')}{settingsField('本批摘要', 'summaryNote', { maxLength: 255 })}</div>
         {(settings.erpStaffCode || settings.erpProjectCode) && <Check checked={settings.erpResponsibilityConfirmed} onChange={value => update('erpResponsibilityConfirmed', value)}>確認承辦人及專案編碼</Check>}
         {prepared.parsed.summary.bundleComponentCount > 0 && <Check checked={settings.bundleZeroConfirmed} onChange={value => update('bundleZeroConfirmed', value)}>確認組合元件無分價，以 0 元銷貨</Check>}
@@ -405,7 +436,7 @@ function ConverterPage({ user }) {
       </fieldset><div className="mt-4 flex flex-wrap gap-3">{previewDirty && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>套用設定</Button>}<Button variant="secondary" disabled={locked || previewDirty || !prepared.audit.ok || !prepared.prepick.ok} onClick={() => download('audit')}>下載金額核對表</Button></div>
         {warnings.length > 0 && <details className="mt-4 text-sm text-slate-600"><summary className="cursor-pointer">提醒（{warnings.length}）</summary><ul className="mt-2 space-y-1">{warnings.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.message}</li>)}</ul></details>}
         {catalog?.sync && <p className="mt-4 text-xs text-slate-500">商品對照更新：{new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
-      </details>
+      </details>}
     </>}
     <MarketplaceBatchManager user={user} enabled={access === 'ready'} currentSession={currentSession} refreshKey={records} />
   </main>;

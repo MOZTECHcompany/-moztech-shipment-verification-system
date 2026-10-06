@@ -23,7 +23,7 @@ const apiError=message=>Object.assign(Error(message),{response:{data:{message}}}
 
 // Real component callbacks, real accounting snapshot, and local API responses.
 // No server, database, platform credentials, or real orders are used.
-async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,getWait=null,postResponder=null,changed=true}={}){
+async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,getWait=null,postResponder=null,changed=true,flow={erp_confirmed_at:null}}={}){
  const {code}=await transform(source,{loader:'jsx',format:'cjs'});
  const hooks=[],effects=[],requests=[],scrolls=[],records=new Map([[19,structuredClone(record)],[20,{...structuredClone(record),id:20,batchNumber:'SYN-SECOND'}]]);
  let query=new URLSearchParams(params),cursor=0,dirty=false,tree,mounted=true,sessionValid=true,lateUpdates=0;
@@ -39,7 +39,7 @@ async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,g
   get:async(url,options)=>{
    requests.push({method:'get',url,options});if(getWait)await getWait(url);
    if(url==='/api/marketplace-intakes')return {data:{intakes:[],facets:[],total:0,orders:0,pageSize:20}};
-   if(url.startsWith('/api/warehouse-intakes/'))return {data:{flow:{erp_confirmed_at:null}}};
+   if(url.startsWith('/api/warehouse-intakes/'))return {data:{flow}};
    const id=Number(url.split('/').at(-1));return {data:structuredClone(records.get(id))};
   },
   post:async(url,body)=>{
@@ -219,8 +219,94 @@ test('invalid server preview identities or a missing confirmation fingerprint ne
  }
 });
 
-test('linked, archived, or other-platform orders never advertise the Shopify contact update action',async()=>{
- for(const record of [{...fixture,links:[{source_order_number:'#SYN-ORIGINAL',order_id:37}]},{...fixture,archivedAt:'2026-10-05T01:00:00Z'},{...fixture,platform:'1Shop'}]){
+test('unknown or finished work states, archived, or other-platform orders never advertise the Shopify contact update action',async()=>{
+ for(const record of [...[undefined,'completed','voided','picking','packing'].map(status=>({...fixture,links:[{source_order_number:'#SYN-ORIGINAL',order_id:37,status}]})),{...fixture,archivedAt:'2026-10-05T01:00:00Z'},{...fixture,platform:'1Shop'}]){
   const view=await manager({record});assert.equal(view.button('更新收件資料','#SYN-ORIGINAL'),undefined);assert.equal(posts(view).length,0);
  }
+});
+
+const shippingQuery='batch=19&order=%23SYN-ORIGINAL&shipping=refresh';
+test('original-order refresh mode previews exactly once without sales downloads, other orders, or batch-wide workflow',async()=>{
+ const view=await manager({params:shippingQuery});
+ assert.equal(posts(view).length,1);assert.ok(posts(view)[0].url.endsWith('/shipping-preview'));
+ assert.ok(view.order());assert.equal(view.order('#SYN-OTHER'),undefined);
+ assert.match(view.text(view.render()),/原訂單資料.*Shopify 最新/s);
+ assert.doesNotMatch(view.text(view.render()),/下載銷貨檔|其他下載|彙總銷貨|預揀總表|銷貨日期|本批出貨流程|商城已保存批次/);
+ assert.equal(view.requests.filter(request=>request.method==='get'&&request.url==='/api/marketplace-intakes').length,0);
+ assert.equal(view.records.get(19).orders[0].shipping.phone,'0900000000');
+ view.render();await view.flush();assert.equal(posts(view).length,1);
+ await view.button('保存收件資料','#SYN-ORIGINAL').props.onClick();await view.flush();
+ assert.equal(posts(view).length,2);assert.equal(posts(view).filter(request=>request.url.endsWith('/shipping-preview')).length,1);
+ assert.equal(view.records.get(19).orders[0].shipping.phone,'0900000001');
+ const close=view.find(view.render(),node=>node.type==='button'&&view.text(node).includes('關閉明細'));close.props.onClick();view.render();
+ assert.equal(view.query().get('shipping'),null);assert.equal(view.query().get('batch'),null);
+});
+
+test('a linked pending target can preview shipping despite active or printed sibling orders',async()=>{
+ const record={...fixture,links:[{source_order_number:'#SYN-ORIGINAL',order_id:37,status:'pending'},{source_order_number:'#SYN-OTHER',order_id:38,status:'packing'}]};
+ const view=await manager({params:shippingQuery,record,flow:{erp_confirmed_at:'2026-10-05',printed_at:'2026-10-05',prepick_claimed_by:8}});
+ assert.equal(posts(view).length,1);assert.ok(view.button('保存收件資料','#SYN-ORIGINAL'));
+ assert.equal(view.order('#SYN-OTHER'),undefined);
+ const regular=await manager({record});assert.ok(regular.button('更新收件資料','#SYN-ORIGINAL'));assert.equal(regular.button('更新收件資料','#SYN-OTHER'),undefined);
+});
+
+test('finished or unknown target workflow states do not auto-query or advertise a shipping update',async()=>{
+ for(const [status,label] of [['completed','裝箱完成'],['voided','已作廢'],['packing','倉庫作業中']]){
+  const record={...fixture,links:[{source_order_number:'#SYN-ORIGINAL',order_id:37,status}]};
+  const view=await manager({params:shippingQuery,record});assert.equal(posts(view).length,0);assert.equal(view.button('更新收件資料'),undefined);assert.match(view.text(view.order()),new RegExp(label));
+ }
+ const missing=await manager({params:'batch=19&order=%23MISSING&shipping=refresh'});
+ assert.equal(posts(missing).length,0);assert.match(missing.text(missing.render()),/找不到原訂單/);assert.equal(missing.order(),undefined);
+});
+
+test('failed automatic preview stays local and requires an explicit retry rather than a request loop',async()=>{
+ let failed=true;
+ const view=await manager({params:shippingQuery,postResponder:async(url,body)=>{
+  if(failed)throw apiError('此訂單已開始作業，請先核對');
+  return {data:{intakeId:19,orderNumber:body.orderNumber,previousShipping:originalShipping,currentShipping,changed:true,previewFingerprint:'retry-preview'}};
+ }});
+ assert.equal(posts(view).length,1);assert.match(view.text(view.order()),/此訂單已開始作業/);assert.equal(view.button('保存收件資料'),undefined);
+ await view.flush();assert.equal(posts(view).length,1);
+ failed=false;await view.button('更新收件資料','#SYN-ORIGINAL').props.onClick();view.render();assert.equal(posts(view).length,2);assert.ok(view.button('保存收件資料'));
+});
+
+test('automatic previews discard old order responses while a newer original-order response remains locked',async()=>{
+ const old=defer(),next=defer();
+ const view=await manager({params:shippingQuery,postResponder:async(url,body)=>{
+  const intakeId=Number(url.split('/')[3]);await(intakeId===19?old.promise:next.promise);
+  return {data:{intakeId,orderNumber:body.orderNumber,previousShipping:originalShipping,currentShipping,changed:true,previewFingerprint:`contact-${intakeId}`}};
+ }});
+ assert.equal(posts(view).length,1);view.navigate('batch=20&order=%23SYN-OTHER&shipping=refresh');await view.flush();assert.equal(posts(view).length,2);
+ old.resolve();await view.flush();assert.equal(view.button('保存收件資料'),undefined);assert.equal(view.button('查詢中…','#SYN-OTHER').props.disabled,true);
+ next.resolve();await view.flush();assert.ok(view.button('保存收件資料','#SYN-OTHER'));assert.equal(view.order(),undefined);
+});
+
+test('turning on original-order refresh rejects retained sales callbacks before requesting a download',async()=>{
+ const view=await manager();const download=view.button('下載銷貨檔');assert.ok(download);
+ view.navigate(shippingQuery);await view.flush();await download.props.onClick();await view.flush();
+ assert.equal(posts(view).filter(request=>request.url.endsWith('/download-link')).length,0);assert.equal(posts(view).length,1);
+ assert.doesNotMatch(view.text(view.render()),/下載銷貨檔/);
+});
+
+test('automatic refresh contact review is discarded when the active account changes',async()=>{
+ const wait=defer();const view=await manager({params:shippingQuery,postResponder:async(url,body)=>{
+  await wait.promise;return {data:{intakeId:19,orderNumber:body.orderNumber,previousShipping:originalShipping,currentShipping,changed:true,previewFingerprint:'late-auto'}};
+ }});
+ view.setSession(false);view.setProps({enabled:false,user:{id:8,role:'dispatcher'}});wait.resolve();await view.flush();
+ assert.equal(view.button('保存收件資料'),undefined);assert.equal(posts(view).length,1);
+});
+
+
+test('a sales download already in flight is discarded before a shipping-only original-order preview begins',async()=>{
+ const wait=defer();
+ const view=await manager({postResponder:async(url,body)=>{
+  if(url.endsWith('/download-link')){await wait.promise;return {data:{url:'/old-sales-file'}};}
+  return {data:{intakeId:19,orderNumber:body.orderNumber,previousShipping:originalShipping,currentShipping,changed:true,previewFingerprint:'fresh-preview'}};
+ }});
+ const downloading=view.button('下載銷貨檔').props.onClick();view.navigate(shippingQuery);await view.flush();
+ assert.equal(posts(view).length,1,'shipping preview waits until the existing operation ends');
+ wait.resolve();await downloading;await view.flush();
+ assert.equal(posts(view).length,2);assert.ok(posts(view)[1].url.endsWith('/shipping-preview'));
+ assert.doesNotMatch(view.text(view.render()),/old-sales-file|銷貨檔已下載|下載彙總銷貨檔/);
+ assert.ok(view.button('保存收件資料'));
 });

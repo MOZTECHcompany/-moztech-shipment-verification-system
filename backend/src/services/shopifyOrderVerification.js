@@ -172,7 +172,10 @@ function normalizeOrder(source, order) {
   const processing = ['in_progress', 'open', 'pending_fulfillment'].includes(rawFulfillment);
   const whollyUnfulfilled = currentQuantity > 0 && active.every(item => item.unfulfilledQuantity === item.currentQuantity);
   const fulfillment = processing && whollyUnfulfilled ? 'unfulfilled' : rawFulfillment;
-  if (!order.cancelledAt && (remainingQuantity > 0 && remainingQuantity !== currentQuantity || fulfillment === 'fulfilled' && remainingQuantity !== 0 || fulfillment === 'unfulfilled' && remainingQuantity !== currentQuantity || !['fulfilled', 'unfulfilled'].includes(fulfillment))) fail('SHOPIFY_FULFILLMENT_REVIEW_REQUIRED', 'Shopify 訂單部分出貨或出貨狀態待核對，不可重新銷整單', name);
+  // A consistent explicit partial state can be displayed and excluded from
+  // new sales. Unknown or contradictory quantities still stop verification.
+  const partial = fulfillment === 'partially_fulfilled' && remainingQuantity > 0 && remainingQuantity < currentQuantity;
+  if (!order.cancelledAt && !partial && (remainingQuantity > 0 && remainingQuantity !== currentQuantity || fulfillment === 'fulfilled' && remainingQuantity !== 0 || fulfillment === 'unfulfilled' && remainingQuantity !== currentQuantity || !['fulfilled', 'unfulfilled'].includes(fulfillment))) fail('SHOPIFY_FULFILLMENT_REVIEW_REQUIRED', 'Shopify 訂單部分出貨或出貨狀態待核對，不可重新銷整單', name);
   const lineValues = active.map(item => {
     const sku = text(item.sku);
     if (!sku) fail('SHOPIFY_SKU_INVALID', item.variant ? 'Shopify 目前商品未填貨號，請補上商品貨號後重新核對' : 'Shopify 自訂商品未填貨號，請改用正式商品後重新核對', name);

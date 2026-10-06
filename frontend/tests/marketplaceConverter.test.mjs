@@ -35,12 +35,13 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, reimports = [], saveResponse = null, params = '' } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
     const storage = new Map([['wms_token', JSON.stringify('synthetic-token')], ['wms_user', JSON.stringify(user)]]);
-    let cursor = 0, dirty = false, tree, mounted = true, lateUpdates = 0;
+    let cursor = 0, dirty = false, tree, mounted = true, lateUpdates = 0, latestPrepared;
+    let query = new URLSearchParams(params);
     const confirmedBarcodes = new Set();
     const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
     const react = {
@@ -69,7 +70,10 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             const profile = body.profileId ? available.find(profile => String(profile.id) === String(body.profileId)) : available.length === 1 ? available[0] : null;
             const effectiveSettings = { ...body.settings, ...(profile?.settings || {}), taxConfirmed: true, discountAllocationConfirmed: true };
             const raw = authoritative ? authoritative(source.parsed) : source.parsed;
-            const products = resolved?.products || Object.fromEntries(raw.items.map(item => [item.sku, {status:'matched',matches:[{erp_sku:item.sku,product_name:item.productName,barcode:item.sku,spec:''}]}]));
+            const activeReimports = typeof reimports === 'function' ? reimports(raw, body) : reimports;
+            const savedNumbers = new Set(activeReimports.map(order => order.orderNumber));
+            const fresh = {...raw, orders:raw.orders.filter(order => !savedNumbers.has(order.sourceOrderNumber)), items:raw.items.filter(item => !savedNumbers.has(item.sourceOrderNumber)), issues:raw.issues.filter(issue => !savedNumbers.has(issue.orderNumber))};
+            const products = resolved?.products || Object.fromEntries(fresh.items.map(item => [item.sku, {status:'matched',matches:[{erp_sku:item.sku,product_name:item.productName,barcode:item.sku,spec:''}]}]));
             effectiveSettings.skuMappings = {...body.settings.skuMappings};
             for (const [sku, item] of Object.entries(products)) if (item.status === 'matched') {
                 const matched = item.matches[0];
@@ -81,14 +85,18 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
                 if (selectedTarget) effectiveSettings.skuMappings[sku] = {...effectiveSettings.skuMappings[sku],erpSku:selectedTarget.erpSku,erpName:selectedTarget.erpName,barcode:apiBarcode || selectedTarget.erpBarcode,confirmed:confirmedBarcodes.has(conflict.fingerprint),barcodeConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
                 else if (conflict?.targetOptions?.length > 1) effectiveSettings.skuMappings[sku] = {...provided,erpSku:'',erpName:'',barcode:'',confirmed:false,barcodeConfirmed:false};
             }
-            const prepared = unified.prepareUnifiedMarketplace(raw,effectiveSettings);
-            return {data:{...prepared,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            const prepared = unified.prepareUnifiedMarketplace(fresh,effectiveSettings);
+            latestPrepared = prepared;
+            prepared.audit = unified.prepareUnifiedMarketplace(raw,effectiveSettings).audit;
+            prepared.choices.push(...activeReimports.map(order => ({number:order.orderNumber,eligible:false,reason:order.message || '已保存'})));
+            return {data:{...prepared,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
-        const built=unified.buildUnifiedConversion(body.rows,body.settings);
+        if (saveResponse) return {data:typeof saveResponse === 'function' ? saveResponse(body) : saveResponse};
+        const built=latestPrepared?.parsed.orders.length ? latestPrepared : unified.buildUnifiedConversion(body.rows,body.settings);
         return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}};
     } };
-    const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate' }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
+    const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate', useSearchParams: () => [query, update => { query = typeof update === 'function' ? update(new URLSearchParams(query)) : new URLSearchParams(update); dirty = true; }] }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -120,7 +128,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
     render();
     for (let i=0;i<5;i++) await Promise.resolve();
     render();
-    return { render, find, text, all, button, change, select, downloads, requests, writes, storage, listeners, unmount: () => { mounted = false; hooks.forEach(h => h?.cleanup?.()); }, lateUpdates: () => lateUpdates };
+    return { render, find, text, all, button, change, select, downloads, requests, writes, storage, listeners, query: () => query, navigate: value => { query = new URLSearchParams(value); render(); }, unmount: () => { mounted = false; hooks.forEach(h => h?.cleanup?.()); }, lateUpdates: () => lateUpdates };
 }
 
 
@@ -658,4 +666,87 @@ test('preview distinguishes API verification from file-only checks and uses the 
     const fromApi = await converter({ verification: { mode: 'api', platform: '1Shop' } }); await fromApi.select(file());
     assert.match(fromApi.text(fromApi.render()), /1Shop API 已核對/);
     assert.doesNotMatch(fromApi.text(fromApi.render()), /Shopify API 已核對/);
+});
+
+const savedShopifyOrder = {orderNumber:'#REVIEW-1',intakeId:19,workOrderId:null,state:'pending',message:'已保存，收件資料可更新',canUpdateShipping:true};
+const shopifyProfile = {...storeProfile,platform:'Shopify'};
+
+test('all saved Shopify orders provide immediate original-order update links without a new sales file or empty warning', async () => {
+    const reimports = [savedShopifyOrder,{...savedShopifyOrder,orderNumber:'#REVIEW-2'}];
+    const view = await converter({profiles:[shopifyProfile],reimports}); await view.select(file(shopifyBarcodeRows));
+    const text = view.text(view.render());
+    assert.match(text,/已保存 2 筆 · 新增 0 筆/);
+    assert.doesNotMatch(text,/沒有可轉換|進階設定與核對表|下載金額核對表|含稅 TWD 0/);
+    assert.equal(downloadSales(view),undefined); assert.equal(view.button('下載新單銷貨檔'),undefined);
+    const links=view.all(node=>node.type==='Button'&&view.text(node)==='更新原訂單');
+    assert.equal(links.length,2);
+    assert.equal(links[0].props.to,'?batch=19&order=%23REVIEW-1&shipping=refresh#batch-detail');
+    assert.equal(links[0].props.disabled,false);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/download-link')).length,0);
+    assert.equal(view.downloads.length,0);
+});
+
+test('mixed Shopify upload shows new-only quantity and money while retaining original source rows at the server save boundary', async () => {
+    const rows=shopifyBarcodeRows.map(row=>[...row]);rows[1][2]='OLD-ONLY-SKU';rows[1][3]='Old saved product';
+    const view = await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]}); await view.select(file(rows));
+    assert.match(view.text(view.render()),/已保存 1 筆 · 新增 1 筆/);
+    assert.match(view.text(view.render()),/新單 2 件商品 ·\s*含稅\s+TWD\s+200/);
+    assert.doesNotMatch(view.text(view.render()),/Old saved product|OLD-ONLY-SKU/);
+    assert.match(view.text(view.render()),/#REVIEW-1.*已保存 · 待出貨/s);
+    const button=view.button('下載新單銷貨檔');assert.equal(button.props.disabled,false);
+    await button.props.onClick();view.render();
+    const save=view.requests.find(request=>request.url==='/api/marketplace-intakes');
+    assert.match(JSON.stringify(save.body.rows),/#REVIEW-1/);assert.match(JSON.stringify(save.body.rows),/#REVIEW-2/);
+    assert.equal(save.body.previewFingerprint,'verified-current-order-v1');
+    assert.equal(save.body.reimports,undefined);assert.equal(save.body.newOrderIds,undefined);
+    assert.equal(view.downloads.length,1);
+});
+
+test('completed, partial, cancelled, busy, and uncertain saved orders offer view-only navigation', async () => {
+    for(const [state,label] of [['completed','已出貨'],['warehouse_completed','裝箱完成'],['partial','部分出貨'],['cancelled','已取消'],['voided','已作廢'],['in_progress','作業中'],['needs_review','待核對']]){
+        const view=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,state,canUpdateShipping:false}]});await view.select(file(shopifyBarcodeRows));
+        const card=view.find(view.render(),node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1');
+        assert.match(view.text(card),new RegExp(label));assert.equal(view.button('更新原訂單'),undefined);
+        assert.equal(view.button('查看原訂單').props.to,'?batch=19&order=%23REVIEW-1#batch-detail');
+    }
+    const legacy=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:null,workOrderId:37}]});await legacy.select(file(shopifyBarcodeRows));
+    assert.equal(legacy.button('查看原訂單').props.to,'/order/37');assert.equal(legacy.button('更新原訂單'),undefined);
+    const invalid=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:'javascript:bad'}]});await invalid.select(file(shopifyBarcodeRows));
+    assert.equal(invalid.button('更新原訂單'),undefined);assert.equal(invalid.button('查看原訂單'),undefined);
+});
+
+test('all-saved success after a save race never requests a download link or creates an anchor and refreshes the original-order list', async () => {
+    let saved=false;
+    const view=await converter({profiles:[shopifyProfile],reimports:()=>saved?[savedShopifyOrder,{...savedShopifyOrder,orderNumber:'#REVIEW-2'}]:[],saveResponse:()=>{saved=true;return {newOrderCount:0,salesDownloadAllowed:false,reimports:[savedShopifyOrder]};}});
+    await view.select(file(shopifyBarcodeRows));await downloadSales(view).props.onClick();view.render();
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,1);
+    assert.equal(view.requests.filter(request=>request.url.endsWith('/download-link')).length,0);
+    assert.equal(previewCalls(view).length,2);assert.equal(view.downloads.length,0);
+    assert.match(view.text(view.render()),/已保存 2 筆 · 新增 0 筆/);assert.ok(view.button('更新原訂單'));
+});
+
+test('a new upload clears the previous original-order refresh route and replaces the saved-order list', async () => {
+    const view=await converter({params:'batch=19&order=%23REVIEW-1&shipping=refresh',profiles:[shopifyProfile],reimports:raw=>raw.orders.some(order=>order.sourceOrderNumber==='#REVIEW-1')?[savedShopifyOrder]:[]});
+    await view.select(file(shopifyBarcodeRows));assert.equal(view.query().get('shipping'),null);
+    view.navigate('batch=19&order=%23REVIEW-1&shipping=refresh');
+    const next=shopifyBarcodeRows.map(row=>[...row]);next[1][0]='#NEW-FIRST';next[2][0]='#NEW-SECOND';
+    await view.select(file(next));
+    for(const key of ['batch','order','shipping'])assert.equal(view.query().get(key),null);
+    assert.equal(view.button('更新原訂單'),undefined);assert.doesNotMatch(view.text(view.render()),/#REVIEW-1|已保存 1 筆/);
+    assert.equal(downloadSales(view).props.disabled,false);
+});
+
+test('new-order barcode issues retain their download gate while a saved order still has its own update entry', async () => {
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));
+    assert.equal(view.button('下載新單銷貨檔').props.disabled,true);assert.ok(view.button('更新原訂單'));
+    await view.button('下載新單銷貨檔').props.onClick();
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,0);assert.equal(view.downloads.length,0);
+});
+
+test('session changes discard saved-order update links and reject their retained callbacks', async () => {
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});await view.select(file(shopifyBarcodeRows));
+    const link=view.button('更新原訂單');let prevented=0;
+    view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));link.props.onClick({preventDefault(){prevented++;}});
+    assert.equal(prevented,1);view.listeners.get('storage')();view.render();
+    assert.equal(view.button('更新原訂單'),undefined);assert.equal(view.downloads.length,0);
 });
