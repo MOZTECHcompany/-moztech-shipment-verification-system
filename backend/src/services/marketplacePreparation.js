@@ -1,5 +1,5 @@
 const {createHash,randomBytes}=require('node:crypto');
-const {lookupProducts}=require('./marketplaceProductCatalog');
+const {lookupProducts,oneShopProductMatch}=require('./marketplaceProductCatalog');
 const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
 const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
 const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
@@ -119,6 +119,8 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   // items cannot create new catalog exceptions for this shipment.
   const eligible=prepareUnifiedMarketplace(salesRaw,settingsInput).parsed;
   const skus=[...new Set(eligible.items.map(i=>i.sku))];
+  const {parseOneShopSku}=await import('./oneShopSku.mjs');
+  const oneShopFormats=new Map(source.platform==='1Shop'?skus.map(sku=>[sku,parseOneShopSku(sku)]):[]);
   const apiBarcodes=new Map(),apiVariants=new Map(),incompleteSources=new Set();
   const eligibleLines=new Set(eligible.items.map(i=>JSON.stringify([i.sourceOrderNumber,i.sourceLineId])));
   for(const order of verification?.orders||[])for(const i of order.items||[]){
@@ -130,12 +132,20 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    if(apiBarcodes.has(i.sku)&&apiBarcodes.get(i.sku)!==i.barcode)throw fail(`商品 ${i.sku} 在 ${source.platform} 對應不同條碼，請核對商品設定`,'BARCODE_AMBIGUOUS');
    apiBarcodes.set(i.sku,i.barcode);
   }
-  const catalog=!skus.length&&reimports.length?{products:{},sync:null}:await resolveProducts(skus);
+  const lookupSkus=[...new Set([...skus,...[...oneShopFormats.values()].filter(Boolean).map(format=>format.sourceBarcode)])];
+  const catalog=!skus.length&&reimports.length?{products:{},sync:null}:await resolveProducts(lookupSkus);
+  const productMatches=new Map(skus.map(sku=>[sku,oneShopFormats.get(sku)?oneShopProductMatch(sku,oneShopFormats.get(sku),catalog.products||{}):catalog.products?.[sku]]));
+  // This barcode comes from the explicitly declared SKU format, not a
+  // separate API barcode field. Live order verification still uses full SKUs.
+  for(const [sku,format] of oneShopFormats)if(format){
+   if(apiBarcodes.has(sku)&&apiBarcodes.get(sku)!==format.sourceBarcode)throw fail(`商品 ${sku} 的 1Shop 國際條碼與 API 資料不同`,'BARCODE_AMBIGUOUS');
+  }
   const extraBarcodes=[...new Set([...apiBarcodes.values()].filter(value=>!skus.includes(value)))];
   const barcodeCatalog=extraBarcodes.length?await resolveProducts(extraBarcodes):{products:{}};
   const sourceCandidates=[];
   for(const sku of skus){
-   const match=catalog.products?.[sku],apiBarcode=apiBarcodes.get(sku),variantIds=[...(apiVariants.get(sku)||[])].sort();
+   if(oneShopFormats.get(sku))continue;
+   const match=productMatches.get(sku),apiBarcode=apiBarcodes.get(sku),variantIds=[...(apiVariants.get(sku)||[])].sort();
    const barcodeMatch=apiBarcode===sku?match:catalog.products?.[apiBarcode]||barcodeCatalog.products?.[apiBarcode];
    const catalogBlocked=[match,barcodeMatch].some(value=>['inactive','ambiguous'].includes(value?.status));
    const targets=catalogBlocked?[]:[...new Map([...(match?.matches||[]),...(barcodeMatch?.matches||[])]
@@ -187,11 +197,15 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   }
   settingsInput.skuMappings={...settingsInput.skuMappings};
   for(const item of eligible.items){
-   const match=catalog.products?.[item.sku],provided=settingsInput.skuMappings[item.sku]||{};
+   const match=productMatches.get(item.sku),provided=settingsInput.skuMappings[item.sku]||{};
+   const format=oneShopFormats.get(item.sku);
+   if(format&&(((provided.confirmed===true||provided.erpConfirmed===true)&&provided.erpSku&&provided.erpSku!==match.matches[0].erp_sku)||
+    ((provided.barcodeConfirmed===true||provided.confirmed===true&&provided.barcodeConfirmed!==false)&&provided.barcode&&provided.barcode!==format.sourceBarcode)))
+    throw fail(`商品 ${item.sku} 的已確認對照與目前 ECOUNT 主檔不同，請重新核對`,'BARCODE_AMBIGUOUS');
    if(selectedTargets.has(item.sku)||match?.status==='matched'){
     const p=selectedTargets.has(item.sku)?selectedTargets.get(item.sku).product:match.matches[0];
     if(!p){settingsInput.skuMappings[item.sku]={...provided,erpSku:'',erpName:'',spec:'',confirmed:false,erpConfirmed:false,barcode:'',barcodeConfirmed:false};continue;}
-    const apiBarcode=apiBarcodes.get(item.sku);
+    const apiBarcode=apiBarcodes.get(item.sku)||oneShopFormats.get(item.sku)?.sourceBarcode;
     const blocked=barcodeConflicts.some(c=>c.sourceSku===item.sku);
     settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,barcode:p.barcode||apiBarcode||provided.barcode||'',barcodeConfirmed:blocked?false:p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
    }else if(!settingsInput.skuMappings[item.sku])settingsInput.skuMappings[item.sku]={erpSku:item.sku,erpName:item.productName,barcode:'',confirmed:false,barcodeConfirmed:false,category:''};

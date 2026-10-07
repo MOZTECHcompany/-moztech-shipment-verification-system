@@ -24,6 +24,17 @@ test('exact current match preserves full SKU, file line IDs and recipient data w
   for (const value of ['private-secret', 'private-app', '私人收件姓名', '0900000000', '私人地址']) assert.equal(evidence.includes(value), false);
   assert.deepEqual(source, rows());
 });
+test('campaign SKU keeps the entire API identity and never invents an API barcode', async () => {
+  const campaignSku = '4711299274435-蒂蒂©️ Didi Chen-第一團';
+  const source = rows(), current = payload();
+  source[1][4] = current.data.cart.products[0].sku = campaignSku;
+  const result = await verifyOneShopRows(source, options(current));
+  assert.deepEqual(result.verification.orders[0].items, [{ sku: campaignSku, quantity: 2, netMinor: 178000 }]);
+  assert.equal(result.rows[1][result.rows[0].indexOf('產品SKU')], campaignSku);
+  assert.equal(Object.hasOwn(result.verification.orders[0].items[0], 'barcode'), false);
+  current.data.cart.products[0].sku = '4711299274435-蒂蒂©️ Didi Chen-第二團';
+  await fails(verifyOneShopRows(source, options(current)), 'ONESHOP_ORDER_CHANGED');
+});
 test('all requests are GETs to the official host, with redirect disabled', async () => {
   let seen;
   await verifyOneShopRows(rows(), options(payload(), { fetchImpl: async (url, init) => { seen = { url: new URL(url), init }; return response(payload()); } }));

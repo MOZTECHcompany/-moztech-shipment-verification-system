@@ -1,3 +1,5 @@
+import { parseOneShopSku } from './oneShopSku.mjs';
+
 // Local-only conversion. Amounts are integer hundredths; no payment or inventory writes.
 export const ECOUNT_HEADERS = ['日期', '序號', '客戶/供應商編碼', '客戶/供應商名稱', '承辦人', '專案', '發貨倉庫', '交易類型', '貨幣', '匯率', '銷貨單單號', '品項編碼', '商城訂單編號', '平台', '店鋪', '來源明細號', '品項名稱', '序號/批號', '規格', '數量', '單價', '單價(含稅)', '外幣金額', '稅前價格', '營業稅', '摘要', '產生生產入庫'];
 
@@ -365,7 +367,7 @@ export function parseMarketplaceRows(rows, { platform, allowedOrderNumbers, allo
       const sourceLineId = explicitLineId || stableId(identity);
       if (seenIds.has(sourceLineId)) issues.push(issue(seenIds.get(sourceLineId) === canonical ? 'AMBIGUOUS_SOURCE_LINE' : 'SOURCE_LINE_ID_COLLISION', '來源明細識別重複或衝突；請提供唯一平台商品明細 ID，不要以重新排序列號代替', extra));
       seenIds.set(sourceLineId, canonical);
-      const item = { id: stableId([platform, number, sourceLineId]), sourceLineId, sourceOrderNumber: number, sourceRow, sku, productName, groupName, groupId: groupName ? stableId([platform, number, groupName]) : '', kind, quantity, unitPriceMinor, lineSubtotalMinor, lineDiscountMinor, category: '', sourceLineIdOrigin: explicitLineId ? 'platform' : 'content' };
+      const item = { id: stableId([platform, number, sourceLineId]), sourceLineId, sourceOrderNumber: number, sourceRow, sku, productName, groupName, groupId: groupName ? stableId([platform, number, groupName]) : '', kind, quantity, unitPriceMinor, lineSubtotalMinor, lineDiscountMinor, category: '', sourceLineIdOrigin: explicitLineId ? 'platform' : 'content', ...(isOne ? parseOneShopSku(sku) : null) };
       if (isOne && kind !== 'bundle_component' && (unitPriceMinor == null || lineSubtotalMinor == null)) issues.push(issue('MISSING_LINE_MONEY', '商品列缺少單價或小計，不能從相鄰列補價格', extra));
       if (isOne && gross != null && lineSubtotalMinor != null && gross !== lineSubtotalMinor) issues.push(issue('LINE_AMOUNT_MISMATCH', '數量乘單價與商品小計不符；請確認折扣及組合數量', extra));
       result.items.push(item); order.itemIds.push(item.id);
@@ -533,10 +535,18 @@ export function warehousePrepickDetails(prepick, items = [], skuMappings = {}) {
     if (!names.has(sku)) names.set(sku, new Set());
     names.get(sku).add(name);
   }
-  const rows = (prepick.rows || []).map(row => {
-    const next = [...row], sku = text(row[skuIndex]);
-    const details = warehouseProductDetails({}, skuMappings[sku] || {});
-    next[nameIndex] = names.has(sku) ? [...names.get(sku)].join('\n') : text(row[nameIndex]) || details.productName;
+  const rows = (prepick.rows || []).map((row, index) => {
+    const next = [...row], sku = text(row[skuIndex]), savedSkus = prepick.sourceSkuGroups?.[index];
+    // Exact old source keys win. New grouped cells use newline-separated full
+    // campaign SKUs; each fallback entry must still be an exact known source.
+    const knownSource = value => typeof value === 'string' && (names.has(value) || Object.hasOwn(skuMappings, value));
+    const parts = sku.split('\n');
+    let skus = [sku];
+    if (Array.isArray(savedSkus) && savedSkus.length && savedSkus.join('\n') === sku && savedSkus.every(knownSource)) skus = savedSkus;
+    else if (!knownSource(sku) && parts.every(knownSource)) skus = parts;
+    const details = warehouseProductDetails({}, skuMappings[skus[0]] || {});
+    const sourceNames = [...new Set(skus.flatMap(value => [...(names.get(value) || [])]))];
+    next[nameIndex] = sourceNames.length ? sourceNames.join('\n') : text(row[nameIndex]) || details.productName;
     next[erpNameIndex] = details.erpName;
     next[specIndex] = details.spec;
     return next;
@@ -549,20 +559,25 @@ export function buildPrepickRows(parsed, settings = {}) {
   const issues = [...(parsed.issues || []).filter((i) => i.severity === 'error'), ...(preview ? [] : mappingIssues(parsed, settings))];
   if (!preview && parsed.orders.some((o) => o.paymentStatus !== 'paid') && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '未付款訂單預揀表僅供明確確認的限定測試'));
   if (!preview && parsed.orders.some((o) => o.cancelled || o.fulfillmentStatus !== 'unfulfilled' || !['paid', 'pending'].includes(o.paymentStatus) || (o.financial.refundedMinor ?? 0) > 0)) issues.push(issue('ORDER_NOT_ELIGIBLE', '此檔包含不能出貨的訂單狀態'));
-  const result = { ok: issues.length === 0, issues, headers: ['分類（對照設定）', '來源SKU', 'ECOUNT品項編碼', preview ? '商品條碼（確認後顯示）' : '已確認國際條碼', '商品名稱', '實體數量', '商城訂單數', '來源商城訂單', '來源組合／分組', '用途'], rows: [], summary: { ...parsed.summary } };
+  const result = { ok: issues.length === 0, issues, headers: ['分類（對照設定）', '來源SKU', 'ECOUNT品項編碼', preview ? '商品條碼（確認後顯示）' : '已確認國際條碼', '商品名稱', '實體數量', '商城訂單數', '來源商城訂單', '來源組合／分組', '用途', 'ECOUNT品項名稱', '規格', '來源團組名稱', '來源團次'], rows: [], sourceSkuGroups: [], summary: { ...parsed.summary } };
   if (!result.ok) return result;
   const groups = new Map();
   for (const item of parsed.items) {
     const m = settings.skuMappings?.[item.sku] || {};
-    const key = JSON.stringify([item.sku, m.erpSku, m.barcode]);
-    if (!groups.has(key)) groups.set(key, { item, mapping: m, quantity: 0, orders: new Set(), groups: new Set() });
+    const barcodeConfirmed = !!text(m.barcode) && (m.barcodeConfirmed === true || (m.confirmed === true && m.barcodeConfirmed !== false));
+    const erpConfirmed = !!text(m.erpSku) && (m.erpConfirmed === true || m.confirmed === true);
+    const key = JSON.stringify(item.sourceSkuFormat && barcodeConfirmed && erpConfirmed ? ['product', m.erpSku, m.barcode, text(m.spec), text(m.category)] : ['source', item.sku, m.erpSku, m.barcode]);
+    if (!groups.has(key)) groups.set(key, { item, mapping: m, quantity: 0, orders: new Set(), groups: new Set(), skus: new Set(), campaigns: new Map() });
     const group = groups.get(key);
-    group.quantity += item.quantity; group.orders.add(item.sourceOrderNumber);
+    group.quantity += item.quantity; group.orders.add(item.sourceOrderNumber); group.skus.add(item.sku);
     if (item.groupName) group.groups.add(item.groupName);
+    if (item.campaignGroupName && item.campaignRound) group.campaigns.set(JSON.stringify([item.campaignGroupName, item.campaignRound]), [item.campaignGroupName, item.campaignRound]);
   }
-  result.rows = [...groups.values()].map(({ item, mapping: m, quantity, orders, groups: sourceGroups }) => {
+  result.rows = [...groups.values()].map(({ item, mapping: m, quantity, orders, groups: sourceGroups, skus, campaigns }) => {
     const barcodeConfirmed = m.barcodeConfirmed === true || (m.confirmed === true && m.barcodeConfirmed !== false);
-    return [text(m.category) || '未分類', item.sku, text(m.erpSku), barcodeConfirmed ? text(m.barcode) : '', text(m.erpName || item.productName), quantity, orders.size, [...orders].sort().join(' / '), [...sourceGroups].join(' / '), preview ? `待核對${!text(m.barcode) || !barcodeConfirmed ? '；條碼未確認' : ''}；不是出貨授權或 ERP／WMS 匯入檔` : '測試預揀；不是 ECOUNT／WMS 匯入檔'];
+    const sourceSkus = [...skus].sort(), sourceCampaigns = [...campaigns].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value);
+    result.sourceSkuGroups.push(sourceSkus);
+    return [text(m.category) || '未分類', sourceSkus.join('\n'), text(m.erpSku), barcodeConfirmed ? text(m.barcode) : '', text(m.erpName || item.productName), quantity, orders.size, [...orders].sort().join(' / '), [...sourceGroups].sort().join(' / '), preview ? `待核對${!text(m.barcode) || !barcodeConfirmed ? '；條碼未確認' : ''}；不是出貨授權或 ERP／WMS 匯入檔` : '測試預揀；不是 ECOUNT／WMS 匯入檔', '', '', sourceCampaigns.map(value => value[0]).join('\n'), sourceCampaigns.map(value => value[1]).join('\n')];
   });
   result.summary = { ...result.summary, skuCount: result.rows.length, physicalQuantity: sum(result.rows.map((r) => r[5])) };
   return warehousePrepickDetails(result, parsed.items, settings.skuMappings);

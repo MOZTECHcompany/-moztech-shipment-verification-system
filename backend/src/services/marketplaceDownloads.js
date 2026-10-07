@@ -22,7 +22,7 @@ function downloadFile({pool}){return async(req,res,next)=>{
   const r=(await pool.query('SELECT * FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!r)return res.status(404).send('批次已刪除或不存在');
   let reviewWarning='';
-  try{const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,r.snapshot,undefined,{returnContext:true});await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))],undefined,reviewed);}catch(e){if(req.params.kind==='prepick'&&e.status===400)reviewWarning=e.message;else throw e;}
+  try{const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,r.snapshot,undefined,{returnContext:true});await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))],undefined,reviewed,{...r.snapshot,platform:r.source_platform});}catch(e){if(req.params.kind==='prepick'&&e.status===400)reviewWarning=e.message;else throw e;}
   const record={reviewWarning,...r.snapshot,handler:await require('./marketplaceHandler').batchHandler(pool,r),id:r.id,batchNumber:r.batch_number,platform:r.source_platform,store:r.source_store,links:await batchLinks(pool,r.id)};
   const {savedBatchTables}=await import('./marketplaceBatchFiles.mjs'),XLSX=require('xlsx');
   const {formatEcountProductColumn}=await import('./marketplaceIntake.mjs');

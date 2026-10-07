@@ -14,12 +14,13 @@ const tracked = git(['ls-files']).split('\n').filter(file => /^(backend|frontend
   && !/(^|\/)(node_modules|tests|__tests__|coverage|dist|uploads|\.env[^/]*)\//.test(file)
   && !/(^|\/)\.env/.test(file) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.log'));
 const files = [];
-// Vite uses the same pure engine as the API. Materialize the two forwarding
+// Vite uses the same pure engine as the API. Materialize the forwarding
 // modules for the isolated frontend Docker context; record the actual bytes.
 const sharedSources = {
   'frontend/src/utils/marketplaceBatchFiles.mjs': 'backend/src/services/marketplaceBatchFiles.mjs',
   'frontend/src/utils/marketplaceIntake.mjs': 'backend/src/services/marketplaceIntake.mjs',
   'frontend/src/utils/unifiedMarketplace.mjs': 'backend/src/services/unifiedMarketplace.mjs',
+  'frontend/src/utils/oneShopSku.mjs': 'backend/src/services/oneShopSku.mjs',
 };
 for (const file of tracked) {
   const origin = path.join(root, sharedSources[file] || file);

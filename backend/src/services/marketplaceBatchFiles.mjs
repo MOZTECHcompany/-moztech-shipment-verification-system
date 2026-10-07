@@ -2,6 +2,8 @@ import { buildEcountUploadTable, prepareEcountFinancials, groupedSalesRecord, wa
 const shippingFields=['recipient','phone','address','postalCode','method','storeName','storeCode','trackingNumber','note'];
 const shippingHeaders=['收件人','收件電話','收件地址','郵遞區號','配送方式','取貨門市','門市代號','物流單號','出貨備註'];
 const shippingCells=shipping=>shippingFields.map(key=>typeof shipping?.[key]==='string'?shipping[key]:'');
+const campaignHeaders=['來源SKU條碼','來源團組名稱','來源團次','來源SKU格式'];
+const campaignCells=item=>['sourceBarcode','campaignGroupName','campaignRound','sourceSkuFormat'].map(key=>typeof item?.[key]==='string'?item[key]:'');
 export function savedBatchTables(record,kind){
  if(kind==='ecount-grouped'){const t=buildEcountUploadTable(groupedSalesRecord(record));return [{name:'銷貨匯入',rows:[t.headers,...t.rows]}];}
  if(kind==='ecount'){const t=buildEcountUploadTable(record);return [{name:'銷貨匯入',rows:[t.headers,...t.rows]}];}
@@ -13,10 +15,10 @@ export function savedBatchTables(record,kind){
  return [
   {name:'批次說明',rows:[['批次',record.batchNumber],['銷貨日期',settings.date],['平台',record.platform],['店鋪',record.store],['轉檔建立者',handler],['專案負責人',settings.projectOwner||'未指定'],['業務負責人',settings.salesOwner||'未指定'],['ECOUNT 承辦人編碼',settings.erpStaffCode||''],['ECOUNT 專案編碼',settings.erpProjectCode||''],['建立者帳號',record.handler?.username||''],['建立者來源',record.handler?.legacy?'依原建立者帳號查得；舊批次未保存當時姓名':'建立批次時的登入人員'],['核對狀態',record.reviewWarning?`待修正，不可作為出貨依據：${record.reviewWarning}`:'依原保存批次資料產生'],['用途','WMS 預揀彙總與來源訂單明細；不是 ECOUNT 理貨回匯檔'],['工作條碼','紙本掃碼工作單請由倉庫預揀頁領單列印；舊理貨批次仍由原批次頁列印'],['金額','訂單總額不代表已收款']]},
   {name:'預揀總表',rows:[...(record.reviewWarning?[[`待修正，不可作為出貨依據：${record.reviewWarning}`]]:[]),[...prepick.headers,'轉檔建立者'],...prepick.rows.map(r=>[...r,handler])]},
-  {name:'訂單商品明細',rows:[...(record.reviewWarning?[[`待修正，不可作為出貨依據：${record.reviewWarning}`]]:[]),['商城訂單','來源明細號','來源貨號','ECOUNT 品項編碼','商品名稱','已確認商品條碼','數量','商品成交金額','WT 工作條碼','轉檔建立者',...shippingHeaders,'ECOUNT品項名稱','規格'],...record.items.map(i=>{
+  {name:'訂單商品明細',rows:[...(record.reviewWarning?[[`待修正，不可作為出貨依據：${record.reviewWarning}`]]:[]),['商城訂單','來源明細號','來源貨號','ECOUNT 品項編碼','商品名稱','已確認商品條碼','數量','商品成交金額','WT 工作條碼','轉檔建立者',...shippingHeaders,'ECOUNT品項名稱','規格',...campaignHeaders],...record.items.map(i=>{
    const m=settings.skuMappings?.[i.sku]||{};
    const details=warehouseProductDetails(i,m);
-   return [i.sourceOrderNumber,i.sourceLineId,i.sku,m.erpSku,details.productName,m.barcodeConfirmed===true?m.barcode:'',i.quantity,i.lineSubtotalMinor==null?'':i.lineSubtotalMinor/100,links.get(i.sourceOrderNumber)?.work_barcode||'',handler,...shippingCells(orders.get(i.sourceOrderNumber)?.shipping),details.erpName,details.spec];
+   return [i.sourceOrderNumber,i.sourceLineId,i.sku,m.erpSku,details.productName,m.barcodeConfirmed===true?m.barcode:'',i.quantity,i.lineSubtotalMinor==null?'':i.lineSubtotalMinor/100,links.get(i.sourceOrderNumber)?.work_barcode||'',handler,...shippingCells(orders.get(i.sourceOrderNumber)?.shipping),details.erpName,details.spec,...campaignCells(i)];
   })]},
   {name:'訂單金額核對',rows:[record.reportHeaders||[],...(record.reportRows||[])]},
   {name:'金額與追溯',rows:traceRows(record,financials)},
@@ -29,7 +31,11 @@ function groupedTrace(record){
  if(!record.salesLayout)return [];
  const view=prepareEcountFinancials(record);
  if(!view.salesLayout)return [];
- return [{name:'彙總銷貨對照',rows:[['彙總明細號','ERP 品項編碼','彙總列數量','彙總列含稅金額','平台','店鋪','商城訂單','來源明細號','分配數量','原訂單成交金額'],...view.salesLayout.lines.flatMap(l=>l.allocations.map(a=>[l.lineId,l.productCode,l.quantity,l.grossMinor/100,...a.identity,a.quantity,a.sourceGrossMinor/100]))]}];
+ const items=new Map(record.items.map(item=>[JSON.stringify([item.sourceOrderNumber,item.sourceLineId]),item]));
+ return [{name:'彙總銷貨對照',rows:[['彙總明細號','ERP 品項編碼','彙總列數量','彙總列含稅金額','平台','店鋪','商城訂單','來源明細號','分配數量','原訂單成交金額','來源SKU',...campaignHeaders],...view.salesLayout.lines.flatMap(l=>l.allocations.map(a=>{
+  const item=items.get(JSON.stringify([a.identity[2],a.identity[3]]));
+  return [l.lineId,l.productCode,l.quantity,l.grossMinor/100,...a.identity,a.quantity,a.sourceGrossMinor/100,item?.sku||'',...campaignCells(item)];
+ }))]}];
 }
 
 function traceRows(record,financials){

@@ -77,3 +77,16 @@ test('complete distinct SKUs survive grouping and identical SKUs sum quantity an
  const same=result.output.salesLayout.lines.find(x=>x.productCode==='04711299273094');assert.equal(same.quantity,3);assert.equal(same.grossMinor,30000);
  const other=result.output.salesLayout.lines.find(x=>x.productCode==='NEW47112992730942');assert.equal(other.quantity,1);
 });
+
+test('1Shop campaign conversion keeps source identity and money while aggregating the same confirmed ERP product', () => {
+ const barcode='4711299274435', skus=[`${barcode}-蒂蒂©️ Didi Chen-第一團`,`${barcode}-另一團組-第二團`];
+ const records=skus.map((sku,index)=>({'訂單編號':`SYN-CAMPAIGN-${index}`,'名稱':'一般品','產品SKU':sku,'產品':'合成商品','產品數量':index+1,'數量(單品/組合/任選)':index+1,'單價':100,'小計':100*(index+1),'訂單金額(不含金/物流手續費)':100*(index+1),'訂單金流手續費':0,'訂單運費':0,'總計金額':100*(index+1),'金流':'信用卡','金流狀態':'已付款','物流狀態':'等待出貨'}));
+ const source=table(records), {parsed}=parseUnifiedMarketplace(source), before=structuredClone({source,parsed});
+ const mappings=Object.fromEntries(skus.map(sku=>[sku,{erpSku:'ERP-SYN-CAMPAIGN',erpName:'合成 ERP 商品',barcode,erpConfirmed:true,barcodeConfirmed:true}]));
+ const result=prepareUnifiedMarketplace(parsed,config(parsed,{salesExportMode:'product-200-v1',skuMappings:mappings}));
+ assert.equal(result.output.ok,true); assert.deepEqual(result.parsed.items.map(i=>i.sku),skus);
+ assert.equal(result.prepick.rows.length,1);assert.equal(result.prepick.rows[0][5],3);
+ assert.equal(result.output.salesLayout.lines.length,1);assert.equal(result.output.salesLayout.lines[0].quantity,3);assert.equal(result.output.salesLayout.lines[0].grossMinor,30000);
+ assert.deepEqual(result.output.salesLayout.lines[0].allocations.map(a=>a.identity[3]).sort(),parsed.items.map(i=>i.sourceLineId).sort());
+ assert.deepEqual({source,parsed},before);
+});

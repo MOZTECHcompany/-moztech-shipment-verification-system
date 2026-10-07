@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMarketplaceRows, parseMoneyMinor, formatMinor, validateMarketplaceExport, buildEcountRows, buildPrepickRows, buildMarketplaceAuditRows, warehouseProductDetails, warehousePrepickDetails, ECOUNT_HEADERS } from '../src/utils/marketplaceIntake.mjs';
+import { parseOneShopSku } from '../../backend/src/services/oneShopSku.mjs';
 
 // Entirely synthetic: no customer details or real order/item identifiers.
 const allow = ['TEST-A', 'TEST-B'];
@@ -225,4 +226,65 @@ test('direct parser rejects damaged scientific notation source codes',()=>{
  const rows=oneRows();rows[0]['產品SKU']='4.71E+12';
  const p=parse(rows);assert.ok(codes(p).includes('INVALID_PRODUCT_IDENTIFIER'));
  assert.equal(buildEcountRows(p,settings()).ok,false);
+});
+
+const campaignBarcode = '4711299274435';
+function campaignRows() {
+  return ['第一團', '第二團'].map((round, index) => ({ ...oneRows()[0], '訂單編號': allow[index], '產品SKU': `${campaignBarcode}-蒂蒂©️ Didi-Chen-${round}`, '產品': `合成團購商品 ${index + 1}`, '產品數量': index + 1, '單價': 100, '小計': (index + 1) * 100, '訂單金額(不含金/物流手續費)': (index + 1) * 100, '訂單運費': 0, '總計金額': (index + 1) * 100, '金流狀態': '已付款', '金流備註': '' }));
+}
+function campaignSettings(parsed) {
+  return { ...settings(), skuMappings: Object.fromEntries(parsed.items.map(item => [item.sku, { erpSku: 'ERP-CAMPAIGN', erpName: 'ERP 團購商品', spec: '合成規格', barcode: campaignBarcode, erpConfirmed: true, barcodeConfirmed: true }])) };
+}
+
+test('1Shop campaign SKU parsing preserves the full source and splits the final campaign separator only', () => {
+  const full = `${campaignBarcode}-蒂蒂©️ Didi-Chen-第一團`;
+  assert.deepEqual(parseOneShopSku(full), { sourceBarcode: campaignBarcode, campaignGroupName: '蒂蒂©️ Didi-Chen', campaignRound: '第一團', sourceSkuFormat: '1shop-barcode-campaign-v1' });
+  for (const value of [null, '', campaignBarcode, `${campaignBarcode}-團組`, `${campaignBarcode}--第一團`, `${campaignBarcode}-  -第一團`, `${campaignBarcode}-團組- `, `NEW${campaignBarcode}-團組-第一團`, `${campaignBarcode}2-團組-第一團`, '4.71E+12-團組-第一團']) assert.equal(parseOneShopSku(value), null, String(value));
+  const original = parse(campaignRows()), reordered = parse(campaignRows().reverse());
+  for (const item of original.items) {
+    assert.equal(item.sku, campaignRows().find(row => row['訂單編號'] === item.sourceOrderNumber)['產品SKU']);
+    assert.equal(item.groupName, '一般品');
+    assert.equal(item.sourceBarcode, campaignBarcode);
+    assert.equal(item.sourceLineId, reordered.items.find(other => other.sku === item.sku).sourceLineId);
+  }
+  assert.notEqual(original.items[0].sourceLineId, original.items[1].sourceLineId);
+  const old = parse();
+  assert.ok(old.items.every(item => !Object.hasOwn(item, 'sourceBarcode') && !Object.hasOwn(item, 'campaignGroupName')));
+  const shop = shopRows(); shop[0]['Lineitem sku'] = full;
+  assert.ok(parseShop(shop).items.every(item => !Object.hasOwn(item, 'sourceSkuFormat')));
+});
+
+test('campaign metadata does not replace the Excel bundle name or its anchor relationship', () => {
+  const rows = oneRows();
+  rows[2]['產品SKU'] = `${campaignBarcode}-主商品團組-第一團`;
+  rows[3]['產品SKU'] = `${campaignBarcode}-配件團組-第二團`;
+  const parsed = parse(rows);
+  assert.equal(parsed.items[2].kind, 'bundle_anchor'); assert.equal(parsed.items[3].kind, 'bundle_component');
+  assert.equal(parsed.items[2].groupName, '合成組合商品'); assert.equal(parsed.items[2].groupId, parsed.items[3].groupId);
+  assert.equal(parsed.items[2].campaignGroupName, '主商品團組'); assert.equal(parsed.items[3].campaignGroupName, '配件團組');
+});
+
+test('confirmed campaign products share one prepick row with complete source SKUs and campaign trace', () => {
+  const parsed = parse(campaignRows()), configured = campaignSettings(parsed), before = structuredClone({ parsed, configured });
+  const prepick = buildPrepickRows(parsed, configured);
+  assert.equal(prepick.ok, true); assert.equal(prepick.rows.length, 1); assert.equal(prepick.rows[0][5], 3); assert.equal(prepick.rows[0][6], 2);
+  assert.deepEqual(prepick.sourceSkuGroups, [parsed.items.map(item => item.sku).sort()]);
+  assert.equal(prepick.rows[0][1], prepick.sourceSkuGroups[0].join('\n'));
+  assert.equal(prepick.rows[0][3], campaignBarcode);
+  assert.equal(prepick.rows[0][4], '合成團購商品 1\n合成團購商品 2');
+  assert.deepEqual(prepick.rows[0].slice(10), ['ERP 團購商品', '合成規格', '蒂蒂©️ Didi-Chen\n蒂蒂©️ Didi-Chen', '第一團\n第二團']);
+  const withoutMetadata = structuredClone(prepick); delete withoutMetadata.sourceSkuGroups;
+  assert.deepEqual(warehousePrepickDetails(withoutMetadata, parsed.items, configured.skuMappings).rows, prepick.rows);
+  assert.deepEqual({ parsed, configured }, before);
+});
+
+test('campaign prepick never groups unconfirmed identities, missing barcodes or different ERP variants', () => {
+  const parsed = parse(campaignRows());
+  for (const change of [mapping => { mapping.barcode = ''; }, mapping => { mapping.barcodeConfirmed = false; }, mapping => { mapping.erpConfirmed = false; }, mapping => { mapping.erpSku = 'ERP-OTHER'; }, mapping => { mapping.spec = '另一規格'; }, mapping => { mapping.barcode = `${campaignBarcode}2`; }]) {
+    const configured = campaignSettings(parsed); change(configured.skuMappings[parsed.items[1].sku]);
+    const prepick = buildPrepickRows(parsed, { ...configured, preview: true });
+    assert.equal(prepick.rows.length, 2); assert.equal(prepick.summary.physicalQuantity, 3);
+  }
+  const noMapping = buildPrepickRows(parsed, { preview: true });
+  assert.equal(noMapping.rows.length, 2); assert.ok(noMapping.rows.every(row => row[3] === ''));
 });
