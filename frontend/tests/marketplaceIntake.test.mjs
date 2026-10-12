@@ -190,9 +190,9 @@ test('batch sequence must be positive integer; TEST tracking number is bounded a
   for (const number of ['', 'REAL-20260101', 'TEST-1234567890123456']) { const s = settings(); s.batchNumber = number; assert.ok(codes(validateMarketplaceExport(parse(), s)).includes('BATCH_NUMBER_REQUIRED')); }
   assert.ok(buildEcountRows(parse(), settings()).rows.every((r) => r[10] === 'TEST-20260102-ABCD'));
 });
-test('fractional TWD order receipts stay visible in source audit and block whole-TWD sales without silent rounding', () => {
+test('fractional TWD order receipts retain exact cents and export whole-TWD sales with explicit per-order deltas', () => {
   const rows = oneRows(); rows[0]['單價'] = '129.29'; rows[0]['小計'] = '129.29'; rows[0]['訂單金額(不含金/物流手續費)'] = '428.29'; rows[0]['總計金額'] = '528.29';
-  const p=parse(rows),out = buildEcountRows(p, settings()); assert.equal(out.ok, false);assert.ok(codes(out).includes('TWD_TOTAL_FRACTION'));assert.deepEqual(out.rows,[]);assert.equal(p.orders[0].financial.totalMinor,52829);
+  const p=parse(rows),before=JSON.stringify(p),out = buildEcountRows(p, settings()); assert.equal(out.ok, true,JSON.stringify(out.issues));assert.equal(out.summary.sourceTotalMinor,142729);assert.equal(out.summary.ecountTotalMinor,142700);assert.equal(out.summary.roundingDeltaMinor,-29);assert.equal(out.rounding.orders[0].sourceTotalMinor,52829);assert.equal(out.rounding.orders[0].ecountTotalMinor,52800);assert.equal(JSON.stringify(p),before);
 });
 test('nonzero source payment fee blocks export until separate accounting mapping exists', () => {
   const rows = oneRows(); rows[0]['訂單金流手續費'] = '10'; rows[0]['總計金額'] = '538'; assert.ok(codes(validateMarketplaceExport(parse(rows), settings())).includes('FEE_MAPPING_REQUIRED'));

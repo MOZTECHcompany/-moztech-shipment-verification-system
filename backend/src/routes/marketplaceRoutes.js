@@ -78,7 +78,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    if(!output.ok&&!allReimports)throw Object.assign(new Error('請先修正轉檔問題'),{status:400,code:'MARKETPLACE_NOT_READY',issues:output.issues});
    const identity=parsed.orders.map(o=>[o.sourcePlatform,clean(settings.store),o.sourceOrderNumber]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
    const fingerprint=hash({platform:source.platform,settings:{...settings,batchNumber:undefined},rows:source.rows,...(verification?{currentFingerprint:verification.currentFingerprint}:{})});
-   const snapshot={platform:source.platform,handler:captureHandler(req.user),settings,sourceEvidence,barcodeReviews:conversion.barcodeReviews||[],summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
+   const snapshot={platform:source.platform,handler:captureHandler(req.user),settings,sourceEvidence,barcodeReviews:conversion.barcodeReviews||[],summary:output.summary,headers:output.headers,rows:output.rows,...(output.salesLayout?{salesLayout:output.salesLayout}:{}),...(output.rounding?{rounding:output.rounding}:{}),reportHeaders:output.reportHeaders,reportRows:output.reportRows,
     orders:parsed.orders.map(o=>({...o,sourceFinancial:raw.orders.find(r=>r.sourceOrderNumber===o.sourceOrderNumber)?.financial})),items:parsed.items,
     prepick:conversion.prepick};
    if(!allReimports){
@@ -112,7 +112,8 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
     const items=parsed.items.filter(i=>i.sourceOrderNumber===order.sourceOrderNumber).map(i=>({sourceLineId:i.sourceLineId,sourceSku:i.sku,productCode:clean(settings.skuMappings[i.sku].erpSku),...warehouseProductDetails(i,settings.skuMappings[i.sku]),quantity:i.quantity,barcode:settings.skuMappings[i.sku].barcodeConfirmed===true?clean(settings.skuMappings[i.sku].barcode):'',groupName:i.groupName,...(i.sourceSkuFormat?{sourceSkuFormat:i.sourceSkuFormat,sourceBarcode:i.sourceBarcode,campaignGroupName:i.campaignGroupName,campaignRound:i.campaignRound}:{})}));
     const physicalIds=new Set(items.map(i=>i.sourceLineId));
     const nonstock=output.rows.filter(r=>r[12]===order.sourceOrderNumber&&!physicalIds.has(r[15])).map(r=>({sourceLineId:r[15],productCode:r[11],quantity:r[19]}));
-    await db.query('INSERT INTO marketplace_intake_orders(intake_id,source_platform,source_store,source_order_number,expected_items,nonstock_items,financial) VALUES($1,$2,$3,$4,$5,$6,$7)',[record.id,order.sourcePlatform,clean(settings.store),order.sourceOrderNumber,JSON.stringify(items),JSON.stringify(nonstock),JSON.stringify({source:raw.orders.find(r=>r.sourceOrderNumber===order.sourceOrderNumber).financial,ecount:order.financial})]);
+    const rounding=output.rounding?.orders.find(entry=>entry.identity[0]===order.sourcePlatform&&entry.identity[1]===order.sourceOrderNumber);
+    await db.query('INSERT INTO marketplace_intake_orders(intake_id,source_platform,source_store,source_order_number,expected_items,nonstock_items,financial) VALUES($1,$2,$3,$4,$5,$6,$7)',[record.id,order.sourcePlatform,clean(settings.store),order.sourceOrderNumber,JSON.stringify(items),JSON.stringify(nonstock),JSON.stringify({source:raw.orders.find(r=>r.sourceOrderNumber===order.sourceOrderNumber).financial,ecount:order.financial,...(rounding?{erpRounding:{policy:output.rounding.policy,...rounding}}:{})})]);
    }
    await require('../services/warehouseRelease').enableFlow(db,record.id,req.user.id);
    await notifyMarketplaceBatch({db,events,intakeId:record.id,actorId:req.user.id,stage:'prepared'});

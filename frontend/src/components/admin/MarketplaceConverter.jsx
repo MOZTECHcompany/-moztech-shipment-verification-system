@@ -196,6 +196,15 @@ function ConverterPage({ user }) {
       if (mounted.current && sequence === request.current) setBusy(false);
     }
   };
+  const checkPhysicalBarcode = async (conflict, value) => {
+    if (locked || inFlight.current || !input || !profileId || !currentSession()) return;
+    const physicalBarcode = String(value || '').trim();
+    const nextSettings = { ...settings, skuMappings: { ...settings.skuMappings, [conflict.sourceSku]: {
+      ...settings.skuMappings?.[conflict.sourceSku], physicalBarcode,
+    } } };
+    setBarcodeChecks({});
+    await refreshPreview(nextSettings, profileId);
+  };
   const update = (key, value) => {
     clearReimportFocus();
     request.current++; setSaved(null); setPreviewDirty(true);
@@ -276,9 +285,10 @@ function ConverterPage({ user }) {
     add('承辦人', [['狀態', '未保存核對草稿'], ['承辦人', user.name || user.username || ''], ['承辦人帳號', user.username || '']]);
     add('預揀總表', [prepared.prepick.headers, ...prepared.prepick.rows]);
     add('訂單金額核對', [prepared.audit.headers, ...prepared.audit.rows]);
-    add('來源商品對照', [['平台', '商城訂單', '來源明細號', '來源SKU', '商品名稱', '原始數量', '原始單價', '原始商品小計', '來源組合名稱', '來源SKU條碼', '來源團組名稱', '來源團次', '來源SKU格式'], ...raw.items.map(item => [raw.platform, item.sourceOrderNumber, item.sourceLineId, item.sku, item.productName, item.quantity, item.unitPriceMinor == null ? '原檔未分價' : item.unitPriceMinor / 100, (item.sourceLineSubtotalMinor ?? item.lineSubtotalMinor) == null ? '原檔未分價' : (item.sourceLineSubtotalMinor ?? item.lineSubtotalMinor) / 100, item.groupName, item.sourceBarcode || '', item.campaignGroupName || '', item.campaignRound || '', item.sourceSkuFormat || ''])]);
+    add('來源商品對照', [['平台', '商城訂單', '來源明細號', '來源SKU', '商品名稱', '原始數量', '原始單價', '原始商品小計', '來源組合名稱', '來源SKU條碼', '來源團組名稱', '來源團次', '來源SKU格式'], ...raw.items.map(item => [raw.platform, item.sourceOrderNumber, item.sourceLineId, item.sku, item.productName, item.quantity, item.unitPriceMinor == null ? '原檔未分價' : prepared.output.rounding ? formatMinor(item.unitPriceMinor) : item.unitPriceMinor / 100, (item.sourceLineSubtotalMinor ?? item.lineSubtotalMinor) == null ? '原檔未分價' : prepared.output.rounding ? formatMinor(item.sourceLineSubtotalMinor ?? item.lineSubtotalMinor) : (item.sourceLineSubtotalMinor ?? item.lineSubtotalMinor) / 100, item.groupName, item.sourceBarcode || '', item.campaignGroupName || '', item.campaignRound || '', item.sourceSkuFormat || ''])]);
     add('本批納入與排除', [['商城訂單', '納入本批', '原因'], ...prepared.choices.map(choice => [choice.number, choice.eligible ? '是' : '否', choice.reason])]);
-    add('ECOUNT成交核對', [['商城訂單', '來源明細號', 'SKU', '數量', '商品淨額', '另分攤訂單折扣'], ...prepared.parsed.items.map(item => [item.sourceOrderNumber, item.sourceLineId, item.sku, item.quantity, item.lineSubtotalMinor == null ? '待確認' : item.lineSubtotalMinor / 100, (item.allocatedDiscountMinor || 0) / 100])]);
+    add('ECOUNT成交核對', [['商城訂單', '來源明細號', 'SKU', '數量', '商品淨額', '另分攤訂單折扣'], ...prepared.parsed.items.map(item => [item.sourceOrderNumber, item.sourceLineId, item.sku, item.quantity, item.lineSubtotalMinor == null ? '待確認' : prepared.output.rounding ? formatMinor(item.lineSubtotalMinor) : item.lineSubtotalMinor / 100, prepared.output.rounding ? formatMinor(item.allocatedDiscountMinor || 0) : (item.allocatedDiscountMinor || 0) / 100])]);
+    if (prepared.output.rounding) add('整元尾差對照', [['商城訂單', '來源明細號', '來源成交金額', 'ECOUNT含稅金額', '整元尾差'], ...prepared.output.rounding.orders.flatMap(order => order.lines.map(line => [order.identity[1], line.sourceLineId, formatMinor(line.sourceGrossMinor), formatMinor(line.ecountGrossMinor), formatMinor(line.roundingDeltaMinor)]))]);
     XLSX.writeFile(book, `預揀與金額核對_${settings.batchNumber}.xlsx`);
   };
   const download = async kind => {
@@ -358,6 +368,7 @@ function ConverterPage({ user }) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div><h2 className="text-lg font-semibold">{reimports.length ? `已保存 ${reimports.length} 筆 · 新增 ${prepared.parsed.summary.orderCount} 筆` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{!onlyReimports && <p className="mt-2 text-sm text-slate-700">{reimports.length ? `新單 ${prepared.parsed.summary.totalQuantity} 件商品 · ` : ''}含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
             {prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
+            {prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
           </div>
           {!onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reimports.length ? '下載新單銷貨檔' : '下載銷貨檔'}</Button>}
         </div>
@@ -380,6 +391,7 @@ function ConverterPage({ user }) {
         const canConfirm = conflict.canConfirm === true;
         const chooseTarget = conflict.targetOptions?.length > 1;
         const sourceBarcodeMissing = conflict.platform === 'Shopify' && conflict.reviewReason === 'SOURCE_BARCODE_MISSING';
+        const canScanPhysicalBarcode = conflict.canEnterPhysicalBarcode === true;
         return <div key={key} className="rounded-lg border border-slate-200 p-4">
           <p className="font-medium">{conflict.sourceName || products.find(item => item.sku === conflict.sourceSku)?.productName || conflict.erpName}</p>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -398,11 +410,12 @@ function ConverterPage({ user }) {
             const url = shopifyOrderUrl(conflict, order);
             return <tr key={`${order.orderNumber}:${order.sourceLineId || index}`} className="border-t border-slate-100"><td className={`${cell} whitespace-nowrap`}>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 underline">{order.orderNumber}</a> : order.orderNumber}</td><td className={cell}>{order.productName}</td><td className={`${cell} whitespace-nowrap`}>{order.barcode || '未填條碼'}</td><td className={`${cell} whitespace-nowrap`}>{order.quantity}</td></tr>;
           })}</tbody></table></div></details>}
+          {canScanPhysicalBarcode && <div className="mt-3 max-w-md"><Field label="實物條碼" value={settings.skuMappings?.[conflict.sourceSku]?.physicalBarcode || conflict.physicalBarcode || ''} maxLength={100} disabled={locked || !profileId} placeholder="掃描商品包裝條碼" onChange={event => { setBarcodeChecks({}); mapping(conflict.sourceSku, 'physicalBarcode', event.target.value); }} onBlur={event => { if (previewDirty) return checkPhysicalBarcode(conflict, event.target.value); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); return checkPhysicalBarcode(conflict, event.currentTarget.value); } }} /></div>}
           <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
             <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
           </fieldset>
-          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>}
+          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}

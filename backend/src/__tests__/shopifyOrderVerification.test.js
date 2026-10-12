@@ -16,6 +16,19 @@ const order = (overrides = {}) => ({ id: 'gid://shopify/Order/7624215101596', na
 const response = (current, responseShop = shop) => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ data: { shop: { myshopifyDomain: responseShop }, order: current } }) });
 const run = (rows = editedRows(), current = order(), options = {}) => verifyShopifyRows(rows, { shop, token, fetchImpl: jest.fn(async () => response(current)), ...options });
 
+test.each(['4.711299270086E+12','X'.repeat(101),'SCAN\nCODE','\nSCAN',123])('a present invalid API barcode cannot become blank physical-scan evidence: %j',barcode=>{
+  const current=order({lineItems:{nodes:[item({variant:{id:'gid://shopify/ProductVariant/123',barcode}})],pageInfo:{hasNextPage:false}}});
+  return expect(run(editedRows(),current)).rejects.toMatchObject({code:'SHOPIFY_BARCODE_INVALID',orderNumber:'#154230'});
+});
+
+test.each([null,''])('a genuinely blank API barcode retains its known variant identity: %j',barcode=>{
+  const current=order({lineItems:{nodes:[item({variant:{id:'gid://shopify/ProductVariant/123',barcode}})],pageInfo:{hasNextPage:false}}});
+  return run(editedRows(),current).then(result=>{
+    expect(result.verification.orders[0].items[0]).toMatchObject({variantId:'gid://shopify/ProductVariant/123'});
+    expect(result.verification.orders[0].items[0]).not.toHaveProperty('barcode');
+  });
+});
+
 test('currentQuantity removes edited-away product; current money and exact platform line ID replace historical CSV', async () => {
   const original = editedRows(), before = JSON.stringify(original), fetchImpl = jest.fn(async () => response(order()));
   const result = await run(original, order(), { fetchImpl });

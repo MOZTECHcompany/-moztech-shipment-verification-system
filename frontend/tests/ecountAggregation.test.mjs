@@ -104,3 +104,14 @@ test('grouped return rejects duplicate/missing rows, wrong money/quantity/barcod
  }
  const summary=receipt(r,true);for(const row of summary.slice(1)){row[16]=row[15];row[15]='';}const result=await reconcileSales(summary,stored(r));assert.equal(result.parsed.workOrders.flatMap(o=>o.items.flatMap(i=>i.serials)).length,450);
 });
+test('fractional source totals keep whole ERP rows at each 200-unit split and exact source manifests',async()=>{
+ for(const [quantity,expected] of [[1,[1]],[199,[199]],[200,[200]],[201,[200,1]],[400,[200,200]],[450,[200,200,50]]]){
+  for(const sourceTotal of [49,110051]){
+   const r=fixture([quantity]);r.items[0].lineSubtotalMinor=sourceTotal;r.orders[0].financial.totalMinor=sourceTotal;
+   Object.assign(r,buildEcountRows({items:r.items,orders:r.orders,issues:[],summary:{}},r.settings));assert.equal(r.ok,true,JSON.stringify(r.issues));
+   const view=prepareEcountFinancials(r),target=sourceTotal===49?0:110100;assert.deepEqual(view.rows.map(row=>row[19]),expected);assert.equal(view.financials.sourceTotalMinor,sourceTotal);assert.equal(view.financials.grossMinor,target);assert.equal(view.financials.roundingDeltaMinor,target-sourceTotal);
+   assert.ok(view.rows.every(row=>Number.isInteger(row[23])&&Number.isInteger(row[24])));assert.equal(view.salesLayout.lines.flatMap(l=>l.allocations).reduce((n,a)=>n+a.sourceGrossMinor,0),target);assert.equal(r.rounding.orders[0].lines[0].sourceGrossMinor,sourceTotal);
+   const result=await reconcileSales(receipt(r),stored(r));assert.equal(result.parsed.workOrders[0].items[0].quantity,quantity);assert.equal(result.receipt.financials.sourceTotalMinor,sourceTotal);assert.deepEqual(result.receipt.rounding,r.rounding);
+  }
+ }
+});

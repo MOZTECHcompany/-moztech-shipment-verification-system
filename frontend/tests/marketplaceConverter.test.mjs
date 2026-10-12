@@ -82,7 +82,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
                 const apiBarcode = conflict?.sourceBarcode;
                 const selectedTarget = conflict?.targetOptions?.find(option => option.erpSku === conflict.selectedErpSku);
                 effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || apiBarcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || !!apiBarcode || provided.barcodeConfirmed === true};
-                if (selectedTarget) effectiveSettings.skuMappings[sku] = {...effectiveSettings.skuMappings[sku],erpSku:selectedTarget.erpSku,erpName:selectedTarget.erpName,barcode:apiBarcode || selectedTarget.erpBarcode,confirmed:confirmedBarcodes.has(conflict.fingerprint),barcodeConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
+                if (selectedTarget) effectiveSettings.skuMappings[sku] = {...effectiveSettings.skuMappings[sku],erpSku:selectedTarget.erpSku,erpName:selectedTarget.erpName,barcode:conflict.physicalBarcode || apiBarcode || selectedTarget.erpBarcode,confirmed:confirmedBarcodes.has(conflict.fingerprint),barcodeConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
                 else if (conflict?.targetOptions?.length > 1) effectiveSettings.skuMappings[sku] = {...provided,erpSku:'',erpName:'',barcode:'',confirmed:false,barcodeConfirmed:false};
             }
             const prepared = unified.prepareUnifiedMarketplace(fresh,effectiveSettings);
@@ -123,7 +123,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
     const all = predicate => { const result = []; const walk = node => { if (Array.isArray(node)) return node.forEach(walk); if (!node || typeof node !== 'object') return; if (predicate(node)) result.push(node); walk(node.props?.children || []); }; walk(render()); return result; };
     const button = label => find(render(), node => node.type === 'Button' && text(node).includes(label));
     const label = value => find(render(), node => node.type === 'label' && text(node).trim().startsWith(value));
-    const change = async (name, value) => { const control = find(label(name), node => ['input', 'select'].includes(node.type)); assert.ok(control, `Control ${name}`); await control.props.onChange({ target: { value, checked: value } }); render(); const refreshed = find(label(name), node => ['input', 'select'].includes(node.type)); if (refreshed?.props.onBlur) await refreshed.props.onBlur(); return render(); };
+    const change = async (name, value) => { const control = find(label(name), node => ['input', 'select'].includes(node.type)); assert.ok(control, `Control ${name}`); await control.props.onChange({ target: { value, checked: value } }); render(); const refreshed = find(label(name), node => ['input', 'select'].includes(node.type)); if (refreshed?.props.onBlur) await refreshed.props.onBlur({target:{value,checked:value},currentTarget:{value}}); return render(); };
     const select = async (...files) => { await find(render(), node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files, value: 'selected' } }); render(); };
     render();
     for (let i=0;i<5;i++) await Promise.resolve();
@@ -409,6 +409,57 @@ test('missing Shopify variant barcode identifies the affected order and offers a
     assert.doesNotMatch(view.text(view.render()),/Shopify 商品條碼未填/);
     assert.equal(view.button('保存商品對照').props.disabled,true,'fresh API data still requires physical review');
     assert.equal(view.all(node => node.type === 'input' && node.props.type === 'checkbox' && node.props.checked).length,0);
+});
+
+test('missing API barcode accepts a physical scan only after a fresh preview and explicit confirmation', async () => {
+    const conflicts = body => {
+        const physicalBarcode = body.settings.skuMappings?.['4711299274732']?.physicalBarcode || '';
+        return [{...shopifyBarcodeConflict,sourceBarcode:'',erpBarcode:'',physicalBarcode,
+            requiresPhysicalBarcode:true,canEnterPhysicalBarcode:true,canConfirm:!!physicalBarcode,
+            barcodeProof:'physical-scan-v1',fingerprint:`physical-scan-${physicalBarcode}`,reviewReason:'SOURCE_BARCODE_MISSING',
+            selectedErpSku:'4711299274732',targetOptions:[{erpSku:'4711299274732',erpName:'ERP 抗藍光保護貼',erpBarcode:'',spec:'iPhone 6.3 18 Pro'}],
+            relatedOrders:shopifyBarcodeConflict.relatedOrders.map(order=>({...order,barcode:'',barcodeMissing:true}))}];
+    };
+    const view=await converter({profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:conflicts,
+        resolved:{products:{'4711299274732':{status:'matched',matches:[{erp_sku:'4711299274732',product_name:'ERP 抗藍光保護貼',barcode:'',spec:'iPhone 6.3 18 Pro'}]}}}});
+    await view.select(file(shopifyBarcodeRows));
+    assert.match(view.text(view.render()),/實物條碼|請掃描實物條碼/);
+    assert.equal(downloadSales(view).props.disabled,true);
+    const scanner=view.all(node=>node.type==='input'&&node.props.placeholder==='掃描商品包裝條碼')[0];
+    assert.equal(scanner.props.value,'','a matching numeric SKU never auto-fills the physical barcode');
+    await scanner.props.onChange({target:{value:'4711299274732'}});view.render();
+    assert.equal(view.button('保存商品對照').props.disabled,true,'editing invalidates the old preview');
+    const updated=view.all(node=>node.type==='input'&&node.props.placeholder==='掃描商品包裝條碼')[0];
+    let prevented=false;await updated.props.onKeyDown({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){prevented=true;}});view.render();
+    assert.equal(prevented,true);assert.equal(previewCalls(view).length,2);
+    assert.equal(view.button('保存商品對照').props.disabled,true,'a barcode alone does not confirm the mapping');
+    await view.change('已核對實物與 ERP',true);
+    await view.button('保存商品對照').props.onClick();view.render();
+    const confirmation=view.requests.find(r=>r.url==='/api/marketplace-intakes/barcode-confirmations');
+    assert.equal(confirmation.body.settings.skuMappings['4711299274732'].physicalBarcode,'4711299274732');
+    assert.equal(confirmation.body.confirmation.fingerprint,'physical-scan-4711299274732');
+    assert.equal(downloadSales(view).props.disabled,false);
+    await view.select(file(shopifyBarcodeRows,'new-file.csv'));
+    assert.equal(view.all(node=>node.type==='input'&&node.props.placeholder==='掃描商品包裝條碼')[0].props.value,'');
+    assert.equal(downloadSales(view).props.disabled,true);
+});
+
+test('decimal order shows separate ERP totals and exports its original cents and rounding trace', async () => {
+    const fields=['Name','Id','Financial Status','Fulfillment Status','Currency','Subtotal','Shipping','Taxes','Total','Discount Amount','Refunded Amount','Outstanding Balance','Lineitem sku','Lineitem name','Lineitem quantity','Lineitem price','Lineitem discount'];
+    const common=['#DECIMAL','10001','paid','unfulfilled','TWD','1815.10','0','0','1815.10','64.90','0','0'];
+    const rows=[fields,[...common,'SKU-A','Product A',1,'590','64.90'],[...common,'SKU-B','Product B',1,'1290','0']];
+    const view=await converter({profiles:[{...storeProfile,platform:'Shopify'}]});await view.select(file(rows));
+    const text=view.text(view.render());
+    assert.match(text,/含稅\s+TWD\s+1815\.10/);assert.match(text,/稅前\s+1,729.*營業稅\s+86/);
+    assert.match(text,/ERP 含稅\s+1,815\s+· 整元尾差\s+-0\.10/);
+    assert.equal(downloadSales(view).props.disabled,false);
+    await view.button('下載金額核對表').props.onClick();view.render();
+    const book=view.downloads[0].book;
+    assert.ok(book.SheetNames.includes('整元尾差對照'));
+    const trace=XLSX.utils.sheet_to_json(book.Sheets['整元尾差對照'],{header:1});
+    assert.ok(trace.some(row=>row[2]==='525.10'&&row[3]==='525.00'&&row[4]==='-0.10'));
+    const sourceRows=XLSX.utils.sheet_to_json(book.Sheets['來源商品對照'],{header:1});
+    assert.equal(sourceRows[1][7],'525.10');
 });
 
 test('per-order preview and save errors identify the order without duplicating an existing prefix', async () => {

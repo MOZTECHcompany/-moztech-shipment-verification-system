@@ -121,12 +121,13 @@ test('a new duplicate barcode between saved review validation and catalog valida
  await expect(verifyCatalogMappings(h.pool,saved.settings,[sku],h.reader,reviewed)).rejects.toMatchObject({status:400});
 });
 
-test('a single current variant with no API barcode preserves an existing confirmed physical profile barcode',async()=>{
+test('a single blank API variant exposes physical scanning but cannot trust client barcode confirmation',async()=>{
  const h=harness();h.products=[{...h.products[0],barcode:''}];
  h.verify.mockResolvedValue({rows:input().rows,verification:{shop:'moztech.myshopify.com',orders:[{number:'#154230',id:'7624215101596',currentQuantity:2,items:[{id:'16493014253724',sku,barcode:'',variantId:variant}]}]}});
  const result=await h.prepare({...input(),settings:{skuMappings:{[sku]:{erpSku:sku,barcode:sku,confirmed:true,barcodeConfirmed:true}}}});
- expect(result.barcodeConflicts).toEqual([]);expect(result.output.ok).toBe(true);expect(result.prepick.ok).toBe(true);
- expect(result.settings.skuMappings[sku]).toMatchObject({barcode:sku,barcodeConfirmed:true});
+ expect(result.output.ok).toBe(false);expect(result.prepick.ok).toBe(false);
+ expect(result.barcodeConflicts[0]).toMatchObject({sourceBarcode:'',physicalBarcode:'',canEnterPhysicalBarcode:true,requiresPhysicalBarcode:true,canConfirm:false,barcodeProof:'physical-scan-v1'});
+ expect(result.settings.skuMappings[sku]).toMatchObject({barcode:'',barcodeConfirmed:false});
 });
 
 test('an actual barcode also present as a different source SKU still offers both exact targets',async()=>{

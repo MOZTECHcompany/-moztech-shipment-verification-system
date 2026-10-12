@@ -87,6 +87,6 @@ async function reconcileSales(rows,record,{logistics=false}={}){
  }
  actual.sort((a,b)=>JSON.stringify(a.identity).localeCompare(JSON.stringify(b.identity)));
  const fingerprint=createHash('sha256').update(JSON.stringify(actual)).digest('hex');
- return {receipt:{fingerprint,vouchers:[...vouchers].sort(),financials:logistics?null:financials,verificationKind:logistics?'warehouse-return':'sales-receipt',financialVerified:!logistics,lines:actual,...(salesLayout?{salesLayout}: {})},parsed};
+ return {receipt:{fingerprint,vouchers:[...vouchers].sort(),financials:logistics?null:financials,verificationKind:logistics?'warehouse-return':'sales-receipt',financialVerified:!logistics,lines:actual,...(salesLayout?{salesLayout}: {}),...(!logistics&&record.snapshot.rounding?{rounding:record.snapshot.rounding}:{})},parsed};
 }
 module.exports={HEADERS,reconcileSales};

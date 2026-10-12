@@ -5,7 +5,7 @@ const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
 const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
 const {safeSettings}=require('./marketplaceSettings');
 const {classifyMarketplaceReimports,newSalesSource}=require('./marketplaceReimports');
-const {barcodeReviewCandidate,readBarcodeReviews,reviewMatchesCandidate}=require('./marketplaceBarcodeReviews');
+const {barcodeReviewCandidate,readBarcodeReviews,readPhysicalBarcodeReviews,reviewMatchesCandidate}=require('./marketplaceBarcodeReviews');
 const clean=value=>String(value??'').trim();
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=(message,code='MARKETPLACE_INVALID',status=400)=>Object.assign(new Error(message),{status,code});
@@ -152,12 +152,6 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
     .filter(p=>p.active===true&&(p.erp_sku===sku||p.barcode===sku||apiBarcode&&(p.erp_sku===apiBarcode||p.barcode===apiBarcode)))
     .map(p=>[p.erp_sku,p])).values()];
    const p=match?.status==='matched'?match.matches[0]:null;
-   if(!catalogBlocked&&targets.length<=1&&!(p?.barcode&&apiBarcode&&p.barcode!==apiBarcode)&&variantIds.length<=1&&!(targets.length&&!p))continue;
-   // An ambiguous or inactive original identity remains blocked, even if the
-   // other exact string happens to name an active product.
-   if(!targets.length&&!p)continue;
-   const common={profileId:profile?.id,platform:source.platform,shop:verification?.shop||profile?.settings?.apiConnectionId||'',sourceSku:sku,sourceBarcode:apiBarcode||'',sourceName:[...new Set(eligible.items.filter(i=>i.sku===sku).map(i=>i.productName))].sort().join(' / '),variantIds};
-   const candidates=targets.map(product=>barcodeReviewCandidate({...common,product}));
    const relatedOrders=eligible.items.filter(item=>item.sku===sku).map(item=>{
     const order=verification?.orders?.find(order=>order.number===item.sourceOrderNumber);
     const verified=order?.items?.find(line=>line.id===item.sourceLineId);
@@ -166,12 +160,43 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
      barcode:verified?.barcode||'',barcodeMissing:!verified?.barcode};
    });
    const missingBarcode=source.platform==='Shopify'&&relatedOrders.some(value=>value.barcodeMissing);
-   sourceCandidates.push({sku,common,targets,candidates,relatedOrders,catalogBlocked,
+   // A scan may supplement only wholly blank, fully identified Shopify
+   // versions and one exact active ERP target. It never changes API evidence.
+   const physicalEligible=Boolean(source.platform==='Shopify'&&!catalogBlocked&&p&&targets.length===1&&relatedOrders.length&&
+    relatedOrders.every(value=>value.barcodeMissing&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId))&&
+    new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length);
+   if(!physicalEligible&&!missingBarcode&&!catalogBlocked&&targets.length<=1&&!(p?.barcode&&apiBarcode&&p.barcode!==apiBarcode)&&variantIds.length<=1&&!(targets.length&&!p))continue;
+   // An ambiguous or inactive original identity remains blocked, even if the
+   // other exact string happens to name an active product.
+   if(!targets.length&&!p&&!missingBarcode)continue;
+   const common={profileId:profile?.id,platform:source.platform,shop:verification?.shop||profile?.settings?.apiConnectionId||'',sourceSku:sku,sourceBarcode:apiBarcode||'',sourceName:[...new Set(eligible.items.filter(i=>i.sku===sku).map(i=>i.productName))].sort().join(' / '),variantIds};
+   const candidates=targets.map(product=>barcodeReviewCandidate({...common,product}));
+   sourceCandidates.push({sku,common,targets,candidates,relatedOrders,catalogBlocked,physicalEligible,
+    requestedPhysicalBarcode:Object.hasOwn(supplied.skuMappings?.[sku]||{},'physicalBarcode')?clean(supplied.skuMappings[sku].physicalBarcode):undefined,
     proposedTarget:clean(supplied.skuMappings?.[sku]?.erpSku),
     reviewReason:catalogBlocked?'ERP_AMBIGUOUS':missingBarcode?'SOURCE_BARCODE_MISSING':incompleteSources.has(sku)?'SOURCE_VARIANT_MISSING':targets.length>1?'ERP_TARGET_REQUIRED':!p?.barcode?'ERP_BARCODE_MISSING':variantIds.length>1?'MULTIPLE_VARIANTS':'BARCODE_MISMATCH'});
   }
+  const physicalSkus=sourceCandidates.filter(value=>value.physicalEligible).map(value=>value.sku);
+  const physicalReviews=profile&&physicalSkus.length?await readPhysicalBarcodeReviews(pool,profile.id,physicalSkus):[];
+  for(const value of sourceCandidates.filter(value=>value.physicalEligible)){
+   let physicalBarcode=value.requestedPhysicalBarcode;
+   if(physicalBarcode===undefined){
+    const compatible=physicalReviews.filter(record=>record.evidence?.sourceSku===value.sku&&reviewMatchesCandidate(
+     barcodeReviewCandidate({...value.common,product:value.targets[0],physicalBarcode:record.evidence.physicalBarcode,barcodeProof:'physical-scan-v1'}),record));
+    // Conflicting recorded scans require a new explicit choice and review.
+    physicalBarcode=compatible.length===1?compatible[0].evidence.physicalBarcode:'';
+   }
+   value.candidates=[barcodeReviewCandidate({...value.common,product:value.targets[0],physicalBarcode,barcodeProof:'physical-scan-v1'})];
+  }
+  const physicalBarcodes=[...new Set(sourceCandidates.filter(value=>value.physicalEligible).map(value=>value.candidates[0].physicalBarcode).filter(Boolean))];
+  const physicalCatalog=physicalBarcodes.length?await resolveProducts(physicalBarcodes):{products:{}};
+  for(const value of sourceCandidates.filter(value=>value.physicalEligible)){
+   const scan=value.candidates[0].physicalBarcode,match=physicalCatalog.products?.[scan];
+   value.physicalCatalogSafe=!scan||Boolean(match&&!['inactive','ambiguous'].includes(match.status)&&
+    (match.matches||[]).every(product=>product.active===true&&product.erp_sku===value.targets[0].erp_sku));
+  }
   const fingerprints=[...new Set(sourceCandidates.flatMap(value=>value.candidates.map(candidate=>candidate.fingerprint)))];
-  const reviews=[];
+  const reviews=[...physicalReviews];
   // Each product can expose two exact targets while the shipment itself still
   // has at most 1,000 product rows. Keep each persisted lookup bounded.
   if(profile)for(let offset=0;offset<fingerprints.length;offset+=1000)
@@ -185,10 +210,12 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    const invalidSelection=Boolean(value.proposedTarget&&!value.candidates.some(candidate=>candidate.erpSku===value.proposedTarget));
    const selectedErpSku=selected?.erpSku||'';
    const candidate={...(selected||barcodeReviewCandidate(value.common)),
-    canConfirm:Boolean(selected?.canConfirm&&!invalidSelection&&!value.catalogBlocked&&!incompleteSources.has(value.sku)),
+    canConfirm:Boolean(selected?.canConfirm&&!invalidSelection&&!value.catalogBlocked&&
+     (value.physicalEligible?value.physicalCatalogSafe:!incompleteSources.has(value.sku))),
+    ...(value.physicalEligible?{requiresPhysicalBarcode:true,canEnterPhysicalBarcode:!invalidSelection}:{}),
     selectedErpSku,targetOptions:value.targets.map(product=>({erpSku:product.erp_sku,erpName:product.product_name,erpBarcode:product.barcode,spec:product.spec||''})),
     relatedOrders:value.relatedOrders,reviewReason:value.reviewReason};
-   selectedTargets.set(value.sku,{product:value.targets.find(product=>product.erp_sku===selectedErpSku)||null});
+   selectedTargets.set(value.sku,{product:value.targets.find(product=>product.erp_sku===selectedErpSku)||null,candidate});
    // Only the currently selected target is confirmable through the route.
    reviewCandidates.push(candidate);
    if(candidate.canConfirm&&approved.has(candidate.fingerprint)){
@@ -207,7 +234,11 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
     if(!p){settingsInput.skuMappings[item.sku]={...provided,erpSku:'',erpName:'',spec:'',confirmed:false,erpConfirmed:false,barcode:'',barcodeConfirmed:false};continue;}
     const apiBarcode=apiBarcodes.get(item.sku)||oneShopFormats.get(item.sku)?.sourceBarcode;
     const blocked=barcodeConflicts.some(c=>c.sourceSku===item.sku);
-    settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,barcode:p.barcode||apiBarcode||provided.barcode||'',barcodeConfirmed:blocked?false:p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
+    const physical=selectedTargets.get(item.sku)?.candidate?.barcodeProof==='physical-scan-v1'?selectedTargets.get(item.sku).candidate:null;
+    settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,
+     barcode:physical?physical.physicalBarcode:p.barcode||apiBarcode||provided.barcode||'',
+     ...(physical?{physicalBarcode:physical.physicalBarcode}:{}),
+     barcodeConfirmed:blocked?false:physical?barcodeReviews.some(review=>review.fingerprint===physical.fingerprint):p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
    }else if(!settingsInput.skuMappings[item.sku])settingsInput.skuMappings[item.sku]={erpSku:item.sku,erpName:item.productName,barcode:'',confirmed:false,barcodeConfirmed:false,category:''};
   }
   const settings=safeSettings(settingsInput);

@@ -164,7 +164,7 @@ test('cancelled zero-current Shopify order remains visible as excluded audit wit
 });
 test('a cancelled empty order does not remove a different valid current shipment in the same CSV',async()=>{
  const h=harness();const active=table([order()]);const source=table([order(),order({Name:'#154195',Id:'7621155160220'})]);
- h.verifyShopify.mockResolvedValueOnce({rows:active,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[]},{number:'#154195',currentQuantity:0,cancelled:true,paymentStatus:'voided',fulfillmentStatus:'unfulfilled',subtotalMinor:0,totalMinor:0,shippingMinor:0,discountMinor:0,outstandingMinor:0,items:[]}]}});
+ h.verifyShopify.mockResolvedValueOnce({rows:active,verification:{shop:'www-omfuture.myshopify.com',orders:[{number:'#154230',currentQuantity:1,items:[{id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'}]},{number:'#154195',currentQuantity:0,cancelled:true,paymentStatus:'voided',fulfillmentStatus:'unfulfilled',subtotalMinor:0,totalMinor:0,shippingMinor:0,discountMinor:0,outstandingMinor:0,items:[]}]}});
  const r=await h.prepare({rows:source});expect(r.output.ok).toBe(true);expect(r.output.summary.physicalQuantity).toBe(1);expect(r.output.summary.ecountTotalMinor).toBe(89000);expect(r.parsed.orders.map(o=>o.sourceOrderNumber)).toEqual(['#154230']);expect(r.raw.orders.map(o=>o.sourceOrderNumber)).toEqual(['#154230','#154195']);expect(r.choices[1]).toMatchObject({eligible:false,number:'#154195',reason:'Shopify 已取消訂單'});
 });
 test('SHOPLINE store binding is trusted, cached by connection, and refreshed before saving',async()=>{

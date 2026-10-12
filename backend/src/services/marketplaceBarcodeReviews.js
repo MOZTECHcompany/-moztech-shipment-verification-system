@@ -11,32 +11,42 @@ const identifier=value=>scalar(value)&&Boolean(value)&&!/^[+-]?(?:\d+\.?\d*|\.\d
 const validId=value=>Number.isSafeInteger(Number(value))&&Number(value)>0&&Number(value)<=2147483647;
 const validFingerprint=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const identityFields=['storeProfileId','platform','shop','sourceSku','sourceBarcode','sourceName','variantId','variantIds','erpSku','erpBarcode','erpName','spec'];
+const physicalProof='physical-scan-v1';
+const physicalFields=['physicalBarcode','barcodeProof'];
+const hasPhysicalProof=evidence=>evidence?.barcodeProof===physicalProof;
+const scanBarcode=evidence=>hasPhysicalProof(evidence)?evidence.physicalBarcode:evidence.erpBarcode||evidence.sourceBarcode;
 function canonical(value){
  if(Array.isArray(value))return value.map(canonical);
  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])]));
  return value;
 }
 const fingerprint=evidence=>createHash('sha256').update(JSON.stringify(canonical(evidence))).digest('hex');
-const reviewEvidence=candidate=>Object.fromEntries(identityFields.map(key=>[key,candidate[key]]));
+// Preserve the exact legacy evidence shape and fingerprint. Only physical-scan
+// reviews add fields; an empty Shopify barcode remains empty in their evidence.
+const reviewEvidence=candidate=>Object.fromEntries([...identityFields,...(hasPhysicalProof(candidate)?physicalFields:[])].map(key=>[key,candidate[key]]));
 
-function barcodeReviewCandidate({profileId,platform,shop,sourceSku,sourceBarcode,sourceName,variantIds,product}={}){
+function barcodeReviewCandidate({profileId,platform,shop,sourceSku,sourceBarcode,sourceName,variantIds,product,physicalBarcode,barcodeProof}={}){
  const variants=[...new Set(Array.isArray(variantIds)?variantIds.map(clean).filter(Boolean):[])].sort();
  const evidence={storeProfileId:validId(profileId)?Number(profileId):null,platform:clean(platform),shop:clean(shop),
   sourceSku:clean(sourceSku),sourceBarcode:clean(sourceBarcode),sourceName:clean(sourceName),variantId:variants.length===1?variants[0]:'',variantIds:variants,
   erpSku:clean(product?.erp_sku),erpBarcode:clean(product?.barcode),erpName:clean(product?.product_name),spec:clean(product?.spec)};
+ const physical=barcodeProof===physicalProof;
+ if(physical)Object.assign(evidence,{physicalBarcode:clean(physicalBarcode),barcodeProof:physicalProof});
  const shopify=evidence.platform==='Shopify';
  const canConfirm=Boolean(evidence.storeProfileId&&['Shopify','SHOPLINE','1Shop'].includes(evidence.platform)&&
   Boolean(evidence.shop)&&scalar(evidence.shop,255)&&(!shopify||/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(evidence.shop))&&
   (!shopify||variants.length>0&&variants.every(value=>/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value)))&&
-  variants.length<=1000&&variants.every(value=>scalar(value,255))&&identifier(evidence.sourceSku)&&identifier(evidence.sourceBarcode)&&
+  variants.length<=1000&&variants.every(value=>scalar(value,255))&&identifier(evidence.sourceSku)&&
+  (physical?shopify&&evidence.sourceBarcode===''&&identifier(evidence.physicalBarcode)&&(!evidence.erpBarcode||evidence.erpBarcode===evidence.physicalBarcode):identifier(evidence.sourceBarcode))&&
   identifier(evidence.erpSku)&&(evidence.erpBarcode===''||identifier(evidence.erpBarcode))&&scalar(evidence.sourceName,5000)&&scalar(evidence.erpName,5000)&&scalar(evidence.spec,5000)&&product?.active===true);
  return {...evidence,fingerprint:fingerprint(evidence),canConfirm};
 }
 
 function validEvidence(evidence){
- if(!evidence||typeof evidence!=='object'||Array.isArray(evidence)||Object.keys(evidence).length!==identityFields.length||identityFields.some(key=>!Object.hasOwn(evidence,key)))return false;
+ const fields=[...identityFields,...(hasPhysicalProof(evidence)?physicalFields:[])];
+ if(!evidence||typeof evidence!=='object'||Array.isArray(evidence)||Object.keys(evidence).length!==fields.length||fields.some(key=>!Object.hasOwn(evidence,key)))return false;
  const candidate=barcodeReviewCandidate({profileId:evidence.storeProfileId,platform:evidence.platform,shop:evidence.shop,sourceSku:evidence.sourceSku,sourceBarcode:evidence.sourceBarcode,sourceName:evidence.sourceName,variantIds:evidence.variantIds,
-  product:{erp_sku:evidence.erpSku,barcode:evidence.erpBarcode,product_name:evidence.erpName,spec:evidence.spec,active:true}});
+  product:{erp_sku:evidence.erpSku,barcode:evidence.erpBarcode,product_name:evidence.erpName,spec:evidence.spec,active:true},physicalBarcode:evidence.physicalBarcode,barcodeProof:evidence.barcodeProof});
  return candidate.canConfirm&&JSON.stringify(canonical(reviewEvidence(candidate)))===JSON.stringify(canonical(evidence));
 }
 function reviewMatchesCandidate(candidate,record){
@@ -54,6 +64,21 @@ async function readBarcodeReviews(pool,profileId,fingerprints){
  const values=[...new Set(fingerprints)];if(!values.length)return [];
  return (await pool.query(`SELECT id,store_profile_id,fingerprint,evidence,confirmed_by,confirmed_at
   FROM marketplace_product_mapping_reviews WHERE store_profile_id=$1 AND fingerprint=ANY($2::text[]) AND revoked_at IS NULL`,[Number(profileId),values])).rows;
+}
+
+async function readPhysicalBarcodeReviews(pool,profileId,skus){
+ if(!validId(profileId))return [];
+ if(!Array.isArray(skus)||skus.length>1000||skus.some(value=>!identifier(value)))throw fail('實物條碼商品識別無效');
+ if(!skus.length)return [];
+ return (await pool.query(`SELECT id,store_profile_id,fingerprint,evidence,confirmed_by,confirmed_at
+  FROM marketplace_product_mapping_reviews WHERE store_profile_id=$1 AND evidence->>'barcodeProof'='physical-scan-v1'
+  AND evidence->>'sourceSku'=ANY($2::text[]) AND revoked_at IS NULL`,[Number(profileId),[...new Set(skus)]])).rows;
+}
+
+function currentReviewTargets(evidence,products){
+ const current=exactReviewTargets(evidence.sourceSku,hasPhysicalProof(evidence)?evidence.physicalBarcode:evidence.sourceBarcode,products);
+ if(hasPhysicalProof(evidence)&&(current.targets.length!==1||current.targets[0]?.erp_sku!==evidence.erpSku))current.blocked=true;
+ return current;
 }
 
 async function confirmBarcodeReview(pool,candidate,user){
@@ -84,8 +109,9 @@ function verifySnapshotSource(snapshot,evidence){
  if(!lines.length||verified.length!==lineIds.size||new Set(verified.map(item=>item.id)).size!==lineIds.size||verified.some(item=>clean(item.barcode)!==evidence.sourceBarcode)||
   (evidence.platform==='Shopify'&&verified.some(item=>!evidence.variantIds.includes(clean(item.variantId))))||
   JSON.stringify([...new Set(verified.map(item=>clean(item.variantId)).filter(Boolean))].sort())!==JSON.stringify(evidence.variantIds))throw fail(`商品 ${evidence.sourceSku} 的來源版本或條碼已變更`,'BARCODE_REVIEW_CHANGED');
+ if(hasPhysicalProof(evidence)&&(lineIds.size!==lines.length||[...new Set(lines.map(item=>clean(item.productName)))].sort().join(' / ')!==evidence.sourceName))throw fail(`商品 ${evidence.sourceSku} 的來源商品明細已變更`,'BARCODE_REVIEW_CHANGED');
  const mapping=snapshot.settings?.skuMappings?.[evidence.sourceSku];
- if(!mapping||mapping.erpSku!==evidence.erpSku||mapping.barcode!==(evidence.erpBarcode||evidence.sourceBarcode)||mapping.barcodeConfirmed!==true)throw fail(`商品 ${evidence.sourceSku} 的已保存對照與核對紀錄不同`,'BARCODE_REVIEW_CHANGED');
+ if(!mapping||mapping.erpSku!==evidence.erpSku||mapping.barcode!==scanBarcode(evidence)||mapping.barcodeConfirmed!==true||hasPhysicalProof(evidence)&&Object.hasOwn(mapping,'physicalBarcode')&&mapping.physicalBarcode!==evidence.physicalBarcode)throw fail(`商品 ${evidence.sourceSku} 的已保存對照與核對紀錄不同`,'BARCODE_REVIEW_CHANGED');
 }
 
 function verifiedReviewTarget(context,settings,sku,product,products){
@@ -93,8 +119,8 @@ function verifiedReviewTarget(context,settings,sku,product,products){
  if(!verified||verified.settings!==settings||!product||product.active!==true)return false;
  const evidence=verified.evidence.find(value=>value.sourceSku===sku&&value.erpSku===product.erp_sku);
  const mapping=settings.skuMappings?.[sku];
- const current=evidence&&Array.isArray(products)?exactReviewTargets(evidence.sourceSku,evidence.sourceBarcode,products):null;
- return Boolean(evidence&&current&&!current.blocked&&current.targets.some(value=>value.erp_sku===product.erp_sku)&&mapping&&mapping.erpSku===evidence.erpSku&&mapping.barcode===(evidence.erpBarcode||evidence.sourceBarcode)&&mapping.barcodeConfirmed===true&&
+ const current=evidence&&Array.isArray(products)?currentReviewTargets(evidence,products):null;
+ return Boolean(evidence&&current&&!current.blocked&&current.targets.some(value=>value.erp_sku===product.erp_sku)&&mapping&&mapping.erpSku===evidence.erpSku&&mapping.barcode===scanBarcode(evidence)&&mapping.barcodeConfirmed===true&&
   product.barcode===evidence.erpBarcode&&product.product_name===evidence.erpName&&clean(product.spec)===evidence.spec);
 }
 function validatedCatalogContext(context,settings,products){
@@ -118,9 +144,9 @@ async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference,{ret
   const evidence=review.evidence,record=records.find(row=>Number(row.id)===Number(review.id));
   if(!record||record.fingerprint!==review.fingerprint||Number(record.store_profile_id)!==evidence.storeProfileId||!validEvidence(record.evidence)||fingerprint(record.evidence)!==review.fingerprint)throw fail(`商品 ${evidence.sourceSku} 的核對已撤銷或變更，請重新核對`,'BARCODE_REVIEW_CHANGED');
   verifySnapshotSource(snapshot,evidence);
-  const targets=exactReviewTargets(evidence.sourceSku,evidence.sourceBarcode,reference.products);
+  const targets=currentReviewTargets(evidence,reference.products);
   const product=targets.targets.find(value=>value.erp_sku===evidence.erpSku);
-  if(!product||product.active!==true||product.erp_sku!==evidence.erpSku||product.barcode!==evidence.erpBarcode||product.product_name!==evidence.erpName||clean(product.spec)!==evidence.spec)throw fail(`商品 ${evidence.sourceSku} 的 ECOUNT 對照已變更，請重新核對`,'BARCODE_REVIEW_CHANGED');
+  if(targets.blocked||!product||product.active!==true||product.erp_sku!==evidence.erpSku||product.barcode!==evidence.erpBarcode||product.product_name!==evidence.erpName||clean(product.spec)!==evidence.spec)throw fail(`商品 ${evidence.sourceSku} 的 ECOUNT 對照已變更，請重新核對`,'BARCODE_REVIEW_CHANGED');
  }
  if(returnContext){
   const context=Object.freeze({});
@@ -128,4 +154,4 @@ async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference,{ret
   return context;
  }
 }
-module.exports={barcodeReviewCandidate,reviewEvidence,reviewMatchesCandidate,readBarcodeReviews,confirmBarcodeReview,revokeBarcodeReview,verifySavedBarcodeReviews,verifiedReviewTarget,validatedCatalogContext};
+module.exports={barcodeReviewCandidate,reviewEvidence,reviewMatchesCandidate,readBarcodeReviews,readPhysicalBarcodeReviews,confirmBarcodeReview,revokeBarcodeReview,verifySavedBarcodeReviews,verifiedReviewTarget,validatedCatalogContext};

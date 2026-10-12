@@ -185,9 +185,13 @@ function normalizeOrder(source, order) {
     const netMinor = money(item.priceAfterAllDiscountsBeforeTaxesSet, currency, '商品目前成交金額', name);
     const grossMinor = unitMinor * item.currentQuantity;
     if (!Number.isSafeInteger(grossMinor) || netMinor > grossMinor) fail('SHOPIFY_LINE_MONEY_INVALID', 'Shopify 商品成交金額與有效數量不一致', name);
-    const barcode = text(item.variant?.barcode), variantId = text(item.variant?.id);
+    const rawBarcode = item.variant?.barcode;
+    const barcode = text(rawBarcode), variantId = text(item.variant?.id);
+    // Malformed present values must never masquerade as a blank API field and
+    // become eligible for a physical-scan supplement.
+    if (rawBarcode != null && (typeof rawBarcode !== 'string' || rawBarcode.length > 100 || /[\u0000-\u001f\u007f]/.test(rawBarcode) || /^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(barcode))) fail('SHOPIFY_BARCODE_INVALID', 'Shopify 商品條碼格式無效，請核對商品設定', name);
     if (variantId && !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(variantId)) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 商品版本無法核對', name);
-    return { item, sku, unitMinor, netMinor, grossMinor, variantId, barcode: barcode && barcode.length <= 100 && !/[\u0000-\u001f\u007f]/.test(barcode) && !/^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(barcode) ? barcode : '' };
+    return { item, sku, unitMinor, netMinor, grossMinor, variantId, barcode };
   });
   const subtotal = lineValues.reduce((sum, item) => sum + item.netMinor, 0), gross = lineValues.reduce((sum, item) => sum + item.grossMinor, 0);
   if (!Number.isSafeInteger(subtotal) || !Number.isSafeInteger(gross) || subtotal !== amounts.currentSubtotalPriceSet || subtotal + amounts.currentShippingPriceSet !== amounts.currentTotalPriceSet) fail('SHOPIFY_TOTAL_MISMATCH', 'Shopify 有效商品、運費與目前總額不一致，須先核對', name);

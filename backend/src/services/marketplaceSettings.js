@@ -12,12 +12,13 @@ function safeSettings(input){
  }
  validate(value);
  if(!input.skuMappings||typeof input.skuMappings!=='object'||Array.isArray(input.skuMappings)||Object.keys(input.skuMappings).length>1000)throw Object.assign(new Error('商品對照格式無效'),{status:400});
- value.skuMappings=Object.fromEntries(Object.entries(input.skuMappings).map(([sku,m])=>[sku,pick(m,['erpSku','erpName','spec','barcode','barcodeConfirmed','confirmed','erpConfirmed','category'])]));
+ value.skuMappings=Object.fromEntries(Object.entries(input.skuMappings).map(([sku,m])=>[sku,pick(m,['erpSku','erpName','spec','barcode','physicalBarcode','barcodeConfirmed','confirmed','erpConfirmed','category'])]));
  value.shippingSku=pick(input.shippingSku,['erpSku','name','confirmed','nonStock']);
  for(const [sku,m] of Object.entries(value.skuMappings)){
   if(!sku||sku.length>100||!Object.keys(m).length)throw Object.assign(new Error('來源貨號或商品對照無效'),{status:400});
   validate(m);
   if(clean(m.erpSku).length>100||clean(m.barcode).length>100)throw Object.assign(new Error('商品編碼或條碼最多 100 字'),{status:400});
+  if(Object.hasOwn(m,'physicalBarcode')&&(m.physicalBarcode.length>100||m.physicalBarcode&&(!clean(m.physicalBarcode)||/^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(clean(m.physicalBarcode)))))throw Object.assign(new Error('實物條碼格式無效，請掃描完整條碼'),{status:400});
  }
  validate(value.shippingSku);
  return value;
