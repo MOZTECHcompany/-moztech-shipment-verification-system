@@ -37,6 +37,7 @@ function singleClientDatabase({ status = 'picking', failSnapshot = false, failCo
                 return rows([]);
             }
             const state = transaction || committed;
+            if (q.includes('FROM wms_carton_allocations')) return rows([]); // Legacy fixture has no box allocations.
             if (q.includes('AS has_open')) return rows([{ has_open: false }]);
             if (q.startsWith('SELECT * FROM orders')) return rows([state.order]);
             if (q.startsWith('SELECT i.id, i.status')) return rows([]);
