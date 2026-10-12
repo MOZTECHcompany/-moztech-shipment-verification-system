@@ -108,8 +108,8 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    }
    const record=(await db.query('INSERT INTO marketplace_intakes(batch_number,source_platform,source_store,fingerprint,created_by,snapshot) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[clean(settings.batchNumber),source.platform,clean(settings.store),fingerprint,req.user.id,JSON.stringify(snapshot)])).rows[0];
    for(const order of parsed.orders){
-    const {warehouseProductDetails}=await import('../services/marketplaceIntake.mjs');
-    const items=parsed.items.filter(i=>i.sourceOrderNumber===order.sourceOrderNumber).map(i=>({sourceLineId:i.sourceLineId,sourceSku:i.sku,productCode:clean(settings.skuMappings[i.sku].erpSku),...warehouseProductDetails(i,settings.skuMappings[i.sku]),quantity:i.quantity,barcode:settings.skuMappings[i.sku].barcodeConfirmed===true?clean(settings.skuMappings[i.sku].barcode):'',groupName:i.groupName,...(i.sourceSkuFormat?{sourceSkuFormat:i.sourceSkuFormat,sourceBarcode:i.sourceBarcode,campaignGroupName:i.campaignGroupName,campaignRound:i.campaignRound}:{})}));
+    const {warehouseProductDetails,mappingScanIdentity}=await import('../services/marketplaceIntake.mjs');
+    const items=parsed.items.filter(i=>i.sourceOrderNumber===order.sourceOrderNumber).map(i=>({sourceLineId:i.sourceLineId,sourceSku:i.sku,productCode:clean(settings.skuMappings[i.sku].erpSku),...warehouseProductDetails(i,settings.skuMappings[i.sku]),quantity:i.quantity,...mappingScanIdentity(settings.skuMappings[i.sku]),groupName:i.groupName,...(i.sourceSkuFormat?{sourceSkuFormat:i.sourceSkuFormat,sourceBarcode:i.sourceBarcode,campaignGroupName:i.campaignGroupName,campaignRound:i.campaignRound}:{})}));
     const physicalIds=new Set(items.map(i=>i.sourceLineId));
     const nonstock=output.rows.filter(r=>r[12]===order.sourceOrderNumber&&!physicalIds.has(r[15])).map(r=>({sourceLineId:r[15],productCode:r[11],quantity:r[19]}));
     const rounding=output.rounding?.orders.find(entry=>entry.identity[0]===order.sourcePlatform&&entry.identity[1]===order.sourceOrderNumber);

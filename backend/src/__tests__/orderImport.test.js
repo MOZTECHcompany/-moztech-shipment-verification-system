@@ -314,8 +314,8 @@ test('source detail persists one batch and distinct marketplace work orders atom
     expect(db.state().orders).toHaveLength(2);
     expect(db.state().orders.map(row => row.slice(3, 7))).toEqual([[20, 'SHOP-100', 'Shopify', 'Demo store'], [20, 'ONE-200', '1Shop', 'Demo store']]);
     expect(db.state().items).toHaveLength(2);
-    expect(db.state().items[0]).toEqual([12, 'SKU-A', 'Product A', 1, '4710000000013', 'SHOP-100', 'Shopify', 'Demo store', 'line-1']);
-    expect(db.state().items[1].slice(5)).toEqual(['ONE-200', '1Shop', 'Demo store', 'line-1']);
+    expect(db.state().items[0]).toEqual([12, 'SKU-A', 'Product A', 1, '4710000000013', 'SHOP-100', 'Shopify', 'Demo store', 'line-1','4710000000013',null,'international',null]);
+    expect(db.state().items[1].slice(5,9)).toEqual(['ONE-200', '1Shop', 'Demo store', 'line-1']);
     expect(db.state().items[1][0]).toBe(13);
     expect(db.earlyEvents()).toBe(0);
 });

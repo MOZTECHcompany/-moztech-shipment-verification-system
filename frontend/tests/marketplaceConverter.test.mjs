@@ -84,6 +84,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
                 effectiveSettings.skuMappings[sku] = {...provided,erpSku:matched.erp_sku,erpName:matched.product_name,barcode:matched.barcode || apiBarcode || provided.barcode || '',confirmed:true,barcodeConfirmed:!!matched.barcode || !!apiBarcode || provided.barcodeConfirmed === true};
                 if (selectedTarget) effectiveSettings.skuMappings[sku] = {...effectiveSettings.skuMappings[sku],erpSku:selectedTarget.erpSku,erpName:selectedTarget.erpName,barcode:conflict.physicalBarcode || apiBarcode || selectedTarget.erpBarcode,confirmed:confirmedBarcodes.has(conflict.fingerprint),barcodeConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
                 else if (conflict?.targetOptions?.length > 1) effectiveSettings.skuMappings[sku] = {...provided,erpSku:'',erpName:'',barcode:'',confirmed:false,barcodeConfirmed:false};
+                if(conflict?.requiresInternalScanCode)effectiveSettings.skuMappings[sku]={...effectiveSettings.skuMappings[sku],barcode:'',barcodeConfirmed:false,scanCodeType:'internal',internalScanCode:conflict.internalScanCode||'',internalScanConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
             }
             const prepared = unified.prepareUnifiedMarketplace(fresh,effectiveSettings);
             latestPrepared = prepared;
@@ -800,4 +801,24 @@ test('session changes discard saved-order update links and reject their retained
     view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));link.props.onClick({preventDefault(){prevented++;}});
     assert.equal(prevented,1);view.listeners.get('storage')();view.render();
     assert.equal(view.button('更新原訂單'),undefined);assert.equal(view.downloads.length,0);
+});
+
+
+test('staff explicitly choose and review an internal label without filling EAN before downloading sales',async()=>{
+ const internalConflicts=body=>{
+  const mapping=body.settings.skuMappings?.['00123']||{},internal=mapping.scanCodeType==='internal',code=mapping.internalScanCode||'';
+  return [{...barcodeConflict,sourceBarcode:'',erpBarcode:'',canEnterInternalScanCode:true,requiresInternalScanCode:internal,canEnterPhysicalBarcode:!internal,internalScanCode:code,fingerprint:`internal-${code}`,canConfirm:internal&&/^ITM-[A-Z0-9-]+$/.test(code)}];
+ };
+ const view=await converter({barcodeConflicts:internalConflicts});await view.select(file());
+ await view.change('商品識別方式','internal');
+ assert.match(view.text(view.render()),/確認此商品沒有國際條碼/);
+ assert.equal(view.button('保存商品對照').props.disabled,true);
+ await view.change('內部掃描碼','ITM-AUDIT-00123');
+ const selected=previewCalls(view).at(-1).body.settings.skuMappings['00123'];
+ assert.equal(selected.scanCodeType,'internal');assert.equal(selected.internalScanCode,'ITM-AUDIT-00123');assert.equal(selected.barcode,'');assert.equal(selected.barcodeConfirmed,false);
+ assert.equal(downloadSales(view).props.disabled,true);
+ await view.change('已核對實物與 ERP',true);await view.button('保存商品對照').props.onClick();view.render();
+ const confirmation=view.requests.find(r=>r.url==='/api/marketplace-intakes/barcode-confirmations');
+ assert.equal(confirmation.body.settings.skuMappings['00123'].barcode,'');assert.equal(confirmation.body.confirmation.fingerprint,'internal-ITM-AUDIT-00123');
+ assert.equal(downloadSales(view).props.disabled,false);assert.equal(view.downloads.length,0);assert.equal(view.writes.length,0);
 });

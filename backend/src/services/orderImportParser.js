@@ -100,6 +100,8 @@ const SOURCE_HEADERS = {
     productCode: ['品項編碼', 'sku', 'product_code'],
     productName: ['品項名稱', '品項名', 'product_name'],
     barcode: ['國際條碼', '條碼', 'barcode'],
+    internalScanCode: ['內部掃描碼', '內碼', 'internal_scan_code'],
+    sourceSku: ['來源sku', '來源貨號', 'source_sku'],
     quantity: ['數量', 'quantity'],
     serials: ['序號/批號', 'sn', 'sn列表', 'serials'],
     summary: ['摘要', 'summary'],
@@ -148,9 +150,10 @@ function parseSourceOrderRows(data, headerIndex) {
         if (matches.length > 1) throw invalid(`明細表頭重複：${SOURCE_HEADERS[field][0]}`);
         columns[field] = matches[0] ?? -1;
     }
-    for (const field of ['voucherNumber', 'sourceOrderNumber', 'productCode', 'productName', 'barcode', 'quantity']) {
+    for (const field of ['voucherNumber', 'sourceOrderNumber', 'productCode', 'productName', 'quantity']) {
         if (columns[field] < 0) throw invalid(`理貨明細缺少欄位：${SOURCE_HEADERS[field][0]}`);
     }
+    if(columns.barcode<0&&columns.internalScanCode<0)throw invalid('理貨明細缺少欄位：國際條碼／內部掃描碼');
     let voucherNumber = null, customerName = null;
     const identities = [], seenLines = new Set();
     // Reuse the established quantity/SN validation through an explicit internal
@@ -173,10 +176,15 @@ function parseSourceOrderRows(data, headerIndex) {
             const source = normalizeSourceIdentity(Object.fromEntries(Object.keys(SOURCE_HEADERS).filter(key => key.startsWith('source')).map(key => [key, cell(key)])));
             if (!source.sourceOrderNumber) throw invalid('商城訂單編號必填');
             if (!cell('productCode')) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
-            if (!cell('barcode')) throw invalid('國際條碼必填，不能用品項編碼代替');
+            const internationalBarcode=cell('barcode')||null,internalScanCode=cell('internalScanCode')||null;
+            if(!internationalBarcode&&!internalScanCode)throw invalid('國際條碼必填；無國條商品請明確提供內部掃描碼，不能用品項編碼代替');
+            if(internalScanCode&&!/^ITM-[A-Za-z0-9._-]{1,96}$/.test(internalScanCode))throw invalid('內部掃描碼須為 ITM- 開頭的完整文字識別');
+            const scanCode=internationalBarcode||internalScanCode;
+            const codeType=internationalBarcode?'international':'internal';
+            if(cell('sourceSku').length>255||/[\u0000-\u001f\u007f]/.test(cell('sourceSku')))throw invalid('來源SKU不可超過255字或含控制字元');
             const context = importSheetContext.get(data) || {};
-            const address = xlsx.utils.encode_cell({ r: index, c: columns.barcode });
-            validateBarcode(cell('barcode'), context.worksheet?.[address], { sheet: context.sheetName, row: sourceRow, cell: address });
+            const address = xlsx.utils.encode_cell({ r: index, c: internationalBarcode?columns.barcode:columns.internalScanCode });
+            validateBarcode(scanCode, context.worksheet?.[address], { sheet: context.sheetName, row: sourceRow, cell: address });
             if (!cell('productName') || !cell('quantity')) throw invalid('品項名稱與數量必填');
             const explicit = parseSerials(cell('serials'), cell('barcode'), Number(cell('quantity')), true);
             const legacySummary = summaryRequiresExplicitSerials(cell('summary'), cell('barcode'), cell('quantity'));
@@ -195,8 +203,8 @@ function parseSourceOrderRows(data, headerIndex) {
             // Per-order customers may differ inside one warehouse document.
             // Only expose a document-level customer if every supplied value agrees.
             if (customer) customerName = customerName === null ? customer : customerName === customer ? customerName : '';
-            normalizedRows.push([cell('barcode'), cell('productCode'), cell('productName'), cell('quantity'), serials.join(' ')]);
-            identities.push({ ...source, sourceRow, sourceSummary:cell('summary'), sourceSerials:cell('serials'), serialSource:explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null });
+            normalizedRows.push([scanCode, cell('productCode'), cell('productName'), cell('quantity'), serials.join(' ')]);
+            identities.push({ ...source, sourceSku:cell('sourceSku')||null,internationalBarcode,internalScanCode,codeType,sourceRow, sourceSummary:cell('summary'), sourceSerials:cell('serials'), serialSource:explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null });
         } catch (error) {
             if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${sourceRow} 列：${error.message}`;
             throw error;

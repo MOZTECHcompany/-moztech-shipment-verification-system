@@ -539,8 +539,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             if (marketplaceSource) await client.query('INSERT INTO marketplace_work_order_links(intake_order_id,order_id) VALUES($1,$2)', [marketplaceSource.id,orderId]);
             for (const item of group.items) {
                 checkDeadline();
-                const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-                    [orderId, item.productCode, item.productName, item.quantity, item.barcode, ...sourceIdentityValues(item)]);
+                const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id, international_barcode, internal_scan_code, code_type, source_sku) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id',
+                    [orderId, item.productCode, item.productName, item.quantity, item.barcode, ...sourceIdentityValues(item),item.internationalBarcode||null,item.internalScanCode||null,item.codeType||'legacy',item.sourceSku||null]);
                 for (const serial of item.serials) {
                     instanceItemIds.push(inserted.rows[0].id);
                     serialValues.push(serial);
