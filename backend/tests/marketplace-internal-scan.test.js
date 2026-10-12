@@ -15,6 +15,12 @@ const proposal=(code=scan,erpSku=sku)=>({skuMappings:{[sku]:{erpSku,scanCodeType
 
 describe('explicit internal scan identity',()=>{
  test.each(['4711299270086','SN0000000001','CT-0001','ITM-','ITM-X\nY','ITM-'+'A'.repeat(97)])('refuses non-internal identity %s',code=>expect(()=>safeSettings(proposal(code))).toThrow());
+ test('a no-EAN SN item imports exact units without treating the internal label as an SN',()=>{
+  const sns=Array.from({length:10},(_,i)=>'AUDITSN'+String(i).padStart(5,'0'));
+  const rows=[['理貨單號','商城訂單編號','品項編碼','品項名稱','國際條碼','數量','內部掃描碼','序號/批號'],['AUDIT-PICK-SN','AUDIT-ORDER-SN',sku,'AUDIT tracked item','',10,scan,sns.join(' ')]];
+  expect(parseOrderRows(rows).items[0]).toMatchObject({internationalBarcode:null,internalScanCode:scan,codeType:'internal',serials:sns,quantity:10});
+  rows[1][7]=sns.slice(0,9).join(' ');expect(()=>parseOrderRows(rows)).toThrow(/SN 數量|SN/);
+ });
  test('native import requires explicit code and preserves full SKU/source line',()=>{
   const header=['理貨單號','商城訂單編號','平台','店鋪','來源明細號','品項編碼','品項名稱','國際條碼','數量','內部掃描碼','來源SKU'];
   const row=['AUDIT-PICK','AUDIT-ORDER','1Shop','AUDIT-STORE','AUDIT-LINE',sku,'AUDIT Product','',10,scan,'0012345678905-團主-第01團'];
