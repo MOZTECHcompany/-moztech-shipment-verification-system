@@ -6,7 +6,7 @@ const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
 function stateToken(order, items, instances) {
     return digest([
         [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.document_type || 'shipment'],
-        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.quantity_sign ?? 1]),
+        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.quantity_sign ?? 1,i.carton_serial_binding ?? false,i.serial_identity_mode ?? 'legacy']),
         sorted(instances).map(i=>[i.id,i.order_item_id,i.serial_number,i.status])
     ]);
 }

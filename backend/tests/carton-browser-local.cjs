@@ -1,0 +1,141 @@
+// Run against carton-browser-server.cjs only: disposable synthetic loopback data.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+(async () => {
+    if (process.env.WMS_CARTON_LOCAL_DEV !== '1') throw Error('Synthetic local DEV opt-in is required');
+    const { chromium } = require(process.env.WMS_PLAYWRIGHT_MODULE || 'playwright');
+    const output = process.env.WMS_CARTON_BROWSER_OUTPUT;
+    if (!output) throw Error('Set WMS_CARTON_BROWSER_OUTPUT');
+    fs.mkdirSync(output, { recursive: true });
+    const browser = await chromium.launch({ headless: true, executablePath: process.env.WMS_CHROME_EXECUTABLE || undefined });
+    const errors = [], external = [], records = [];
+    const contexts = [];
+    async function login(username, width = 1440) {
+        const context = await browser.newContext({ viewport: { width, height: 1000 }, acceptDownloads: true });
+        contexts.push(context);
+        const page = await context.newPage();
+        page.on('pageerror', error => errors.push(error.message));
+        page.on('request', req => { if (!/^(http:\/\/127\.0\.0\.1:|data:|blob:)/.test(req.url())) external.push(req.url()); });
+        await page.goto('http://127.0.0.1:55771/login');
+        await page.locator('#corely-username').fill(username);
+        await page.locator('#corely-password').fill('carton-dev-fixture-only');
+        await page.getByRole('button', { name: '登入系統' }).click();
+        await page.waitForURL('**/tasks');
+        return page;
+    }
+    async function read(page, url) {
+        const token = await page.evaluate(() => JSON.parse(localStorage.getItem('wms_token')));
+        const response = await page.request.get(`http://127.0.0.1:55452${url}`, { headers: { Authorization: `Bearer ${token}` } });
+        assert.equal(response.status(), 200, await response.text());
+        return response.json();
+    }
+    async function scan(page, orderId, value, type) {
+        await page.goto(`http://127.0.0.1:55771/order/${orderId}`);
+        const input = page.locator('#order-scan-input');
+        await input.waitFor();
+        await assert.doesNotReject(() => input.waitFor({ state: 'visible' }));
+        await page.waitForFunction(() => !document.querySelector('#order-scan-input')?.disabled);
+        const response = page.waitForResponse(r => r.url().endsWith(`/api/orders/${orderId}/carton-scan`) && r.request().method() === 'POST');
+        await input.fill(value); await input.press('Enter');
+        const result = await response; assert.equal(result.status(), 200, await result.text());
+        const payload = await result.json();
+        assert.equal(payload.allocation.status, type === 'pick' ? 'picked' : 'packed');
+        await page.waitForURL('**/tasks');
+        records.push({ case: `${type}-${orderId}`, amount: payload.allocation.lines.reduce((s,l)=>s+l.quantity,0), status: payload.order.status });
+    }
+    try {
+        const admin = await login('fixture-admin');
+        await admin.goto('http://127.0.0.1:55771/cartons');
+        await admin.route('**/api/cartons/CTN-261012-M1-001', async route => { await new Promise(resolve=>setTimeout(resolve,500)); await route.continue(); });
+        const lateDetail=admin.waitForResponse(r=>r.url().endsWith('/api/cartons/CTN-261012-M1-001'));
+        await admin.getByRole('button', { name: 'CTN-261012-M1-001', exact: true }).click();
+        await admin.getByRole('button', { name: 'CTN-261012-M1-002', exact: true }).click();
+        await admin.getByRole('dialog').getByRole('heading', { name:'CTN-261012-M1-002',exact:true }).waitFor();
+        await lateDetail; await admin.waitForTimeout(100);
+        assert.equal(await admin.getByRole('dialog').getByRole('heading').innerText(),'CTN-261012-M1-002');
+        records.push({case:'late-detail-A-cannot-replace-new-B',passed:true});
+        await admin.keyboard.press('Escape'); await admin.unroute('**/api/cartons/CTN-261012-M1-001');
+        await admin.getByRole('button', { name: 'CTN-261012-M1-001', exact: true }).click();
+        await admin.getByText('箱內 SN（共 10 個，可用 10 個）').click();
+        await admin.screenshot({ path: path.join(output, 'carton-sn-detail.png'), fullPage: true });
+        await admin.keyboard.press('Escape');
+        const { buildCartonManifest } = require(process.env.WMS_ERP_CARTON_MANIFEST_MODULE);
+        const manifest = buildCartonManifest('DEV-ERP-BATCH', { productName: 'DEV ERP 無國條商品', modelCode: 'NSI', barcode: '' },
+            [{ id: 'CTN-DEV-ERP-IMPORT', quantity: 10, serials: [] }], { confirmed: true, itemCode: 'LOCAL-ITEM', internalScanCode: 'ITM-LOCAL-ITEM' });
+        const file = path.join(output, 'synthetic-erp-manifest.json'); fs.writeFileSync(file, JSON.stringify(manifest));
+        const imported = admin.waitForResponse(r => r.url().endsWith('/api/cartons/import') && r.request().method() === 'POST');
+        await admin.getByLabel('匯入箱號檔案').setInputFiles(file);
+        assert.equal((await imported).status(), 200);
+        await admin.getByRole('button', { name: 'CTN-DEV-ERP-IMPORT', exact: true }).click();
+        await admin.getByRole('button', { name: '編輯', exact: true }).click();
+        await admin.getByLabel('數量', { exact: true }).fill('9');
+        const edited = admin.waitForResponse(r => r.url().endsWith('/api/cartons/CTN-DEV-ERP-IMPORT') && r.request().method() === 'PATCH');
+        await admin.getByRole('button', { name: '儲存', exact: true }).click();
+        assert.equal((await edited).status(), 200);
+        const sealed = admin.waitForResponse(r => r.url().endsWith('/seal') && r.request().method() === 'POST');
+        await admin.getByRole('button', { name: '確認箱內內容', exact: true }).click();
+        assert.equal((await sealed).status(), 200);
+        const importedResult = await read(admin, '/api/cartons/CTN-DEV-ERP-IMPORT'); const importedBox=importedResult.carton||importedResult;
+        assert.equal(importedBox.status, 'sealed'); assert.equal(importedBox.lines[0].ean, null); assert.equal(importedBox.lines[0].quantity, 9);
+        records.push({ case: 'actual-ERP-manifest-UI-import-edit-seal', passed: true });
+        await admin.keyboard.press('Escape');
+        const picker = await login('fixture-picker');
+        const labels = JSON.parse(fs.readFileSync(process.env.WMS_CARTON_LABEL_DECODE, 'utf8'));
+        const qr = id => {
+            const decoded = labels.find(label=>label.qr === `CARTON:${id}`);
+            assert.ok(decoded, 'QR from generated PDF must decode');
+            return decoded.qr;
+        };
+        await scan(picker, 1, qr('CTN-261012-M1-001'), 'pick');
+        await scan(picker, 2, qr('CTN-261012-M1-002'), 'pick');
+        await scan(picker, 3, qr('CTN-261012-M1-003'), 'pick');
+        await picker.goto('http://127.0.0.1:55771/order/4');
+        await picker.getByRole('button', { name: '掃箱／拆箱' }).click();
+        await picker.route('**/api/cartons/lookup?*', async route => { if(new URL(route.request().url()).searchParams.get('scanValue')==='CARTON:CTN-261012-M1-001') await new Promise(resolve=>setTimeout(resolve,500)); await route.continue(); });
+        await picker.getByLabel('箱號', { exact: true }).fill('CARTON:CTN-261012-M1-001');
+        const lateLookup=picker.waitForResponse(r=>r.url().includes('/api/cartons/lookup?')&&r.url().includes('M1-001'));
+        await picker.getByRole('button', { name: '查詢', exact: true }).click();
+        await picker.getByLabel('箱號', { exact: true }).fill('CARTON:CTN-261012-SPLIT-001');
+        await lateLookup; await picker.waitForTimeout(100);
+        assert.equal(await picker.getByRole('dialog').locator('fieldset').count(),0);
+        records.push({case:'edited-scan-input-rejects-late-lookup-A',passed:true});
+        await picker.unroute('**/api/cartons/lookup?*');
+        await picker.getByRole('button', { name: '查詢', exact: true }).click();
+        await picker.getByLabel('本次取出數量').fill('6');
+        const splitResponse = picker.waitForResponse(r => r.url().endsWith('/api/orders/4/carton-scan') && r.request().method() === 'POST');
+        await picker.getByRole('button', { name: '確認拆箱揀貨' }).click();
+        assert.equal((await splitResponse).status(), 200);
+        await picker.waitForURL('**/tasks');
+        const beforeResult = await read(admin, '/api/cartons/CTN-261012-SPLIT-001'); const beforePack=beforeResult.carton||beforeResult;
+        assert.equal(beforePack.lines[0].remainingQuantity, 4);
+        const packer = await login('fixture-packer');
+        for (const [id, cartonId] of [[1,'CTN-261012-M1-001'],[2,'CTN-261012-M1-002'],[3,'CTN-261012-M1-003'],[4,'CTN-261012-SPLIT-001']]) await scan(packer, id, `CARTON:${cartonId}`, 'pack');
+        const afterResult=await read(admin, '/api/cartons/CTN-261012-SPLIT-001'); assert.equal((afterResult.carton||afterResult).lines[0].remainingQuantity,4);
+        records.push({ case: 'split-6-of-10-then-pack-remaining-4', passed: true });
+        const snapshot = await read(admin, '/api/orders/1/work-snapshot');
+        assert.equal(snapshot.instances.length, 10); assert.ok(snapshot.instances.every(s=>s.status==='packed'));
+        const vendor = await read(admin, '/api/orders/3/work-snapshot');
+        assert.deepEqual(vendor.instances.map(s=>s.serial_number).sort(), ['W'.repeat(100), 'Vendor-A02'].sort());
+        await admin.goto('http://127.0.0.1:55771/order/1');
+        await admin.getByRole('button', { name: '箱號明細', exact: true }).click();
+        await admin.getByText('裝箱核對完成', { exact: true }).waitFor();
+        await admin.screenshot({ path: path.join(output, 'completed-carton-trace.png'), fullPage: true });
+        const downloading = admin.waitForEvent('download');
+        await admin.getByRole('dialog').getByRole('button', { name: '匯出對照', exact: true }).click();
+        const download = await downloading; const xlsxPath=path.join(output, download.suggestedFilename()); await download.saveAs(xlsxPath);
+        const xlsx = require('../node_modules/xlsx'); const wb = xlsx.readFile(xlsxPath);
+        const rows = xlsx.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1});
+        assert.equal(rows.length,11); assert.equal(rows[1][17],1); assert.equal(rows[1][10],'CTN-261012-M1-001'); assert.equal(rows[1][3],'');
+        records.push({case:'completed-export-10-exact-SN-rows-no-guessed-ERP-voucher',passed:true});
+        const mobile = await login('fixture-admin',390); await mobile.goto('http://127.0.0.1:55771/cartons');
+        await mobile.getByRole('button',{name:'CTN-261012-M1-003',exact:true}).click();
+        await mobile.getByText('箱內 SN（共 2 個，可用 0 個）').click();
+        assert.ok(await mobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'mobile page must not overflow');
+        await mobile.screenshot({path:path.join(output,'carton-mobile.png'),fullPage:true});
+        assert.deepEqual(errors,[]); assert.ok(external.every(url=>/^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(url)), 'Only pre-existing font assets may leave loopback');
+        fs.writeFileSync(path.join(output,'browser-acceptance.json'),JSON.stringify({scope:'synthetic local real full app and PostgreSQL; no production or external business calls; existing font assets recorded; scanner input from raster-decoded PDFs',records,pageErrors:errors,externalBusinessRequests:[],externalFontAssets:[...new Set(external)]},null,2));
+        console.log(JSON.stringify({passed:records.length,pageErrors:errors.length,externalBusinessRequests:[],externalFontAssets:[...new Set(external)].length}));
+    } finally { for(const c of contexts) await c.close(); await browser.close(); }
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -9,9 +9,10 @@ const { pool } = require('../config/database');
 const logger = require('../utils/logger');
 const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
-const { normalizeSerialScanInput } = require('../utils/serialNumber');
+const { normalizeSerialScanInput, pickExactSerial } = require('../utils/serialNumber');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
+const { assertNoCartonAllocations, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
 
 const router = express.Router();
 const {warehouseOnly} = require('../utils/managementScope');
@@ -375,6 +376,7 @@ router.patch('/orders/:orderId/void', warehouseOnly, authorizeAdmin, async (req,
         client = await pool.connect();
         await client.query('BEGIN'); transactionOpen = true;
         const previousOrder=(await client.query('SELECT id,status FROM orders WHERE id=$1 FOR UPDATE',[orderId])).rows[0];
+        await assertNoCartonAllocations(client, orderId);
         if (await hasOpenOrderChange(client,orderId)) { await client.query('ROLLBACK'); transactionOpen=false; return res.status(409).json({message:'此訂單已有待審核異動，請先核准或駁回申請'}); }
         const result = await client.query("UPDATE orders SET status = 'voided', void_reason = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING voucher_number", [orderId, reason]);
         if (!result.rowCount) { await client.query('ROLLBACK'); transactionOpen = false; return res.status(404).json({ message: '找不到要作廢的訂單' }); }
@@ -387,7 +389,7 @@ router.patch('/orders/:orderId/void', warehouseOnly, authorizeAdmin, async (req,
     } catch (error) {
         if (transactionOpen) { try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError = rollbackError; } }
         if (commitAttempted || releaseError) { releaseError ||= error; return res.status(503).json({ code: 'VOID_RESULT_UNKNOWN', message: '作廢結果尚未確認，請重新整理核對。' }); }
-        res.status(500).json({ message: '作廢失敗，資料未變更' });
+        res.status(error.status || 500).json({ ...(error.code === 'CARTON_ALLOCATION_GUARD' ? { code: error.code } : {}), message: error.status ? error.message : '作廢失敗，資料未變更' });
     } finally { client?.release(releaseError); }
 });
 
@@ -499,17 +501,20 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         orderId = orderResult.rows[0].id;
         const instanceItemIds = [];
         const serialValues = [];
+        const positiveSerialValues = [];
         for (const item of items) {
             checkDeadline();
-            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, quantity_sign) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-                [orderId, item.productCode, item.productName, Math.abs(item.quantity), item.barcode, Math.sign(item.quantity)]);
+            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, quantity_sign, serial_identity_mode) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+                [orderId, item.productCode, item.productName, Math.abs(item.quantity), item.barcode, Math.sign(item.quantity), item.serialMode === 'exact' ? 'exact' : 'legacy']);
             for (const serial of item.serials) {
                 instanceItemIds.push(inserted.rows[0].id);
                 serialValues.push(serial);
+                if (item.quantity > 0) positiveSerialValues.push(serial);
             }
         }
         if (serialValues.length) {
             checkDeadline();
+            await guardSerialImport(client, orderId, positiveSerialValues);
             await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) SELECT * FROM unnest($1::int[], $2::text[])', [instanceItemIds, serialValues]);
         }
         // Import attribution is still based on this log, so it is required and may not be swallowed.
@@ -600,7 +605,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
     let rejectedScanAudit;
     let command;
     try { command = parseCommand(req.body, userId); } catch (error) { return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
-    let changedItemId, changedInstanceId;
+    let changedItemId, changedInstanceId, cartonUnitContext;
     const events = deferredEvents(io);
     try {
         client = await pool.connect();
@@ -677,16 +682,21 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         const instanceResult = await trackedQuery(
             client,
             'match_instance_exact_for_update',
-            `SELECT i.id, i.status
+            `SELECT i.id, i.status, i.serial_number, oi.quantity_sign
              FROM order_item_instances i
              JOIN order_items oi ON i.order_item_id = oi.id
-             WHERE oi.order_id = $1 AND i.serial_number = $2
+             WHERE oi.order_id = $1 AND (i.serial_number = $2 OR i.serial_number = $3 OR UPPER(i.serial_number) = $4)
              FOR UPDATE`,
-            [orderId, scanInfo.normalized]
+            [orderId, scanRaw, scanRaw.replace(/^SN\s*[:：]/i, '').trim(), scanInfo.normalized]
         );
 
-        if (instanceResult.rows.length > 0) {
-            instanceRow = instanceResult.rows[0];
+        const exactMatch = pickExactSerial(instanceResult.rows, scanRaw);
+        if (exactMatch.ambiguous) {
+            throw Object.assign(new Error('此掃描值對應多筆實際 SN，請掃描保留原大小寫的完整序號'), { status: 409 });
+        }
+        if (exactMatch.instance) {
+            instanceRow = exactMatch.instance;
+            matchedBy = exactMatch.match;
         } else {
             // 純數字新條碼：允許用 digitsOnly 去比對資料庫內 SN（移除非數字後）
             // 同時也支援：舊貨掃到 SN: 前綴但資料庫存的是去前綴後的值
@@ -709,7 +719,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                                 const digitsResult = await trackedQuery(
                                         client,
                                         'match_instance_digits_for_update',
-                    `SELECT i.id, i.status
+                    `SELECT i.id, i.status, i.serial_number, oi.quantity_sign
                      FROM order_item_instances i
                      JOIN order_items oi ON i.order_item_id = oi.id
                      WHERE oi.order_id = $1
@@ -732,6 +742,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         if (instanceRow) {
             const instance = instanceRow;
             changedInstanceId = instance.id;
+            await guardUnitScan(client, orderId, { instanceId: instance.id, serialNumber: instance.serial_number, quantitySign: instance.quantity_sign ?? 1, type, amount: amountNum });
             let newStatus = '';
             if (type === 'pick' && instance.status === 'pending') newStatus = 'picked'; 
             else if (type === 'pack' && instance.status === 'picked') newStatus = 'packed'; 
@@ -745,7 +756,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 orderId,
                 operationType: type,
                 details: {
-                    serialNumber: scanInfo.normalized,
+                    serialNumber: instance.serial_number ?? scanInfo.normalized,
                     scanRaw,
                     matchedBy,
                     statusChange: `${instance.status} -> ${newStatus}`
@@ -835,6 +846,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 throw Object.assign(new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`), { status: 400 });
             }
             const item = itemResult.rows[0];
+            cartonUnitContext = await guardUnitScan(client, orderId, { orderItemId: item.id, type, amount: amountNum });
             changedItemId = item.id;
             if (type === 'pick') { 
                 const newPickedQty = item.picked_quantity + amountNum; 
@@ -871,7 +883,12 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         let finalStatus = order.status;
 
         // 完成必須同時滿足揀貨完成 + 裝箱完成
-        if (allPicked && allPacked && canAutoComplete(order.status)) {
+        if (amountNum < 0 && cartonUnitContext?.hasAllocations && (!allPicked || !allPacked)) {
+            finalStatus = allPicked ? 'packing' : 'picking';
+            statusChanged = finalStatus !== order.status;
+            await trackedQuery(client, 'reopen_carton_order_after_loose_undo',
+                'UPDATE orders SET status=$1,completed_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$2', [finalStatus, orderId]);
+        } else if (allPicked && allPacked && canAutoComplete(order.status)) {
             const hasOpen = await hasOpenExceptions(client, orderId);
             if (!hasOpen) {
                 finalStatus = 'completed';
@@ -1002,13 +1019,16 @@ router.post('/orders/:orderId/defect', warehouseOnly, authorizeRoles('admin', 'd
         const order = (await client.query('SELECT id, status FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到指定訂單');
         if (order.status === 'voided') throw fail(409, '已作廢訂單不可更換SN');
+        await assertNoCartonAllocations(client, orderId);
+        await assertNoRegisteredSerials(client, [oldSn, newSn, newInput.trim()]);
         if (await hasOpenOrderChange(client,orderId)) throw fail(409,'此訂單異動待審核，暫停 SN 更換');
         if (req.user.role === 'dispatcher') {
             const own = await client.query("SELECT 1 FROM operation_logs WHERE order_id=$1 AND action_type='import' AND user_id=$2 AND id=(SELECT id FROM operation_logs WHERE order_id=$1 AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1)", [orderId, userId]);
             if (!own.rowCount) throw fail(403, '僅允許操作自己拋單的訂單');
         }
-        const instance = (await client.query('SELECT i.id,i.order_item_id,oi.product_name,oi.barcode FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE i.serial_number=$1 AND oi.order_id=$2 FOR UPDATE OF i', [oldSn, orderId])).rows[0];
+        const instance = (await client.query('SELECT i.id,i.order_item_id,oi.product_name,oi.barcode,oi.serial_identity_mode FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE i.serial_number=$1 AND oi.order_id=$2 FOR UPDATE OF i', [oldSn, orderId])).rows[0];
         if (!instance) throw fail(404, '找不到該訂單中對應的舊SN');
+        if (instance.serial_identity_mode === 'exact') assertLegacySerialValues([oldSn, newInput.trim().replace(/^SN\s*[:：]/i, '').trim()]);
         const duplicate = await client.query('SELECT 1 FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE oi.order_id=$1 AND i.serial_number=$2', [orderId, newSn]);
         if (duplicate.rowCount) throw fail(409, '新SN已存在於此訂單');
         await client.query('UPDATE order_item_instances SET serial_number=$1, updated_at=NOW() WHERE id=$2', [newSn, instance.id]);
