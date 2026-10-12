@@ -38,6 +38,12 @@ apiClient.interceptors.request.use(
     }
 );
 
+apiClient.getSessionIdentity = () => {
+    let actor;
+    try { const user = JSON.parse(sessionStorage.getItem('wms_user')); actor = [user?.id, user?.role, user?.management_scope]; }
+    catch { actor = null; }
+    return JSON.stringify([actor, sessionStorage.getItem('wms_token')]);
+};
 export default apiClient;
 
 // 3. 全域回應攔截器：標準化錯誤並提示

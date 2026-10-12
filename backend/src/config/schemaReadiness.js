@@ -1,6 +1,12 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    wms_cartons: ['carton_id','status','content_revision','state_revision','source_system','source_reference'],
+    wms_carton_lines: ['id','carton_id','item_code','international_barcode','internal_scan_code','code_type','quantity','remaining_quantity','actual_sns'],
+    wms_carton_serials: ['serial_number','line_id','available'],
+    wms_carton_allocations: ['id','carton_id','order_id','content_revision','status','lines'],
+    wms_carton_history: ['id','carton_id','event_type','content_revision','state_revision','actor_id','details'],
+    marketplace_internal_scan_codes: ['internal_scan_code','product_code','created_by','created_at'],
     marketplace_product_mapping_reviews: ['id','store_profile_id','fingerprint','evidence','confirmed_by','confirmed_at','revoked_by','revoked_at'],
     marketplace_batch_notices: ['id','intake_id','stage','actor_id','actor_name','actor_role','created_at'],
     marketplace_batch_notice_recipients: ['notice_id','user_id','seen_at'],
@@ -22,7 +28,7 @@ const requiredColumns = {
     wms_logistics_expected_returns: ['id', 'shipment_id', 'status'],
     users: ['management_scope', 'id', 'username', 'password', 'name', 'role', 'created_at'],
     orders: ['warehouse_hold', 'id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'import_batch_id', 'source_order_number', 'source_platform', 'source_store', 'work_barcode'],
-    order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'source_order_number', 'source_platform', 'source_store', 'source_line_id'],
+    order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'source_order_number', 'source_platform', 'source_store', 'source_line_id','international_barcode','internal_scan_code','code_type','source_sku','carton_serial_binding','serial_identity_mode'],
     order_item_instances: ['id', 'order_item_id', 'serial_number', 'status', 'created_at', 'updated_at'],
     operation_logs: ['id', 'user_id', 'order_id', 'item_id', 'action_type', 'operation_type', 'details', 'created_at'],
     task_comments: ['id', 'order_id', 'user_id', 'content', 'parent_id', 'priority', 'created_at', 'updated_at'],

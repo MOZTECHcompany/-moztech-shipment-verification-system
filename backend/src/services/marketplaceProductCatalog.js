@@ -69,10 +69,11 @@ function createProductRouter({ reader = readReference } = {}) {
 }
 async function verifyCatalogMappings(_pool, settings, skus = Object.keys(settings.skuMappings), reader = readReference, reviewedContext, sourceContext) {
  const {productIdentifierIssue}=await import('./marketplaceIntake.mjs');
- for(const sku of skus){const m=settings.skuMappings?.[sku];for(const value of [sku,m?.erpSku,m?.barcode]){const problem=productIdentifierIssue(value);if(problem)throw fail(problem);}}
+ for(const sku of skus){const m=settings.skuMappings?.[sku];for(const value of [sku,m?.erpSku,m?.barcode,m?.internalScanCode]){const problem=productIdentifierIssue(value);if(problem)throw fail(problem);}}
  const {parseOneShopSku}=await import('./oneShopSku.mjs');
  const platform=sourceContext?.platform||sourceContext?.sourceEvidence?.verification?.platform||sourceContext?.orders?.[0]?.sourcePlatform;
  const formats=new Map(platform==='1Shop'?skus.map(sku=>[sku,parseOneShopSku(sku)]):[]);
+ if(skus.some(sku=>settings.skuMappings?.[sku]?.scanCodeType==='internal')&&!reviewedContext)throw fail('內部掃描碼必須有已保存的商品核對紀錄');
  const reference = await reader();
  if (!reference) {
   if(reviewedContext||[...formats.values()].some(Boolean))throw fail('目前無法核對已保存商品的 ECOUNT 主檔，請重新核對');

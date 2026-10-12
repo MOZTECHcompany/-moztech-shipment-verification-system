@@ -133,6 +133,7 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
+app.use('/api/cartons', express.json({ limit: '2mb' }));
 app.use('/api/marketplace-intakes', express.json({ limit: '10mb' }));
 app.use('/api/warehouse-intakes', express.json({ limit: '10mb' }));
 app.use(express.json());
@@ -171,6 +172,9 @@ app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').cr
 
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
+const { createCartonRouter, createOrderCartonRouter } = require('./routes/cartonRoutes');
+app.use('/api/cartons', authenticateToken, createCartonRouter({ pool }));
+app.use('/api/orders', authenticateToken, createOrderCartonRouter({ pool }));
 
 // File downloads require a short-lived, batch-scoped HttpOnly grant minted by an authenticated staff request.
 app.get('/api/marketplace-files/:id/:kind',require('./services/marketplaceDownloads').downloadFile({pool}));

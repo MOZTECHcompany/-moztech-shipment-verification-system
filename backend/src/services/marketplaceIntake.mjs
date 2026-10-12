@@ -192,7 +192,7 @@ export function prepareEcountFinancials(record){
     if(String(r[17]||'').trim())throw Error('原明細已有序號/批號，不可重新彙總；請保留原銷貨格式');
     const item=physical.get(identity(r)),m=item?record.settings.skuMappings?.[item.sku]:record.settings.shippingSku;
     if(!m||m.erpSku!==r[11])throw Error('彙總商品對照與原明細不符');
-    const barcode=item&&(m.barcodeConfirmed===true||(m.confirmed===true&&m.barcodeConfirmed!==false))?text(m.barcode):'';
+    const barcode=item?mappingScanCode(m):'';
     // Keep differing ERP variants, warehouses, tax/currency and stock/nonstock
     // separate even when a supplier has reused the same printed barcode.
     const key=JSON.stringify([r.slice(0,12),r[13],r[14],r[18],barcode,!!item,r[25]]);
@@ -438,13 +438,23 @@ export function productIdentifierIssue(value) {
   return '';
 }
 
+// Internal labels are explicit warehouse identities; they never fill EAN.
+export function mappingScanCode(mapping={}) {
+  if(mapping.scanCodeType==='internal')return mapping.internalScanConfirmed===true&&!text(mapping.barcode)?text(mapping.internalScanCode):'';
+  return mapping.barcodeConfirmed===true||(mapping.confirmed===true&&mapping.barcodeConfirmed!==false)?text(mapping.barcode):'';
+}
+export function mappingScanIdentity(mapping={}) {
+  const scan=mappingScanCode(mapping),internal=mapping.scanCodeType==='internal';
+  return {barcode:scan,internationalBarcode:internal?null:scan||null,internalScanCode:internal?scan||null:null,codeType:internal?'internal':'international'};
+}
+
 function mappingIssues(parsed, settings, requireBarcode = true) {
   const issues = [];
   for (const sku of new Set(parsed.items.map((item) => item.sku))) {
     const m = settings.skuMappings?.[sku];
-    for(const value of [sku,m?.erpSku,m?.barcode]){const problem=productIdentifierIssue(value);if(problem)issues.push(issue('INVALID_PRODUCT_IDENTIFIER',problem,{sku}));}
+    for(const value of [sku,m?.erpSku,m?.barcode,m?.internalScanCode]){const problem=productIdentifierIssue(value);if(problem)issues.push(issue('INVALID_PRODUCT_IDENTIFIER',problem,{sku}));}
     if (!(m?.erpConfirmed === true || m?.confirmed === true) || !text(m?.erpSku)) issues.push(issue('PRODUCT_MAPPING_REQUIRED', `SKU ${sku} 必須確認 ERP 品項編碼`, { sku }));
-    if (requireBarcode && (!text(m?.barcode) || !(m?.barcodeConfirmed === true || (m?.confirmed === true && m?.barcodeConfirmed !== false)))) issues.push(issue('BARCODE_MAPPING_REQUIRED', `SKU ${sku} 的實物條碼尚未確認，不可用 SKU 自行代替`, { sku }));
+    if (requireBarcode && !mappingScanCode(m)) issues.push(issue('BARCODE_MAPPING_REQUIRED', `SKU ${sku} 的實物條碼尚未確認，不可用 SKU 自行代替`, { sku }));
   }
   return issues;
 }
@@ -481,7 +491,7 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   }
   for (const sku of new Set(parsed.items.map((item) => item.sku))) {
     const m = settings.skuMappings?.[sku];
-    if (!text(m?.barcode) || !(m?.barcodeConfirmed === true || (m?.confirmed === true && m?.barcodeConfirmed !== false))) issues.push(issue('BARCODE_UNCONFIRMED', `SKU ${sku} 條碼待確認；ECOUNT 銷貨檔不含條碼，之後 WMS 作業前仍須核對`, { sku }, 'warning'));
+    if (!mappingScanCode(m)) issues.push(issue('BARCODE_UNCONFIRMED', `SKU ${sku} 條碼待確認；ECOUNT 銷貨檔不含條碼，之後 WMS 作業前仍須核對`, { sku }, 'warning'));
   }
   return { ok: !issues.some((i) => i.severity === 'error'), issues };
 }
@@ -587,18 +597,19 @@ export function warehousePrepickDetails(prepick, items = [], skuMappings = {}) {
 }
 
 export function buildPrepickRows(parsed, settings = {}) {
+  const hasInternal=Object.values(settings.skuMappings||{}).some(m=>m.scanCodeType==='internal');
   const preview = settings.preview === true;
   const issues = [...(parsed.issues || []).filter((i) => i.severity === 'error'), ...(preview ? [] : mappingIssues(parsed, settings))];
   if (!preview && parsed.orders.some((o) => o.paymentStatus !== 'paid') && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '未付款訂單預揀表僅供明確確認的限定測試'));
   if (!preview && parsed.orders.some((o) => o.cancelled || o.fulfillmentStatus !== 'unfulfilled' || !['paid', 'pending'].includes(o.paymentStatus) || (o.financial.refundedMinor ?? 0) > 0)) issues.push(issue('ORDER_NOT_ELIGIBLE', '此檔包含不能出貨的訂單狀態'));
-  const result = { ok: issues.length === 0, issues, headers: ['分類（對照設定）', '來源SKU', 'ECOUNT品項編碼', preview ? '商品條碼（確認後顯示）' : '已確認國際條碼', '商品名稱', '實體數量', '商城訂單數', '來源商城訂單', '來源組合／分組', '用途', 'ECOUNT品項名稱', '規格', '來源團組名稱', '來源團次'], rows: [], sourceSkuGroups: [], summary: { ...parsed.summary } };
+  const result = { ok: issues.length === 0, issues, headers: ['分類（對照設定）', '來源SKU', 'ECOUNT品項編碼', hasInternal?'商品掃描碼':preview ? '商品條碼（確認後顯示）' : '已確認國際條碼', '商品名稱', '實體數量', '商城訂單數', '來源商城訂單', '來源組合／分組', '用途', 'ECOUNT品項名稱', '規格', '來源團組名稱', '來源團次', ...(hasInternal?['掃描碼類型','國際條碼','內部掃描碼']:[])], rows: [], sourceSkuGroups: [], summary: { ...parsed.summary } };
   if (!result.ok) return result;
   const groups = new Map();
   for (const item of parsed.items) {
     const m = settings.skuMappings?.[item.sku] || {};
-    const barcodeConfirmed = !!text(m.barcode) && (m.barcodeConfirmed === true || (m.confirmed === true && m.barcodeConfirmed !== false));
+    const barcodeConfirmed = Boolean(mappingScanCode(m));
     const erpConfirmed = !!text(m.erpSku) && (m.erpConfirmed === true || m.confirmed === true);
-    const key = JSON.stringify(item.sourceSkuFormat && barcodeConfirmed && erpConfirmed ? ['product', m.erpSku, m.barcode, text(m.spec), text(m.category)] : ['source', item.sku, m.erpSku, m.barcode]);
+    const key = JSON.stringify(item.sourceSkuFormat && barcodeConfirmed && erpConfirmed ? ['product', m.erpSku, mappingScanCode(m), m.scanCodeType||'international', text(m.spec), text(m.category)] : ['source', item.sku, m.erpSku, mappingScanCode(m)]);
     if (!groups.has(key)) groups.set(key, { item, mapping: m, quantity: 0, orders: new Set(), groups: new Set(), skus: new Set(), campaigns: new Map() });
     const group = groups.get(key);
     group.quantity += item.quantity; group.orders.add(item.sourceOrderNumber); group.skus.add(item.sku);
@@ -606,10 +617,10 @@ export function buildPrepickRows(parsed, settings = {}) {
     if (item.campaignGroupName && item.campaignRound) group.campaigns.set(JSON.stringify([item.campaignGroupName, item.campaignRound]), [item.campaignGroupName, item.campaignRound]);
   }
   result.rows = [...groups.values()].map(({ item, mapping: m, quantity, orders, groups: sourceGroups, skus, campaigns }) => {
-    const barcodeConfirmed = m.barcodeConfirmed === true || (m.confirmed === true && m.barcodeConfirmed !== false);
+    const barcodeConfirmed = Boolean(mappingScanCode(m));
     const sourceSkus = [...skus].sort(), sourceCampaigns = [...campaigns].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value);
     result.sourceSkuGroups.push(sourceSkus);
-    return [text(m.category) || '未分類', sourceSkus.join('\n'), text(m.erpSku), barcodeConfirmed ? text(m.barcode) : '', text(m.erpName || item.productName), quantity, orders.size, [...orders].sort().join(' / '), [...sourceGroups].sort().join(' / '), preview ? `待核對${!text(m.barcode) || !barcodeConfirmed ? '；條碼未確認' : ''}；不是出貨授權或 ERP／WMS 匯入檔` : '測試預揀；不是 ECOUNT／WMS 匯入檔', '', '', sourceCampaigns.map(value => value[0]).join('\n'), sourceCampaigns.map(value => value[1]).join('\n')];
+    return [text(m.category) || '未分類', sourceSkus.join('\n'), text(m.erpSku), barcodeConfirmed ? mappingScanCode(m) : '', text(m.erpName || item.productName), quantity, orders.size, [...orders].sort().join(' / '), [...sourceGroups].sort().join(' / '), preview ? `待核對${!mappingScanCode(m) || !barcodeConfirmed ? '；條碼未確認' : ''}；不是出貨授權或 ERP／WMS 匯入檔` : '測試預揀；不是 ECOUNT／WMS 匯入檔', '', '', sourceCampaigns.map(value => value[0]).join('\n'), sourceCampaigns.map(value => value[1]).join('\n'), ...(hasInternal?[m.scanCodeType==='internal'?'內部掃描碼':'國際條碼', m.scanCodeType==='internal'?'':mappingScanCode(m), m.scanCodeType==='internal'?mappingScanCode(m):'']:[])];
   });
   result.summary = { ...result.summary, skuCount: result.rows.length, physicalQuantity: sum(result.rows.map((r) => r[5])) };
   return warehousePrepickDetails(result, parsed.items, settings.skuMappings);

@@ -3,7 +3,7 @@ const {readOrderImportRows,parseOrderRows,matchesSourceHeader}=require('./orderI
 const {mutateFlow}=require('./warehouseRelease');
 const clean=v=>String(v??'').trim();
 const fail=message=>Object.assign(new Error(message),{status:400});
-const aliases={sourcePlatform:'平台',sourceStore:'店鋪',sourceOrderNumber:'商城訂單編號',sourceLineId:'來源明細號',productCode:'品項編碼',quantity:'數量',barcode:'國際條碼',serials:'序號/批號',summary:'摘要'};
+const aliases={sourcePlatform:'平台',sourceStore:'店鋪',sourceOrderNumber:'商城訂單編號',sourceLineId:'來源明細號',productCode:'品項編碼',quantity:'數量',barcode:'國際條碼',internalScanCode:'內部掃描碼',sourceSku:'來源SKU',serials:'序號/批號',summary:'摘要'};
 function normalizeReturnRows(rows){
  const vouchers=['理貨單號','理貨單單號','理貨單編號','出貨單號','出貨單單號','ECOUNT實際銷貨單號'];
  const header=rows.findIndex(r=>r.some(v=>vouchers.includes(clean(v)))&&r.some(v=>matchesSourceHeader(v,'sourceLineId')));

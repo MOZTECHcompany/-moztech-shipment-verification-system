@@ -6,6 +6,7 @@ function makeFakeClient(script) {
     calls,
     query: async (text, params) => {
       calls.push({ text: String(text), params });
+      if (String(text).includes('FROM wms_carton_allocations') || String(text).includes('FROM wms_carton_serials') || String(text).includes('pg_advisory_xact_lock')) return { rows: [], rowCount: 0 };
       for (const step of script) {
         if (typeof step.match === 'function' ? step.match(text, params) : String(text).includes(step.match)) {
           return typeof step.result === 'function' ? step.result(text, params) : step.result;

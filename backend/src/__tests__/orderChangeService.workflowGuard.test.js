@@ -6,6 +6,7 @@ const proposal = { note: '核對異動', items: [{ barcode: '4711299273087', pro
 test('an approved change keeps a batch order held until the separate prepick completion', async () => {
     readLines.mockResolvedValue({ items: [{ id: 11, quantity: 3, picked_quantity: 3, packed_quantity: 0 }], instances: [] });
     const client = { query: jest.fn(async sql => {
+        if (sql.includes('FROM wms_carton_allocations') || sql.includes('FROM wms_carton_serials') || sql.includes('pg_advisory_xact_lock')) return { rows: [], rowCount: 0 };
         if (sql === 'SELECT * FROM orders WHERE id = $1 FOR UPDATE') return { rowCount: 1, rows: [{ id: 1, status: 'pending', import_batch_id: 9, warehouse_hold: true }] };
         if (sql.includes('FROM order_items\n         WHERE order_id = $1 AND barcode = $2')) return { rows: [{ id: 11, quantity: 2, picked_quantity: 0, packed_quantity: 0 }] };
         if (sql.includes('FROM order_item_instances')) return { rows: [] };

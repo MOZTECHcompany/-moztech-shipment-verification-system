@@ -269,6 +269,7 @@ function database({ existing = false, failLog = false, failCommit = false, failR
             if (sql.startsWith('SELECT * FROM marketplace_intake_orders')) return result([]);
             if (sql.startsWith('INSERT INTO warehouse_import_batches')) return result([{ id: 20 }]);
             if (sql.startsWith('SELECT id FROM orders')) return result(existing ? [{ id: 42 }] : []);
+            if (sql.includes('FROM wms_carton_serials')) return result([]);
             if (sql.startsWith('INSERT INTO orders')) { pending.orders.push(values); return result([{ id: 11 + pending.orders.length }]); }
             if (sql.startsWith('INSERT INTO order_items')) { pending.items.push(values); return result([{ id: pending.items.length }]); }
             if (sql.startsWith('INSERT INTO order_item_instances')) { pending.instances.push(...values[1]); return result([]); }
@@ -314,8 +315,8 @@ test('source detail persists one batch and distinct marketplace work orders atom
     expect(db.state().orders).toHaveLength(2);
     expect(db.state().orders.map(row => row.slice(3, 7))).toEqual([[20, 'SHOP-100', 'Shopify', 'Demo store'], [20, 'ONE-200', '1Shop', 'Demo store']]);
     expect(db.state().items).toHaveLength(2);
-    expect(db.state().items[0]).toEqual([12, 'SKU-A', 'Product A', 1, '4710000000013', 'SHOP-100', 'Shopify', 'Demo store', 'line-1']);
-    expect(db.state().items[1].slice(5)).toEqual(['ONE-200', '1Shop', 'Demo store', 'line-1']);
+    expect(db.state().items[0]).toEqual([12, 'SKU-A', 'Product A', 1, '4710000000013', 'SHOP-100', 'Shopify', 'Demo store', 'line-1','4710000000013',null,'international',null,'legacy']);
+    expect(db.state().items[1].slice(5,9)).toEqual(['ONE-200', '1Shop', 'Demo store', 'line-1']);
     expect(db.state().items[1][0]).toBe(13);
     expect(db.earlyEvents()).toBe(0);
 });

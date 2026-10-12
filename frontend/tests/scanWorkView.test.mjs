@@ -9,6 +9,7 @@ import { createScanSubmission } from '../src/utils/scanSubmission.js';
 import * as orderWorkProgress from '../src/utils/orderWorkProgress.js';
 import * as sourceOrders from '../src/utils/sourceOrders.js';
 import * as scanDelta from '../src/utils/scanDelta.js';
+import * as cartonScan from '../src/utils/cartonScan.js';
 
 const source = await readFile(new URL('../src/components/OrderWorkView.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
@@ -76,6 +77,7 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
         '@/utils/orderWorkProgress': orderWorkProgress,
         '@/utils/sourceOrders': sourceOrders,
         '@/utils/scanDelta': scanDelta,
+        '@/utils/cartonScan': cartonScan,
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
         '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, speakTaskComplete: type => spoken.push(['complete', type]) },
         '@/utils/desktopNotification': { notifyScanError: noop },

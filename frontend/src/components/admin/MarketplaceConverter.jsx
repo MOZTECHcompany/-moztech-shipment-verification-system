@@ -205,6 +205,16 @@ function ConverterPage({ user }) {
     setBarcodeChecks({});
     await refreshPreview(nextSettings, profileId);
   };
+  const chooseScanCodeType = async (conflict, scanCodeType) => {
+    if(locked||inFlight.current||!input||!profileId||!currentSession())return;
+    const nextSettings={...settings,skuMappings:{...settings.skuMappings,[conflict.sourceSku]:{...settings.skuMappings?.[conflict.sourceSku],scanCodeType,barcode:'',barcodeConfirmed:false,internalScanConfirmed:false}}};
+    setBarcodeChecks({});await refreshPreview(nextSettings,profileId);
+  };
+  const checkInternalScanCode = async (conflict, value) => {
+    if(locked||inFlight.current||!input||!profileId||!currentSession())return;
+    const nextSettings={...settings,skuMappings:{...settings.skuMappings,[conflict.sourceSku]:{...settings.skuMappings?.[conflict.sourceSku],scanCodeType:'internal',internalScanCode:String(value||'').trim(),internalScanConfirmed:false,barcode:'',barcodeConfirmed:false}}};
+    setBarcodeChecks({});await refreshPreview(nextSettings,profileId);
+  };
   const update = (key, value) => {
     clearReimportFocus();
     request.current++; setSaved(null); setPreviewDirty(true);
@@ -217,6 +227,7 @@ function ConverterPage({ user }) {
       ...current.skuMappings[sku], [key]: value,
       ...(['erpSku', 'erpName'].includes(key) ? { confirmed: false } : {}),
       ...(key === 'barcode' ? { barcodeConfirmed: false } : {}),
+      ...(['internalScanCode','scanCodeType','erpSku'].includes(key)?{internalScanConfirmed:false}:{}),
     } } }));
   };
   const useProfile = async id => {
@@ -392,6 +403,7 @@ function ConverterPage({ user }) {
         const chooseTarget = conflict.targetOptions?.length > 1;
         const sourceBarcodeMissing = conflict.platform === 'Shopify' && conflict.reviewReason === 'SOURCE_BARCODE_MISSING';
         const canScanPhysicalBarcode = conflict.canEnterPhysicalBarcode === true;
+        const internal = conflict.requiresInternalScanCode === true;
         return <div key={key} className="rounded-lg border border-slate-200 p-4">
           <p className="font-medium">{conflict.sourceName || products.find(item => item.sku === conflict.sourceSku)?.productName || conflict.erpName}</p>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -410,12 +422,14 @@ function ConverterPage({ user }) {
             const url = shopifyOrderUrl(conflict, order);
             return <tr key={`${order.orderNumber}:${order.sourceLineId || index}`} className="border-t border-slate-100"><td className={`${cell} whitespace-nowrap`}>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 underline">{order.orderNumber}</a> : order.orderNumber}</td><td className={cell}>{order.productName}</td><td className={`${cell} whitespace-nowrap`}>{order.barcode || '未填條碼'}</td><td className={`${cell} whitespace-nowrap`}>{order.quantity}</td></tr>;
           })}</tbody></table></div></details>}
+          {conflict.canEnterInternalScanCode && <div className="mt-3 max-w-md"><Field label="商品識別方式"><select className={inputClass} disabled={locked||!profileId} value={internal?'internal':'international'} onChange={event=>chooseScanCodeType(conflict,event.target.value)}><option value="international">掃描實物條碼</option><option value="internal">無國條：自建內部掃描碼</option></select></Field></div>}
+          {internal && <div className="mt-3 max-w-md"><Field label="內部掃描碼" value={settings.skuMappings?.[conflict.sourceSku]?.internalScanCode || conflict.internalScanCode || ''} maxLength={100} disabled={locked||!profileId} placeholder="ITM- 開頭的自建商品識別碼" onChange={event=>{setBarcodeChecks({});mapping(conflict.sourceSku,'internalScanCode',event.target.value);}} onBlur={event=>{if(previewDirty)return checkInternalScanCode(conflict,event.target.value);}} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();return checkInternalScanCode(conflict,event.currentTarget.value);}}}/><p className="mt-2 text-sm text-slate-600">確認此商品沒有國際條碼，將此內碼印在商品標籤；同一內碼只對應一個 ECOUNT 品項。</p></div>}
           {canScanPhysicalBarcode && <div className="mt-3 max-w-md"><Field label="實物條碼" value={settings.skuMappings?.[conflict.sourceSku]?.physicalBarcode || conflict.physicalBarcode || ''} maxLength={100} disabled={locked || !profileId} placeholder="掃描商品包裝條碼" onChange={event => { setBarcodeChecks({}); mapping(conflict.sourceSku, 'physicalBarcode', event.target.value); }} onBlur={event => { if (previewDirty) return checkPhysicalBarcode(conflict, event.target.value); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); return checkPhysicalBarcode(conflict, event.currentTarget.value); } }} /></div>}
           <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
             <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
           </fieldset>
-          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
+          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{internal ? '請填寫並核對內部掃描碼' : canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}
@@ -444,7 +458,7 @@ function ConverterPage({ user }) {
           const masterBarcode = catalogProduct?.status === 'matched' ? catalogProduct.matches?.[0]?.barcode : '';
           const apiBarcodeVerified = prepared.verification?.orders?.some(order => order.items?.some(product => product.sku === item.sku && product.barcode === mapped.barcode));
           const barcodeTrusted = !!mapped.barcode && (masterBarcode === mapped.barcode || apiBarcodeVerified);
-          return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName}</p><p className="mt-1 text-sm text-slate-600">ECOUNT {mapped.erpSku || item.sku}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="商品掃描條碼">{barcodeTrusted ? <span className="mt-1 flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-950">{mapped.barcode}</span> : <input className={inputClass} value={mapped.barcode || ''} placeholder="待核對" onChange={event => mapping(item.sku, 'barcode', event.target.value)} />}</Field><Field label="商品分類" value={mapped.category || ''} onChange={event => mapping(item.sku, 'category', event.target.value)} /></div>{mapped.barcode && !barcodeTrusted && <Check checked={mapped.barcodeConfirmed} onChange={value => mapping(item.sku, 'barcodeConfirmed', value)}>確認實物條碼</Check>}</div>;
+          return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName}</p><p className="mt-1 text-sm text-slate-600">ECOUNT {mapped.erpSku || item.sku}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label={mapped.scanCodeType==='internal'?'內部掃描碼':'商品掃描條碼'}>{(barcodeTrusted||mapped.scanCodeType==='internal'&&mapped.internalScanConfirmed) ? <span className="mt-1 flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-950">{mapped.scanCodeType==='internal'?mapped.internalScanCode:mapped.barcode}</span> : <input className={inputClass} value={mapped.barcode || ''} placeholder="待核對" onChange={event => mapping(item.sku, 'barcode', event.target.value)} />}</Field><Field label="商品分類" value={mapped.category || ''} onChange={event => mapping(item.sku, 'category', event.target.value)} /></div>{mapped.scanCodeType!=='internal' && mapped.barcode && !barcodeTrusted && <Check checked={mapped.barcodeConfirmed} onChange={value => mapping(item.sku, 'barcodeConfirmed', value)}>確認實物條碼</Check>}</div>;
         })}</div></details>
       </fieldset><div className="mt-4 flex flex-wrap gap-3">{previewDirty && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>套用設定</Button>}<Button variant="secondary" disabled={locked || previewDirty || !prepared.audit.ok || !prepared.prepick.ok} onClick={() => download('audit')}>下載金額核對表</Button></div>
         {warnings.length > 0 && <details className="mt-4 text-sm text-slate-600"><summary className="cursor-pointer">提醒（{warnings.length}）</summary><ul className="mt-2 space-y-1">{warnings.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.message}</li>)}</ul></details>}
