@@ -1,6 +1,6 @@
 const {createHash}=require('node:crypto');
 const {parseOrderRows}=require('./orderImportParser');
-const HEADERS=['ECOUNT實際銷貨單號','WMS批次號','客戶/供應商編碼','發貨倉庫','交易類型','平台','店鋪','商城訂單編號','來源明細號','品項編碼','數量','稅前價格','營業稅','含稅金額','國際條碼','序號/批號','摘要','內部掃描碼','來源SKU'];
+const HEADERS=['ECOUNT實際銷貨單號','WMS批次號','客戶/供應商編碼','發貨倉庫','交易類型','平台','店鋪','商城訂單編號','來源明細號','品項編碼','數量','稅前價格','營業稅','含稅金額','國際條碼','序號/批號','摘要','內部掃描碼','來源SKU','實際SN'];
 const clean=v=>String(v??'').trim();
 const fail=message=>Object.assign(new Error(message),{status:400});
 async function reconcileSales(rows,record,{logistics=false}={}){
@@ -23,7 +23,7 @@ async function reconcileSales(rows,record,{logistics=false}={}){
  let byKey=allExpected;
  const seen=new Set(),vouchers=new Set(),actual=[];
  const physical=new Map(record.orders.flatMap(o=>o.expected_items.map(i=>[JSON.stringify([o.source_platform,o.source_store,o.source_order_number,i.sourceLineId]),i])));
- const picking=[['理貨單號','品項編碼','品項名稱','商城訂單編號','平台','店鋪','來源明細號','國際條碼','數量','序號/批號','摘要','內部掃描碼','來源SKU']];
+ const picking=[['理貨單號','品項編碼','品項名稱','商城訂單編號','平台','店鋪','來源明細號','國際條碼','數量','序號/批號','摘要','內部掃描碼','來源SKU','實際SN']];
  const grouped=new Map((salesLayout?.lines||[]).map(l=>[l.lineId,l]));
  if(logistics)byKey=new Map([...byKey].filter(([key,r])=>salesLayout?grouped.get(r[15])?.physical:physical.has(key)));
  for(let n=h+1;n<rows.length;n++){
@@ -53,9 +53,9 @@ async function reconcileSales(rows,record,{logistics=false}={}){
    if(get('國際條碼')&&get('國際條碼')!==international)throw fail(`第 ${n+1} 列：國際條碼不符`);
    if(get('內部掃描碼')&&get('內部掃描碼')!==item.internalScanCode)throw fail(`第 ${n+1} 列：內部掃描碼不符`);
    if(get('來源SKU')&&get('來源SKU')!==item.sourceSku)throw fail(`第 ${n+1} 列：來源SKU不符`);
-   picking.push([record.batch_number,item.productCode,item.productName,get('商城訂單編號'),get('平台'),get('店鋪'),get('來源明細號'),international,item.quantity,get('序號/批號'),get('摘要'),item.internalScanCode||'',item.sourceSku||'']);
+   picking.push([record.batch_number,item.productCode,item.productName,get('商城訂單編號'),get('平台'),get('店鋪'),get('來源明細號'),international,item.quantity,get('序號/批號'),get('摘要'),item.internalScanCode||'',item.sourceSku||'',get('實際SN')]);
   }else if(get('序號/批號'))throw fail('非庫存運費不可含 SN');
-  vouchers.add(voucher);actual.push({identity:JSON.parse(key),voucher,productCode:get('品項編碼'),quantity:Number(get('數量')),netMinor:verifyMoney?net:null,taxMinor:verifyMoney?tax:null,grossMinor:verifyMoney?gross:null,...(logistics?{barcode:item?.barcode||''}:{}),serials:get('序號/批號'),summary:get('摘要')});
+  vouchers.add(voucher);actual.push({identity:JSON.parse(key),voucher,productCode:get('品項編碼'),quantity:Number(get('數量')),netMinor:verifyMoney?net:null,taxMinor:verifyMoney?tax:null,grossMinor:verifyMoney?gross:null,...(logistics?{barcode:item?.barcode||''}:{}),serials:get('序號/批號'),summary:get('摘要'),...(get('實際SN')?{actualSN:get('實際SN')}:{} )});
  }
  if([...byKey.keys()].some(key=>!seen.has(key)))throw fail(logistics?'回傳未包含整批全部商品，未建立任務':'回傳未包含整批全部商品與運費明細，未建立／放行任務');
  let parsed=parseOrderRows(picking);
@@ -69,8 +69,9 @@ async function reconcileSales(rows,record,{logistics=false}={}){
    if(!item)throw fail('回傳缺少彙總商品');
    for(const a of segment.allocations){
     const key=JSON.stringify(a.identity),source=physical.get(key);
-    if(!assigned.has(key))assigned.set(key,{identity:a.identity,item:source,quantity:0,serials:[],segments:[],summaries:[]});
+    if(!assigned.has(key))assigned.set(key,{identity:a.identity,item:source,quantity:0,serials:[],serialMode:item.serialMode,segments:[],summaries:[]});
     const target=assigned.get(key);
+    if(item.serialMode==='exact')target.serialMode='exact';
     target.quantity+=a.quantity;target.serials.push(...item.serials.slice(offset,offset+a.quantity));
     target.segments.push(segment.lineId);target.summaries.push(item.sourceSummary);offset+=a.quantity;
    }
@@ -78,7 +79,7 @@ async function reconcileSales(rows,record,{logistics=false}={}){
   const expanded=[picking[0]];
   for(const a of assigned.values()){
    if(a.quantity!==a.item.quantity||a.serials.length&&a.serials.length!==a.quantity)throw fail('原訂單商品的數量或 SN 未完整分配，請核對全部彙總列');
-   expanded.push([record.batch_number,a.item.productCode,a.item.productName,a.identity[2],a.identity[0],a.identity[1],a.identity[3],a.item.codeType==='internal'?'':a.item.internationalBarcode??a.item.barcode,a.quantity,a.serials.join(' '),'',a.item.internalScanCode||'',a.item.sourceSku||'']);
+   expanded.push([record.batch_number,a.item.productCode,a.item.productName,a.identity[2],a.identity[0],a.identity[1],a.identity[3],a.item.codeType==='internal'?'':a.item.internationalBarcode??a.item.barcode,a.quantity,a.serialMode==='exact'?'':a.serials.join(' '),'',a.item.internalScanCode||'',a.item.sourceSku||'',a.serialMode==='exact'?a.serials.join(','):'']);
   }
   if(assigned.size!==physical.size)throw fail('彙總回傳未涵蓋全部原訂單商品');
   parsed=parseOrderRows(expanded);

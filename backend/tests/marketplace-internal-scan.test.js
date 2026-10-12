@@ -102,6 +102,11 @@ describe('EC persisted internal proof and saved-sales return',()=>{
   const savedSnapshot={...approved.output,items:approved.parsed.items,orders:approved.parsed.orders,settings:approved.settings};
   const {prepareEcountFinancials}=await import('../src/services/marketplaceIntake.mjs');
   const {HEADERS}=require('../src/services/erpSalesReceipt'),receipt=[HEADERS,...prepareEcountFinancials(savedSnapshot).rows.map(r=>['AUDIT-ERP-SAVED',approved.settings.batchNumber,r[2],r[6],r[7],r[13],r[14],r[12],r[15],r[11],r[19],r[23],r[24],r[23]+r[24],'','','',scan,sku])];
+  const trackedReceipt=receipt.map((row,index)=>index?row.map((value,column)=>column===HEADERS.indexOf('實際SN')?'Vendor-a02,Vendor-A02':value).concat(Array(Math.max(0,HEADERS.length-row.length)).fill('')):row);
+  trackedReceipt[1][HEADERS.indexOf('實際SN')]='Vendor-a02,Vendor-A02';
+  const tracked=await reconcileSales(trackedReceipt,{batch_number:approved.settings.batchNumber,snapshot:savedSnapshot,orders});
+  expect(tracked.parsed.workOrders.flatMap(o=>o.items).flatMap(i=>i.serials)).toEqual(['Vendor-a02','Vendor-A02']);
+  expect(tracked.parsed.workOrders.flatMap(o=>o.items).every(i=>i.serialMode==='exact')).toBe(true);
   const result=await reconcileSales(receipt,{batch_number:approved.settings.batchNumber,snapshot:savedSnapshot,orders});
   expect(result.parsed.workOrders.flatMap(o=>o.items).every(i=>i.barcode===scan&&i.internationalBarcode===null&&i.internalScanCode===scan&&i.sourceSku===sku)).toBe(true);expect(result.receipt.vouchers).toEqual(['AUDIT-ERP-SAVED']);
   expect(h.writes.every(([sql])=>sql.includes('marketplace_product_mapping_reviews')||sql.includes('marketplace_internal_scan_codes'))).toBe(true);
