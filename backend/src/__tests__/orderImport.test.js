@@ -122,6 +122,7 @@ function database({ existing = false, failLog = false, failCommit = false, failR
             if (sql === 'ROLLBACK') { if (failRollback) throw new Error('rollback lost'); pending = undefined; return result([]); }
             if (sql === 'COMMIT') { if (failCommit) throw new Error('commit lost'); state = pending; pending = undefined; return result([]); }
             if (sql.startsWith('SELECT id FROM orders')) return result(existing ? [{ id: 42 }] : []);
+            if (sql.includes('FROM wms_carton_serials')) return result([]); // Legacy import has no registered/allocated box SNs.
             if (sql.startsWith('INSERT INTO orders')) { pending.orders.push(values); return result([{ id: 12 }]); }
             if (sql.startsWith('INSERT INTO order_items')) { pending.items.push(values); return result([{ id: pending.items.length }]); }
             if (sql.startsWith('INSERT INTO order_item_instances')) { pending.instances.push(...values[1]); return result([]); }

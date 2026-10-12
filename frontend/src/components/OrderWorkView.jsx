@@ -20,6 +20,8 @@ import { socket } from '@/api/socket';
 import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
+import { isCartonScan } from '@/utils/cartonScan';
+import { CartonWorkControls } from './CartonWorkControls';
 import SerialList from './SerialList';
 import { buildWorkItems, filterWorkItems, workStage } from '@/utils/orderWorkProgress';
 import voiceNotification from '@/utils/voiceNotification';
@@ -284,6 +286,8 @@ function AuthenticatedOrderWorkView({ user }) {
     const [rejectedScan, setRejectedScan] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const scanSubmissionRef = useRef(null);
+    const cartonScannerRef = useRef(null);
+    const cartonRejectedRef = useRef(null);
     if (!scanSubmissionRef.current) scanSubmissionRef.current = createScanSubmission();
     const [scanNeedsReview, setScanNeedsReview] = useState(false);
     const orderDataVersionRef = useRef(0);
@@ -1466,6 +1470,7 @@ function AuthenticatedOrderWorkView({ user }) {
         setBarcodeInput(current => current.trim() === scanValue ? '' : current);
         setScanError(null);
         setRejectedScan(null);
+        cartonRejectedRef.current = null;
 
         const status = currentOrderData.order?.status;
         if (!status) {
@@ -1509,6 +1514,16 @@ function AuthenticatedOrderWorkView({ user }) {
                 });
                 setRejectedScan({ value: scanValue, retryable: false });
                 return false;
+            }
+            if (isCartonScan(scanValue)) {
+                if (scanSubmissionRef.current.isBusy()) {
+                    cartonRejectedRef.current = scanValue;
+                    setRejectedScan({ value: scanValue, retryable: true });
+                    setScanError('這個箱號尚未處理，請等候上一筆完成後再送出。');
+                    soundNotification.play('error');
+                    return false;
+                }
+                return cartonScannerRef.current?.scan(scanValue, operationType) || false;
             }
             const choices = signedScanChoices(currentOrderData, scanValue, operationType);
             if (choices?.length > 1) {
@@ -1562,6 +1577,35 @@ function AuthenticatedOrderWorkView({ user }) {
     
     // 相機掃描處理
     const handleCameraScan = (code) => handleScan(code);
+
+    const handleCartonResponse = (snapshot, scan) => {
+        if (!mountedRef.current || String(snapshot.order.id) !== String(activeOrderIdRef.current)) return;
+        orderDataVersionRef.current++;
+        setCurrentOrderData(snapshot);
+        setLastAcceptedScan(scan);
+        if (!cartonRejectedRef.current || cartonRejectedRef.current.replace(/^CARTON:/i, '') === scan.value.replace(/^CARTON:/i, '')) {
+            setScanError(null); setRejectedScan(null); cartonRejectedRef.current = null;
+        }
+        if (scan.type === 'release') return;
+        soundNotification.play(scan.type === 'pick' ? 'pickSuccess' : 'packSuccess');
+        completedStagesRef.current.delete(scan.type);
+        const complete = (scan.type === 'pick' && snapshot.order.status === 'picked') || (scan.type === 'pack' && snapshot.order.status === 'completed');
+        if (complete) announceStageComplete(scan.type);
+        if (snapshot.order.status === 'completed' || (snapshot.order.status === 'picked' && user.role === 'picker')) {
+            MySwal.fire({ title: scan.type === 'pick' ? '揀貨完成' : '裝箱核對完成', icon: 'success', timer: 1500, showConfirmButton: false }).then(() => {
+                if (mountedRef.current) navigate('/tasks', { state: { view: 'completed' } });
+            });
+        }
+    };
+    const handleCartonError = (value, err, unknown) => {
+        if (!mountedRef.current || String(orderId) !== String(activeOrderIdRef.current)) return;
+        orderDataVersionRef.current++;
+        cartonRejectedRef.current = value;
+        if (unknown) { scanSubmissionRef.current.requireReview(); setScanNeedsReview(true); }
+        const text = unknown ? '箱號掃描結果待確認，請重新載入訂單核對後再作業。' : err.response?.data?.message || err.message;
+        setRejectedScan({ value, retryable: false }); setScanError(text);
+        soundNotification.play('error'); toast.error(text);
+    };
 
     const handleVoidOrder = async () => {
         if (!currentOrderData.order) return;
@@ -1718,7 +1762,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                     <ScanLine size={20} className="text-blue-600"/>
                                     掃描作業
                                 </h3>
-                                <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品條碼或 SN，按 Enter 送出</p>
+                                <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品、SN 或箱號，按 Enter 送出</p>
                                 <PersonalSoundControls user={user} compact />
                                 <VoiceControls compact />
                                 <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
@@ -1800,6 +1844,12 @@ function AuthenticatedOrderWorkView({ user }) {
 
                             </div>
                         </div>
+
+                        <CartonWorkControls key={`${orderId}:${user?.id}:${user?.role}`} ref={cartonScannerRef} orderData={currentOrderData} user={user}
+                            stage={canScanNow ? (orderStatus === 'picking' ? 'pick' : 'pack') : null}
+                            blocked={loading || isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions || !canOperate || !canScanNow}
+                            submissionRef={scanSubmissionRef} onResponse={handleCartonResponse} onError={handleCartonError}
+                            onBusy={(busy, value) => { setIsUpdating(busy); if (busy) { orderDataVersionRef.current++; setPendingScan(value); } }} />
 
                         {/* 例外處理（可追蹤狀態：open/ack/resolved） */}
                         <Card className="border-0 shadow-sm">

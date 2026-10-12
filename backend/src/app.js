@@ -133,6 +133,7 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
+app.use('/api/cartons', express.json({ limit: '2mb' }));
 app.use(express.json());
 app.use(require('./middleware/requestPerformance').requestPerformance(pool));
 app.use(require('./middleware/queryAdmission').createQueryAdmission());
@@ -169,6 +170,9 @@ app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').cr
 
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
+const { createCartonRouter, createOrderCartonRouter } = require('./routes/cartonRoutes');
+app.use('/api/cartons', authenticateToken, createCartonRouter({ pool }));
+app.use('/api/orders', authenticateToken, createOrderCartonRouter({ pool }));
 
 // 以下路由需要認證
 app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));
