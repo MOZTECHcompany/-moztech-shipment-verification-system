@@ -25,3 +25,9 @@ test('duplicate allocation rows, partial SN lists and signed reversal quantities
   const f=fixture();mutate(f);assert.throws(()=>buildCartonShipmentTrace(f));
  }
 });
+
+test('one carton line may allocate to multiple explicit source order item groups',()=>{
+ const f=fixture();f.allocations[0].lines[0].quantity=1;f.allocations[0].lines[0].actualSN=['AUDITSN00001'];
+ f.allocations[0].lines.push({...f.allocations[0].lines[0],orderItemId:10,sourceLineId:'AUDIT-LINE-2',actualSN:['AUDITSN00002']});
+ const result=buildCartonShipmentTrace(f);assert.equal(result.rows.length,2);assert.deepEqual(result.rows.map(r=>r[result.headers.indexOf('來源明細號')]),['AUDIT-LINE','AUDIT-LINE-2']);
+});

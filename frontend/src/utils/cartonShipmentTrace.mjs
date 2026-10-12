@@ -11,7 +11,7 @@ export function buildCartonShipmentTrace(payload={}) {
  for(const a of allocations){
   if(!['picked','packed','released'].includes(a.status)||!Array.isArray(a.lines))fail('箱出貨分配狀態或明細無效');
   for(const line of a.lines){
-   const key=JSON.stringify([a.allocationId,line.lineId]);
+   const key=JSON.stringify([a.allocationId,line.lineId,line.orderItemId]);
    if(seen.has(key)||!integer(line.quantity)||line.quantitySign!==1)fail('箱出貨明細重複或數量無效');seen.add(key);
    const serials=line.actualSN||[];
    if(!Array.isArray(serials)||new Set(serials).size!==serials.length||serials.some(s=>typeof s!=='string'||!s)||serials.length&&serials.length!==line.quantity)fail('箱出貨 SN 與實際數量不一致');
