@@ -37,6 +37,7 @@ function singleClientDatabase({ status = 'picking', failSnapshot = false, failCo
                 return rows([]);
             }
             const state = transaction || committed;
+            if (q.includes('FROM wms_carton_allocations') || q.includes('FROM wms_carton_serials') || q.includes('pg_advisory_xact_lock')) return rows([]);
             if (q.includes('AS has_open')) return rows([{ has_open: false }]);
             if (q.includes('AS blocked')) return rows([{ blocked: false }]);
             if (q.startsWith('SELECT * FROM orders')) return rows([state.order]);

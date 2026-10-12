@@ -22,6 +22,8 @@
 
 `marketplace_internal_scan_codes` 將一個內碼永久綁定一個 ERP 品項；同一商品的多個來源版本可重新核對，不能把該內碼改綁其他品項。
 
+箱模組在本分支使用 `040_wms_cartons.sql`；保留 `039` 的來源掃描身分欄位與原商城流程。`040` 增加 `carton_serial_binding` 與 `serial_identity_mode`，舊資料預設 `legacy`；只有明確「實際SN」欄位或箱內容綁定才標記 `exact`，不由字元格式猜測來源。箱掃描仍受 `warehouse_hold` 阻擋，必須完成原 ERP 回執／預揀放行。揀貨與裝箱分別要求既有 `picking`／`packing` 階段及指定人員，包含管理員；箱掃描不會代替認領，也不會把 `picked` 直接當作可裝箱。
+
 ## 箱出貨對照
 
 `buildCartonShipmentTrace(payload)` 將 `/api/orders/:orderId/carton-shipments` 的分配展平為 XLSX 表格資料。有 SN 每筆一個 SN、数量 1；無 SN 保存實際分配数量。表格保存箱號、箱內容版本、分配 ID、WMS 工作單、完整來源 SKU／明細、國條／內碼、揀貨與裝箱狀態及解除紀錄。
@@ -30,6 +32,12 @@
 
 ## 驗證及尚待驗收
 
-本機 backend 全部 46 suites / 694 tests 通過；frontend 全部 393 tests 通過，再新增人工內碼 UI 的實際選擇／核對 callback 測試，該檔 47 tests 通過。frontend build 通過。測試涵蓋 Shopify、SHOPLINE、1Shop 內碼核對、來源 SKU 與 ERP 品號不同時的明確人工選擇、原 ECOUNT 回執準備 WMS 身分、撤銷及變更阻擋、既有實物條碼相容，以及箱對照展平。
+最後整合後，backend 全部 48 suites／712 tests 通過。箱號真 HTTP 測試使用兩種独立引擎：PGlite 與本機 PostgreSQL 17.10（127.0.0.1:55441，每輪新建隨機合成 DB）；72 項中 70 項通過、0 失敗、2 項跳過。兩項跳過只對應本 EC base 不具備的正式 signed-document schema 的負向單品 SN 驗證；全部正向 EC／箱號測試均執行，不覆蓋或假造本分支缺少的正式 schema。
 
-仍需 root 組合箱模組後的獨立 DB 整箱／拆箱／SN／重複掃描整體驗證、DEV 候選瀏覽器驗收、真實外箱貼紙及人員操作驗收；上述測試不代表正式發布或真實出貨驗收完成。
+整合測試涵蓋整箱／尾箱／拆箱、10 筆保留大小寫的實際 SN、同品兩筆來源明細的 6／4 SN 分配、無國條 `ITM-` 身分、完整來源 SKU 與四項來源身分、合成已儲存 ECOUNT 回執的原單關聯、重掃與雙人競爭、未知 COMMIT 回覆、解除及出貨歷史。既有 hold／認領／指定人員門檻均保留；箱 8 加散貨 2 的更正只可撤回散貨，不能減掉已分配或已裝箱的箱內容。原短碼 SN 編輯仍相容，明確實際 SN 不會透過舊編輯改寫大小寫。
+
+證據：`/tmp/carton-ec-port-final-unit-v3.log`（48／712）、`/tmp/carton-ec-port-final-pg-v3.log`（70 通過／2 signed-only 跳過）。Root 的前端整合 399 項測試與 build 已通過；共用箱 UI 在正式來源的完整本機 app 中完成 12 筆瀏覽器驗證（0 page errors、0 外部商務請求）。該畫面驗證不冒充本 EC 分支的完整 Cloud DEV 或外部 ECOUNT 驗收。EC 的額外唯讀商城角色不顯示箱作業入口；後端權限仍為最後依據。
+
+本分支仍以 `d54fa09a78b77e5b1de4abb0b728cd61412f1b1d` 為來源 base；正式 `main` 的 migration 歷史不同。尚未發布到 shared Cloud DEV，未改其 SQL schema／交通或正式 ERP／WMS 資料，也未新增 Cloud SQL instance。既有 migration-validation 曾有正式資料複本，不能當作本輪合成驗收環境。
+
+仍需外箱實體貼紙、掃描器、實際人員與 ECOUNT 回匯作業驗收。上述本機合成測試不代表正式發布或真實出貨完成。

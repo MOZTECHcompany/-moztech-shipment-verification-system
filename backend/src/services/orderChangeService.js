@@ -256,6 +256,9 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
     const order = orderResult.rows[0];
     if (order.import_batch_id) await client.query('SELECT id FROM warehouse_import_batches WHERE id=$1 FOR UPDATE', [order.import_batch_id]);
     if (order.status === 'voided') throw Object.assign(new Error('已作廢訂單不可異動'),{status:409});
+    await require('./cartonGuards').assertNoCartonAllocations(client, orderId);
+    await require('./cartonGuards').assertLegacyOrderSerialEditing(client, orderId, proposal);
+    await require('./cartonGuards').assertNoRegisteredSerials(client, validated.value.items.flatMap(item => [...item.snList, ...item.removedSnList]));
     const originalStatus = normalizeOrderStatusForRollback(order.status);
 
     const changesApplied = [];

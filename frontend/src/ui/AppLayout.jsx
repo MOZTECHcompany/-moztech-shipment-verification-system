@@ -2,7 +2,7 @@ import {managementRoleLabel} from '@/utils/managementScope';
 import OrderReviewAlerts from '@/components/OrderReviewAlerts';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { ArrowLeft, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
+import { Box, ArrowLeft, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { EnvironmentBanner } from '../components/EnvironmentBanner';
 
@@ -50,6 +50,7 @@ export function AppLayout({ user, onLogout, children }) {
   });
   const links = [
     { to: '/tasks', label: '工作台', icon: ClipboardList },
+    ...(['admin', 'superadmin', 'dispatcher', 'picker', 'packer'].includes(user?.role) ? [{ to: '/cartons', label: '箱號管理', icon: Box }] : []),
     ...(['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? [{ to: '/admin', label: '出貨管理', icon: LayoutDashboard }] : []),
   ];
   const inSettings = ['/settings', '/admin/users', '/admin/operation-logs'].includes(location.pathname);
@@ -85,6 +86,7 @@ export function AppLayout({ user, onLogout, children }) {
         <OrderReviewAlerts key={user?.id} user={user} />
         {offline && <div role="status" className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><WifiOff className="mt-0.5 shrink-0" size={17} /><span>網路已離線。請恢復連線並核對操作結果後，再繼續掃碼。</span></div>}
         <main id="main-content" tabIndex={-1} data-layout-content className="corely-main safe-bottom">
+          {import.meta.env?.VITE_CARTON_SYNTHETIC_DEV === '1' && <p role="note" className="mb-3 rounded-lg bg-amber-100 px-4 py-2 text-sm text-amber-900">箱號測試站 · 僅有測試資料</p>}
           <ErrorBoundary key={location.pathname}>
             <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white p-6">正在開啟作業畫面…</div>}>
               {children || <Outlet />}

@@ -21,6 +21,7 @@ const ScanErrors = lazy(() => import('./components/admin/ScanErrors').then(modul
 const DefectStats = lazy(() => import('./components/admin/DefectStats').then(module => ({ default: module.DefectStats })));
 const Exceptions = lazy(() => import('./components/admin/Exceptions').then(module => ({ default: module.Exceptions })));
 const TaskDashboard = lazy(() => import('./components/TaskDashboard').then(module => ({ default: module.TaskDashboard })));
+const CartonsPage = lazy(() => import('./components/CartonsPage').then(module => ({ default: module.CartonsPage })));
 const OrderWorkView = lazy(() => import('./components/OrderWorkView').then(module => ({ default: module.OrderWorkView })));
 const WarehouseRelease = lazy(() => import('./components/WarehouseRelease'));
 const ImportBatchView = lazy(() => import('./components/ImportBatchView').then(module => ({ default: module.ImportBatchView })));
@@ -145,6 +146,7 @@ function App() {
                             <Route path="/tasks" element={<TasksEntry key={`${user?.id}:${user?.role}`} user={user} token={token} />} />
                             <Route path="/team" element={<TeamBoard user={user} />} />
                             <Route path="/team/:postId" element={<TeamPostView user={user} />} />
+                            <Route path="/cartons" element={['admin', 'superadmin', 'dispatcher', 'picker', 'packer'].includes(user?.role) ? <CartonsPage key={`${user?.id}:${user?.role}`} user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/order/:orderId" element={<OrderWorkView user={user} />} />
                             <Route path="/warehouse-intakes" element={<WarehouseRelease user={user} token={token} />} />
                             <Route path="/warehouse-intakes/:intakeId" element={<WarehouseRelease user={user} token={token} />} />
