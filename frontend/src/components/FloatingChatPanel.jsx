@@ -1,6 +1,7 @@
 // FloatingChatPanel.jsx - 類似 iMessage 的現代化浮動討論面板
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { getPortalTarget, getWorkspaceRoot } from '../workspace/nativeRuntime.js';
 import { X, Minus, Maximize2, Minimize2, Send, Smile, AlertTriangle, MessageSquare, Paperclip, Image as ImageIcon, Mic } from 'lucide-react';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket';
@@ -17,7 +18,7 @@ const PANEL_GAP = 24;
 
 const getContentRightEdge = () => {
     if (typeof window === 'undefined') return null;
-    const contentEl = document.querySelector('[data-layout-content]');
+    const contentEl = getWorkspaceRoot()?.querySelector('[data-layout-content]');
     if (!contentEl) return null;
     const rect = contentEl.getBoundingClientRect();
     return rect.right;
@@ -45,11 +46,6 @@ const clampToBounds = (value, { min, max }) => {
     if (Number.isNaN(value)) return min;
     if (min === max) return min;
     return Math.min(Math.max(value, min), max);
-};
-
-const getPortalTarget = () => {
-    if (typeof document === 'undefined') return null;
-    return document.body;
 };
 
 const getDefaultPosition = (index, alignToContent) => {

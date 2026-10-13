@@ -1,3 +1,5 @@
+import { getNativeRuntime, isNativeSessionCurrent } from '../workspace/nativeRuntime.js';
+import { saveBlobDownload } from '../workspace/downloads.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -128,12 +130,14 @@ export function TeamPostView({ user }) {
 
   const previewAttachment = async (att) => {
     if (!id || !att?.id) return;
+    const runtime = getNativeRuntime();
     setDownloadingId(att.id);
     try {
       const res = await apiClient.get(
         `/api/team/posts/${id}/attachments/${att.id}/download?inline=1`,
         { responseType: 'blob' }
       );
+      if (!isNativeSessionCurrent(runtime)) return;
       const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
       const url = window.URL.createObjectURL(blob);
       window.open(url, '_blank', 'noopener,noreferrer');
@@ -148,13 +152,16 @@ export function TeamPostView({ user }) {
 
   const downloadAttachment = async (att) => {
     if (!id || !att?.id) return;
+    const runtime = getNativeRuntime();
     setDownloadingId(att.id);
     try {
       const res = await apiClient.get(
         `/api/team/posts/${id}/attachments/${att.id}/download`,
         { responseType: 'blob' }
       );
+      if (!isNativeSessionCurrent(runtime)) return;
       const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
+      if (runtime) { saveBlobDownload(blob, att.original_name || `attachment-${att.id}`, { runtime }); return; }
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

@@ -4,6 +4,8 @@ import { ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Loader2, UploadClou
 import { Button, PageHeader } from '../../ui';
 import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
+import { getNativeRuntime, handleWorkspaceAnchor } from '../../workspace/nativeRuntime.js';
+import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
 import { batchSessionMatches } from '../../utils/importBatches';
 import { formatMinor, ECOUNT_GROUPED_MODE } from '../../utils/marketplaceIntake.mjs';
@@ -322,10 +324,14 @@ function ConverterPage({ user }) {
           return;
         }
         setSaved(response.data);
-        const link = await apiClient.post(`/api/marketplace-intakes/${response.data.id}/download-link`, { kind: 'ecount' }, { withCredentials: true });
-        if (!mounted.current || !currentSession()) return;
-        const anchor = document.createElement('a'); anchor.href = `${API_ORIGIN}${link.data.url}`; anchor.download = '';
-        document.body.appendChild(anchor); anchor.click(); anchor.remove();
+        if (getNativeRuntime()) {
+          if (!await downloadNativeMarketplaceFile({ id: response.data.id, kind: 'ecount' }, { isCurrent: () => mounted.current && currentSession() })) return;
+        } else {
+          const link = await apiClient.post(`/api/marketplace-intakes/${response.data.id}/download-link`, { kind: 'ecount' }, { withCredentials: true });
+          if (!mounted.current || !currentSession()) return;
+          const anchor = document.createElement('a'); anchor.href = `${API_ORIGIN}${link.data.url}`; anchor.download = '';
+          document.body.appendChild(anchor); anchor.click(); anchor.remove();
+        }
         if (!await loadRecords()) return;
         showMessage('已保存・待 ECOUNT 匯入');
         // Reuse validated customer/warehouse settings on the next file. Profile
@@ -360,7 +366,7 @@ function ConverterPage({ user }) {
   const needsStore = !settings.store || !settings.customerCode;
   return <main className="mx-auto max-w-7xl space-y-5 pb-8 text-slate-900" data-testid="marketplace-converter">
     <Link to="/admin" className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16} />返回出貨管理</Link>
-    <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title="商城訂單轉檔" /><a href="#saved-batches" className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title="商城訂單轉檔" /><a href="#saved-batches" onClick={event => handleWorkspaceAnchor(event, 'saved-batches')} className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a></div>
     {message && <div role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}><p>{message}</p>{existingOrderLink && <Button as={Link} to={existingOrderLink} variant="secondary" className="mt-3" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>查看原訂單</Button>}</div>}
     <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300'}`} onDragOver={event => { event.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); selectFiles(Array.from(event.dataTransfer.files || [])); }} aria-label="商城訂單檔案區">
       <div className="flex flex-col items-center py-3 text-center"><UploadCloud size={32} className="mb-3 text-blue-600" /><h2 className="text-lg font-semibold">{dragging ? '放開檔案，開始核對' : '拖曳商城訂單到這裡'}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p>

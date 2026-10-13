@@ -1,3 +1,5 @@
+import * as nativeRuntime from '../src/workspace/nativeRuntime.js';
+import * as nativeDownloads from '../src/workspace/downloads.js';
 import * as managementScope from '../src/utils/managementScope.js';
 import * as orderChangePresentation from '../src/utils/orderChangePresentation.js';
 import test from 'node:test';
@@ -66,6 +68,8 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
         off: (name, callback) => { offCalls.push([name, callback]); }
     };
     const imports = {
+        '../workspace/nativeRuntime.js': nativeRuntime,
+        '../workspace/downloads.js': nativeDownloads,
         '@/utils/managementScope': managementScope,
         '@/utils/orderChangePresentation': orderChangePresentation,
         react,

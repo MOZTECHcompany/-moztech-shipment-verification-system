@@ -1,3 +1,4 @@
+import * as workspacePrinting from '../src/workspace/printing.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -14,6 +15,7 @@ const {code}=await transform(source,{loader:'jsx',format:'cjs'}),module={exports
 vm.runInNewContext(code,{module,exports:module.exports,require:name=>{
  if(name==='../../utils/marketplaceIntake.mjs')return intake;
  if(name==='../../ui')return {Button:({children})=>React.createElement('button',null,children)};
+ if(name==='../../workspace/printing.js')return workspacePrinting;
  if(name==='react-to-print')return {useReactToPrint:()=>()=>{}};
  return require(name);
 }});

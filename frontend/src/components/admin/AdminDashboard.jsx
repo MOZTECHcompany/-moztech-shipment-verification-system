@@ -9,6 +9,8 @@ import { AlertTriangle, ArrowRight, CheckCircle2, Database, FileDown, FileSpread
 import { PageHeader, Button } from '../../ui';
 import { readImportResult } from '../../utils/workOrders';
 import { BatchPrintLabels } from '../LabelPrinter';
+import { getNativeRuntime, getWorkspaceLocation, isNativeSessionCurrent } from '../../workspace/nativeRuntime.js';
+import { saveBlobDownload } from '../../workspace/downloads.js';
 
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 const idleImport = { phase: 'idle' };
@@ -35,7 +37,7 @@ function saveRecovery(key, value) {
 
 export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
     const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
-    const requestedIntakeId = batchId ? String(batchId) : typeof window !== 'undefined' && window.location?.search ? new URLSearchParams(window.location.search).get('intakeId') : '';
+    const requestedIntakeId = batchId ? String(batchId) : new URLSearchParams(getWorkspaceLocation().search).get('intakeId');
     const intakeId = /^[1-9]\d{0,9}$/.test(requestedIntakeId || '') ? requestedIntakeId : '';
     const recoveryKey = `wms_import_recovery:${user?.id ?? 'current'}`;
     const [dateRange, setDateRange] = useState([null, null]);
@@ -140,22 +142,28 @@ export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
     };
 
     const handleExportAdminReport = async () => {
-        if (exportInFlight.current) return;
+        if (exportInFlight.current || !mounted.current) return;
         if (!startDate || !endDate) { toast.error('請選擇完整的日期範圍'); return; }
         exportInFlight.current = true;
         setExporting(true);
         const from = format(startDate, 'yyyy-MM-dd');
         const to = format(endDate, 'yyyy-MM-dd');
+        const runtime = getNativeRuntime();
         try {
             const response = await apiClient.get('/api/reports/export', { params: { startDate: from, endDate: to }, responseType: 'blob', timeout: 130000 });
-            const url = window.URL.createObjectURL(new Blob([response.data]));
-            const link = document.createElement('a');
-            try {
-                link.href = url;
-                link.download = `營運報告_${from}_至_${to}.csv`;
-                document.body.appendChild(link);
-                link.click();
-            } finally { link.remove(); window.URL.revokeObjectURL(url); }
+            if (!mounted.current || !isNativeSessionCurrent(runtime)) return;
+            if (runtime) {
+                if (!saveBlobDownload(response.data, `營運報告_${from}_至_${to}.csv`, { runtime, isCurrent: () => mounted.current })) return;
+            } else {
+                const url = window.URL.createObjectURL(new Blob([response.data]));
+                const link = document.createElement('a');
+                try {
+                    link.href = url;
+                    link.download = `營運報告_${from}_至_${to}.csv`;
+                    document.body.appendChild(link);
+                    link.click();
+                } finally { link.remove(); window.URL.revokeObjectURL(url); }
+            }
             if (mounted.current) toast.success('營運報告已下載');
         } catch (error) {
             let message = '報告產生失敗，請確認連線與權限後重試。';

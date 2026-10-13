@@ -4,6 +4,13 @@ const {validateIdentity}=require('../services/erpSession');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {logOperation}=require('../services/operationLogService');
 const actor={role:'viewer',erpSubject:'staff',permissions:['wms_tasks:read','wms_logs:read']};
+test('ERP viewer may introspect its own verified identity without any broader auth or workflow access',()=>{
+ const res={status:jest.fn().mockReturnThis(),json:jest.fn()},next=jest.fn();
+ portalScope({user:actor,method:'GET',originalUrl:'/api/auth/me'},res,next);expect(next).toHaveBeenCalledTimes(1);
+ for(const [method,path] of [['POST','/api/auth/me'],['GET','/api/auth/me/other'],['GET','/api/admin/users'],['POST','/api/orders/1/claim']]){
+  next.mockClear();portalScope({user:actor,method,originalUrl:path},res,next);expect(next).not.toHaveBeenCalled();expect(res.status).toHaveBeenLastCalledWith(403);
+ }
+});
 test('report scope permits only its exact GET paths, never mutations or adjacent admin APIs',()=>{
  for(const path of ['/api/operation-logs','/api/operation-logs/stats?startDate=2026-09-01']) expect(allowsPortalRead({user:actor,method:'GET',originalUrl:path})).toBe(true);
  for(const [method,path] of [['POST','/api/operation-logs'],['GET','/api/admin/users'],['GET','/api/analytics'],['GET','/api/operation-logs/../admin/users']]) expect(allowsPortalRead({user:actor,method,originalUrl:path})).toBe(false);

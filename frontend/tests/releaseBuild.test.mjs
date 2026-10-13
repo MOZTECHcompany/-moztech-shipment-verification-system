@@ -46,7 +46,9 @@ test('release packaging defaults to production and explicit dev changes only fro
     assert.equal(production.build.images[0], dev.build.images[0]);
     assert.notEqual(production.build.images[1], dev.build.images[1]);
     assert.match(dev.build.images[1], /corely-wms-frontend:dev-/);
-    assert.doesNotMatch(JSON.stringify(production.build), /--build-arg|VITE_DEPLOY_ENV/);
+    assert.doesNotMatch(JSON.stringify(production.build), /VITE_DEPLOY_ENV/);
+    assert.ok(production.build.steps[1].args.includes(`VITE_SOURCE_COMMIT=${production.manifest.commit}`));
+    assert.ok(dev.build.steps[1].args.includes(`VITE_SOURCE_COMMIT=${dev.manifest.commit}`));
     assert.deepEqual(dev.build.steps[1].args.slice(3, 5), ['--build-arg', 'VITE_DEPLOY_ENV=dev']);
     assert.doesNotMatch(JSON.stringify(dev.build), /NODE_ENV|--mode|development/);
     assert.deepEqual(dev.manifest.files.map(file => file.path), ['backend/Dockerfile', 'frontend/Dockerfile.cloudrun', 'frontend/src/App.jsx']);

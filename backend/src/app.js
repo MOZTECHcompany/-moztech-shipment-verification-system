@@ -52,10 +52,11 @@ if (process.env.NODE_ENV !== 'test' && !process.env.JWT_SECRET) {
 // =================================================================
 // CORS 配置
 // =================================================================
-const { getAllowedOrigins } = require('./config/runtime');
+const { getAllowedOrigins, getSocketAllowedOrigins } = require('./config/runtime');
 const { pool } = require('./config/database');
 const { assertSchemaReady } = require('./config/schemaReadiness');
 const allowlist = getAllowedOrigins(process.env);
+const socketAllowlist = getSocketAllowedOrigins(process.env, allowlist);
 
 const corsOptions = {
     origin: function (origin, callback) {
@@ -86,10 +87,11 @@ const corsOptions = {
 // =================================================================
 const io = new Server(server, {
     cors: {
-        origin: corsOptions.origin,
+        origin: (origin, callback) => callback(null, !origin || socketAllowlist.includes(origin)),
         methods: corsOptions.methods,
         credentials: corsOptions.credentials
     },
+    allowRequest: (req, callback) => callback(null, !req.headers.origin || socketAllowlist.includes(req.headers.origin)),
     pingTimeout: 60000,
     pingInterval: 25000,
     transports: ['websocket', 'polling']

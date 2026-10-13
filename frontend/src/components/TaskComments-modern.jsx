@@ -1,3 +1,4 @@
+import { getEventTarget } from '../workspace/nativeRuntime.js';
 // frontend/src/components/TaskComments-modern.jsx
 // 任務評論系統 - 現代化重構版 (iMessage/LINE 風格)
 
@@ -21,7 +22,7 @@ import { CommentsLoadState } from './CommentsLoadState';
 import desktopNotification from '@/utils/desktopNotification';
 import soundNotification from '@/utils/soundNotification';
 import { Button, Skeleton } from '@/ui';
-import Swal from 'sweetalert2';
+import Swal from '@/workspace/nativeSwal';
 import withReactContent from 'sweetalert2-react-content';
 
 const MySwal = withReactContent(Swal);
@@ -209,7 +210,7 @@ export default function TaskComments({ orderId, currentUser, allUsers, mode = 'e
     // 點擊外部關閉選單
     useEffect(() => {
         const handleClickOutside = (event) => {
-            if (activeMessageId && !event.target.closest('.action-menu-container')) {
+            if (activeMessageId && !getEventTarget(event)?.closest('.action-menu-container')) {
                 setActiveMessageId(null);
             }
         };

@@ -1,3 +1,4 @@
+import { assetUrl, handleWorkspaceAnchor } from '../workspace/nativeRuntime.js';
 import {managementRoleLabel} from '@/utils/managementScope';
 import OrderReviewAlerts from '@/components/OrderReviewAlerts';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
@@ -57,10 +58,10 @@ export function AppLayout({ user, onLogout, children }) {
   const section = inSettings ? '設定' : location.pathname.startsWith('/order/') ? '出貨核對' : links.find(link => location.pathname.startsWith(link.to))?.label || '工作台';
   return (
     <div className={`wms-workspace corely-shell ${collapsed ? 'corely-shell--collapsed' : ''} ${resizing ? 'corely-shell--resizing' : ''}`} style={{ '--sidebar-width': `${sidebarWidth}px` }}>
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-white focus:p-3">跳到主要內容</a>
+      <a href="#main-content" onClick={event => handleWorkspaceAnchor(event, 'main-content', { focus: true })} className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-white focus:p-3">跳到主要內容</a>
       <aside className="corely-sidebar">
         <Link to="/tasks" className="corely-brand" aria-label="Corely AI 儲運管理系統，返回工作台">
-          <img src="/branding/corely-app.png" alt="" width="36" height="36" />
+          <img src={assetUrl('/branding/corely-app.png')} alt="" width="36" height="36" />
           <span className="corely-sidebar-label"><strong>Corely AI</strong><span>儲運管理系統</span></span>
         </Link>
         <nav id="workspace-nav" aria-label="主要導覽" className="corely-nav">

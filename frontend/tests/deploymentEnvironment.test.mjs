@@ -1,3 +1,4 @@
+import * as nativeRuntime from '../src/workspace/nativeRuntime.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -35,7 +36,7 @@ async function component(path, overrides, flag) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8');
     const { code } = await transform(source, { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': flag === undefined ? 'undefined' : JSON.stringify(flag) } });
     const module = { exports: {} };
-    vm.runInNewContext(code, { module, exports: module.exports, URLSearchParams, require: name => overrides[name] || require(name), localStorage: { getItem: () => null }, navigator: { onLine: true } });
+    vm.runInNewContext(code, { module, exports: module.exports, URLSearchParams, require: name => name === '../workspace/nativeRuntime.js' ? nativeRuntime : overrides[name] || require(name), localStorage: { getItem: () => null }, navigator: { onLine: true } });
     return module.exports;
 }
 const Link = ({ to, children, className, end: _end, ...props }) => React.createElement('a', { ...props, href: to, className: typeof className === 'function' ? className({ isActive: false }) : className }, children);

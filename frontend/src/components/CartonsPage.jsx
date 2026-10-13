@@ -1,3 +1,4 @@
+import { getWorkspaceRoot } from '../workspace/nativeRuntime.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeWriter, BarcodeFormat } from '@zxing/library';
 import { Box, Plus, Printer, Upload } from 'lucide-react';
@@ -76,7 +77,7 @@ export function CartonsPage({ user }) {
         ensureCurrent(); const { data } = await api.post(`/api/cartons/${encodeURIComponent(detail.cartonId)}/seal`, { expectedContentRevision: detail.contentRevision, expectedActorId: user.id }); ensureCurrent(); setDetail(data.carton || data); toast.success('已確認箱內內容');
     });
     const print = () => {
-        const markup = document.querySelector('[data-carton-label]')?.outerHTML;
+        const markup = getWorkspaceRoot()?.querySelector('[data-carton-label]')?.outerHTML;
         const win = markup && window.open('', '_blank');
         if (!win) { toast.error('請允許列印視窗'); return; }
         win.document.open(); win.document.write(`<html><head><title>箱號貼紙</title><style>@page{size:60mm 75mm;margin:0}body{margin:0;font-family:sans-serif} [data-carton-label]{width:54mm;padding:3mm;border:0;font-size:12px;overflow-wrap:anywhere}svg{display:block;margin:2mm auto}</style></head><body>${markup}</body></html>`); win.document.close(); win.focus(); win.print();

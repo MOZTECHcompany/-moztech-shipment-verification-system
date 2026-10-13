@@ -1,3 +1,4 @@
+import { reloadWorkspace } from '../workspace/nativeRuntime.js';
 // frontend/src/components/CameraScanner.jsx
 // 相機條碼掃描組件 - Apple 風格現代化版本
 
@@ -172,7 +173,7 @@ export function CameraScanner({ onScan, onClose, mode = 'single' }) {
                         </div>
                         <h3 className="text-white font-bold text-xl mb-2">無法啟動相機</h3>
                         <p className="text-white/60 mb-6">{error}</p>
-                        <Button onClick={() => window.location.reload()} variant="secondary">
+                        <Button onClick={() => reloadWorkspace()} variant="secondary">
                             重新整理頁面
                         </Button>
                     </div>

@@ -1,3 +1,4 @@
+import { getEventTarget, getWorkspaceRoot } from '../workspace/nativeRuntime.js';
 // frontend/src/components/TaskComments.jsx
 // 任務評論系統 - 優化版（優先級、置頂、搜尋、未讀提示）
 
@@ -186,7 +187,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
     useEffect(() => {
         // 點擊外部關閉提及列表
         const handleClickOutside = (event) => {
-            if (mentionsRef.current && !mentionsRef.current.contains(event.target)) {
+            if (mentionsRef.current && !mentionsRef.current.contains(getEventTarget(event))) {
                 setShowMentions(false);
             }
         };
@@ -399,7 +400,7 @@ export function TaskComments({ orderId, currentUser, allUsers }) {
 
     const jumpToCommentId = (commentId) => {
         // 嘗試捲到 pinned
-        const pinnedEl = document.getElementById(`comment-${commentId}`);
+        const pinnedEl = getWorkspaceRoot()?.getElementById(`comment-${commentId}`);
         if (pinnedEl) {
             pinnedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return;

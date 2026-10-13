@@ -1,3 +1,4 @@
+import { assetUrl } from '../workspace/nativeRuntime.js';
 import React, { useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Box, CheckCheck, Eye, EyeOff, Loader2, LockKeyhole, ScanLine, UserRound } from 'lucide-react';
@@ -51,7 +52,7 @@ export function LoginPage({ onLogin }) {
     <main className="corely-login">
       <div className="corely-login__shell">
         <header className="corely-login__header">
-          <img className="corely-login__wordmark" src="/branding/corely-wordmark.png" alt="Corely AI" width="2172" height="724" />
+          <img className="corely-login__wordmark" src={assetUrl('/branding/corely-wordmark.png')} alt="Corely AI" width="2172" height="724" />
           <span className="corely-login__company">Corely AI <span aria-hidden="true">/</span> WAREHOUSE OPERATIONS</span>
         </header>
 
@@ -64,7 +65,7 @@ export function LoginPage({ onLogin }) {
             <div className="corely-login__visual" aria-hidden="true">
               <div className="corely-login__orbit corely-login__orbit--outer" />
               <div className="corely-login__orbit corely-login__orbit--inner" />
-              <img className="corely-login__symbol" src="/branding/corely-symbol.png" alt="" width="1254" height="1254" />
+              <img className="corely-login__symbol" src={assetUrl('/branding/corely-symbol.png')} alt="" width="1254" height="1254" />
               <div className="corely-login__visual-label"><ScanLine size={16} /> 每一次核對，都有跡可循</div>
             </div>
 

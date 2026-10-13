@@ -1,8 +1,8 @@
 // frontend/src/App.jsx
 
 import { isWarehouseAdmin } from './utils/managementScope';
-import { lazy, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { BrowserRouter, MemoryRouter, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
 import apiClient from './api/api';
 import { socket, setSocketSession } from './api/socket';
@@ -30,15 +30,44 @@ const TeamPostView = lazy(() => import('./components/TeamPostView').then(module 
 import { loginEntryUrl } from './utils/entryDestination';
 import { useWarehouseSession } from './hooks/useWarehouseSession';
 import { AppLayout } from '@/ui';
+import OrderReviewAlerts from './components/OrderReviewAlerts';
+import ErrorBoundary from './components/ErrorBoundary';
+import { EnvironmentBanner } from './components/EnvironmentBanner';
 
 // AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
 
-function ProtectedRoute({ user, token }) {
+function ProtectedRoute({ user, token, host }) {
     const location = useLocation();
     if (!user || !token) {
-        return <Navigate to={loginEntryUrl(location.pathname + location.search)} replace />;
+        return host ? <p role="alert">作業身分已失效，請從營運系統重新選擇工作身分。</p> : <Navigate to={loginEntryUrl(location.pathname + location.search)} replace />;
     }
     return <Outlet />;
+}
+
+function WorkspaceNavigation({ host }) {
+    const location = useLocation();
+    const navigate = useNavigate();
+    const navigationType = useNavigationType();
+    const path = location.pathname + location.search + location.hash;
+    useEffect(() => host.registerNavigate(navigate), [host, navigate]);
+    useEffect(() => { host.onNavigate?.(path, { replace: navigationType !== 'PUSH' }); }, [host, path, navigationType]);
+    return null;
+}
+
+function NativeLayout({ user }) {
+    const location = useLocation();
+    const [offline, setOffline] = useState(() => navigator.onLine === false);
+    useEffect(() => {
+        const online = () => setOffline(false), offline = () => setOffline(true);
+        window.addEventListener('online', online); window.addEventListener('offline', offline);
+        return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline); };
+    }, []);
+    return <div className="wms-workspace wms-native-workspace">
+        <EnvironmentBanner />
+        <OrderReviewAlerts key={user?.id} user={user} />
+        {offline && <p role="status" className="mb-4 rounded-lg bg-amber-50 p-3 text-amber-900">網路已離線。請恢復連線並核對操作結果後，再繼續掃碼。</p>}
+        <ErrorBoundary key={location.pathname}><Suspense fallback={<p role="status">正在開啟作業畫面…</p>}><Outlet /></Suspense></ErrorBoundary>
+    </div>;
 }
 
 function TasksEntry({ user, token }) {
@@ -46,10 +75,10 @@ function TasksEntry({ user, token }) {
     return <TaskDashboard key={`${user?.id}:${user?.role}:${location.search}`} user={user} token={token} />;
 }
 
-function App() {
+function App({ host } = {}) {
     // A handoff tab may contain a superseded station token from another tab.
     // Do not start its socket while the new ERP ticket is being exchanged.
-    const [handoffPending, setHandoffPending] = useState(() => window.location.pathname === '/erp-entry');
+    const [handoffPending, setHandoffPending] = useState(() => !host && window.location.pathname === '/erp-entry');
     const [user, setUser] = useWarehouseSession('wms_user', null);
     const [token, setToken] = useWarehouseSession('wms_token', null);
 
@@ -57,7 +86,9 @@ function App() {
     useEffect(() => {
         if (!token) return;
         let alive=true;
-        apiClient.get('/api/auth/me',{headers:{Authorization:`Bearer ${token}`}}).then(({data})=>{if(alive)setUser(data.user);}).catch(()=>{});
+        apiClient.get('/api/auth/me',{headers:{Authorization:`Bearer ${token}`}}).then(({data})=>{if(alive)setUser(data.user);}).catch(error=>{
+            if (alive && host && [401,403].includes(error.response?.status)) host.onAuthRequired?.(error.response?.data || {});
+        });
         return()=>{alive=false;};
     },[token,setUser]);
 
@@ -80,6 +111,7 @@ function App() {
             setSocketSession(null);
             setUser(null);
             setToken(null);
+            if (host) { host.onAuthRequired?.(reason); return; }
             if (user?.erpSubject && user?.erpOrigin) { window.location.assign(user.erpOrigin + '/warehouse'); return; }
             toast.error(reason.code === 'SOCKET_AUTH_UNAVAILABLE' ? '即時連線驗證暫時無法完成，請稍後重新登入' : '登入已失效，請重新登入');
         };
@@ -92,7 +124,7 @@ function App() {
             socket.off('session_expired', requireLogin);
             socket.off('connect_error', onConnectError);
         };
-    }, [setToken, setUser, handoffPending, user?.erpOrigin, user?.erpSubject]);
+    }, [setToken, setUser, handoffPending, user?.erpOrigin, user?.erpSubject, host]);
 
     const handleLogin = (data) => {
         // Make the new identity available before child effects start loading tasks.
@@ -114,25 +146,28 @@ function App() {
         setSocketSession(null);
         setUser(null);
         setToken(null);
-        if (user?.erpSubject && user?.erpOrigin) window.location.assign(user.erpOrigin + '/warehouse');
+        if (host) host.onAuthRequired?.({ code: 'WORKSPACE_CLOSED' });
+        else if (user?.erpSubject && user?.erpOrigin) window.location.assign(user.erpOrigin + '/warehouse');
     };
     
     const canRead = permission => ['admin','superadmin'].includes(user?.role) || (user?.erpSubject && user.permissions?.includes(permission));
     const getHomeRoute = () => {
-        if (!user || !token) return "/login";
+        if (!user || !token) return host ? "/tasks" : "/login";
         return "/tasks";
     };
 
+    const Router = host ? MemoryRouter : BrowserRouter;
     return (
         <>
             <Toaster richColors position="top-right" />
-            <BrowserRouter>
+            <Router {...(host ? { initialEntries: [host.initialPath || '/tasks'] } : {})}>
+                {host && <WorkspaceNavigation host={host} />}
                 <Routes>
-                    <Route path="/erp-entry" element={<ErpEntry onLogin={handleLogin} />} />
-                    <Route path="/login" element={<PortalLogin onLogin={handleLogin} />} />
+                    {!host && <Route path="/erp-entry" element={<ErpEntry onLogin={handleLogin} />} />}
+                    {!host && <Route path="/login" element={<PortalLogin onLogin={handleLogin} />} />}
                     
-                    <Route element={<ProtectedRoute user={user} token={token} />}>
-                        <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
+                    <Route element={<ProtectedRoute user={user} token={token} host={host} />}>
+                        <Route element={host ? <NativeLayout user={user} /> : <AppLayout user={user} onLogout={handleLogout} />}>
                             <Route path="/settings/logistics" element={['admin','superadmin'].includes(user?.role) ? <LogisticsSettings /> : <Navigate to="/tasks" />} />
                             <Route path="/settings" element={<SettingsPage user={user} />} />
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
@@ -156,7 +191,7 @@ function App() {
 
                     <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
                 </Routes>
-            </BrowserRouter>
+            </Router>
         </>
     );
 }

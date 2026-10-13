@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from './Button';
 import { cx } from './utils';
+import { getPortalTarget } from '../workspace/nativeRuntime.js';
 
 export function Modal({ open, onClose, title, children, footer, className }) {
   if (!open) return null;
@@ -35,7 +36,7 @@ export function Modal({ open, onClose, title, children, footer, className }) {
   );
 
   if (typeof document === 'undefined') return node;
-  return createPortal(node, document.body);
+  return createPortal(node, getPortalTarget());
 }
 
 export default Modal;

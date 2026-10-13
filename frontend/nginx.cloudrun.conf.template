@@ -33,6 +33,20 @@ server {
     location /assets/ {
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header Access-Control-Allow-Origin "*";
+    }
+    location = /workspace-manifest.json {
+        try_files $uri =404;
+        add_header Cache-Control "no-store";
+        add_header Access-Control-Allow-Origin "*";
+    }
+    location /sounds/ {
+        try_files $uri =404;
+        add_header Access-Control-Allow-Origin "*";
+    }
+    location /branding/ {
+        try_files $uri =404;
+        add_header Access-Control-Allow-Origin "*";
     }
     location = /index.html { add_header Cache-Control "no-store"; }
     location / { try_files $uri $uri/ /index.html; }

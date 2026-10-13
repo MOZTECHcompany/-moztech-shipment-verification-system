@@ -11,7 +11,7 @@ import {
     Volume2, VolumeX, ArrowRight, Clock, CheckCircle2, CheckSquare, 
     Square, Trash, HandMetal, BarChart3
 } from 'lucide-react';
-import Swal from 'sweetalert2';
+import Swal from '@/workspace/nativeSwal';
 import withReactContent from 'sweetalert2-react-content';
 import { soundNotification } from '@/utils/soundNotification.js';
 

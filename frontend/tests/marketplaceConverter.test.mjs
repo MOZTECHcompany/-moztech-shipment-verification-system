@@ -1,3 +1,5 @@
+import * as nativeRuntime from '../src/workspace/nativeRuntime.js';
+import * as nativeDownloads from '../src/workspace/downloads.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -97,7 +99,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         const built=latestPrepared?.parsed.orders.length ? latestPrepared : unified.buildUnifiedConversion(body.rows,body.settings);
         return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}};
     } };
-    const imports = { '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate', useSearchParams: () => [query, update => { query = typeof update === 'function' ? update(new URLSearchParams(query)) : new URLSearchParams(update); dirty = true; }] }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
+    const imports = { '../../workspace/nativeRuntime.js': nativeRuntime, '../../workspace/downloads.js': nativeDownloads, '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate', useSearchParams: () => [query, update => { query = typeof update === 'function' ? update(new URLSearchParams(query)) : new URLSearchParams(update); dirty = true; }] }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager' };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -135,6 +137,29 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
 
 const previewCalls = view => view.requests.filter(request => request.url === '/api/marketplace-intakes/preview');
 const downloadSales = view => view.button('下載銷貨檔');
+
+test('native converter keeps the original saved source rows and delegates the saved file without an authenticated href', async () => {
+    const oldWindow = globalThis.window, oldDocument = globalThis.document;
+    const calls = [], clicked = [];
+    globalThis.window = { URL: { createObjectURL: () => 'blob:converter-file', revokeObjectURL() {} } };
+    globalThis.document = { createElement: () => ({ click() { clicked.push(this.href); }, remove() {} }) };
+    const dispose = nativeRuntime.installNativeRuntime({ portalTarget: { appendChild() {} }, download: async args => { calls.push(args); return { data: new Blob(['original-file']), headers: { 'content-disposition': 'attachment; filename="original.xlsx"' } }; } });
+    try {
+        const view = await converter(); await view.select(file());
+        await downloadSales(view).props.onClick(); view.render();
+        assert.deepEqual(calls, [{ id: 1, kind: 'ecount' }]);
+        assert.deepEqual(clicked, ['blob:converter-file']);
+        assert.equal(view.requests.filter(request => request.url.endsWith('/download-link')).length, 0);
+        const saved = view.requests.find(request => request.url === '/api/marketplace-intakes');
+        assert.equal(saved.body.rows[1][2], '00123');
+        assert.equal(saved.body.rows[2][2], '00124');
+        assert.equal(view.downloads.length, 0);
+    } finally {
+        dispose();
+        if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
+        if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument;
+    }
+});
 
 test('converter route guard preserves authorized roles across deployment environments', async () => {
     for (const flag of ['production', '']) for (const role of ['admin', 'superadmin', 'dispatcher']) assert.equal((await converter({ flag, role })).render().type, 'main');

@@ -1,3 +1,5 @@
+import { getWorkspaceRoot, isWorkspaceFocusIdle, reloadWorkspace, getNativeRuntime, isNativeSessionCurrent } from '../workspace/nativeRuntime.js';
+import { saveBlobDownload } from '../workspace/downloads.js';
 import {isOrderManager,isWarehouseAdmin} from '@/utils/managementScope';
 import {isDeletionRequest,changeQuantityRange} from '@/utils/orderChangePresentation';
 // frontend/src/components/OrderWorkView.jsx
@@ -13,7 +15,7 @@ import {
     Maximize2, Minimize2, CheckCircle2, Pencil
 } from 'lucide-react';
 import { PageHeader, Button, Card, CardContent, CardHeader, CardTitle, CardDescription, EmptyState, SkeletonText, Badge, Modal } from '@/ui';
-import Swal from 'sweetalert2';
+import Swal from '@/workspace/nativeSwal';
 import withReactContent from 'sweetalert2-react-content';
 import apiClient from '@/api/api';
 import { socket } from '@/api/socket';
@@ -399,7 +401,7 @@ function AuthenticatedOrderWorkView({ user }) {
     // Only the initial order arrival may focus the scanner. Background refreshes must
     // not pull the caret out of a comment, exception form, search field or dialog.
     useEffect(() => {
-        if (currentOrderData.order?.id && document.activeElement === document.body) barcodeInputRef.current?.focus();
+        if (currentOrderData.order?.id && isWorkspaceFocusIdle()) barcodeInputRef.current?.focus();
     }, [currentOrderData.order?.id]);
 
     const fetchOrderDetails = useCallback(async (id) => {
@@ -456,12 +458,15 @@ function AuthenticatedOrderWorkView({ user }) {
 
     const downloadExceptionAttachment = useCallback(async (exceptionId, attachment) => {
         if (!orderId || !exceptionId || !attachment?.id) return;
+        const runtime = getNativeRuntime();
         try {
             const res = await apiClient.get(
                 `/api/orders/${orderId}/exceptions/${exceptionId}/attachments/${attachment.id}/download`,
                 { responseType: 'blob' }
             );
+            if (!isNativeSessionCurrent(runtime)) return;
             const blob = new Blob([res.data], { type: attachment.mime_type || 'application/octet-stream' });
+            if (runtime) { saveBlobDownload(blob, attachment.original_name || `attachment-${attachment.id}`, { runtime }); return; }
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -477,12 +482,14 @@ function AuthenticatedOrderWorkView({ user }) {
 
     const previewExceptionAttachment = useCallback(async (exceptionId, attachment) => {
         if (!orderId || !exceptionId || !attachment?.id) return;
+        const runtime = getNativeRuntime();
         setAttachmentPreviewLoading(true);
         try {
             const res = await apiClient.get(
                 `/api/orders/${orderId}/exceptions/${exceptionId}/attachments/${attachment.id}/download?inline=1`,
                 { responseType: 'blob' }
             );
+            if (!isNativeSessionCurrent(runtime)) return;
             const blob = new Blob([res.data], { type: attachment.mime_type || 'application/octet-stream' });
             const url = window.URL.createObjectURL(blob);
             setAttachmentPreviewUrl(url);
@@ -1354,8 +1361,8 @@ function AuthenticatedOrderWorkView({ user }) {
             confirmButtonText: '結案',
             cancelButtonText: '取消',
             preConfirm: () => {
-                const resolutionAction = document.getElementById('resolution-action')?.value;
-                const note = document.getElementById('resolution-note')?.value;
+                const resolutionAction = MySwal.getPopup()?.querySelector('#resolution-action')?.value;
+                const note = MySwal.getPopup()?.querySelector('#resolution-note')?.value;
                 if (!resolutionAction) {
                     MySwal.showValidationMessage('請選擇處置類型');
                     return null;
@@ -1814,7 +1821,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     onDiscussion={() => {
                         setIsFocusMode(false);
                         requestAnimationFrame(() => {
-                            const panel = document.getElementById('order-discussion');
+                            const panel = getWorkspaceRoot()?.getElementById('order-discussion');
                             panel?.scrollIntoView({ block: 'start' });
                             panel?.focus({ preventScroll: true });
                         });
@@ -1899,7 +1906,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                     )}
                                 </div>
                                 {scanNeedsReview && (
-                                    <button type="button" className="mb-3 text-sm underline text-amber-800" onClick={() => window.location.reload()}>
+                                    <button type="button" className="mb-3 text-sm underline text-amber-800" onClick={() => reloadWorkspace()}>
                                         重新載入訂單並核對掃描結果
                                     </button>
                                 )}

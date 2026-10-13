@@ -1,3 +1,5 @@
+import * as nativeRuntime from '../src/workspace/nativeRuntime.js';
+import * as nativeDownloads from '../src/workspace/downloads.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -52,7 +54,7 @@ async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,g
   patch:async()=>{throw Error('Recovery must not archive or restore');},
   delete:async()=>{throw Error('Recovery must not delete orders');},
  };
- const imports={react,'react-router-dom':{Link:'Link',useSearchParams:()=>[query,(update)=>{query=typeof update==='function'?update(new URLSearchParams(query)):new URLSearchParams(update);dirty=true;}]},'lucide-react':{},'../../ui':{Button:'Button'},'@/api/api.js':api,'../../utils/marketplaceIntake.mjs':intake,'../../api/origin':{API_ORIGIN:''},'./AdminDashboard':{AdminDashboard:'AdminDashboard'}};
+ const imports={'../../workspace/nativeRuntime.js':nativeRuntime,'../../workspace/downloads.js':nativeDownloads,react,'react-router-dom':{Link:'Link',useSearchParams:()=>[query,(update)=>{query=typeof update==='function'?update(new URLSearchParams(query)):new URLSearchParams(update);dirty=true;}]},'lucide-react':{},'../../ui':{Button:'Button'},'@/api/api.js':api,'../../utils/marketplaceIntake.mjs':intake,'../../api/origin':{API_ORIGIN:''},'./AdminDashboard':{AdminDashboard:'AdminDashboard'}};
  const module={exports:{}};
  vm.runInNewContext(code,{module,exports:module.exports,require:name=>{if(!(name in imports))throw Error(`Unexpected import ${name}`);return imports[name];},console,crypto:webcrypto,document:{createElement(){throw Error('Recovery must not download sales');}},Object});
  const expand=node=>{
@@ -72,6 +74,21 @@ async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,g
  return {render,text,find,all,order,button,requests,scrolls,records,flush,navigate(value){query=new URLSearchParams(value);render();},setSession(value){sessionValid=value;},setProps(value){props={...props,...value};render();},query:()=>query,unmount(){mounted=false;hooks.forEach(h=>h?.cleanup?.());},lateUpdates:()=>lateUpdates};
 }
 const posts=view=>view.requests.filter(request=>request.method==='post');
+
+test('native batch download has a retry button and retains no capability or JWT download URL', async () => {
+ const oldWindow=globalThis.window,oldDocument=globalThis.document,calls=[],clicked=[];
+ globalThis.window={URL:{createObjectURL:()=> 'blob:saved-batch',revokeObjectURL(){}}};
+ globalThis.document={createElement:()=>({click(){clicked.push(this.href);},remove(){}})};
+ const dispose=nativeRuntime.installNativeRuntime({portalTarget:{appendChild(){}},download:async args=>{calls.push(args);return {data:new Blob(['saved-original']),headers:{'content-disposition':'attachment; filename="saved.xlsx"'}};}});
+ try{
+  const view=await manager();const before=structuredClone(view.records.get(19));
+  await view.button('下載銷貨檔').props.onClick();view.render();
+  assert.deepEqual(calls,[{id:19,kind:'ecount-grouped'}]);assert.deepEqual(clicked,['blob:saved-batch']);assert.equal(posts(view).length,0);
+  const retry=view.all(node=>node.type==='button'&&view.text(node)==='下載彙總銷貨檔')[0];assert.ok(retry);assert.equal(retry.props.href,undefined);
+  assert.equal(view.all(node=>node.type==='a'&&node.props.download).length,0);
+  assert.deepEqual(view.records.get(19),before);
+ }finally{dispose();if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;if(oldDocument===undefined)delete globalThis.document;else globalThis.document=oldDocument;}
+});
 
 test('original order navigation focuses its saved details and shipping without opening the other order',async()=>{
  const view=await manager(),focused=view.order(),other=view.order('#SYN-OTHER');

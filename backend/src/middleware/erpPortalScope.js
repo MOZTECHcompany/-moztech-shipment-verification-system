@@ -13,6 +13,10 @@ function allowsPortalRead(req) {
   return readPaths.some(([pattern, permission]) => pattern.test(path) && req.user.permissions?.includes(permission));
 }
 function portalScope(req, res, next) {
+  // Identity introspection exposes only the already-authenticated caller. It
+  // does not grant viewer access to another user, a task, or any mutation.
+  const path = (req.originalUrl || req.url || '').split('?')[0];
+  if (req.user?.erpSubject && req.method === 'GET' && path === '/api/auth/me') return next();
   if (req.user?.role !== 'viewer' || allowsPortalRead(req) || (req.method === 'POST' && req.originalUrl === '/api/auth/erp/logout')) return next();
   return res.status(403).json({message:'沒有此儲運操作權限'});
 }

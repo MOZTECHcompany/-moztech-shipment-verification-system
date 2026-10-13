@@ -1,3 +1,5 @@
+import { getNativeRuntime, getWorkspaceLocation, isNativeSessionCurrent } from '../../workspace/nativeRuntime.js';
+import { saveBlobDownload } from '../../workspace/downloads.js';
 import {isDeletionRequest} from '@/utils/orderChangePresentation';
 import {isWarehouseAdmin} from '@/utils/managementScope';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -102,7 +104,7 @@ function renderSnBlock(label, snText) {
 export function Exceptions({user}) {
   const canReview=isWarehouseAdmin(user);
   const [tab, setTab] = useState('open');
-  const [filters, setFilters] = useState(() => ({ ...emptyFilters, type: new URLSearchParams(window.location.search).get('type') || '' }));
+  const [filters, setFilters] = useState(() => ({ ...emptyFilters, type: new URLSearchParams(getWorkspaceLocation().search).get('type') || '' }));
   const [draft, setDraft] = useState(filters);
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -267,12 +269,15 @@ export function Exceptions({user}) {
 
   const downloadAttachment = useCallback(async (row, att) => {
     if (!row?.order_id || !row?.id || !att?.id) return;
+    const runtime = getNativeRuntime();
     try {
       const res = await apiClient.get(
         `/api/orders/${row.order_id}/exceptions/${row.id}/attachments/${att.id}/download`,
         { responseType: 'blob' }
       );
+      if (!isNativeSessionCurrent(runtime)) return;
       const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
+      if (runtime) { saveBlobDownload(blob, att.original_name || `attachment-${att.id}`, { runtime }); return; }
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -288,11 +293,13 @@ export function Exceptions({user}) {
 
   const previewAttachment = useCallback(async (row, att) => {
     if (!row?.order_id || !row?.id || !att?.id) return;
+    const runtime = getNativeRuntime();
     try {
       const res = await apiClient.get(
         `/api/orders/${row.order_id}/exceptions/${row.id}/attachments/${att.id}/download?inline=1`,
         { responseType: 'blob' }
       );
+      if (!isNativeSessionCurrent(runtime)) return;
       const blob = new Blob([res.data], { type: att.mime_type || 'application/octet-stream' });
       const url = window.URL.createObjectURL(blob);
       setAttachmentPreviewUrl(url);

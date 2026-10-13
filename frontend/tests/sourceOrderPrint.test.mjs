@@ -1,3 +1,4 @@
+import * as workspacePrinting from '../src/workspace/printing.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -15,7 +16,7 @@ async function component(file, overrides = {}) {
     const source = await readFile(new URL(`../src/components/${file}.jsx`, import.meta.url), 'utf8');
     const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
     const module = { exports: {} };
-    vm.runInNewContext(code, { module, exports: module.exports, require: name => overrides[name] || require(name) });
+    vm.runInNewContext(code, { module, exports: module.exports, require: name => name === '../workspace/printing.js' ? workspacePrinting : overrides[name] || require(name) });
     return module.exports;
 }
 const barcodeComponents = await component('OrderBarcode', { '../utils/orderBarcode': orderBarcode });

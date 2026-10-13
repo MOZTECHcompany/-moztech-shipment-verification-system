@@ -3,6 +3,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useReactToPrint } from 'react-to-print';
+import { withWorkspacePrintOptions } from '../workspace/printing.js';
 import { Printer, Package, FileText, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
@@ -16,13 +17,13 @@ import { loadWorkOrdersForPrint, printPreparedWorkOrders, workOrderBarcode } fro
 export function ShippingLabel({ order, items, className, variant = 'default' }) {
     const componentRef = useRef(null);
 
-    const handlePrint = useReactToPrint({
+    const handlePrint = useReactToPrint(withWorkspacePrintOptions({
         contentRef: componentRef,
         documentTitle: `出貨標籤-${order.voucher_number}`,
         onAfterPrint: () => toast.info('列印視窗已關閉，請確認印表機輸出。'),
         onPrintError: () => toast.error('無法開啟列印，請重試。'),
         pageStyle: '@page { margin: 8mm; } @media print { body { color: #000; background: #fff; } thead { display: table-header-group; } tr { break-inside: avoid; } }',
-    });
+    }));
 
     return (
         <div>
@@ -155,13 +156,13 @@ export function ShippingLabel({ order, items, className, variant = 'default' }) 
 export function PickingList({ order, items, instances = [], className, variant = 'default' }) {
     const componentRef = useRef(null);
 
-    const handlePrint = useReactToPrint({
+    const handlePrint = useReactToPrint(withWorkspacePrintOptions({
         contentRef: componentRef,
         documentTitle: `揀貨單-${order.voucher_number}`,
         onAfterPrint: () => toast.info('列印視窗已關閉，請確認印表機輸出。'),
         onPrintError: () => toast.error('無法開啟列印，請重試。'),
         pageStyle: '@page { margin: 8mm; } @media print { body { color: #000; background: #fff; } thead { display: table-header-group; } tr { break-inside: avoid; } }',
-    });
+    }));
 
 
     return (
@@ -481,7 +482,7 @@ export function BatchPrintLabels({ orders, label = '批量列印工作單', isCu
     const [documents, setDocuments] = useState([]);
     const [loading, setLoading] = useState(false);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestController.current?.abort(); }; }, []);
-    const handlePrint = useReactToPrint({
+    const handlePrint = useReactToPrint(withWorkspacePrintOptions({
         contentRef: componentRef,
         documentTitle: '商城工作單批量列印',
         print: frame => printPreparedWorkOrders(frame, {
@@ -492,7 +493,7 @@ export function BatchPrintLabels({ orders, label = '批量列印工作單', isCu
         onAfterPrint: () => { inFlight.current = false; if (mounted.current) setLoading(false); toast.info('列印視窗已關閉，請確認各張工作單輸出。'); },
         onPrintError: () => { inFlight.current = false; if (mounted.current) setLoading(false); toast.error('工作單資料未完整載入或列印失敗，請重試整個批次。'); },
         pageStyle: '@page { margin: 8mm; } @media print { body { color: #000; background: #fff; } .work-order-paper { break-after: page; } .work-order-paper:last-child { break-after: auto; } thead { display: table-header-group; } tr { break-inside: avoid; } }',
-    });
+    }));
     useEffect(() => {
         if (!documents.length || !readyToPrint.current) return;
         readyToPrint.current = false;

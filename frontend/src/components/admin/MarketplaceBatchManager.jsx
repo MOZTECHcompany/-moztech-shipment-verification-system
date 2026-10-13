@@ -5,6 +5,8 @@ import {Button} from '../../ui';
 import apiClient from '@/api/api.js';
 import {formatMinor,prepareEcountFinancials,groupedSalesRecord} from '../../utils/marketplaceIntake.mjs';
 import {API_ORIGIN} from '../../api/origin';
+import {getNativeRuntime} from '../../workspace/nativeRuntime.js';
+import {downloadNativeMarketplaceFile} from '../../workspace/downloads.js';
 import {AdminDashboard} from './AdminDashboard';
 const control='min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const textButton='inline-flex min-h-10 items-center gap-1 text-sm font-medium text-blue-700 hover:underline disabled:opacity-40';
@@ -113,10 +115,16 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  const download=async(id,kind)=>{
   if(pending.current||!valid()||shippingContext.current!==shippingContextKey||shippingRefresh&&String(id)===selected)return;const context=shippingContextKey;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
   try{
-   const response=await apiClient.post(`/api/marketplace-intakes/${id}/download-link`,{kind},{withCredentials:true});if(!valid()||shippingContext.current!==context)return;
-   const url=`${API_ORIGIN}${response.data.url}`;setFileLink({url,label:kind==='ecount-grouped'?'下載彙總銷貨檔':kind==='ecount'?'下載原保存格式':'下載預揀與訂單明細 Excel'});
+   const label=kind==='ecount-grouped'?'下載彙總銷貨檔':kind==='ecount'?'下載原保存格式':'下載預揀與訂單明細 Excel';
+   if(getNativeRuntime()){
+    if(!await downloadNativeMarketplaceFile({id,kind},{isCurrent:()=>valid()&&shippingContext.current===context}))return;
+    setFileLink({native:true,id,kind,label});
+   }else{
+    const response=await apiClient.post(`/api/marketplace-intakes/${id}/download-link`,{kind},{withCredentials:true});if(!valid()||shippingContext.current!==context)return;
+    const url=`${API_ORIGIN}${response.data.url}`;setFileLink({url,label});
+    const anchor=document.createElement('a');anchor.href=url;anchor.download='';document.body.appendChild(anchor);anchor.click();anchor.remove();
+   }
    setNotice(kind==='prepick'?'預揀與訂單明細已下載。':'銷貨檔已下載。已在 ECOUNT 儲存的批次，請勿重複匯入。');
-   const anchor=document.createElement('a');anchor.href=url;anchor.download='';document.body.appendChild(anchor);anchor.click();anchor.remove();
   }catch(e){if(valid()&&shippingContext.current===context)setNotice(e.response?.data?.message||'下載失敗，請重試。');}
   finally{pending.current=false;if(valid())setBusy(false);}
  };
@@ -136,7 +144,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    <label className="text-sm">結束銷貨日期<input type="date" className={control} value={filters.to} onChange={e=>filter('to',e.target.value)}/></label>
   </div></details>
   <button className={textButton+' mt-2'} onClick={()=>setFilters(initial)}>清除篩選</button></>}
-  {notice&&<div role="status" className="my-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-950"><p>{notice}</p>{fileLink&&<a href={fileLink.url} download className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={e=>{if(!valid())e.preventDefault();}}>{fileLink.label}</a>}</div>}
+  {notice&&<div role="status" className="my-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-950"><p>{notice}</p>{fileLink&&(fileLink.native?<button type="button" disabled={busy} className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={()=>download(fileLink.id,fileLink.kind)}>{fileLink.label}</button>:<a href={fileLink.url} download className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={e=>{if(!valid())e.preventDefault();}}>{fileLink.label}</a>)}</div>}
   {!shippingRefresh&&<>{loading?<p role="status" className="py-8 text-center text-slate-500">載入批次中…</p>:Object.entries(groups).map(([date,rows])=><section key={date} className="mt-4" aria-label={`${date} 銷貨批次`}>
    <h3 className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold">{date}</h3>
    <div className="mt-3 grid gap-4 lg:grid-cols-2">{rows.map(r=><article key={r.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${String(r.id)===selected?'border-blue-500 ring-1 ring-blue-100':'border-slate-200'}`} aria-label={`批次 ${r.batch_number}`}>

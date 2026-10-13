@@ -1,3 +1,4 @@
+import * as workspacePrinting from '../src/workspace/printing.js';
 import * as scope from '../src/utils/managementScope.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +16,7 @@ vm.runInNewContext(code,{module,exports:module.exports,require:name=>{
  if(name==='@/utils/managementScope')return scope;
  if(name==='@/ui')return {Button:()=>null};
  if(name==='./OrderBarcode')return {OrderBarcode:({value,label})=>React.createElement('span',{'data-barcode':value},label)};
+ if(name==='../workspace/printing.js')return workspacePrinting;
  if(name==='react-to-print')return {useReactToPrint:()=>()=>{}};
  return require(name);
 }});

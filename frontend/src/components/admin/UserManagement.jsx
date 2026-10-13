@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { Users, PlusCircle, Edit, Trash2, ArrowLeft, Loader2, Shield, User as UserIcon } from 'lucide-react';
-import Swal from 'sweetalert2';
+import Swal from '@/workspace/nativeSwal';
 import withReactContent from 'sweetalert2-react-content';
 import { PageHeader, Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Table, THead, TH, TBody, TR, TD, Modal, Input, Badge, EmptyState, Skeleton, SkeletonText } from '../../ui';
 

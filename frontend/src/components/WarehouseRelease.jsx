@@ -1,6 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {Link,useParams} from 'react-router-dom';
 import {useReactToPrint} from 'react-to-print';
+import {withWorkspacePrintOptions} from '../workspace/printing.js';
 import api from '@/api/api.js';
 import {Button} from '@/ui';
 import {isWarehouseAdmin} from '@/utils/managementScope';
@@ -44,10 +45,10 @@ function ReleaseDetail({id,user,token}){
   return refresh();
  };
  const run=async(action,payload)=>{if(busy)return;setBusy(true);setError('');setNotice('');try{await mutate(action,payload);if(action==='scan'){setBarcode('');setNotice(`已記錄 ${payload.quantity} 件。`);}if(action==='assign')setNotice('預揀人員已指派。');if(action==='reset-product')setNotice('已歸零，請重新清點。');}catch(e){setError(e.response?.data?.message||e.message||'操作失敗，請以相同內容重試');}finally{if(valid())setBusy(false);}};
- const print=useReactToPrint({contentRef:paperRef,documentTitle:`整批預揀與訂單明細-${data?.batch.batch_number||id}`,
+ const print=useReactToPrint(withWorkspacePrintOptions({contentRef:paperRef,documentTitle:`整批預揀與訂單明細-${data?.batch.batch_number||id}`,
   onBeforePrint:async()=>{if(!valid())throw Error('登入人員已變更');const fresh=await mutate('print',{kind:paper});if(!valid())throw Error('登入人員已變更');await new Promise(resolve=>{printResolve.current=resolve;setPrintData(fresh);});},
   onPrintError:(_,e)=>{setError(e.response?.data?.message||e.message||'列印未開啟，請重試');setBusy(false);},onAfterPrint:()=>{setBusy(false);setNotice('列印視窗已關閉；缺紙可重印。');},
-  pageStyle:'@page {size:A4;margin:10mm} @media print {body {color:#000;background:white} thead{display:table-header-group} tr{break-inside:avoid} .work-sheet{break-after:page}.work-sheet:last-child{break-after:auto}}'});
+  pageStyle:'@page {size:A4;margin:10mm} @media print {body {color:#000;background:white} thead{display:table-header-group} tr{break-inside:avoid} .work-sheet{break-after:page}.work-sheet:last-child{break-after:auto}}'}));
  if(!data)return <main><p role="status">{error||'載入批次…'}</p></main>;
  const {batch,flow,orders,products,events}=data;
  const missingBarcodes=products.filter(p=>!p.barcode);

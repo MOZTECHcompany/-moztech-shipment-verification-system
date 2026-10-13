@@ -32,10 +32,11 @@ for (const file of tracked) {
   files.push({ path: file, ...(sharedSources[file] ? { source: sharedSources[file] } : {}), sha256: crypto.createHash('sha256').update(content).digest('hex') });
 }
 const digest = crypto.createHash('sha256').update(JSON.stringify(files)).digest('hex');
+const sourceCommit = git(['rev-parse', 'HEAD']);
 const images = ['backend', 'frontend'].map(type => `asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-${type}:${type === 'frontend' && environment === 'dev' ? 'dev' : 'workstation'}-${digest.slice(0, 12)}`);
-fs.writeFileSync(path.join(out, 'source-manifest.json'), JSON.stringify({ commit: git(['rev-parse', 'HEAD']), environment, digest, files }, null, 2));
+fs.writeFileSync(path.join(out, 'source-manifest.json'), JSON.stringify({ commit: sourceCommit, environment, digest, files }, null, 2));
 fs.writeFileSync(path.join(out, 'cloudbuild.json'), JSON.stringify({ steps: [
   { name: 'gcr.io/cloud-builders/docker', args: ['build', '-f', 'backend/Dockerfile', '-t', images[0], 'backend'] },
-  { name: 'gcr.io/cloud-builders/docker', args: ['build', '-f', 'frontend/Dockerfile.cloudrun', ...(environment === 'dev' ? ['--build-arg', 'VITE_DEPLOY_ENV=dev'] : []), '-t', images[1], 'frontend'] }
+  { name: 'gcr.io/cloud-builders/docker', args: ['build', '-f', 'frontend/Dockerfile.cloudrun', ...(environment === 'dev' ? ['--build-arg', 'VITE_DEPLOY_ENV=dev'] : []), '--build-arg', `VITE_SOURCE_COMMIT=${sourceCommit}`, '-t', images[1], 'frontend'] }
 ], images }, null, 2));
 console.log(JSON.stringify({ output: out, commit: git(['rev-parse', 'HEAD']), environment, digest, files: files.length }));

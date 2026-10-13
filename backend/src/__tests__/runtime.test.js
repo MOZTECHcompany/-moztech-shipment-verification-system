@@ -1,4 +1,14 @@
-const { getAllowedOrigins, getDatabaseOptions } = require('../config/runtime');
+const { getAllowedOrigins, getDatabaseOptions, getSocketAllowedOrigins } = require('../config/runtime');
+
+test('native socket origin extends only enabled trusted ERP SSO and leaves HTTP CORS unchanged', () => {
+    const env = { NODE_ENV: 'production', CORS_ORIGINS: 'https://wms.example', ERP_PORTAL_ORIGIN: 'https://erp.example' };
+    expect(getSocketAllowedOrigins(env)).toEqual(['https://wms.example']);
+    expect(getSocketAllowedOrigins({ ...env, ERP_PORTAL_SSO_ENABLED: 'true' })).toEqual(['https://wms.example', 'https://erp.example']);
+    expect(getAllowedOrigins({ ...env, ERP_PORTAL_SSO_ENABLED: 'true' })).toEqual(['https://wms.example']);
+    for (const origin of ['https://erp.example/path', 'https://erp.example/', 'https://user:password@erp.example', 'http://erp.example']) {
+        expect(() => getSocketAllowedOrigins({ ...env, ERP_PORTAL_SSO_ENABLED: 'true', ERP_PORTAL_ORIGIN: origin })).toThrow();
+    }
+});
 test('local database guard rejects missing and remote destinations', () => {
     expect(() => getDatabaseOptions({})).toThrow();
     expect(() => getDatabaseOptions({ DATABASE_URL: 'postgresql://user:pass@remote.example/wms' })).toThrow();

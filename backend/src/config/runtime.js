@@ -35,4 +35,14 @@ function getDatabaseOptions(env) {
         connectionTimeoutMillis: 5000
     };
 }
-module.exports = { getAllowedOrigins, getDatabaseOptions };
+
+function getSocketAllowedOrigins(env, allowedOrigins = getAllowedOrigins(env)) {
+    const origins = [...allowedOrigins];
+    if (env.ERP_PORTAL_SSO_ENABLED === 'true' && env.ERP_PORTAL_ORIGIN) {
+        const url = new URL(env.ERP_PORTAL_ORIGIN);
+        if (url.protocol !== 'https:' || url.origin !== env.ERP_PORTAL_ORIGIN || url.username || url.password) throw new Error('ERP_PORTAL_ORIGIN must be an exact HTTPS origin');
+        if (!origins.includes(url.origin)) origins.push(url.origin);
+    }
+    return origins;
+}
+module.exports = { getAllowedOrigins, getDatabaseOptions, getSocketAllowedOrigins };

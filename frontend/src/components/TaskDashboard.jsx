@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
 import { Package, Box, User, Loader2, ServerOff, LayoutDashboard, Trash2, ArrowRight, Clock, CheckCircle2, ListChecks, MessageSquare, Flame, AlertTriangle, Pin, RefreshCw } from 'lucide-react';
-import Swal from 'sweetalert2';
+import Swal from '@/workspace/nativeSwal';
 import withReactContent from 'sweetalert2-react-content';
 import soundNotification from '@/utils/soundNotification.js';
 import voiceNotification from '@/utils/voiceNotification.js';

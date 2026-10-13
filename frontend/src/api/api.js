@@ -12,6 +12,54 @@ const apiClient = axios.create({
     },
 });
 
+// The native workspace uses the ERP's authenticated, same-origin transport.
+// Keep the existing Axios request/response behavior and every business body.
+export function configureWorkspaceTransport(transport, { isCurrentSession = () => true, onAuthRequired } = {}) {
+    if (typeof transport !== 'function') throw new TypeError('Workspace transport is required');
+    const previous = apiClient.defaults.adapter;
+    const requests = new Set();
+    let active = true;
+    const adapter = async config => {
+        if (!active || !isCurrentSession()) throw new axios.CanceledError('Workspace session changed', config);
+        if (typeof config.url !== 'string' || !/^\/api\/[A-Za-z0-9]/.test(config.url) || /[\\\u0000-\u0020]/.test(config.url)) {
+            throw new TypeError('Workspace requests must use a WMS API path');
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        config.signal?.addEventListener('abort', abort, { once: true });
+        if (config.signal?.aborted) controller.abort();
+        requests.add(controller);
+        try {
+            const response = await transport({ ...config, signal: controller.signal });
+            if (!active || !isCurrentSession()) throw new axios.CanceledError('Workspace session changed', config);
+            const result = { ...response, config, headers: response?.headers || {}, statusText: response?.statusText || '' };
+            if (!Number.isInteger(result.status)) throw new TypeError('Workspace transport returned no HTTP status');
+            if (!(config.validateStatus || (status => status >= 200 && status < 300))(result.status)) {
+                throw new axios.AxiosError(result.data?.message || `Request failed with status ${result.status}`, undefined, config, undefined, result);
+            }
+            return result;
+        } catch (error) {
+            const data = error.response?.data || {};
+            const expired = error.response?.status === 401 || (error.response?.status === 403 && (
+                /(?:AUTH_REQUIRED|WMS_SESSION_INVALID|WMS_SESSION_EXPIRED|AUTH_SESSION_INVALID)/.test(data.code || '')
+                || /Token 無效或已過期|帳號或登入已失效|作業身分已失效/.test(data.message || '')
+            ));
+            if (active && isCurrentSession() && expired) onAuthRequired?.(data);
+            throw error;
+        } finally {
+            requests.delete(controller);
+            config.signal?.removeEventListener('abort', abort);
+        }
+    };
+    apiClient.defaults.adapter = adapter;
+    return () => {
+        active = false;
+        for (const request of requests) request.abort();
+        requests.clear();
+        if (apiClient.defaults.adapter === adapter) apiClient.defaults.adapter = previous;
+    };
+}
+
 // 2. 新增一個「請求攔截器 (Request Interceptor)」
 // 這會在【每一次】請求發送前，自動執行這個函數
 apiClient.interceptors.request.use(

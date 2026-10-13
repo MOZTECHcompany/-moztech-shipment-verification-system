@@ -5,17 +5,28 @@ import tailwindcss from 'tailwindcss';
 import autoprefixer from 'autoprefixer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workspaceManifestPlugin } from './config/workspaceBuild.mjs';
+import { sweetAlertLifecyclePlugin, sweetAlertPrebundlePlugin } from './config/sweetAlertLifecycle.mjs';
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, projectDir, 'VITE_');
   const target = resolveApiOrigin(env.VITE_API_BASE_URL, command === 'serve') || 'http://127.0.0.1:3001';
+  const sourceCommit = env.VITE_SOURCE_COMMIT || 'development';
+  if (sourceCommit !== 'development' && !/^[a-f0-9]{40}$/.test(sourceCommit)) throw new Error('VITE_SOURCE_COMMIT must be a full Git commit');
   return {
-  plugins: [react()],
+  plugins: [sweetAlertLifecyclePlugin(), react(), ...(command === 'build' ? [workspaceManifestPlugin(sourceCommit)] : [])],
+  optimizeDeps: { esbuildOptions: { plugins: [sweetAlertPrebundlePlugin()] } },
+  define: { 'import.meta.env.VITE_SOURCE_COMMIT': JSON.stringify(sourceCommit) },
+  experimental: { renderBuiltUrl: (_filename, context) => context.hostType === 'js' ? { relative: true } : { relative: false } },
   build: {
+    // The SDK loads all styles into its ShadowRoot. Lazy chunks may only
+    // preload JavaScript; they must not inject unscoped CSS into the ERP head.
+    cssCodeSplit: false,
     rollupOptions: {
-      input: { main: path.resolve(projectDir, 'index.html'), migrate: path.resolve(projectDir, 'migrate.html') },
+      preserveEntrySignatures: 'strict',
+      input: { main: path.resolve(projectDir, 'index.html'), migrate: path.resolve(projectDir, 'migrate.html'), workspace: path.resolve(projectDir, 'src/workspace/index.jsx') },
     },
   },
   css: {

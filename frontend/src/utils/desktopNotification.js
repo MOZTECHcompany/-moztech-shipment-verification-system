@@ -1,3 +1,4 @@
+import { assetUrl } from '../workspace/nativeRuntime.js';
 // frontend/src/utils/desktopNotification.js
 // 桌面通知工具 - 使用 Notification API
 
@@ -57,8 +58,8 @@ class DesktopNotification {
         }
 
         const defaultOptions = {
-            icon: '/branding/corely-app.png',
-            badge: '/branding/corely-app.png',
+            icon: assetUrl('/branding/corely-app.png'),
+            badge: assetUrl('/branding/corely-app.png'),
             dir: 'auto',
             lang: 'zh-TW',
             requireInteraction: false,
@@ -102,7 +103,7 @@ class DesktopNotification {
         return this.show('🆕 新任務到達', {
             body: `訂單: ${task.voucher_number}\n客戶: ${task.customer_name}`,
             tag: 'new-task',
-            icon: '/branding/corely-app.png',
+            icon: assetUrl('/branding/corely-app.png'),
             requireInteraction: true, // 需要用戶手動關閉
             data: { type: 'new-task', taskId: task.id }
         });
@@ -116,7 +117,7 @@ class DesktopNotification {
         return this.show('🆕 新任務到達', {
             body: `有 ${count} 個新任務等待處理`,
             tag: 'new-tasks',
-            icon: '/branding/corely-app.png',
+            icon: assetUrl('/branding/corely-app.png'),
             requireInteraction: true
         });
     }

@@ -1,3 +1,5 @@
+import * as nativeRuntime from '../src/workspace/nativeRuntime.js';
+import * as nativeDownloads from '../src/workspace/downloads.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -40,6 +42,8 @@ function dashboard({ role = 'admin', storage = new Map(), props = {} } = {}) {
     };
     const deferred = (bucket, data) => new Promise((resolve, reject) => bucket.push({ ...data, resolve, reject }));
     const imports = {
+        '../../workspace/nativeRuntime.js': nativeRuntime,
+        '../../workspace/downloads.js': nativeDownloads,
         react,
         '../../utils/workOrders': workOrders,
         '../LabelPrinter': { BatchPrintLabels: 'BatchPrintLabels' },
@@ -57,6 +61,7 @@ function dashboard({ role = 'admin', storage = new Map(), props = {} } = {}) {
     const downloads = [], revoked = [];
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => imports[name] || generic,
+        URLSearchParams,
         FormData: class { constructor() { this.parts = []; } append(...args) { this.parts.push(args); } },
         Blob: class { constructor(parts) { this.parts = parts; } },
         sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },

@@ -3,6 +3,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './index.css' // <--- 這一行是載入所有樣式的關鍵！
+import 'sweetalert2/dist/sweetalert2.css'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/api/queryClient'
 import * as Sentry from '@sentry/react'
