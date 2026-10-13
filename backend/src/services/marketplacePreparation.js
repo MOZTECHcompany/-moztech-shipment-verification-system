@@ -167,6 +167,11 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
      barcode:verified?.barcode||'',barcodeMissing:!verified?.barcode,sourceVerified:Boolean(verified||aggregateVerified)};
    });
    const missingBarcode=source.platform==='Shopify'&&relatedOrders.some(value=>value.barcodeMissing);
+   const completeVariants=source.platform!=='Shopify'||Boolean(relatedOrders.length&&
+    relatedOrders.every(value=>value.sourceVerified&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId)&&
+     value.barcode&&value.barcode===apiBarcode)&&
+    new Set(relatedOrders.map(value=>JSON.stringify([value.orderNumber,value.sourceLineId]))).size===relatedOrders.length);
+   if(source.platform==='Shopify'&&!completeVariants)incompleteSources.add(sku);
    // A scan may supplement only wholly blank, fully identified Shopify
    // versions and one exact active ERP target. It never changes API evidence.
    const physicalEligible=Boolean(source.platform==='Shopify'&&!catalogBlocked&&p&&targets.length===1&&relatedOrders.length&&
@@ -175,7 +180,11 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    const internalEligible=Boolean(verification?.mode==='api'&&!catalogBlocked&&p&&!p.barcode&&targets.length===1&&relatedOrders.length&&
     relatedOrders.every(value=>value.sourceVerified&&value.barcodeMissing&&(source.platform!=='Shopify'||/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId)))&&
     new Set(relatedOrders.map(value=>JSON.stringify([value.orderNumber,value.sourceLineId]))).size===relatedOrders.length);
-   if(!internalEligible&&!physicalEligible&&!missingBarcode&&!catalogBlocked&&targets.length<=1&&!(p?.barcode&&apiBarcode&&p.barcode!==apiBarcode)&&variantIds.length<=1&&!(targets.length&&!p))continue;
+   // Model options can share one physical item. Multiple versions need the
+   // same actual API barcode and one exact, active ERP barcode target.
+   const sharedVariants=source.platform==='Shopify'&&variantIds.length>1&&targets.length===1&&
+    Boolean(p?.barcode&&p.barcode===apiBarcode);
+   if(!internalEligible&&!physicalEligible&&!missingBarcode&&!catalogBlocked&&targets.length<=1&&!(p?.barcode&&apiBarcode&&p.barcode!==apiBarcode)&&completeVariants&&(variantIds.length<=1||sharedVariants)&&!(targets.length&&!p))continue;
    // An ambiguous or inactive original identity remains blocked, even if the
    // other exact string happens to name an active product.
    if(!targets.length&&!p&&!missingBarcode)continue;

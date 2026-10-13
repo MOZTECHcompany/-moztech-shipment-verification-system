@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {savedBatchTables} from '../src/utils/marketplaceBatchFiles.mjs';
 import {parseUnifiedMarketplace,prepareUnifiedMarketplace} from '../src/utils/unifiedMarketplace.mjs';
+import {buildEcountRows,buildPrepickRows,prepareEcountFinancials} from '../src/utils/marketplaceIntake.mjs';
 const r={handler:{userId:7,name:'原承辦人',username:'staff'},batchNumber:'SYN',platform:'Shopify',store:'Synthetic',settings:{date:'2026-09-16',skuMappings:{NEW0012:{erpSku:'NEW0012',erpName:'Film',barcode:'not-confirmed',barcodeConfirmed:false}}},prepick:{headers:['SKU','Qty'],rows:[['NEW0012',2]]},reportHeaders:['Order','Total'],reportRows:[['SYN-01',123]],items:[{sku:'NEW0012',sourceOrderNumber:'SYN-01',sourceLineId:'LINE-1',quantity:2,lineSubtotalMinor:12300}],links:[{source_order_number:'SYN-01',work_barcode:'WT-SYN'}]};
 test('saved downloads preserve exact source identifier, amounts and work barcode without current converter draft',()=>{
  const tables=savedBatchTables(r,'prepick');
@@ -68,4 +69,63 @@ test('saved campaign downloads append source metadata and trace each grouped all
   assert.deepEqual(row.slice(10),[item.sku,barcode,item.campaignGroupName,item.campaignRound,item.sourceSkuFormat]);
  }
  assert.deepEqual(record,before);
+});
+
+function sharedShopifyRecord(){
+ const sku='4711299271373',items=[
+  {sourceOrderNumber:'SYN-14',sourceLineId:'gid://shopify/LineItem/14',sku,productName:'MOZTECH iPhone 14 Pro Max 防窺晶霧貼',quantity:1,lineSubtotalMinor:89000},
+  {sourceOrderNumber:'SYN-15',sourceLineId:'gid://shopify/LineItem/15',sku,productName:'MOZTECH iPhone 15 Plus 防窺晶霧貼',quantity:2,lineSubtotalMinor:159000}
+ ];
+ const orders=items.map(item=>({sourcePlatform:'Shopify',sourceOrderNumber:item.sourceOrderNumber,paymentStatus:'paid',fulfillmentStatus:'unfulfilled',financial:{totalMinor:item.lineSubtotalMinor,shippingMinor:0,currency:'TWD'}}));
+ const settings={store:'合成商店',customerCode:'CUST',warehouseCode:'003',date:'2026-10-13',batchSequence:'1',batchNumber:'TEST-SHARED-MODELS',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,salesExportMode:'product-200-v1',skuMappings:{[sku]:{erpSku:sku,erpName:'共用實物保護貼',barcode:sku,erpConfirmed:true,barcodeConfirmed:true,spec:'iPhone 14 Pro Max / 15 Plus'}}};
+ const parsed={issues:[],items,orders,summary:{orderCount:2}},output=buildEcountRows(parsed,settings);
+ assert.equal(output.ok,true,JSON.stringify(output.issues));
+ return {...output,platform:'Shopify',settings,items,orders,prepick:buildPrepickRows(parsed,settings),sourceEvidence:{verification:{version:'shopify-current-v2',platform:'Shopify',shop:'synthetic.myshopify.com',orders:items.map((item,index)=>({number:item.sourceOrderNumber,items:[{id:item.sourceLineId,sku,variantId:`gid://shopify/ProductVariant/${14+index}`}]}))}}};
+}
+
+test('saved Shopify shared-product downloads append each original variant without changing models, allocation or existing columns',()=>{
+ const record=sharedShopifyRecord(),before=structuredClone(record),withoutEvidence=structuredClone(record);
+ delete withoutEvidence.sourceEvidence;
+ const original=savedBatchTables(withoutEvidence,'prepick'),tables=savedBatchTables(record,'prepick');
+ assert.equal(record.prepick.rows.length,1);assert.equal(record.prepick.rows[0][5],3);
+ const view=prepareEcountFinancials(record);
+ assert.equal(view.rows.length,1);assert.equal(view.rows[0][19],3);assert.equal(view.financials.grossMinor,248000);
+ assert.equal(view.salesLayout.lines[0].allocations.length,2);
+ for(const name of ['訂單商品明細','彙總銷貨對照']){
+  const table=tables.find(t=>t.name===name),old=original.find(t=>t.name===name);
+  assert.equal(table.rows[0].at(-1),'Shopify variant ID');
+  assert.deepEqual(table.rows.map(row=>row.slice(0,-1)),old.rows);
+  const orderIndex=table.rows[0].indexOf('商城訂單');
+  assert.deepEqual(new Map(table.rows.slice(1).map(row=>[row[orderIndex],row.at(-1)])),new Map([['SYN-14','gid://shopify/ProductVariant/14'],['SYN-15','gid://shopify/ProductVariant/15']]));
+ }
+ const details=tables.find(t=>t.name==='訂單商品明細');
+ assert.deepEqual(details.rows.slice(1).map(row=>[row[0],row[4],row[6],row[7]]),record.items.map(item=>[item.sourceOrderNumber,item.productName,item.quantity,item.lineSubtotalMinor/100]));
+ for(const table of tables.filter(t=>!['訂單商品明細','彙總銷貨對照'].includes(t.name)))assert.deepEqual(table,original.find(t=>t.name===table.name));
+ assert.deepEqual(savedBatchTables(record,'ecount'),savedBatchTables(withoutEvidence,'ecount'));
+ assert.deepEqual(record,before);
+});
+
+test('Shopify variant trace requires an exact saved order and line pair and leaves missing or ambiguous proof blank',()=>{
+ const record=sharedShopifyRecord();
+ record.items.forEach(item=>{item.variantId='gid://shopify/ProductVariant/999';});
+ record.sourceEvidence.verification.orders[0].items[0].id=record.items[1].sourceLineId;
+ record.sourceEvidence.verification.orders[1].items.push({...record.sourceEvidence.verification.orders[1].items[0],variantId:'gid://shopify/ProductVariant/999'});
+ const before=structuredClone(record),tables=savedBatchTables(record,'prepick');
+ for(const name of ['訂單商品明細','彙總銷貨對照'])assert.deepEqual(tables.find(t=>t.name===name).rows.slice(1).map(row=>row.at(-1)),['','']);
+ assert.deepEqual(record,before);
+});
+
+test('legacy and unrelated platform downloads retain their existing columns without saved Shopify verification',()=>{
+ const legacy=sharedShopifyRecord();delete legacy.sourceEvidence;
+ const legacyTables=savedBatchTables(legacy,'prepick');
+ const supplied=structuredClone(legacy);supplied.verification=sharedShopifyRecord().sourceEvidence.verification;
+ assert.deepEqual(savedBatchTables(supplied,'prepick'),legacyTables);
+ for(const platform of ['SHOPLINE','1Shop']){
+  const record=sharedShopifyRecord();record.platform=platform;
+  const withoutEvidence=structuredClone(record);delete withoutEvidence.sourceEvidence;
+  assert.deepEqual(savedBatchTables(record,'prepick'),savedBatchTables(withoutEvidence,'prepick'));
+ }
+ const unrelated=sharedShopifyRecord();unrelated.sourceEvidence.verification.platform='SHOPLINE';
+ assert.deepEqual(savedBatchTables(unrelated,'prepick'),legacyTables);
+ assert.ok(legacyTables.every(table=>!table.rows[0].includes('Shopify variant ID')));
 });
