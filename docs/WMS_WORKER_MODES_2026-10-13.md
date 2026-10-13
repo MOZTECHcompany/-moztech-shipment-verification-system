@@ -39,4 +39,21 @@
 
 保留原revision及新增schema。新同帳號已執行裝箱、暫停或交接後，不可直接退回忽略雙工序／暫停狀態的舊程式繼續作業，須使用支援031的修正映像；不得還原舊dump、刪欄位或改寫人員／進度。遷移不在app啟動執行，僅用明確指向 `corely_wms` 的release程序。
 
-目前程式與本機驗證完成；候選／正式revision、image digest及GitHub同步證據於實際發布後補記。正式現場原始ERP檔、實體條碼槍與耳機聽感仍須使用者於日常作業確認，不把合成fixture宣稱為實物驗收。
+## 正式發布結果
+
+2026/10/13 14:37 台灣時間完成正式查核。
+
+- 網址：[wms.corely.cc](https://wms.corely.cc)及[Cloud Run原生入口](https://corely-wms-249593319772.asia-east1.run.app)。
+- 公司專案 `moztech-main-db`、`asia-east1/corely-wms`；正式revision `corely-wms-worker-modes-20261013`，流量100%。
+- 部署程式提交 `69abd189a79ae0251ba3d14cbc3fc4f914484086`；來源SHA256 `dae5815a7a2dd3265ab293f3112078c1c64d66505328d4bd5f8f58a29d5c821b`。GitHub main包含此程式及本發布紀錄。
+- Backend：`asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-backend@sha256:99135afb579a7e9dc96459416c367414d67ebf5fd3b2b36d7052b49bdf5f8a2d`。
+- Frontend：`asia-east1-docker.pkg.dev/moztech-main-db/cloud-run/corely-wms-frontend@sha256:5afab9392b3333998424505ab4f394cc4915df22e5d52ec8f0e2ae5993aef357`。
+- Cloud Build `20af7dc9-bdba-4a8e-8e0f-1b59b71ad862` SUCCESS；程式CI `38356839281` success，Node22。
+- 正式PostgreSQL17僅套用031。遷移交易鎖定users後逐欄聚合核對：26個帳號的username/password/name/role/management_scope/created_at一致；新能力override維持NULL、當日模式表空白，沒有合併、改密碼或停用帳號。
+- 候選及正式唯讀驗證涵蓋揀貨員、裝箱員與三種管理員：雙工序能力、台灣工作日、操作人員清單、工作快照與交接API均正常；訂單管理員仍無審核權，倉儲／系統管理員的審核權與持久通知保持一致。
+- 實際登入瀏覽器以GET驗成員兩作業勾選、「今日預設」及原設定／例外頁，未儲存任何真實帳號設定，未建立合成正式訂單，未執行正式掃碼／交接／ERP／物流／庫存寫入。
+- Cloud Run僅更新兩應用映像；原IAM、資料庫及附件設定、共用驗收服務不變。原signed-import候選tag已移除，上版revision `corely-wms-signed-import-20261002`仍保留；回復必須遵守上節雙工序／暫停界線。
+
+發布證據：本機協調目錄 `artifacts/wms-worker-modes-20261013`。使用新畫面前，請各作業人員重新整理頁面，避免舊分頁沿用單工序介面。
+
+正式現場原始ERP檔、實體條碼槍與耳機聽感仍須使用者於日常作業確認，不把合成fixture宣稱為實物驗收。
