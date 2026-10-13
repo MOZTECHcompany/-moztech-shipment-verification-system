@@ -18,6 +18,7 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_NATIVE_CARTONS_2026-10-13.md`：現用 WMS 原生自建箱號、草稿編輯／封存、QR 貼紙及 ECOUNT 理貨單整箱／拆箱核對；正式 revision `corely-wms-carton-native-84f7f6e`（100%）、部署程式 `84f7f6e`，套用 additive migration040。保留下列031雙工序／暫停與交接；ECOUNT維持正式銷貨與庫存帳，掃箱不再扣正式庫存。新箱分配使用後不得直接退回忽略箱保護的舊映像。
 - `docs/WMS_WORKER_MODES_2026-10-13.md`：同帳號雙工序、今日預設、進度保留與交接、實際人員／工序快照；現有帳號密碼與歷史不合併、不改寫。正式revision `corely-wms-worker-modes-20261013`（100%）、部署程式 `69abd18`，套用031；26帳號的原身分與密碼完整保留。回復界線請讀該文件與即時Cloud Run。
 
 - `docs/WMS_SIGNED_IMPORT_2026-10-02.md`：ERP 全負數／正負混合理貨單匯入為獨立新核對訂單、正負數列印／匯出、絕對件數完成判斷；原訂單不更動。正式 revision `corely-wms-signed-import-20261002`（100%），部署程式 `e4f3af6`；套用 additive migration 030。正負單產生後只能回復支援方向的映像，請讀該文件與即時 Cloud Run。

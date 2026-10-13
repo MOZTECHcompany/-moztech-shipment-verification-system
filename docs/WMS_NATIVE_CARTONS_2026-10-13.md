@@ -21,3 +21,13 @@ ECOUNT 繼續負責正式銷貨／庫存帳。WMS 掃箱更新倉內核對及箱
 Migration `040_wms_cartons.sql` 只新增箱資料表及訂單品項兩個欄位；保持已有 `031_worker_modes.sql`。部署先在獨立 DEV schema 驗證，再以相同 image digest 建正式 0% 候選，正式切流前重讀 runtime 和資料快照。發布回執另存協調目錄。實體條碼槍、紙張、現場原始 ECOUNT 檔案和實際箱內物品由現場驗收。
 
 新箱資料開始使用後，不可直接回復不含箱分配保護的舊映像繼續作業；應使用相容箱資料和 031 工序狀態的修正映像。保留資料庫和歷史紀錄，不能刪欄位／箱資料或還原舊 dump。
+
+## 正式發布回執
+
+2026/10/13 發布到 [現用 WMS 箱號管理](https://wms.corely.cc/cartons)，revision `corely-wms-carton-native-84f7f6e`，100% 流量；來源 `84f7f6e38bf8992d238a483e765b8d95b80e9140`，PR #12 已合併。Cloud Build `51639d2f-7355-414e-8bf6-79780fb21ff6` 與兩個 CI 均成功。
+
+Backend digest `aaa587f8bc03c7bd5d5c39cc664d619eac472ddb414b6a6573dd70093abae738`；Frontend digest `b2631250d7ec087a2b8a4d3d7a8ca17409d3181fd2e5b011836eb148d2c118e9`。先以同一映像在私有 `corely-wms-carton-validation`、獨立 DEV schema 驗證，雲端合成 SN／無EAN建箱、揀裝、防重送、對照與工序稽核通過並全部回滾。
+
+正式只套用040：26個帳號、5099張訂單、34890個品項、53147筆SN的既有欄位逐筆雜湊保持一致；新箱與分配表為空，既有品項默認保持legacy。正式五種帳號、舊工作模式與訂單／交接唯讀檢查通過；正式瀏覽器原生建箱表單正常，沒有儲存測試箱、掃真實單或改ECOUNT。原 worker-modes revision 保留但舊候選 tag 移除，防止作業人員從舊入口繞過箱分配保護。
+
+本機證據：AI ERP協調目錄 `artifacts/carton-integration-20261012/native-cloud-release/正式WMS部署回執.md` 與 `release-receipt.json`。現場實物、原始ECOUNT檔與條碼槍／印表機仍由人員驗收。
