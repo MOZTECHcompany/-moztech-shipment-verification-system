@@ -9,16 +9,19 @@ import { createScanSubmission } from '../src/utils/scanSubmission.js';
 import * as orderWorkProgress from '../src/utils/orderWorkProgress.js';
 import * as signedOrder from '../src/utils/signedOrder.js';
 import * as scanDelta from '../src/utils/scanDelta.js';
+import * as workCapabilities from '../src/utils/workCapabilities.js';
+import * as warehouseWork from '../src/utils/warehouseWork.js';
 
 const source = await readFile(new URL('../src/components/OrderWorkView.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
 
 // Execute the real component event handlers with controlled hooks and transport.
 // Child components and DOM rendering are omitted; no application server is started.
-function workView({ role = 'picker', deferRead = false, initialData } = {}) {
+function workView({ role = 'picker', deferRead = false, initialData, stage, workTypes } = {}) {
     const order = { id: 1, status: role === 'picker' ? 'picking' : 'packing', picker_id: 1, packer_id: 1 };
     const fixture = initialData || { order, items: [{ id: 11, quantity: 100, picked_quantity: 0, packed_quantity: 0, barcode: 'ITEM' }], instances: [] };
-    const states = [fixture, false, ''];
+    const states = [];
+    let fixtureStateIndex;
     const refs = [];
     const effects = [];
     let stateCursor = 0;
@@ -34,7 +37,12 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
         useState(initial) {
             const i = stateCursor++;
-            if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial;
+            if (!(i in states)) {
+                let value=typeof initial === 'function' ? initial() : initial;
+                if (value && value.order === null && Array.isArray(value.items) && Array.isArray(value.instances)) {fixtureStateIndex=i;value=fixture;}
+                if(i===fixtureStateIndex+1 && value===true)value=false;
+                states[i]=value;
+            }
             return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value; }];
         },
         useRef(initial) { const i = refCursor++; return refs[i] ||= { current: initial }; },
@@ -67,7 +75,10 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         '@/utils/managementScope': managementScope,
         '@/utils/orderChangePresentation': orderChangePresentation,
         react,
-        'react-router-dom': { useParams: () => ({ orderId: '1' }), useNavigate: () => noop },
+        'react-router-dom': { useParams: () => ({ orderId: '1' }), useNavigate: () => noop, useSearchParams:()=>[new URLSearchParams({stage:stage||(role==='packer'?'pack':'pick')}),noop] },
+        '@/contexts/WorkModeContext': {useWorkMode:()=>({selectStage:async()=>true})},
+        '@/utils/workCapabilities': workCapabilities,
+        '@/utils/warehouseWork': warehouseWork,
         sonner: { toast: { warning: (...args) => warnings.push(args), error: noop, success: noop, info: noop } },
         '@/api/api': api,
         '@/api/socket': { socket },
@@ -76,7 +87,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
         '@/utils/signedOrder': signedOrder,
         '@/utils/scanDelta': scanDelta,
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
-        '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, speakTaskComplete: type => spoken.push(['complete', type]) },
+        '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, stop:noop, speakTaskComplete: type => spoken.push(['complete', type]) },
         '@/utils/desktopNotification': { notifyScanError: noop },
         'sweetalert2-react-content': () => ({ fire: () => Promise.resolve({}) })
     };
@@ -85,11 +96,11 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => imports[name] || generic,
         setTimeout: noop, setInterval: () => 1, clearInterval: noop,
-        navigator: {}, console, window: { location: { reload: noop } }
+        navigator: {}, console, URLSearchParams, window: { location: { reload: noop,search:'' } }
     });
     function render() {
         stateCursor = 0; refCursor = 0; effects.length = 0;
-        const shell = module.exports.OrderWorkView({ user: { id: 1, role } });
+        const shell = module.exports.OrderWorkView({ user: { id: 1, role, ...(workTypes?{work_types:workTypes}:{}) } });
         return typeof shell.type === 'function' ? shell.type(shell.props) : shell;
     }
     function find(tree, predicate) {
@@ -104,7 +115,7 @@ function workView({ role = 'picker', deferRead = false, initialData } = {}) {
     const type = text => input().props.onChange({ target: { value: text } });
     const enter = () => input().props.onKeyDown({ key: 'Enter', preventDefault: noop });
     const camera = () => find(render(), node => node.type === 'CameraScanner');
-    return { find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[0] };
+    return { find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[fixtureStateIndex] };
 }
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -205,7 +216,7 @@ test('socket cleanup removes only the exact handlers installed by this view', ()
     const collaborationEffect = view.effects.find(callback => callback.toString().includes('active_sessions_update'));
     const cleanup = collaborationEffect();
     cleanup();
-    assert.equal(view.offCalls.length, 5);
+    assert.equal(view.offCalls.length, view.listeners.size);
     for (const [name, callback] of view.offCalls) assert.equal(callback, view.listeners.get(name));
 });
 
@@ -345,7 +356,7 @@ for (const [role, countField, finalStatus] of [['picker', 'picked_quantity', 'pi
         const view = workView({ role, initialData: fixture });
         view.type('SAME'); view.enter(); await settle();
         assert.equal(view.posts.length, 0, 'Ambiguous direction must not silently choose the first row');
-        const dialog = view.find(view.render(), node => node.props?.role === 'dialog' && node.props?.['aria-label'] === '請選擇本次核對的品項');
+        const dialog = view.find(view.render(), node => node.props?.open && node.props?.title === '請選擇本次核對的品項');
         assert.ok(dialog);
         const reversed = view.find(dialog, node => node.type === 'button' && node.props.children.some(child => child?.props?.item?.quantity_sign === -1));
         reversed.props.onClick(); await settle();
@@ -371,4 +382,30 @@ test('ERP signed orders hide the quantity editor while preserving generic except
     assert.equal(view.input().props.disabled, false);
     assert.equal(view.find(view.render(), node => node.type === 'Button' && node.props.children.includes('申請異動')), undefined);
     assert.ok(view.find(view.render(), node => node.type === 'Button' && node.props.children.includes('新增')));
+});
+
+
+test('a manager finishes picking and cannot silently use the next barcode as packing', async()=>{
+    const view=workView({role:'admin',workTypes:['pick','pack'],stage:'pick',initialData:{order:{id:1,status:'picking',picker_id:1,packer_id:null},items:[{id:11,quantity:1,picked_quantity:0,packed_quantity:0,barcode:'ITEM'}],instances:[]}});
+    view.type('ITEM');view.enter();await settle();
+    const accepted=structuredClone(view.fixture);accepted.order.status='picked';accepted.items[0].picked_quantity=1;
+    view.posts[0].resolve({data:accepted});await settle();
+    assert.equal(view.input().props.disabled,true);view.type('ITEM');view.enter();await settle();
+    assert.equal(view.posts.length,1);assert.equal(view.posts[0].body.type,'pick');
+    assert.deepEqual(view.spoken,[['complete','pick']]);
+    assert.ok(view.find(view.render(),node=>node.props?.children?.includes('開始裝箱')));
+});
+test('the same picker account can scan packing when that explicit stage was claimed', async()=>{
+    const view=workView({role:'picker',workTypes:['pick','pack'],stage:'pack',initialData:{order:{id:1,status:'packing',picker_id:1,packer_id:1},items:[{id:11,quantity:2,picked_quantity:2,packed_quantity:0,barcode:'ITEM'}],instances:[]}});
+    assert.equal(view.input().props.disabled,false);view.type('ITEM');view.enter();await settle();
+    assert.equal(view.posts.length,1);assert.equal(view.posts[0].body.type,'pack');
+    const accepted=structuredClone(view.fixture);accepted.items[0].packed_quantity=1;view.posts[0].resolve({data:accepted});await settle();
+    assert.deepEqual(JSON.parse(JSON.stringify(view.spoken)),[['progress',1,1,{type:'pack'}]]);
+});
+test('paused work and a transferred-away task cannot send another barcode', async()=>{
+    for(const extra of [{pick_paused_at:'2026-10-13T01:00:00Z'},{picker_id:2}]){
+        const view=workView({workTypes:['pick','pack'],stage:'pick',initialData:{order:{id:1,status:'picking',picker_id:1,packer_id:null,...extra},items:[{id:11,quantity:2,picked_quantity:1,packed_quantity:0,barcode:'ITEM'}],instances:[]}});
+        assert.equal(view.input().props.disabled,true);view.type('ITEM');view.enter();await settle();
+        assert.equal(view.posts.length,0);assert.equal(view.currentData().items[0].picked_quantity,1);
+    }
 });

@@ -17,11 +17,19 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
     const contexts = [];
     const expectedScanFailures = new Map();
     const originalCwd = process.cwd();
-    async function pageFor(role, mobile = false, timezoneId = 'Asia/Taipei', collapseAlerts = true) {
-        const context = await browser.newContext({ timezoneId, viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
-        contexts.push(context);
-        const user = (await pool.query('SELECT id,username,name,role,management_scope FROM users WHERE id=$1', [users[role]])).rows[0];
-        await context.addInitScript(({user,token}) => { localStorage.setItem('wms_user', JSON.stringify(user)); localStorage.setItem('wms_token', JSON.stringify(token)); }, { user, token: tokens[role] });
+    async function pageFor(role, mobile = false, timezoneId = 'Asia/Taipei', collapseAlerts = true, sharedContext = null) {
+        const context = sharedContext || await browser.newContext({ timezoneId, viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1100 }, extraHTTPHeaders: iam ? { 'X-Serverless-Authorization': 'Bearer ' + iam } : {} });
+        if (!sharedContext) contexts.push(context);
+        const user = (await pool.query('SELECT id,username,name,role,management_scope,can_pick,can_pack FROM users WHERE id=$1', [users[role]])).rows[0];
+        user.work_types = ['pick','pack'].filter(stage => typeof user[stage === 'pick' ? 'can_pick' : 'can_pack'] === 'boolean' ? user[stage === 'pick' ? 'can_pick' : 'can_pack'] : ['picker','packer','admin','superadmin'].includes(user.role));
+        const initialStage = role.startsWith('dual') ? null : user.role === 'packer' ? 'pack' : user.work_types.includes('pick') ? 'pick' : null;
+        await context.addInitScript(({user,token,initialStage}) => {
+            localStorage.setItem('wms_user', JSON.stringify(user)); localStorage.setItem('wms_token', JSON.stringify(token));
+            if (initialStage) {
+                const date = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+                sessionStorage.setItem(`corely:wms:work-mode:v1:${user.id}:${date}`, initialStage);
+            }
+        }, { user, token: tokens[role], initialStage });
         const page = await context.newPage(); page.setDefaultTimeout(15000);
         await page.addInitScript(() => {
             window.__wmsTones = [];
@@ -313,7 +321,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
             await manager.goto(webBase+'/tasks');
             await manager.getByText('訂單管理員',{exact:true}).waitFor();
             await Promise.all([manager.waitForResponse(r=>new URL(r.url()).searchParams.get('q')===requestVoucher),manager.getByLabel('查找任務',{exact:true}).fill(requestVoucher)]);
-            assert.equal(await manager.getByRole('button',{name:'批次揀貨',exact:true}).count(),0);
+            assert.equal(await manager.getByRole('button',{name:'批次揀貨',exact:true}).count(),1);
             await manager.getByRole('button',{name:'申請刪除訂單 '+requestVoucher,exact:true}).click();
             await manager.getByRole('textbox',{name:'刪除原因',exact:true}).fill('UI review reason');
             await response(manager,`/api/orders/${id}/deletion-requests`,'POST',()=>manager.getByRole('button',{name:'送交主管審核',exact:true}).click());
@@ -584,8 +592,9 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
                 await worker.close();
             }
         });
+        await require('./worker-mode-browser.cjs')({ step, pageFor, response, api, ok, pool, users, webBase, prefix, output, cleanupOrders });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 20 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 24 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

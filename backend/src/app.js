@@ -175,6 +175,7 @@ app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes')
 app.use('/api/admin/users', authenticateToken, authorizeAdmin, userRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminRoutes);
 app.use('/api/admin', authenticateToken, authorizeAdmin, adminExceptionRoutes);
+app.use('/api', authenticateToken, require('./routes/warehouseWorkRoutes'));
 app.use('/api', authenticateToken, taskRoutes);
 app.use('/api', authenticateToken, orderRoutes);
 app.use('/api', authenticateToken, analyticsRoutes);

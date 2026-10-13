@@ -10,7 +10,7 @@ export function Modal({ open, onClose, title, children, footer, className }) {
     <div className="fixed inset-0 z-50 animate-in fade-in duration-200">
       <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-all" onClick={onClose} />
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className={cx('w-full max-w-lg glass-panel rounded-2xl shadow-2xl transform transition-all animate-in zoom-in-95 duration-200', className)}>
+        <div role="dialog" aria-modal="true" aria-label={title} className={cx('w-full max-w-lg glass-panel rounded-2xl shadow-2xl transform transition-all animate-in zoom-in-95 duration-200', className)}>
           <div className="px-6 py-5 border-b border-gray-100/50 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors rounded-full p-1 hover:bg-gray-100/50">

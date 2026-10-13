@@ -24,6 +24,7 @@ const TeamBoard = lazy(() => import('./components/TeamBoard').then(module => ({ 
 const TeamPostView = lazy(() => import('./components/TeamPostView').then(module => ({ default: module.TeamPostView })));
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { AppLayout } from '@/ui';
+import { WorkModeProvider } from './contexts/WorkModeContext';
 
 // AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
 
@@ -98,6 +99,7 @@ function App() {
         <>
             <Toaster richColors position="top-right" />
             <BrowserRouter>
+              <WorkModeProvider user={user}>
                 <Routes>
                     <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
                     
@@ -121,6 +123,7 @@ function App() {
 
                     <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
                 </Routes>
+              </WorkModeProvider>
             </BrowserRouter>
         </>
     );

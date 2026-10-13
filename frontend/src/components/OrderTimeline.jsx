@@ -4,10 +4,16 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Package, Box, CheckCircle2, User, FileText, AlertCircle } from 'lucide-react';
 import apiClient from '@/api/api.js';
-import { format } from 'date-fns';
+import { formatMessageTimestamp } from '@/utils/messageTimestamp';
+import {workTypeLabel,workActorLabel} from '@/utils/warehouseWork';
 
 // 操作類型配置
 const actionConfig = {
+    pick:{icon:Package,bg:'bg-orange-50',border:'border-orange-200',text:'text-orange-700',dot:'bg-orange-500',title:'揀貨操作'},
+    pack:{icon:Box,bg:'bg-green-50',border:'border-green-200',text:'text-green-700',dot:'bg-green-500',title:'裝箱操作'},
+    transfer:{icon:User,bg:'bg-blue-50',border:'border-blue-200',text:'text-blue-700',dot:'bg-blue-500',title:'任務交接'},
+    work_pause:{icon:Clock,bg:'bg-amber-50',border:'border-amber-200',text:'text-amber-700',dot:'bg-amber-500',title:'暫停作業'},
+    work_resume:{icon:Clock,bg:'bg-blue-50',border:'border-blue-200',text:'text-blue-700',dot:'bg-blue-500',title:'繼續作業'},
     order_imported: {
         icon: FileText,
         color: 'blue',
@@ -149,21 +155,18 @@ const TimelineItem = ({ log, isLast }) => {
                         <div className="flex items-start justify-between mb-3">
                             <div>
                                 <h3 className={`text-lg font-semibold ${config.text}`}>
-                                    {config.title}
+                                    {config.title}{log.work_type&&` · ${workTypeLabel(log.work_type)}`}
                                 </h3>
                                 {log.user_name && (
                                     <p className="text-sm text-gray-500 mt-1 flex items-center gap-1">
                                         <User size={14} />
-                                        {log.user_name}
+                                        {log.actor_snapshot?.name || log.user_name}{log.actor_snapshot&&`（${workActorLabel(log)}）`}
                                     </p>
                                 )}
                             </div>
                             <div className="text-right">
                                 <p className="text-sm font-medium text-gray-900">
-                                    {format(new Date(log.created_at), 'HH:mm:ss')}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                    {format(new Date(log.created_at), 'yyyy-MM-dd')}
+                                    {formatMessageTimestamp(log.created_at)}
                                 </p>
                             </div>
                         </div>

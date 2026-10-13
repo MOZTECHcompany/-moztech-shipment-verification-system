@@ -29,6 +29,9 @@ function globalErrorHandler(err, req, res, next) {
 
     // Only the scan route sets this after a confirmed rollback or before any transaction.
     const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED', ...(err.scanReason === 'STATE_CHANGED' ? { reason: err.scanReason } : {}) } : {};
+    if (err.code === 'WORK_RESULT_UNKNOWN') {
+        return res.status(503).json({ code: err.code, message: '作業結果待確認，請重新整理核對，請勿重複送出' });
+    }
     if (err.code === '57014' || /timeout exceeded when trying to connect|connection terminated due to connection timeout/i.test(err.message || '')) {
         return res.set('Retry-After', '1').status(503).json({ code: 'QUERY_BUSY', ...scanResult, message: '系統忙碌中，請稍後再試。' });
     }

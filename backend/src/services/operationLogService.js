@@ -3,6 +3,7 @@
 
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
+const { actorSnapshot } = require('../utils/warehouseWork');
 
 /**
  * 記錄操作並向 Socket.IO 訂閱者廣播
@@ -24,25 +25,29 @@ async function logOperation({
     userName,
     userRole,
     voucherNumber,
-    customerName
+    customerName, actor, workType
 }) {
     try {
         const executor = db && typeof db.query === 'function' ? db : pool;
 
         const result = await executor.query(
-            'INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
-            [userId, orderId, operationType, JSON.stringify(details)]
+            `INSERT INTO operation_logs (user_id, order_id, action_type, details, actor_snapshot, work_type)
+             VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, (SELECT jsonb_build_object('id',id,'username',username,
+                 'name',COALESCE(name,username),'role',role,'management_scope',management_scope) FROM users WHERE id=$1)), $6)
+             RETURNING id, created_at, actor_snapshot, work_type`,
+            [userId, orderId, operationType, JSON.stringify(details), actor ? JSON.stringify(actorSnapshot(actor)) : null,
+                workType || (['pick', 'pack'].includes(operationType) ? operationType : details?.task_type || details?.stage || null)]
         );
 
         if (io) {
             const logEntry = result.rows[0];
-            let resolvedUserName = userName;
-            let resolvedUserRole = userRole;
+            let resolvedUserName = logEntry.actor_snapshot?.name || actor?.name || actor?.username || userName;
+            let resolvedUserRole = logEntry.actor_snapshot?.role || actor?.role || userRole;
             let resolvedVoucherNumber = voucherNumber;
             let resolvedCustomerName = customerName;
 
             const shouldFetchUser = !resolvedUserName || !resolvedUserRole;
-            const shouldFetchOrder = !resolvedVoucherNumber || !resolvedCustomerName;
+            const shouldFetchOrder = orderId != null && (!resolvedVoucherNumber || !resolvedCustomerName);
 
             if (shouldFetchUser || shouldFetchOrder) {
                 const [userInfo, orderInfo] = await Promise.all([
@@ -66,6 +71,8 @@ async function logOperation({
                 user_id: userId,
                 user_name: resolvedUserName,
                 user_role: resolvedUserRole,
+                actor_snapshot: logEntry.actor_snapshot || (actor ? actorSnapshot(actor) : null),
+                work_type: logEntry.work_type || workType || (['pick','pack'].includes(operationType) ? operationType : null),
                 order_id: orderId,
                 voucher_number: resolvedVoucherNumber,
                 customer_name: resolvedCustomerName,

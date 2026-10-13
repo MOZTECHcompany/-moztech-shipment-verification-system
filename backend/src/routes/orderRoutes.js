@@ -15,6 +15,7 @@ const { deferredEvents } = require('../utils/transactionEvents');
 
 const router = express.Router();
 const {warehouseOnly} = require('../utils/managementScope');
+const { workTypes, assertWork, assertStage, requireWarehouseWorker, assertScanWork, pauseField } = require('../utils/warehouseWork');
 const {deletionRequestHandler, requestDeletion} = require('../services/orderReviewService');
 const {notifyOrderChange,warehouseReviewerIds} = require('../services/orderChangeNotifications');
 // Recipients are fixed by the committed operation, never supplied by the client.
@@ -177,12 +178,13 @@ const importLimiter = rateLimit({
 // POST /api/orders/batch-claim
 // All claim entry points share the same locked state transition and audit path.
 async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false, stage }) {
-    const { id: userId, role } = user;
-    const isAdminLike = role === 'admin' || role === 'superadmin';
+    const { id: userId } = user;
     const fail = (status, message) => Object.assign(new Error(message), { status });
-    if (!['picker', 'packer', 'admin', 'superadmin'].includes(role) || (pickingOnly && role === 'packer')) {
+    if (!workTypes(user).length) {
         throw fail(403, '此角色不可認領該作業');
     }
+    if (stage !== undefined) assertStage(stage);
+    if (pickingOnly && stage === 'pack') throw fail(403, '此入口僅能認領揀貨任務');
     if (!Number.isSafeInteger(Number(orderId)) || Number(orderId) <= 0) throw fail(400, '訂單 ID 無效');
     let client, transactionOpen = false, commitAttempted = false, releaseError;
     const events = deferredEvents(io);
@@ -194,18 +196,29 @@ async function claimWarehouseOrder({ orderId, user, io, pickingOnly = false, sta
         if (!orderResult.rows.length) throw fail(404, '找不到該訂單');
         const order = orderResult.rows[0];
         if (await hasOpenOrderChange(client, orderId)) throw fail(409, '此訂單異動審核中，請先主管核可後再作業。');
-        let newStatus, task_type;
-        if (stage !== 'pack' && (role === 'picker' || isAdminLike) && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
-            newStatus = 'picking'; task_type = 'pick';
-            await client.query('UPDATE orders SET status = $1, picker_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-        } else if (stage !== 'pick' && !pickingOnly && (role === 'packer' || isAdminLike) && order.status === 'picked') {
-            if (await hasOpenExceptions(client, orderId)) throw fail(409, '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。');
-            newStatus = 'packing'; task_type = 'pack';
-            await client.query('UPDATE orders SET status = $1, packer_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
-        } else {
-            throw fail(400, `無法認領該任務，訂單狀態為「${order.status}」，可能已被他人處理。`);
+        const task_type = stage || (pickingOnly || ['pending','picking'].includes(order.status) ? 'pick' : 'pack');
+        assertWork(user, task_type);
+        const targetStatus = task_type === 'pick' ? 'picking' : 'packing';
+        const targetOwner = task_type === 'pick' ? order.picker_id : order.packer_id;
+        if (order.status === targetStatus && Number(targetOwner) === Number(userId)) {
+            if (order[pauseField(task_type)]) throw fail(409, '此作業已暫停，請使用繼續作業');
+            commitAttempted = true;
+            await client.query('COMMIT'); transactionOpen = false;
+            return order;
         }
-        await logOperation({ userId, orderId, operationType: 'claim', details: { new_status: newStatus }, io: events, db: client });
+        let newStatus;
+        if (task_type === 'pick' && (order.status === 'pending' || (order.status === 'picking' && !order.picker_id))) {
+            newStatus = 'picking';
+            await client.query('UPDATE orders SET status = $1, picker_id = $2, pick_paused_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+        } else if (task_type === 'pack' && !pickingOnly && order.status === 'picked') {
+            if (await hasOpenExceptions(client, orderId)) throw fail(409, '此訂單存在未核可例外，請先主管核可（ack）後再認領裝箱任務。');
+            newStatus = 'packing';
+            await client.query('UPDATE orders SET status = $1, packer_id = $2, pack_paused_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [newStatus, userId, orderId]);
+        } else {
+            throw fail(409, '此作業階段不能認領，若由其他人負責，請先完成交接');
+        }
+        await logOperation({ userId, orderId, operationType: 'claim', workType: task_type, actor: user,
+            details: { new_status: newStatus, stage: task_type, operation_context: 'owner' }, io: events, db: client });
         const updatedOrder = (await client.query('SELECT o.*, u.name as current_user FROM orders o LEFT JOIN users u ON (CASE WHEN $1 = \'pick\' THEN o.picker_id WHEN $1 = \'pack\' THEN o.packer_id END) = u.id WHERE o.id = $2', [task_type, orderId])).rows[0];
         events.emit('task_claimed', { ...updatedOrder, task_type });
         commitAttempted = true;
@@ -235,11 +248,11 @@ function parseClaimIds(value) {
 
 async function claimBatch(req, res, next, pickingOnly) {
     try {
-        if (!['picker', 'packer', 'admin', 'superadmin'].includes(req.user.role) || (pickingOnly && req.user.role === 'packer')) return res.status(403).json({ message: '權限不足' });
+        if (!workTypes(req.user).length) return res.status(403).json({ message: '權限不足' });
         const stage = req.body.stage;
         if (stage !== undefined && !['pick', 'pack'].includes(stage)) return res.status(400).json({ message: '批次作業階段無效' });
-        if ((stage === 'pack' && (pickingOnly || req.user.role === 'picker')) ||
-            (stage === 'pick' && req.user.role === 'packer')) return res.status(403).json({ message: '不可認領其他作業階段的任務' });
+        if (stage !== undefined) assertWork(req.user, stage);
+        if (stage === 'pack' && pickingOnly) return res.status(403).json({ message: '此入口僅能認領揀貨任務' });
         const ids = parseClaimIds(req.body.orderIds);
         const orders = [], failed = [];
         for (let i = 0; i < ids.length; i++) {
@@ -263,14 +276,14 @@ async function claimBatch(req, res, next, pickingOnly) {
     } catch (error) { next(error); }
 }
 
-router.post('/orders/batch-claim', warehouseOnly, (req, res, next) => claimBatch(req, res, next, true));
-router.post('/orders/batch/claim', warehouseOnly, (req, res, next) => claimBatch(req, res, next, false));
+router.post('/orders/batch-claim', requireWarehouseWorker, (req, res, next) => claimBatch(req, res, next, true));
+router.post('/orders/batch/claim', requireWarehouseWorker, (req, res, next) => claimBatch(req, res, next, false));
 
 // POST /api/orders/:orderId/claim
-router.post('/orders/:orderId/claim', warehouseOnly, async (req, res, next) => {
+router.post('/orders/:orderId/claim', requireWarehouseWorker, async (req, res, next) => {
     try {
-        await claimWarehouseOrder({ orderId: req.params.orderId, user: req.user, io: req.app.get('io') });
-        res.status(200).json({ message: '任務認領成功' });
+        const order = await claimWarehouseOrder({ orderId: req.params.orderId, user: req.user, stage: req.body?.stage, io: req.app.get('io') });
+        res.status(200).json({ message: '任務認領成功', order });
     } catch (error) {
         if (error.code === 'CLAIM_RESULT_UNKNOWN') return res.status(503).json({ code: error.code, message: error.message });
         next(error);
@@ -514,8 +527,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         }
         // Import attribution is still based on this log, so it is required and may not be swallowed.
         const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
-        const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
-            [req.user.id, orderId, 'import', JSON.stringify(details)]);
+        const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details, actor_snapshot) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
+            [req.user.id, orderId, 'import', JSON.stringify(details), JSON.stringify(require('../utils/warehouseWork').actorSnapshot(req.user))]);
         events.emit('new_operation_log', {
             id: log.rows[0].id, created_at: log.rows[0].created_at,
             user_id: req.user.id, user_name: req.user.name, user_role: req.user.role,
@@ -553,10 +566,9 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 });
 
 // POST /api/orders/update_item
-router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
+router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next) => {
     const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
-    const { id: userId, role } = req.user;
-    const isAdminLike = role === 'admin' || role === 'superadmin';
+    const { id: userId } = req.user;
     const io = req.app.get('io');
     const scanRequestStartedAt = Date.now();
     let scanOutcome = 'unknown';
@@ -578,7 +590,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         return result;
     };
 
-    if (!(isAdminLike || role === 'picker' || role === 'packer')) {
+    if (!workTypes(req.user).length) {
         scanOutcome = 'forbidden';
         return res.status(403).json({ message: '權限不足' });
     }
@@ -587,6 +599,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '掃碼類型或數量無效' });
     }
 
+    try { assertWork(req.user, type); } catch (error) { return res.status(error.status).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
     const scanRaw = String(scanValue ?? '').trim();
     if (!scanRaw) {
         scanOutcome = 'invalid_input';
@@ -600,7 +613,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
     let rejectedScanAudit;
     let command;
     try { command = parseCommand(req.body, userId); } catch (error) { return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
-    let changedItemId, changedInstanceId;
+    let changedItemId, changedInstanceId, operationContext;
     const events = deferredEvents(io);
     try {
         client = await pool.connect();
@@ -655,17 +668,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
             }
         }
 
-        // Auto-transition from picked to packing if type is pack
-        if (type === 'pack' && order.status === 'picked') {
-             await client.query("UPDATE orders SET status = 'packing', packer_id = COALESCE(packer_id, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2", [userId, orderId]);
-             order.status = 'packing';
-             if (!order.packer_id) order.packer_id = userId;
-             events.emit('task_status_changed', { orderId: parseInt(orderId, 10), newStatus: 'packing' });
-        }
-
-        if ((type === 'pick' && order.picker_id !== userId && !isAdminLike) || (type === 'pack' && order.packer_id !== userId && !isAdminLike)) {
-            throw new Error('您不是此任務的指定操作員');
-        }
+        operationContext = assertScanWork(req.user, order, type);
         markStage('precheckMs');
 
         const scanInfo = normalizeSerialScanInput(scanRaw);
@@ -677,7 +680,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         const instanceResult = await trackedQuery(
             client,
             'match_instance_exact_for_update',
-            `SELECT i.id, i.status
+            `SELECT i.id, i.status, i.order_item_id
              FROM order_item_instances i
              JOIN order_items oi ON i.order_item_id = oi.id
              WHERE oi.order_id = $1 AND i.serial_number = $2
@@ -709,7 +712,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                                 const digitsResult = await trackedQuery(
                                         client,
                                         'match_instance_digits_for_update',
-                    `SELECT i.id, i.status
+                    `SELECT i.id, i.status, i.order_item_id
                      FROM order_item_instances i
                      JOIN order_items oi ON i.order_item_id = oi.id
                      WHERE oi.order_id = $1
@@ -748,10 +751,13 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                     serialNumber: scanInfo.normalized,
                     scanRaw,
                     matchedBy,
-                    statusChange: `${instance.status} -> ${newStatus}`
+                    statusChange: `${instance.status} -> ${newStatus}`,
+                    orderItemId: instance.order_item_id, instanceId: instance.id, before: { status: instance.status },
+                    after: { status: newStatus }, command_id: command?.id || null, operation_context: operationContext
                 },
                 io: events,
                 db: client,
+                actor: req.user, workType: type,
                 userRole: req.user?.role,
                 userName: req.user?.name,
                 voucherNumber: order.voucher_number,
@@ -849,9 +855,14 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 userId,
                 orderId,
                 operationType: type,
-                details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id },
+                details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id,
+                    before: { picked_quantity: item.picked_quantity, packed_quantity: item.packed_quantity },
+                    after: { picked_quantity: item.picked_quantity + (type === 'pick' ? amountNum : 0),
+                        packed_quantity: item.packed_quantity + (type === 'pack' ? amountNum : 0) },
+                    command_id: command?.id || null, operation_context: operationContext },
                 io: events,
                 db: client,
+                actor: req.user, workType: type,
                 userRole: req.user?.role,
                 userName: req.user?.name,
                 voucherNumber: order.voucher_number,
@@ -938,7 +949,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 await client.query('BEGIN');
                 await client.query("SET LOCAL lock_timeout = '1500ms'");
                 await client.query("SET LOCAL statement_timeout = '3000ms'");
-                await logOperation({ userId, orderId, operationType: 'scan_error', details: rejectedScanAudit, db: client, io: rejectionEvents });
+                await logOperation({ userId, orderId, operationType: 'scan_error', details: { ...rejectedScanAudit, command_id: command?.id || null, operation_context: operationContext || 'rejected' }, actor: req.user, workType: type, db: client, io: rejectionEvents });
                 await client.query('COMMIT');
                 rejectionEvents.publish();
             } catch (auditError) {

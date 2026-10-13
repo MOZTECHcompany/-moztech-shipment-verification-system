@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
+const { workTypes } = require('../utils/warehouseWork');
 const { getTaskPage } = require('../utils/taskPagination');
 
 // GET /api/tasks
@@ -17,9 +18,12 @@ router.get('/tasks', async (req, res) => {
         logger.debug(`[/api/tasks] 使用者請求 - ID: ${userId}, 角色: ${role} (effective=${effectiveRole})`);
         if (!effectiveRole) return res.status(403).json({ message: '使用者角色無效' });
 
+        const stage = req.query.stage || '';
+        if (typeof stage !== 'string' || stage && !['pick','pack'].includes(stage)) return res.status(400).json({message:'作業階段無效'});
+        const allowed = workTypes(req.user);
         const query = `
             SELECT 
-                o.id, o.voucher_number, o.customer_name, o.status, o.document_type, p.name as picker_name,
+                o.id, o.voucher_number, o.customer_name, o.status, o.document_type, o.picker_id, o.packer_id, o.pick_paused_at, o.pack_paused_at, p.name as picker_name,
                 (CASE WHEN o.status = 'picking' THEN picker_u.name WHEN o.status = 'packing' THEN packer_u.name ELSE NULL END) as current_user,
                 (CASE WHEN o.status IN ('pending', 'picking') THEN 'pick' WHEN o.status IN ('picked', 'packing') THEN 'pack' END) as task_type,
                 COALESCE(o.is_urgent, FALSE) as is_urgent,
@@ -58,10 +62,11 @@ router.get('/tasks', async (req, res) => {
                 LIMIT 1
             ) import_log ON TRUE
             WHERE 
-                ($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
+                (($2 = 'admin' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
                 ($2 = 'dispatcher' AND o.status IN ('pending', 'picking', 'picked', 'packing')) OR
-                ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL)))) OR
-                ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1)))
+                ($3 AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL)))) OR
+                ($4 AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1))))
+                AND ($5='' OR ($5='pick' AND o.status IN ('pending','picking')) OR ($5='pack' AND o.status IN ('picked','packing')))
             GROUP BY o.id, o.voucher_number, o.customer_name, o.status, o.created_at, p.name, picker_u.name, packer_u.name
             ORDER BY 
                 (CASE WHEN $2 = 'dispatcher' THEN MAX(CASE WHEN import_log.user_id = $1 THEN 1 ELSE 0 END) ELSE 0 END) DESC,
@@ -71,7 +76,7 @@ router.get('/tasks', async (req, res) => {
         `;
 
         logger.debug(`[/api/tasks] 執行查詢，參數: userId=${userId}, role=${effectiveRole}`);
-        const result = await pool.query(query, [userId, effectiveRole]);
+        const result = await pool.query(query, [userId, effectiveRole, allowed.includes('pick'), allowed.includes('pack'), stage]);
         logger.info(`[/api/tasks] 查詢結果: 找到 ${result.rows.length} 筆任務`);
         if (result.rows.length > 0) {
             logger.debug(`[/api/tasks] 第一筆任務:`, JSON.stringify(result.rows[0]));
@@ -136,16 +141,11 @@ router.get('/tasks/completed', async (req, res) => {
                 (CASE WHEN import_log.user_id = ${myUserParam} THEN 1 ELSE 0 END) DESC,
                 o.updated_at DESC
             `;
-        } else if (effectiveRole === 'picker') {
-            conditions.push(`o.picker_id = $${paramIndex++}`);
-            params.push(userId);
-            conditions.push("o.status IN ('picked', 'packing', 'completed')");
-        } else if (effectiveRole === 'packer') {
-            conditions.push(`o.packer_id = $${paramIndex++}`);
-            params.push(userId);
-            conditions.push("o.status = 'completed'");
         } else {
-            return res.json([]);
+            const person = `$${paramIndex++}`;
+            params.push(userId);
+            conditions.push(`o.status IN ('picked','packing','completed') AND (o.picker_id=${person} OR o.packer_id=${person}
+                OR EXISTS(SELECT 1 FROM operation_logs history WHERE history.order_id=o.id AND history.user_id=${person} AND history.action_type IN ('pick','pack')))`);
         }
 
         // 日期篩選（預設用台灣時區切日）
@@ -162,7 +162,7 @@ router.get('/tasks/completed', async (req, res) => {
 
         const query = `
             SELECT 
-                o.id, o.voucher_number, o.customer_name, o.status, o.document_type, p.name as picker_name,
+                o.id, o.voucher_number, o.customer_name, o.status, o.document_type, o.picker_id, o.packer_id, o.pick_paused_at, o.pack_paused_at, p.name as picker_name,
                 pk.name as packer_name,
                 o.updated_at as completed_at,
                 import_log.user_id as imported_by_user_id,

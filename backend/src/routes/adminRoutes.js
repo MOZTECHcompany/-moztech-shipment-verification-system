@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
+const { parseWorkOverrides } = require('../utils/warehouseWork');
 const userService = require('../services/userService');
 const jwt = require('jsonwebtoken');
 
@@ -87,13 +88,14 @@ router.post('/create-user', require('../utils/managementScope').warehouseOnly, a
     if ((role === 'admin' || role === 'superadmin') && actorRole !== 'superadmin') {
       return res.status(403).json({ message: '只有最高管理員可以新增管理員' });
     }
-    const user = await userService.createUser({ username, password, name, role, management_scope });
+    const user = await userService.createUser({ username, password, name, role, management_scope, ...parseWorkOverrides(req.body) });
 
     return res.status(201).json({
       message: `使用者 ${user.username} (${user.role}) 已成功建立`,
       user
     });
   } catch (error) {
+    if (error.status === 400) return res.status(400).json({message:error.message});
     if (error.message === '用戶名已存在') {
       return res.status(409).json({ message: error.message });
     }

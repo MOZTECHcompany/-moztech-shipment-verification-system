@@ -16,11 +16,11 @@ LEFT JOIN LATERAL (
     FROM order_items WHERE order_id=o.id
 ) quantities ON TRUE
 LEFT JOIN LATERAL (
-    SELECT string_agg(DISTINCT u.name, ', ' ORDER BY u.name) FILTER (WHERE ol.action_type='pick') AS pickers,
-        string_agg(DISTINCT u.name, ', ' ORDER BY u.name) FILTER (WHERE ol.action_type='pack') AS packers,
-        (array_agg(u.name ORDER BY ol.created_at,ol.id) FILTER (WHERE ol.action_type='void'))[1] AS void_user,
+    SELECT string_agg(DISTINCT COALESCE(ol.actor_snapshot->>'name',u.name), ', ' ORDER BY COALESCE(ol.actor_snapshot->>'name',u.name)) FILTER (WHERE ol.action_type='pick') AS pickers,
+        string_agg(DISTINCT COALESCE(ol.actor_snapshot->>'name',u.name), ', ' ORDER BY COALESCE(ol.actor_snapshot->>'name',u.name)) FILTER (WHERE ol.action_type='pack') AS packers,
+        (array_agg(COALESCE(ol.actor_snapshot->>'name',u.name) ORDER BY ol.created_at,ol.id) FILTER (WHERE ol.action_type='void'))[1] AS void_user,
         (array_agg(ol.created_at ORDER BY ol.created_at,ol.id) FILTER (WHERE ol.action_type='void'))[1] AS void_at
-    FROM operation_logs ol JOIN users u ON u.id=ol.user_id
+    FROM operation_logs ol LEFT JOIN users u ON u.id=ol.user_id
     WHERE ol.order_id=o.id AND ol.action_type IN ('pick','pack','void')
 ) activity ON TRUE
 WHERE (o.status='completed' AND o.completed_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Taipei')

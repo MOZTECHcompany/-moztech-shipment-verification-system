@@ -12,7 +12,9 @@ const { logOperation } = require('../services/operationLogService');
 // Legacy comment/mention TIMESTAMP columns contain UTC wall time. Expose them
 // as instants; leave stored values and microsecond cursor text unchanged.
 const router = express.Router();
-const {warehouseOnly,isOrderManager} = require('../utils/managementScope');
+const {isWarehouseAdmin} = require('../utils/managementScope');
+const { assertWork, requireWarehouseWorker, actorSnapshot, pauseField } = require('../utils/warehouseWork');
+const { readLines } = require('../services/scanSnapshot');
 const { deferredEvents } = require('../utils/transactionEvents');
 
 const rateMap = new Map();
@@ -620,11 +622,10 @@ router.get('/tasks/:orderId/sessions', async (req, res) => {
     }
 });
 
-router.post('/tasks/:orderId/transfer', warehouseOnly, async (req, res) => {
+router.post('/tasks/:orderId/transfer', requireWarehouseWorker, async (req, res) => {
     const { orderId } = req.params;
     const { to_user_id, task_type, reason } = req.body;
-    const { id: fromUserId, role } = req.user;
-    const isAdmin = ['admin', 'superadmin'].includes(role);
+    const { id: fromUserId } = req.user;
     const events = deferredEvents(req.app.get('io'));
     const fail = (status, message) => Object.assign(new Error(message), { status });
     if (!['pick', 'pack'].includes(task_type) || !Number.isSafeInteger(Number(to_user_id)) || Number(to_user_id) <= 0) return res.status(400).json({ message: '請提供正確的作業類型與接手人員' });
@@ -634,16 +635,50 @@ router.post('/tasks/:orderId/transfer', warehouseOnly, async (req, res) => {
         await client.query('BEGIN'); transactionOpen = true;
         const order = (await client.query('SELECT id, status, picker_id, packer_id FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到指定訂單');
-        const expectedRole = task_type === 'pick' ? 'picker' : 'packer';
+        assertWork(req.user, task_type);
         const owner = task_type === 'pick' ? order.picker_id : order.packer_id;
-        if (!isAdmin && (role !== expectedRole || owner !== fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
+        if (!isWarehouseAdmin(req.user) && Number(owner) !== Number(fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
         if (order.status !== (task_type === 'pick' ? 'picking' : 'packing')) throw fail(409, '僅能轉交進行中的同階段作業');
-        const target = (await client.query('SELECT id, role, management_scope FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
-        if (!target || isOrderManager(target) || ![expectedRole, 'admin', 'superadmin'].includes(target.role)) throw fail(400, '接手人員沒有此作業的權限');
-        await client.query('INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason) VALUES ($1,$2,$3,$4,$5)', [orderId, fromUserId, to_user_id, task_type, reason]);
-        await client.query(task_type === 'pick' ? 'UPDATE orders SET picker_id=$1, updated_at=NOW() WHERE id=$2' : 'UPDATE orders SET packer_id=$1, updated_at=NOW() WHERE id=$2', [to_user_id, orderId]);
-        await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', details: { to_user_id, task_type, reason }, db: client, io: events });
-        events.emit('task_transferred', { orderId, from_user_id: fromUserId, to_user_id, task_type });
+        const target = (await client.query('SELECT id,username,name,role,management_scope,can_pick,can_pack FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
+        if (!target) throw fail(404, '找不到接手人員');
+        assertWork(target, task_type);
+        if (Number(owner) === Number(to_user_id)) throw fail(409, '此人已是作業負責人，不需要重複交接');
+        const previous = owner ? (await client.query('SELECT id,username,name,role,management_scope FROM users WHERE id=$1', [owner])).rows[0] : null;
+        const { items, instances } = await readLines(client, orderId);
+        const serialCounts = new Map();
+        for (const instance of instances) {
+            const key = Number(instance.order_item_id), counts = serialCounts.get(key) || {total:0,picked:0,packed:0};
+            counts.total++;
+            if (['picked','packed'].includes(instance.status)) counts.picked++;
+            if (instance.status === 'packed') counts.packed++;
+            serialCounts.set(key,counts);
+        }
+        const lineProgress = items.map(item => {
+            const serials = serialCounts.get(Number(item.id));
+            return { id: item.id, barcode: item.barcode, quantity: item.quantity,
+                picked_quantity: serials ? serials.picked : Number(item.picked_quantity),
+                packed_quantity: serials ? serials.packed : Number(item.packed_quantity) };
+        });
+        const progress = { stage: task_type, items: lineProgress,
+            instances: instances.map(i => ({ id: i.id, order_item_id: i.order_item_id, serial_number: i.serial_number, status: i.status })),
+            picked_quantity: lineProgress.reduce((sum,i) => sum+i.picked_quantity,0),
+            packed_quantity: lineProgress.reduce((sum,i) => sum+i.packed_quantity,0) };
+        const actor = actorSnapshot(req.user), from = previous ? actorSnapshot(previous) : null, to = actorSnapshot(target);
+        await client.query(`INSERT INTO task_assignments (order_id,from_user_id,to_user_id,task_type,reason,performed_by,
+            actor_snapshot,from_snapshot,to_snapshot,progress_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [orderId,owner,to_user_id,task_type,reason,fromUserId,JSON.stringify(actor),JSON.stringify(from),JSON.stringify(to),JSON.stringify(progress)]);
+        const field = task_type === 'pick' ? 'picker_id' : 'packer_id';
+        await client.query(`UPDATE orders SET ${field}=$1,${pauseField(task_type)}=NULL,updated_at=NOW() WHERE id=$2`, [to_user_id, orderId]);
+        await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', actor: req.user, workType: task_type,
+            details: { from_user_id:owner,to_user_id,performed_by:fromUserId,task_type,reason,progress_snapshot:progress }, db: client, io: events });
+        const content = `【${task_type === 'pick' ? '揀貨' : '裝箱'}作業交接】${from?.name || '未指定'} → ${to.name}，已揀 ${progress.picked_quantity} 件、已裝 ${progress.packed_quantity} 件${reason ? '；'+reason : ''}`;
+        const comment = (await client.query("INSERT INTO task_comments(order_id,user_id,content,priority) VALUES($1,$2,$3,'urgent') RETURNING id", [orderId,fromUserId,content])).rows[0];
+        const recipients = [...new Set([owner,Number(to_user_id)].filter(Boolean))];
+        await client.query('INSERT INTO task_mentions(comment_id,mentioned_user_id) SELECT $1,id FROM users WHERE id=ANY($2::int[])', [comment.id,recipients]);
+        events.emit('new_comment', {orderId:Number(orderId),commentId:comment.id,userId:fromUserId,content,priority:'urgent'});
+        for (const userId of recipients) events.emit('new_mention', {userId,orderId:Number(orderId),commentId:comment.id,content,priority:'urgent'});
+        events.emit('task_transferred', { orderId, from_user_id:owner,to_user_id,performed_by:fromUserId,task_type });
+        events.emit('task_status_changed', {orderId:Number(orderId),newStatus:order.status});
         commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
         events.publish();
         res.json({ message: '任務已成功轉移' });

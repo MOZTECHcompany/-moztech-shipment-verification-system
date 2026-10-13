@@ -5,6 +5,8 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
+import {formatMessageTimestamp} from '@/utils/messageTimestamp';
+import {workActorLabel,workTypeLabel} from '@/utils/warehouseWork';
 import { socket } from '@/api/socket.js';
 import {
     FileText, Search, Filter, Download, RefreshCw,
@@ -22,6 +24,11 @@ import {
 
 // 操作類型的中文對照和顏色
 const actionTypeMap = {
+    work_pause: {label:'暫停作業',icon:'⏸'},
+    work_resume: {label:'繼續作業',icon:'▶'},
+    transfer: {label:'任務交接',icon:'↔'},
+    work_mode_selected: {label:'選擇今日作業',icon:'↔'},
+    work_assigned: {label:'指派今日作業',icon:'✋'},
     import: { label: '匯入訂單', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: '📥' },
     claim: { label: '認領任務', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: '✋' },
     pick: { label: '揀貨操作', color: 'bg-gradient-to-br from-yellow-50 to-yellow-100 text-yellow-800 border-yellow-200', icon: '📦' },
@@ -148,18 +155,19 @@ export function OperationLogs() {
 
     // 轉換為 CSV 格式
     const convertToCSV = (data) => {
-        const headers = ['時間', '訂單編號', '客戶名稱', '操作類型', '操作人員', '角色', '詳細資訊'];
+        const headers = ['時間', '訂單編號', '客戶名稱', '操作類型', '實際操作人員', '當時帳號身分', '當下工序', '詳細資訊'];
         const rows = data.map(log => [
-            new Date(log.created_at).toLocaleString('zh-TW'),
+            formatMessageTimestamp(log.created_at),
             log.voucher_number || '-',
             log.customer_name || '-',
             actionTypeMap[log.action_type]?.label || log.action_type,
-            log.user_name || '-',
-            log.user_role || '-',
+            log.actor_snapshot?.name || log.user_name || '-',
+            log.actor_snapshot ? workActorLabel(log) : '歷史身分未記錄',
+            workTypeLabel(log.work_type || (['pick','pack'].includes(log.action_type)?log.action_type:null)) || '-',
             JSON.stringify(log.details)
         ]);
         
-        return [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+        return [headers, ...rows].map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g,'""')}"`).join(',')).join('\n');
     };
 
     // 格式化詳細資訊
@@ -319,7 +327,8 @@ export function OperationLogs() {
                                 <TH>時間</TH>
                                 <TH>訂單資訊</TH>
                                 <TH>操作類型</TH>
-                                <TH>操作人員</TH>
+                                <TH>實際操作人員</TH>
+                                <TH>當下工序</TH>
                                 <TH>詳細資訊</TH>
                             </THead>
                             <TBody>
@@ -353,7 +362,7 @@ export function OperationLogs() {
                                     </>
                                 ) : logs.length === 0 ? (
                                     <TR>
-                                        <TD colSpan={5} className="py-10">
+                                        <TD colSpan={6} className="py-10">
                                             <EmptyState title="沒有找到操作記錄" description="嘗試調整篩選條件" />
                                         </TD>
                                     </TR>
@@ -363,7 +372,7 @@ export function OperationLogs() {
                                             <TD className="whitespace-nowrap text-xs">
                                                 <div className="flex items-center gap-1">
                                                     <Calendar className="h-3.5 w-3.5 text-gray-400" />
-                                                    {new Date(log.created_at).toLocaleString('zh-TW')}
+                                                    {formatMessageTimestamp(log.created_at)}
                                                 </div>
                                             </TD>
                                             <TD>
@@ -387,10 +396,14 @@ export function OperationLogs() {
                                                         <User className="h-3.5 w-3.5 text-purple-600" />
                                                     </div>
                                                     <div>
-                                                        <div className="text-sm font-semibold text-gray-900">{log.user_name || '-'}</div>
-                                                        <div className="text-[10px] text-gray-500">{log.user_role || '-'}</div>
+                                                        <div className="text-sm font-semibold text-gray-900">{log.actor_snapshot?.name || log.user_name || '-'}</div>
+                                                        <div className="text-[10px] text-gray-500">{log.actor_snapshot ? workActorLabel(log) : '歷史身分未記錄'}</div>
                                                     </div>
                                                 </div>
+                                            </TD>
+                                            <TD className="whitespace-nowrap text-sm">
+                                                {workTypeLabel(log.work_type || (['pick','pack'].includes(log.action_type)?log.action_type:null)) || '—'}
+                                                {(() => {let details=log.details;try{if(typeof details==='string')details=JSON.parse(details);}catch{details={};}return details?.operation_context==='assistance'?<span className="ml-2 text-xs text-amber-700">協助</span>:null;})()}
                                             </TD>
                                             <TD className="max-w-xs">
                                                 <div className="text-xs text-gray-600 space-y-0.5">{formatDetails(log.details)}</div>

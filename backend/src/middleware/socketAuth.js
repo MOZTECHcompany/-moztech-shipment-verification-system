@@ -1,3 +1,4 @@
+const { staffUser, workTypes } = require('../utils/warehouseWork');
 const jwt = require('jsonwebtoken');
 
 const STAFF_ROLES = new Set(['picker', 'packer', 'dispatcher', 'admin', 'superadmin']);
@@ -10,7 +11,7 @@ function authError(code = 'SOCKET_AUTH_REQUIRED') {
 
 async function currentStaffUser(pool, id) {
     const result = await pool.query({
-        text: 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1',
+        text: 'SELECT id, username, name, role, management_scope, can_pick, can_pack FROM users WHERE id = $1',
         values: [id], query_timeout: 5000,
     });
     const row = result.rows[0];
@@ -18,7 +19,7 @@ async function currentStaffUser(pool, id) {
     // There is no is_active column in the current schema. A current account and
     // a recognized staff role are required; never authorize from JWT role claims.
     if (!row || !STAFF_ROLES.has(role)) throw authError();
-    return { id: row.id, username: row.username, name: row.name, role, management_scope:row.management_scope || 'all' };
+    return staffUser({ ...row, role });
 }
 
 function createSocketAuthenticator({ pool, secret }) {
@@ -58,7 +59,7 @@ function guardSocketSession(socket, { pool, recheckMs = 60000 }) {
     const recheck = async () => {
         try {
             const user = await currentStaffUser(pool, socket.data.user.id);
-            if (user.role !== socket.data.user.role || user.management_scope !== socket.data.user.management_scope) { closeSession(); return; }
+            if (user.role !== socket.data.user.role || user.management_scope !== socket.data.user.management_scope || JSON.stringify(user.work_types) !== JSON.stringify(socket.data.user.work_types)) { closeSession(); return; }
             socket.data.user = user;
         } catch (error) { closeSession(error.data?.code || 'SOCKET_AUTH_UNAVAILABLE'); return; }
         if (socket.connected) { accountTimer = setTimeout(recheck, recheckMs); accountTimer.unref?.(); }

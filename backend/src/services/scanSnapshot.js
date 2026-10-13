@@ -5,7 +5,7 @@ const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
 // joined user names and SQL column order do not create false mismatches.
 function stateToken(order, items, instances) {
     return digest([
-        [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.document_type || 'shipment'],
+        [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.document_type || 'shipment', ...(order.pick_paused_at || order.pack_paused_at ? [order.pick_paused_at || null, order.pack_paused_at || null] : [])],
         sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.quantity_sign ?? 1]),
         sorted(instances).map(i=>[i.id,i.order_item_id,i.serial_number,i.status])
     ]);

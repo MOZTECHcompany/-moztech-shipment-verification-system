@@ -4,11 +4,15 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { useWorkMode } from '../contexts/WorkModeContext';
+import { workStageLabel, workTypesForUser } from '../utils/workCapabilities';
 
 const roleLabels = { picker: '揀貨員', packer: '裝箱員', dispatcher: '出貨調度', admin: '管理員', superadmin: '系統管理員' };
 
 export function AppLayout({ user, onLogout, children }) {
   const location = useLocation();
+  const { stage } = useWorkMode();
+  const orderStage = location.pathname.startsWith('/order/') ? new URLSearchParams(location.search).get('stage') : stage;
   const clampWidth = value => Math.min(360, Math.max(180, value));
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try { const value = Number(localStorage.getItem('wms_sidebar_width')); return Number.isFinite(value) && value > 0 ? clampWidth(value) : 208; } catch { return 208; }
@@ -75,7 +79,8 @@ export function AppLayout({ user, onLogout, children }) {
         <header className="corely-topbar">
           <span className="text-sm font-medium text-slate-600">{section}</span>
           {user && <div className="ml-auto flex min-w-0 items-center gap-3">
-            <span className="hidden text-xs text-slate-500 sm:block">{managementRoleLabel(user)}</span>
+            <span className="hidden text-xs text-slate-500 sm:block">{['picker','packer'].includes(user.role) && workTypesForUser(user).length === 2 ? '倉儲作業員' : managementRoleLabel(user)}</span>
+            {['pick','pack'].includes(orderStage) && <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${orderStage === 'pick' ? 'bg-orange-50 text-orange-800' : 'bg-emerald-50 text-emerald-800'}`}>{workStageLabel(orderStage)}</span>}
             <span className="max-w-32 truncate text-sm font-medium" title={user.name || user.username}>{user.name || user.username}</span>
             <button type="button" onClick={onLogout} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-100" aria-label="登出"><LogOut size={16} aria-hidden="true" /><span className="hidden sm:inline">登出</span></button>
           </div>}

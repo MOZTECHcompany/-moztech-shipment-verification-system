@@ -8,6 +8,7 @@ import { transform } from 'esbuild';
 import { filterTasks, canBatchPick, canBatchClaim, batchStagesForRole, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
 import * as signedOrder from '../src/utils/signedOrder.js';
+import * as workCapabilities from '../src/utils/workCapabilities.js';
 
 const source = await readFile(new URL('../src/components/TaskDashboard.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
@@ -20,7 +21,7 @@ const fixtures = [
 
 // Exercise the component's real callbacks with controlled hooks and deferred API
 // responses. This isolates UI state transitions without a database or browser.
-function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {}) {
+function dashboard({ role = 'admin', initialView = 'active', pinned = [], stage = role === 'packer' ? 'pack' : 'pick', workTypes, modeError = '' } = {}) {
     const hooks = [];
     const timers = new Map();
     let timerId = 0;
@@ -65,6 +66,8 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
         return promise;
     };
     const notifications = new Proxy({ isEnabled: () => false, play: value => sounds.push(value) }, { get: (target, key) => key === '__esModule' ? false : target[key] || noop });
+    let selectedStage = stage;
+    const modeSelections = [];
     const imports = {
         '@/utils/managementScope': managementScope,
         '@/utils/orderChangePresentation': orderChangePresentation,
@@ -78,6 +81,9 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
         '@/utils/taskFilters': { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole },
         '@/utils/taskPage': { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage },
         '@/utils/signedOrder': signedOrder,
+        '@/utils/workCapabilities': workCapabilities,
+        '@/contexts/WorkModeContext': { useWorkMode: () => ({ stage: selectedStage, loading: false, choosing: false, error: modeError, selectStage: async next => { selectedStage = next; modeSelections.push(next); dirty = true; return true; } }) },
+        './WorkModeControls': { WorkModeControls: 'WorkModeControls' },
         '@/utils/soundNotification.js': notifications,
         '@/utils/voiceNotification.js': notifications,
         '@/utils/desktopNotification.js': notifications,
@@ -91,8 +97,9 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
         module, exports: module.exports, require: name => imports[name] || generic,
         setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id), console, URLSearchParams,
         localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }
+        , navigator: { onLine: true }
     });
-    const user = { id: 7, name: 'Test operator', role };
+    const user = { id: 7, name: 'Test operator', role, ...(workTypes ? {work_types: workTypes} : {}) };
     function render() {
         if (!mounted) return tree;
         for (let i = 0; i < 12; i++) {
@@ -124,7 +131,7 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [] } = {})
     };
     const advanceSearch = () => { for (const [id, timer] of [...timers]) { if (timer.delay <= 300) { timers.delete(id); timer.fn(); } } render(); };
     render();
-    return { advanceSearch, reads, posts, navigation, sounds, failures, successes, listeners, storage, render, filters, button, card, find, text, settle, unmount, updatesAfterUnmount: () => updatesAfterUnmount };
+    return { advanceSearch, reads, posts, navigation, sounds, failures, successes, listeners, storage, render, filters, button, card, find, text, settle, unmount, modeSelections, updatesAfterUnmount: () => updatesAfterUnmount };
 }
 
 async function loaded(options) {
@@ -230,7 +237,8 @@ test('claim prevents double submit and enters work only after server success', a
     view.posts[0].resolve({ data: { message: 'ok' } });
     await first;
     await view.settle();
-    assert.deepEqual(view.navigation, ['/order/1']);
+    assert.deepEqual(view.navigation, ['/order/1?stage=pick']);
+    assert.deepEqual(JSON.parse(JSON.stringify(view.posts[0].body)), {stage:'pick'});
     assert.deepEqual(view.sounds, ['taskClaimed']);
 });
 
@@ -309,7 +317,7 @@ test('a pending claim locks other cards without labelling them as pending', asyn
     assert.doesNotMatch(view.text(primary), /認領中/);
     view.posts[0].resolve({ data: { message: 'ok' } });
     await first;
-    assert.deepEqual(view.navigation, ['/order/1']);
+    assert.deepEqual(view.navigation, ['/order/1?stage=pick']);
     assert.equal(view.posts.length, 1);
 });
 
@@ -535,7 +543,7 @@ test('cards show server totals, select a group, reset pagination and retain sear
     assert.equal(count.props.value, 502);
     view.button('下一頁').props.onClick(); view.render();
     view.reads[1].resolve(summaryPage(fixtures)); await view.settle();
-    statButton(view, '裝箱任務').props.onClick(); view.render();
+    await statButton(view, '裝箱任務').props.onClick(); view.render();
     assert.match(view.reads[2].url, /group=pack/);
     assert.doesNotMatch(view.reads[2].url, /cursor=/);
     view.reads[2].resolve(summaryPage([fixtures[1]])); await view.settle();
@@ -575,6 +583,12 @@ test('status events remove tasks that no longer belong to the selected group and
 });
 
 async function enterBatch(view, label) {
+    const stage = label === '揀貨' ? 'pick' : 'pack';
+    if (!view.button('批次' + label)) {
+        const controls = view.find(view.render(), node => node.type === 'WorkModeControls');
+        await controls.props.onSelect(stage); view.render();
+        view.reads.at(-1).resolve({ data: fixtures }); await view.settle();
+    }
     view.button('批次' + label).props.onClick();
     view.render();
     view.reads.at(-1).resolve({ data: fixtures });
@@ -666,4 +680,56 @@ test('batch completion after unmount does not fetch or update the next screen', 
     assert.equal(view.reads.length,readCount);
     assert.equal(view.updatesAfterUnmount(),0);
     assert.deepEqual(view.successes,[]);
+});
+
+test('a dual-capability packing worker claims the explicit pack phase under their existing picker identity', async () => {
+    const view=await loaded({role:'picker',workTypes:['pick','pack'],stage:'pack'});
+    assert.match(view.reads[0].url,/stage=pack/);
+    assert.ok(view.button('批次裝箱'));
+    assert.equal(view.button('批次揀貨'),undefined);
+    assert.equal(view.card(1),undefined);
+    const pending=view.card(2).props.onClaim(2,false);
+    assert.deepEqual(JSON.parse(JSON.stringify(view.posts[0].body)),{stage:'pack'});
+    view.posts[0].resolve({data:{message:'ok'}}); await pending;
+    assert.deepEqual(view.navigation,['/order/2?stage=pack']);
+});
+
+test('initial stage choice is required and a pending claim prevents changing today’s mode', async () => {
+    const fresh=await loaded({workTypes:['pick','pack'],stage:null});
+    await fresh.card(1).props.onClaim(1,false);
+    assert.equal(fresh.posts.length,0);
+    assert.equal(fresh.card(1).props.claimDisabled,true);
+    const view=await loaded({workTypes:['pick','pack']});
+    const pending=view.card(1).props.onClaim(1,false);
+    const controls=view.find(view.render(),node=>node.type==='WorkModeControls');
+    assert.equal(controls.props.disabled,true);
+    assert.equal(await controls.props.onSelect('pack'),false);
+    assert.deepEqual(view.modeSelections,[]);
+    view.posts[0].resolve({data:{message:'ok'}}); await pending;
+});
+
+test('choosing a different stage clears only UI batch selections and never releases or resets a held order', async () => {
+    const view=await loaded({workTypes:['pick','pack']});
+    await enterBatch(view,'揀貨');
+    view.card(1).props.toggleTaskSelection(1);
+    assert.ok(view.button('認領 1 個揀貨任務'));
+    const controls=view.find(view.render(),node=>node.type==='WorkModeControls');
+    await controls.props.onSelect('pack'); view.render();
+    assert.equal(view.posts.length,0);
+    assert.equal(view.button('認領 1 個揀貨任務'),undefined);
+    assert.match(view.reads.at(-1).url,/stage=pack/);
+    assert.deepEqual(view.modeSelections,['pack']);
+});
+
+test('a claim with unknown result and failed readback blocks stage switching until the list can be verified',async()=>{
+    const view=await loaded({workTypes:['pick','pack']});
+    const pending=view.card(1).props.onClaim(1,false);
+    view.posts[0].reject(new Error('network timeout'));await view.settle();
+    view.reads[1].reject(new Error('offline'));await pending;await view.settle();
+    const controls=view.find(view.render(),node=>node.type==='WorkModeControls');
+    assert.equal(controls.props.disabled,true);
+    assert.equal(await controls.props.onSelect('pack'),false);
+    assert.equal(view.card(1).props.claimDisabled,true);
+    view.button('重試載入').props.onClick();view.reads[2].resolve({data:fixtures});await view.settle();
+    assert.equal(view.find(view.render(),node=>node.type==='WorkModeControls').props.disabled,false);
 });

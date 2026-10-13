@@ -23,7 +23,7 @@ test('legacy userId claim works with current admin role and name', async () => {
     pool.query.mockResolvedValue({ rows: [{ id: 7, username: 'operator', name: 'Current name', role: ' Admin ' }] });
     const res = await request(app).get('/admin').auth(token({ userId: 7, role: 'picker' }), { type: 'bearer' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: 7, username: 'operator', name: 'Current name', role: 'admin', management_scope: 'all' });
+    expect(res.body).toEqual({ id: 7, username: 'operator', name: 'Current name', role: 'admin', management_scope: 'all',can_pick:null,can_pack:null,work_types:['pick','pack'] });
     expect(pool.query.mock.calls[0][0].values).toEqual([7]);
 });
 test('database outage fails closed without treating the user as logged out', async () => {

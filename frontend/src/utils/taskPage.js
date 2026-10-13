@@ -1,13 +1,14 @@
 export const TASK_PAGE_SIZE = 50;
-export const taskQueryScope = ({ view, date, search, status, urgent, group = 'all' }) => JSON.stringify([view, view === 'completed' ? date : '', search.trim(), status, urgent, group]);
+export const taskQueryScope = ({ view, date, search, status, urgent, group = 'all', stage }) => JSON.stringify([view, view === 'completed' ? date : '', search.trim(), status, urgent, group, view === 'completed' ? '' : stage || '']);
 
-export function taskPageUrl({ view, date, search, status, urgent, cursor, group = 'all' }) {
+export function taskPageUrl({ view, date, search, status, urgent, cursor, group = 'all', stage }) {
     const params = new URLSearchParams({ pagination: 'cursor', limit: String(TASK_PAGE_SIZE) });
     if (search.trim()) params.set('q', search.trim());
     if (status !== 'all') params.set('status', status);
     if (group !== 'all') params.set('group', group);
     if (urgent) params.set('urgent', 'true');
     if (view === 'completed') params.set('date', date);
+    if (view !== 'completed' && ['pick', 'pack'].includes(stage)) params.set('stage', stage);
     if (cursor) params.set('cursor', cursor);
     return `/api/tasks${view === 'completed' ? '/completed' : ''}?${params}`;
 }

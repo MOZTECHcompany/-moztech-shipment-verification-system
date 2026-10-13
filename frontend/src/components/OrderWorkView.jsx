@@ -4,7 +4,7 @@ import {isDeletionRequest,changeQuantityRange} from '@/utils/orderChangePresenta
 // 訂單作業視圖 - Apple 風格現代化版本 (Focus Mode & Enhanced UI)
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { 
     Loader2, ArrowLeft, Check, ScanLine, Package, 
@@ -21,7 +21,11 @@ import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
 import SerialList from './SerialList';
-import { buildWorkItems, filterWorkItems, workStage } from '@/utils/orderWorkProgress';
+import { buildWorkItems, filterWorkItems } from '@/utils/orderWorkProgress';
+import {canWork,workTypesForUser} from '@/utils/workCapabilities';
+import {useWorkMode} from '@/contexts/WorkModeContext';
+import {validWorkStage,stageForOrder,stageStatus,stageOwner,stagePaused,stageCanScan} from '@/utils/warehouseWork';
+import {WorkHandoffs} from './WorkHandoffs';
 import voiceNotification from '@/utils/voiceNotification';
 import desktopNotification from '@/utils/desktopNotification';
 import { CameraScanner } from './CameraScanner';
@@ -166,8 +170,8 @@ const SNItemCard = ({ item, instances, progress, stage, lineInfo, signedDocument
 
 // --- 数量模式的品项卡片 ---
 const QuantityItemCard = ({ item, onUpdate, user, orderStatus, isUpdating, progress, stage, lineInfo, signedDocument }) => {
-    const canAdjustPick = (user.role === 'picker' || isWarehouseAdmin(user)) && orderStatus === 'picking';
-    const canAdjustPack = (user.role === 'packer' || isWarehouseAdmin(user)) && orderStatus === 'packing';
+    const canAdjustPick = stage === 'pick' && canWork(user,'pick') && orderStatus === 'picking';
+    const canAdjustPack = stage === 'pack' && canWork(user,'pack') && orderStatus === 'packing';
     const isComplete = progress.complete;
 
     return (
@@ -276,8 +280,23 @@ function AuthenticatedOrderWorkView({ user }) {
     const { orderId } = useParams();
     const navigate = useNavigate();
     const MySwal = withReactContent(Swal);
+    const [searchParams,setSearchParams] = useSearchParams();
+    const {selectStage} = useWorkMode();
+    const initialStage = searchParams.get('stage');
+    const lockedStageRef = useRef(validWorkStage(initialStage)?initialStage:null);
+    const [lockedStage,setLockedStage] = useState(lockedStageRef.current);
+    const [workControlBusy,setWorkControlBusy] = useState(false);
+    const workControlRef = useRef(false);
+    const [handoffOpen,setHandoffOpen] = useState(false);
+    const [handoffTargets,setHandoffTargets] = useState([]);
+    const [handoffTarget,setHandoffTarget] = useState('');
+    const [handoffReason,setHandoffReason] = useState('');
+    const [handoffVersion,setHandoffVersion] = useState(0);
 
     const [currentOrderData, setCurrentOrderData] = useState({ order: null, items: [], instances: [] });
+    const currentOrderRef = useRef(currentOrderData.order);currentOrderRef.current=currentOrderData.order;
+    const stage = lockedStage || stageForOrder(currentOrderData.order?.status);
+    const stageRef = useRef(stage);stageRef.current = stage;
     const [loading, setLoading] = useState(true);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
@@ -378,7 +397,14 @@ function AuthenticatedOrderWorkView({ user }) {
             setLoading(true);
             setLoadError('');
             const response = await apiClient.get(`/api/orders/${id}/work-snapshot`, { timeout: 15000 });
-            if (isCurrent() && !scanSubmissionRef.current.isBusy()) setCurrentOrderData(response.data);
+            if (isCurrent() && !scanSubmissionRef.current.isBusy()) {
+                if (!lockedStageRef.current) {
+                    const initial=stageForOrder(response.data.order?.status);
+                    lockedStageRef.current=initial;setLockedStage(initial);
+                    const params=new URLSearchParams(window.location.search);params.set('stage',initial);setSearchParams(params,{replace:true});
+                }
+                setCurrentOrderData(response.data);
+            }
         } catch (err) {
             if (!isCurrent()) return;
             setLoadError(err.response?.data?.message || '暫時無法更新訂單，請檢查連線後重試。');
@@ -550,7 +576,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 // The scan response handles our own in-flight operation and completion exactly once.
                 if (scanSubmissionRef.current.isBusy()) return;
                 // 如果狀態變為 completed，顯示完成動畫並跳轉
-                if (data.newStatus === 'completed') {
+                if (data.newStatus === 'completed' && stageRef.current === 'pack' && Number(stageOwner(currentOrderRef.current,'pack'))===Number(user.id)) {
                     if (!announceStageComplete('pack')) return;
                     soundNotification.play('taskCompleted');
                     MySwal.fire({
@@ -564,7 +590,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     });
                 } 
                 // 如果狀態變為 picked (揀貨完成)，且當前用戶是 picker，提示完成
-                else if (data.newStatus === 'picked' && user.role === 'picker') {
+                else if (data.newStatus === 'picked' && stageRef.current === 'pick' && Number(stageOwner(currentOrderRef.current,'pick'))===Number(user.id)) {
                     if (!announceStageComplete('pick')) return;
                     soundNotification.play('taskCompleted');
                     MySwal.fire({
@@ -590,6 +616,9 @@ function AuthenticatedOrderWorkView({ user }) {
             }
         };
 
+        const handleWorkChanged=data=>{if(Number(data.orderId)===Number(orderId)){fetchOrderDetails(orderId);setHandoffVersion(v=>v+1);}};
+        socket.on('task_transferred',handleWorkChanged);
+        socket.on('task_work_paused',handleWorkChanged);
         socket.on('active_sessions_update', handleActiveSessions);
         socket.on('new_comment', handleNewComment);
         socket.on('task_status_changed', handleTaskStatusChanged);
@@ -597,6 +626,8 @@ function AuthenticatedOrderWorkView({ user }) {
 
         return () => {
             clearInterval(interval);
+            socket.off('task_transferred',handleWorkChanged);
+            socket.off('task_work_paused',handleWorkChanged);
             socket.off('connect', handleReconnect);
             socket.off('active_sessions_update', handleActiveSessions);
             socket.off('new_comment', handleNewComment);
@@ -852,7 +883,7 @@ function AuthenticatedOrderWorkView({ user }) {
 
     const canPackNow = useMemo(() => {
         const status = currentOrderData.order?.status;
-        const roleCanPack = user?.role === 'packer' || isAdminLike;
+        const roleCanPack = canWork(user,'pack');
         return roleCanPack && (status === 'packing' || status === 'picked');
     }, [currentOrderData.order?.status, user?.role, isAdminLike]);
 
@@ -1324,7 +1355,7 @@ function AuthenticatedOrderWorkView({ user }) {
     };
 
     const updateItemState = (scanValue, type, amount = 1, orderItemId) => {
-        if (!currentOrderData.order) return false;
+        if (!currentOrderData.order || type !== stage || !canScanNow || workControlRef.current) return false;
         const submission = scanSubmissionRef.current.submit(scanValue, async () => {
             try {
                 const command = makeScanCommand(currentOrderData, {
@@ -1345,7 +1376,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 // A new accepted scan after a legitimate reopen can complete again.
                 completedStagesRef.current.delete(type);
                 if (stageCompleted) announceStageComplete(type);
-                if (newStatus === 'completed') {
+                if (type === 'pack' && newStatus === 'completed') {
                     MySwal.fire({
                         title: '裝箱核對完成',
                         text: '所有品項已完成裝箱核對，即將返回任務列表。',
@@ -1357,7 +1388,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     });
                     return;
                 }
-                if (newStatus === 'picked' && user.role === 'picker') {
+                if (type === 'pick' && newStatus === 'picked') {
                     MySwal.fire({
                         title: '✅ 揀貨完成！',
                         text: '此訂單已完成揀貨，即將返回任務列表...',
@@ -1412,7 +1443,7 @@ function AuthenticatedOrderWorkView({ user }) {
 
                 if (isConflict) {
                     // 盡量同步最新例外狀態，避免使用者一直碰到 409
-                    fetchOrderExceptions(orderId);
+                    fetchOrderExceptions(orderId);fetchOrderDetails(orderId);
                 }
 
                 // 播放錯誤音效（WebAudio）
@@ -1460,7 +1491,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const handleScan = (rawValue = barcodeInput) => {
         const scanValue = String(rawValue ?? '').trim();
         if (!scanValue) return false;
-        if (scanNeedsReview || signedScanChoice) return false;
+        if (scanNeedsReview || signedScanChoice || handoffOpen || workControlRef.current || !canScanNow) return false;
         // Consume each scanner Enter exactly once, including rejected/busy submissions.
         // A camera result must not erase unrelated keyboard input.
         setBarcodeInput(current => current.trim() === scanValue ? '' : current);
@@ -1474,8 +1505,7 @@ function AuthenticatedOrderWorkView({ user }) {
             return;
         }
         let operationType = null;
-        if ((user.role === 'picker' || isWarehouseAdmin(user)) && status === 'picking') operationType = 'pick';
-        else if ((user.role === 'packer' || isWarehouseAdmin(user)) && (status === 'packing' || status === 'picked')) operationType = 'pack';
+        if (stageCanScan(currentOrderData.order,stage,user,canWork(user,stage))) operationType=stage;
         
         if (operationType) {
             if (hasOpenOrderChange) {
@@ -1547,10 +1577,10 @@ function AuthenticatedOrderWorkView({ user }) {
         return false;
     };
 
-    const canOperate = !isOrderManager(user) && ['picker','packer','admin','superadmin'].includes(user?.role);
+    const canOperate = canWork(user,stage);
     const orderStatus = currentOrderData.order?.status;
-    const canScanNow = ((user.role === 'picker' || isAdminLike) && orderStatus === 'picking')
-        || ((user.role === 'packer' || isAdminLike) && ['picked', 'packing'].includes(orderStatus));
+    const workIsPaused = stagePaused(currentOrderData.order,stage);
+    const canScanNow = stageCanScan(currentOrderData.order,stage,user,canOperate) && !workControlBusy && !handoffOpen;
 
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(e.currentTarget?.value ?? barcodeInput); } };
     const handleClick = () => { barcodeInputRef.current?.focus(); handleScan(); };
@@ -1607,9 +1637,57 @@ function AuthenticatedOrderWorkView({ user }) {
         } finally { exportPendingRef.current = false; }
     };
 
-    const handleReturnToTasks = () => navigate('/tasks');
+    const runWorkControl = async operation => {
+        if (workControlRef.current || scanSubmissionRef.current.isBusy() || scanNeedsReview || signedScanChoice) return false;
+        workControlRef.current=true;setWorkControlBusy(true);
+        try { await operation();return true; }
+        catch(error) {
+            toast.error('作業變更未完成',{description:error.response?.data?.message || error.message});
+            await fetchOrderDetails(orderId);
+            return false;
+        } finally {workControlRef.current=false;setWorkControlBusy(false);}
+    };
+    const handleSwitchWork = async () => {
+        if (workControlBusy || scanSubmissionRef.current.isBusy() || scanNeedsReview || signedScanChoice) return;
+        const next=stage==='pick'?'pack':'pick';
+        if (!canWork(user,next)) return;
+        const ownedActive=currentOrderData.order?.status===stageStatus(stage) && Number(stageOwner(currentOrderData.order,stage))===Number(user.id);
+        if(ownedActive && !workIsPaused){
+            const result=await MySwal.fire({title:`暫停${stage==='pick'?'揀貨':'裝箱'}並切換？`,text:'已核對進度與認領人保留，之後可繼續作業。',showCancelButton:true,confirmButtonText:'暫停並切換',cancelButtonText:'取消'});
+            if(!result.isConfirmed)return;
+        }
+        await runWorkControl(async()=>{
+            if(ownedActive && !workIsPaused)await apiClient.post(`/api/orders/${orderId}/work-pause`,{stage});
+            const selected=await selectStage(next);if(selected===false)throw new Error('今日作業選擇未儲存，請再試一次。');
+            voiceNotification.stop();setBarcodeInput('');setSignedScanChoice(null);setShowCameraScanner(false);
+            navigate('/tasks');
+        });
+    };
+    const handleStartWork = next => runWorkControl(async()=>{
+        if(!canWork(user,next))throw new Error('沒有此作業的權限');
+        if(stagePaused(currentOrderData.order,next))await apiClient.post(`/api/orders/${orderId}/work-resume`,{stage:next});
+        else await apiClient.post(`/api/orders/${orderId}/claim`,{stage:next});
+        lockedStageRef.current=next;setLockedStage(next);completedStagesRef.current.delete(next);
+        const params=new URLSearchParams(window.location.search);params.set('stage',next);setSearchParams(params,{replace:true});
+        setBarcodeInput('');setScanError(null);setRejectedScan(null);voiceNotification.stop();
+        await fetchOrderDetails(orderId);toast.success(next==='pick'?'已開始揀貨':'已開始裝箱');
+    });
+    const openHandoff = async()=>{
+        if(workControlBusy || scanSubmissionRef.current.isBusy() || scanNeedsReview || signedScanChoice)return;
+        try{
+            const {data}=await apiClient.get('/api/warehouse/operators');
+            setHandoffTargets((data.items||[]).filter(person=>Number(person.id)!==Number(stageOwner(currentOrderData.order,stage)) && canWork(person,stage)));
+            setHandoffTarget('');setHandoffReason('');setHandoffOpen(true);
+        }catch(error){toast.error('無法載入接手人員',{description:error.response?.data?.message || error.message});}
+    };
+    const submitHandoff = ()=>runWorkControl(async()=>{
+        if(!handoffTarget)throw new Error('請選擇接手人員');
+        await apiClient.post(`/api/tasks/${orderId}/transfer`,{to_user_id:Number(handoffTarget),task_type:stage,reason:handoffReason.trim()});
+        setHandoffOpen(false);setHandoffVersion(v=>v+1);setBarcodeInput('');voiceNotification.stop();
+        await fetchOrderDetails(orderId);toast.success('任務已交接，原有進度保留');
+    });
+    const handleReturnToTasks = () => {if(!workControlRef.current && !scanSubmissionRef.current.isBusy())navigate('/tasks');};
 
-    const stage = workStage(user.role, currentOrderData.order?.status);
     const stageLabel = stage === 'pick' ? '揀貨' : '裝箱';
     const workItems = useMemo(() => buildWorkItems(currentOrderData.items, currentOrderData.instances, stage), [currentOrderData, stage]);
     const visibleItems = useMemo(() => filterWorkItems(workItems, itemSearch, isFocusMode), [workItems, itemSearch, isFocusMode]);
@@ -1690,6 +1768,10 @@ function AuthenticatedOrderWorkView({ user }) {
                 {currentOrderData.order && <WorkstationBar
                     orderId={orderId} user={user} voucher={currentOrderData.order.voucher_number}
                     stageLabel={stageLabel} remainingQty={remainingQty}
+                    operatorName={user.name||user.username} assisted={canScanNow && Number(stageOwner(currentOrderData.order,stage))!==Number(user.id)}
+                    onSwitch={workTypesForUser(user).length>1?handleSwitchWork:undefined}
+                    onTransfer={currentOrderData.order.status===stageStatus(stage) && (Number(stageOwner(currentOrderData.order,stage))===Number(user.id)||isWarehouseAdmin(user))?openHandoff:undefined}
+                    busy={workControlBusy||isUpdating||scanNeedsReview||handoffOpen||!!signedScanChoice}
                     onScan={() => {
                         barcodeInputRef.current?.scrollIntoView({ block: 'center' });
                         barcodeInputRef.current?.focus({ preventScroll: true });
@@ -1704,6 +1786,22 @@ function AuthenticatedOrderWorkView({ user }) {
                     }}
                 />}
 
+                {currentOrderData.order && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+                    <span>{workIsPaused?`${stageLabel}已暫停，核對進度保留。`:canScanNow?`${user.name||user.username}正在${stageLabel}`:`目前為${stageLabel}檢視，開始作業後才能掃碼。`}</span>
+                    <div className="flex flex-wrap gap-2">
+                        {workIsPaused && canWork(user,stage) && (Number(stageOwner(currentOrderData.order,stage))===Number(user.id)||isWarehouseAdmin(user)) && <Button disabled={workControlBusy||isUpdating||scanNeedsReview} onClick={()=>handleStartWork(stage)}>繼續作業</Button>}
+                        {!workIsPaused && canWork(user,stage) && ((stage==='pick'&&orderStatus==='pending')||(stage==='pack'&&orderStatus==='picked')) && <Button disabled={workControlBusy||isUpdating||operationBlockedByOrderChange||packBlockedByExceptions} onClick={()=>handleStartWork(stage)}>開始{stageLabel}</Button>}
+                        {stage==='pick' && orderStatus==='picked' && canWork(user,'pack') && <Button disabled={workControlBusy||isUpdating||operationBlockedByOrderChange||hasOpenExceptions} onClick={()=>handleStartWork('pack')}>開始裝箱</Button>}
+                    </div>
+                </div>}
+                {currentOrderData.order && <div className="mb-4"><WorkHandoffs orderId={orderId} version={handoffVersion}/></div>}
+                <Modal open={handoffOpen} onClose={()=>{if(!workControlBusy)setHandoffOpen(false);}} title="交接任務" footer={<><Button variant="secondary" disabled={workControlBusy} onClick={()=>setHandoffOpen(false)}>取消</Button><Button disabled={!handoffTarget||workControlBusy} onClick={submitHandoff}>{workControlBusy?'交接中…':'確認交接'}</Button></>}>
+                    <div className="space-y-4">
+                        <p className="text-sm text-slate-600">交接{stageLabel}任務，已核對數量與 SN 保留。</p>
+                        <label className="block text-sm font-medium">接手人員<select aria-label="接手人員" value={handoffTarget} onChange={e=>setHandoffTarget(e.target.value)} disabled={workControlBusy} className="mt-2 w-full rounded-xl border p-3"><option value="">選擇人員</option>{handoffTargets.map(person=><option key={person.id} value={person.id}>{person.name||person.username}</option>)}</select></label>
+                        <label className="block text-sm font-medium">交接備註（選填）<textarea aria-label="交接備註" maxLength={500} value={handoffReason} onChange={e=>setHandoffReason(e.target.value)} disabled={workControlBusy} className="mt-2 w-full rounded-xl border p-3"/></label>
+                    </div>
+                </Modal>
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     {/* 左側：掃描與討論 (在專注模式下隱藏討論) */}
                     <div className="lg:col-span-4 xl:col-span-3 space-y-6 min-w-0">
@@ -2078,7 +2176,7 @@ function AuthenticatedOrderWorkView({ user }) {
                                                     {hasSN ? (
                                                         <SNItemCard item={item} instances={itemInstances} progress={progress} stage={stage} lineInfo={lineInfo} signedDocument={isSignedDocument(currentOrderData.order)} />
                                                     ) : (
-                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} signedDocument={isSignedDocument(currentOrderData.order)} />
+                                                        <QuantityItemCard item={item} onUpdate={handleQuantityUpdate} user={user} orderStatus={currentOrderData.order?.status} isUpdating={isUpdating || scanNeedsReview || !canScanNow || operationBlockedByOrderChange || packBlockedByExceptions} progress={progress} stage={stage} lineInfo={lineInfo} signedDocument={isSignedDocument(currentOrderData.order)} />
                                                     )}
                                                 </div>
                                             );
@@ -2141,7 +2239,7 @@ function AuthenticatedOrderWorkView({ user }) {
                 />
 
                 <Modal open={!!signedScanChoice} onClose={() => setSignedScanChoice(null)} title="請選擇本次核對的品項" footer={<Button variant="secondary" onClick={() => setSignedScanChoice(null)}>取消</Button>}>
-                    <section role="dialog" aria-label="請選擇本次核對的品項">
+                    <section>
                     <p className="mb-3 text-sm text-slate-600">這個條碼同時有新增與沖正品項。</p>
                     <div className="space-y-2">{signedScanChoice?.items.map(item => <button key={item.id} type="button" className="flex min-h-14 w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-blue-500 hover:bg-blue-50" onClick={() => {
                         const choice = signedScanChoice;

@@ -55,7 +55,7 @@ function singleClientDatabase({ status = 'picking', failSnapshot = false, failCo
                 return rows([log]);
             }
             if (q.startsWith('WITH instance_stats AS')) return rows([{ has_unpicked: state.item.picked_quantity < 100, has_unpacked: state.item.packed_quantity < 100 }]);
-            if (q.startsWith('UPDATE orders SET status = $1,')) { state.order.status = params[0]; state.order.picker_id = params[1]; return rows([]); }
+            if (q.startsWith('UPDATE orders SET status = $1,')) { state.order.status = params[0]; state.order[q.includes('packer_id') ? 'packer_id' : 'picker_id'] = params[1]; return rows([]); }
             if (q.startsWith('UPDATE orders SET status')) {
                 state.order.status = q.includes("status = 'completed'") ? 'completed' : q.includes("status = 'packing'") ? 'packing' : 'picked';
                 return rows([]);
@@ -93,6 +93,10 @@ async function invoke(handler, db, body = {}, user = { id: 1, role: 'picker', na
 test('100 pick and 100 pack requests complete with one pool client and one mutation each', async () => {
     const db = singleClientDatabase();
     for (const type of ['pick', 'pack']) {
+        if(type === 'pack') {
+            const {next} = await invoke(claim,db,{stage:'pack'},{id:2,role:'packer',name:'Fixture operator'});
+            expect(next).not.toHaveBeenCalled();
+        }
         for (let i = 1; i <= 100; i++) {
             const user = { id: type === 'pick' ? 1 : 2, role: type === 'pick' ? 'picker' : 'packer', name: 'Fixture operator' };
             const { res, next } = await invoke(scan, db, { orderId: 1, scanValue: 'ITEM', type }, user);
@@ -101,12 +105,13 @@ test('100 pick and 100 pack requests complete with one pool client and one mutat
         }
     }
     expect(db.state().order.status).toBe('completed');
-    expect(db.commits()).toBe(200);
+    expect(db.commits()).toBe(201);
     expect(db.earlyEvents()).toBe(0);
-    expect(db.state().logs).toHaveLength(200);
-    expect(db.client.release).toHaveBeenCalledTimes(200);
+    expect(db.state().logs.filter(l => ['pick','pack'].includes(l.action_type))).toHaveLength(200);
+    expect(db.state().logs).toHaveLength(201);
+    expect(db.client.release).toHaveBeenCalledTimes(201);
     expect(pool.query).not.toHaveBeenCalled();
-    expect(db.io.emit.mock.calls.filter(([event]) => event === 'task_status_changed').map(([, data]) => data.newStatus)).toEqual(['picked', 'packing', 'completed']);
+    expect(db.io.emit.mock.calls.filter(([event]) => event === 'task_status_changed').map(([, data]) => data.newStatus)).toEqual(['picked', 'completed']);
 });
 
 test('snapshot failure rolls back mutation and publishes no event', async () => {
@@ -121,13 +126,14 @@ test('snapshot failure rolls back mutation and publishes no event', async () => 
     expect(db.client.release).toHaveBeenCalledTimes(1);
 });
 
-test('failed first packing scan does not broadcast a rolled-back packing transition', async () => {
+test('packing needs an explicit claim and a wrong-stage scan cannot change ownership or emit success', async () => {
     const db = singleClientDatabase({ status: 'picked' });
     const { next } = await invoke(scan, db, { orderId: 1, scanValue: 'WRONG', type: 'pack' }, { id: 2, role: 'packer' });
     expect(next).toHaveBeenCalled();
     expect(db.state().order.status).toBe('picked');
-    expect(db.io.emit.mock.calls.map(([event, body]) => [event, body.action_type])).toEqual([['new_operation_log', 'scan_error']]);
-    expect(db.state().logs).toHaveLength(1);
+    expect(next.mock.calls[0][0].status).toBe(409);
+    expect(db.io.emit).not.toHaveBeenCalled();
+    expect(db.state().logs).toHaveLength(0);
     expect(db.state().item.packed_quantity).toBe(0);
 });
 
@@ -191,4 +197,16 @@ test.each([{ type: 'typo' }, { amount: 1.5 }, { amount: 0 }, { amount: Number.MA
     expect(res.json.mock.calls[0][0].code).toBe('SCAN_NOT_APPLIED');
     expect(pool.connect).not.toHaveBeenCalled();
     expect(db.state().item.picked_quantity).toBe(0);
+});
+
+
+test('a wrong barcode in explicitly claimed packing retains a durable rejection audit only',async()=>{
+    const db=singleClientDatabase({status:'packing'});
+    const {next}=await invoke(scan,db,{orderId:1,scanValue:'WRONG',type:'pack'},{id:2,role:'packer',name:'Fixture operator'});
+    expect(next).toHaveBeenCalled();
+    expect(db.state().order.status).toBe('packing');
+    expect(db.state().item.packed_quantity).toBe(0);
+    expect(db.state().logs).toHaveLength(1);
+    expect(db.state().logs[0].action_type).toBe('scan_error');
+    expect(db.io.emit.mock.calls.map(([event,body])=>[event,body.action_type])).toEqual([['new_operation_log','scan_error']]);
 });

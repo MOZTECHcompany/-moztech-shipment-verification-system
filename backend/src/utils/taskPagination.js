@@ -1,3 +1,4 @@
+const { workTypes } = require('./warehouseWork');
 const { createHash } = require('node:crypto');
 
 const badRequest = message => Object.assign(new Error(message), { status: 400 });
@@ -8,7 +9,7 @@ const roles = new Set(['admin', 'dispatcher', 'picker', 'packer']);
 function parseTaskPage(user, query, view) {
     const role = user.role === 'superadmin' ? 'admin' : user.role;
     if (!roles.has(role)) throw Object.assign(new Error('使用者角色無效'), { status: 403 });
-    for (const key of ['q', 'status', 'date', 'urgent', 'limit', 'cursor', 'group']) {
+    for (const key of ['q', 'status', 'date', 'urgent', 'limit', 'cursor', 'group', 'stage']) {
         if (query[key] !== undefined && typeof query[key] !== 'string') throw badRequest('查詢參數格式不正確');
     }
     const search = (query.q || '').normalize('NFKC').trim().toLocaleLowerCase();
@@ -17,13 +18,16 @@ function parseTaskPage(user, query, view) {
     if (!['all', 'pending', 'picking', 'picked', 'packing', 'completed'].includes(status)) throw badRequest('作業狀態無效');
     const group = query.group || 'all';
     if (!['all', 'pick', 'pack', 'inProgress', 'mine', 'picked', 'done'].includes(group)) throw badRequest('任務分類無效');
+    const stage = view === 'active' ? query.stage || '' : '';
+    if (stage && !['pick','pack'].includes(stage)) throw badRequest('作業階段無效');
+    const allowed = workTypes(user);
     const date = query.date || '';
     if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)) throw badRequest('日期格式無效');
     if (query.urgent && !['true', 'false', '1', '0'].includes(query.urgent)) throw badRequest('緊急篩選格式無效');
     if (query.limit && !/^\d+$/.test(query.limit)) throw badRequest('分頁大小無效');
     const limit = Math.min(Math.max(Number(query.limit || 50), 1), 100);
     const urgent = ['true', '1'].includes(query.urgent);
-    const scope = createHash('sha256').update(JSON.stringify([String(user.id), role, view, search, status, date, urgent, limit, group])).digest('hex').slice(0, 24);
+    const scope = createHash('sha256').update(JSON.stringify([String(user.id), role, view, search, status, date, urgent, limit, group, stage, allowed])).digest('hex').slice(0, 24);
     let cursor = null;
     if (query.cursor) {
         try {
@@ -32,7 +36,7 @@ function parseTaskPage(user, query, view) {
             if (cursor.v !== 1 || cursor.scope !== scope || ![cursor.mine, cursor.pin, cursor.urgent].every(v => v === 0 || v === 1) || !/^-?\d+(\.\d{1,6})?$/.test(String(cursor.at)) || !/^[1-9]\d{0,14}$/.test(String(cursor.id))) throw new Error();
         } catch { throw badRequest('分頁已失效，請重新整理清單'); }
     }
-    return { userId: user.id, role, view, search, status, date, urgent, limit, scope, cursor, group };
+    return { userId: user.id, role, view, search, status, date, urgent, limit, scope, cursor, group, stage, work_types: allowed };
 }
 
 // Opt-in page contract. The legacy array routes remain unchanged.
@@ -42,14 +46,16 @@ async function getTaskPage(pool, user, query, view) {
     const param = value => { params.push(value); return `$${params.length}`; };
     const conditions = [];
     if (view === 'active') {
+        params.push(page.work_types.includes('pick'), page.work_types.includes('pack'));
         conditions.push(`(($2 IN ('admin', 'dispatcher') AND o.status IN ('pending','picking','picked','packing'))
-            OR ($2 = 'picker' AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL))))
-            OR ($2 = 'packer' AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1))))`);
+            OR ($3 AND (o.status = 'pending' OR (o.status = 'picking' AND (o.picker_id = $1 OR o.picker_id IS NULL))))
+            OR ($4 AND (o.status = 'picked' OR (o.status = 'packing' AND o.packer_id = $1))))`);
     } else {
         conditions.push(`(($2 IN ('admin','dispatcher') AND o.status IN ('picked','packing','completed'))
-            OR ($2 = 'picker' AND o.picker_id = $1 AND o.status IN ('picked','packing','completed'))
-            OR ($2 = 'packer' AND o.packer_id = $1 AND o.status = 'completed'))`);
+            OR (o.status IN ('picked','packing','completed') AND (o.picker_id=$1 OR o.packer_id=$1
+                OR EXISTS(SELECT 1 FROM operation_logs history WHERE history.order_id=o.id AND history.user_id=$1 AND history.action_type IN ('pick','pack')))))`);
     }
+    if (page.stage) conditions.push(page.stage === 'pick' ? "o.status IN ('pending','picking')" : "o.status IN ('picked','packing')");
     if (page.status !== 'all') conditions.push(`o.status = ${param(page.status)}`);
     if (page.urgent) conditions.push('COALESCE(o.is_urgent, FALSE) = TRUE');
     const timeColumn = view === 'completed' ? 'updated_at' : 'created_at';
@@ -78,8 +84,7 @@ async function getTaskPage(pool, user, query, view) {
     // Counts and items share one statement snapshot and the same authorization/filter scope.
     const mine = page.role === 'dispatcher' ? 'imported_by_user_id = $1'
         : view === 'completed' ? 'TRUE'
-        : page.role === 'picker' ? "status = 'picking' AND picker_id = $1"
-        : page.role === 'packer' ? "status = 'packing' AND packer_id = $1" : 'FALSE';
+        : "((status = 'picking' AND picker_id = $1) OR (status = 'packing' AND packer_id = $1))";
     const groups = {
         all: 'TRUE', pick: "status IN ('pending','picking')", pack: "status IN ('picked','packing')",
         inProgress: "status IN ('picking','packing')", mine,
@@ -93,7 +98,7 @@ async function getTaskPage(pool, user, query, view) {
     const limit = param(page.limit + 1);
     const result = await pool.query(`
         WITH eligible AS (
-            SELECT o.id, o.voucher_number, o.customer_name, o.status, o.document_type, o.picker_id, o.packer_id,
+            SELECT o.id, o.voucher_number, o.customer_name, o.status, o.document_type, o.picker_id, o.packer_id, o.pick_paused_at, o.pack_paused_at,
                 COALESCE(o.is_urgent, FALSE) AS is_urgent, o.updated_at AS completed_at,
                 import_log.user_id AS imported_by_user_id,
                 CASE WHEN $2 = 'dispatcher' AND import_log.user_id = $1 THEN 1 ELSE 0 END AS _mine,

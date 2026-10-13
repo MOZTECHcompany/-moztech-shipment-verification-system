@@ -1,3 +1,4 @@
+const { staffUser, workTypes } = require('../utils/warehouseWork');
 // backend/src/middleware/auth.js
 // 認證和授權中間件
 
@@ -27,7 +28,7 @@ async function authenticateToken(req, res, next) {
         // transaction connection; deleted/demoted accounts lose HTTP access too.
         const { pool } = require('../config/database');
         const { rows } = await pool.query({
-            text: 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1',
+            text: 'SELECT id, username, name, role, management_scope, can_pick, can_pack FROM users WHERE id = $1',
             values: [claims.id], query_timeout: 5000,
         });
         const user = rows[0];
@@ -35,7 +36,7 @@ async function authenticateToken(req, res, next) {
         if (!user || !['picker', 'packer', 'dispatcher', 'admin', 'superadmin'].includes(role) || claims.exp * 1000 <= Date.now()) {
             return res.status(403).json({ message: '帳號或登入已失效，請重新登入' });
         }
-        req.user = { id: user.id, username: user.username, name: user.name, role, management_scope:user.management_scope || 'all' };
+        req.user = staffUser({ ...user, role });
         req[verifiedStaff] = true;
         return next();
     } catch {

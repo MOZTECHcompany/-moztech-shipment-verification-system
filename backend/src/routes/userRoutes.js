@@ -3,6 +3,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { parseWorkOverrides } = require('../utils/warehouseWork');
 const userService = require('../services/userService');
 const { authorizeAdmin } = require('../middleware/auth');
 const { pool } = require('../config/database');
@@ -31,7 +32,7 @@ router.post('/', async (req, res, next) => {
             return res.status(403).json({ message: '只有最高管理員可以新增管理員' });
         }
 
-        const user = await userService.createUser({ username, password, name, role: normalizedRole, management_scope });
+        const user = await userService.createUser({ username, password, name, role: normalizedRole, management_scope, ...parseWorkOverrides(req.body) });
         
         res.status(201).json({ 
             message: '用戶創建成功',
@@ -105,7 +106,7 @@ router.put('/:userId', async (req, res, next) => {
             return res.status(403).json({ message: '只有最高管理員可以設定管理員角色' });
         }
 
-        const user = await userService.updateUser(targetUserId, { name, role: normalizedRole, password, management_scope });
+        const user = await userService.updateUser(targetUserId, { name, role: normalizedRole, password, management_scope, ...parseWorkOverrides(req.body) });
         
         res.json({ 
             message: '用戶更新成功',

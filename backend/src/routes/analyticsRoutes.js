@@ -33,8 +33,10 @@ router.get('/operation-logs', authorizeAdmin, async (req, res) => {
                 ol.action_type,
                 ol.details,
                 ol.created_at,
-                u.name as user_name,
-                u.role as user_role,
+                COALESCE(ol.actor_snapshot->>'name',u.name) as user_name,
+                ol.actor_snapshot->>'role' as user_role,
+                u.role as current_user_role, ol.actor_snapshot, ol.work_type,
+                ol.actor_snapshot IS NOT NULL AS has_actor_snapshot,
                 o.voucher_number,
                 o.customer_name,
                 o.status as order_status
@@ -260,8 +262,10 @@ router.get('/scan-errors', authorizeAdmin, async (req, res) => {
                 ol.created_at,
                 ol.action_type,
                 ol.details,
-                u.name as user_name,
-                u.role as user_role,
+                COALESCE(ol.actor_snapshot->>'name',u.name) as user_name,
+                ol.actor_snapshot->>'role' as user_role,
+                u.role as current_user_role, ol.actor_snapshot, ol.work_type,
+                ol.actor_snapshot IS NOT NULL AS has_actor_snapshot,
                 o.voucher_number,
                 o.customer_name
             FROM operation_logs ol

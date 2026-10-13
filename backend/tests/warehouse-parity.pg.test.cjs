@@ -36,8 +36,8 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
     const roles = ['superadmin', 'admin', 'dispatcher', 'picker', 'packer'];
     const users = {}, tokens = {};
     const password = 'fixture-warehouse-password';
-    for (const role of roles) users[role] = (await pool.query('INSERT INTO users(username,password,name,role) VALUES($1,$2,$3,$4) RETURNING id',
-        [`fixture_${role}`, await bcrypt.hash(password, 4), `Fixture ${role}`, role])).rows[0].id;
+    for (const role of roles) users[role] = (await pool.query('INSERT INTO users(username,password,name,role,can_pick,can_pack) VALUES($1,$2,$3,$4,$5,$6) RETURNING id',
+        [`fixture_${role}`, await bcrypt.hash(password, 4), `Fixture ${role}`, role, role === 'picker' ? true : role === 'packer' ? false : null, role === 'packer' ? true : role === 'picker' ? false : null])).rows[0].id;
     const { app, server, io } = require('../src/app');
     const sockets = [];
     t.after(async () => {
@@ -127,9 +127,9 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         assert.equal((await importOrder('PARITY-BULK', 500)).status, 409);
         assert.equal((await api('picker', 'POST', '/api/orders/import')).status, 403);
         assert.equal((await claim('dispatcher', bulkOrder)).status, 403);
-        assert.equal((await claim('packer', bulkOrder)).status, 400);
+        assert.equal((await claim('packer', bulkOrder)).status, 403);
         const claims = await Promise.all([claim('picker', bulkOrder), claim('admin', bulkOrder)]);
-        assert.deepEqual(claims.map(x => x.status).sort(), [200, 400]);
+        assert.deepEqual(claims.map(x => x.status).sort(), [200, 409]);
         // Either authorized claimant can win; all scans below use its real role.
         bulkOrder = { id: bulkOrder, picker: claims[0].status === 200 ? 'picker' : 'admin' };
     });
@@ -262,7 +262,7 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
         const transferOrder = ok(await importOrder('PARITY-TRANSFER', 2), 201).orderId;
         ok(await claim('picker', transferOrder));
         assert.equal((await api('packer', 'POST', `/api/tasks/${transferOrder}/transfer`, { to_user_id: users.admin, task_type: 'pick' })).status, 403);
-        assert.equal((await api('picker', 'POST', `/api/tasks/${transferOrder}/transfer`, { to_user_id: users.packer, task_type: 'pick' })).status, 400);
+        assert.equal((await api('picker', 'POST', `/api/tasks/${transferOrder}/transfer`, { to_user_id: users.packer, task_type: 'pick' })).status, 403);
         assert.equal((await api('picker', 'POST', `/api/tasks/${transferOrder}/transfer`, { to_user_id: users.admin, task_type: 'wrong' })).status, 400);
 
         ok(await api('picker', 'POST', `/api/tasks/${transferOrder}/transfer`, { to_user_id: users.admin, task_type: 'pick', reason: 'Synthetic shift handover' }));
@@ -316,6 +316,7 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
     });
     await require('./order-review-flows.cjs')({t,api,ok,pool,users,tokens,importOrder,observedEvents});
     await require('./order-signed-import-flows.cjs')({t,api,ok,pool,users,observedEvents});
+    await require('./warehouse-worker-mode-flows.cjs')({t,api,ok,pool,users,tokens,observedEvents,password});
     await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
     await require('./order-completion-flows.cjs')({ t, api, ok, pool, users, observedEvents });
     await require('./comment-time-flows.cjs')({ t, api, ok, pool, users });

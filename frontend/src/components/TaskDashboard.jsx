@@ -21,6 +21,9 @@ import TaskListFilters from './TaskListFilters';
 import { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole } from '@/utils/taskFilters';
 import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
 import { signedDocumentLabel } from '@/utils/signedOrder';
+import { useWorkMode } from '@/contexts/WorkModeContext';
+import { WorkModeControls } from './WorkModeControls';
+import { canWork, orderWorkUrl } from '@/utils/workCapabilities';
 
 // Counts should stay readable while tasks refresh.
 function NumberTicker({ value }) {
@@ -291,7 +294,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
                                 查看訂單 <ArrowRight size={20} />
                             </span>
                         </Button>
-                    ) : (user?.role === 'dispatcher' || isOrderManager(user) || task.change_pending) ? (
+                    ) : (!canWork(user, task.task_type) || task.change_pending) ? (
                         <Button
                             variant="secondary"
                             size="lg"
@@ -362,6 +365,7 @@ const ModernTaskCard = ({ task, onClaim, user, onDelete, batchMode, selectedTask
 };
 
 export function TaskDashboard({ user }) {
+    const { stage: workMode, selectStage, loading: modeLoading, choosing: modeChoosing, error: modeError } = useWorkMode();
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState('');
@@ -427,7 +431,7 @@ export function TaskDashboard({ user }) {
     const [statusFilter, setStatusFilter] = useState('all');
     const [urgentOnly, setUrgentOnly] = useState(false);
     const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || urgentOnly || taskGroup !== 'all';
-    const query = { view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup };
+    const query = { view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup, stage: workMode };
     const queryScope = taskQueryScope(query);
     requestScopeRef.current = taskQueryScope({ ...query, search });
     const searchPending = search.trim() !== debouncedSearch;
@@ -533,7 +537,7 @@ export function TaskDashboard({ user }) {
     };
 
     const toggleBatchMode = (stage) => {
-        if (batchClaimPending.current || activeClaimId.current !== null || !batchStagesForRole(user).includes(stage)) return;
+        if (batchClaimPending.current || activeClaimId.current !== null || loadError || modeLoading || modeChoosing || modeError || workMode !== stage || !batchStagesForRole(user).includes(stage)) return;
         const next = batchMode === stage ? false : stage;
         setBatchMode(next);
         setSelectedTasks([]);
@@ -564,7 +568,7 @@ export function TaskDashboard({ user }) {
             setPageInfo({ hasMore: false, nextCursor: null });
         }
         try {
-            const endpoint = taskPageUrl({ view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup, cursor: pageCursor });
+            const endpoint = taskPageUrl({ view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup, cursor: pageCursor, stage: workMode });
             const response = await apiClient.get(endpoint, { timeout: 15000 });
             if (!isCurrent()) return;
             const page = readTaskPage(response.data);
@@ -578,7 +582,7 @@ export function TaskDashboard({ user }) {
         } finally {
             if (isCurrent()) setLoading(false);
         }
-    }, [user, currentView, completedDate, debouncedSearch, statusFilter, urgentOnly, taskGroup, pageCursor, queryScope, requestKey, searchPending]);
+    }, [user, currentView, completedDate, debouncedSearch, statusFilter, urgentOnly, taskGroup, pageCursor, queryScope, requestKey, searchPending, workMode]);
 
     const refreshTasks = () => {
         setSelectedTasks([]);
@@ -593,7 +597,7 @@ export function TaskDashboard({ user }) {
     };
 
     const handleBatchClaim = async () => {
-        if (!mountedRef.current || currentViewRef.current !== 'active' || loading || searchPending || batchClaimPending.current || activeClaimId.current !== null) return;
+        if (!mountedRef.current || currentViewRef.current !== 'active' || loading || loadError || searchPending || batchClaimPending.current || activeClaimId.current !== null || workMode !== batchMode || modeLoading || modeChoosing || modeError) return;
         const claimableIds = selectedTasks.filter(id => tasks.some(task => task.id === id && canBatchClaim(task, user, batchMode)));
         if (claimableIds.length === 0) {
             toast.error(`請選擇尚未認領的${batchLabel}任務`);
@@ -652,7 +656,8 @@ export function TaskDashboard({ user }) {
                 if (updated.status === 'voided') return [];
                 if (currentViewRef.current === 'active' && !isActiveTaskForRole(updated, user)) return [];
                 if (currentViewRef.current === 'completed' && !['picked', 'packing', 'completed'].includes(updated.status)) return [];
-                if (currentViewRef.current === 'completed' && user.role === 'packer' && updated.status !== 'completed') return [];
+                if (currentViewRef.current === 'active' && workMode === 'pick' && !['pending', 'picking'].includes(updated.status)) return [];
+                if (currentViewRef.current === 'active' && workMode === 'pack' && !['picked', 'packing'].includes(updated.status)) return [];
                 updated.task_type = ['pending', 'picking'].includes(updated.status) ? 'pick' : updated.status === 'completed' ? 'done' : 'pack';
                 return [updated];
             }));
@@ -682,7 +687,7 @@ export function TaskDashboard({ user }) {
             task_deleted: handleTaskDeleted, task_urgent_changed: handleUrgentChanged, task_pin_changed: handleTaskPinChanged };
         Object.entries(events).forEach(([name, handler]) => socket.on(name, handler));
         return () => Object.entries(events).forEach(([name, handler]) => socket.off(name, handler));
-    }, [user, pinStorageKey]);
+    }, [user, pinStorageKey, workMode]);
 
     // Pins are shared across dates/views: a filtered list must not delete them.
     useEffect(() => {
@@ -696,9 +701,12 @@ export function TaskDashboard({ user }) {
 
     const handleClaimTask = async (orderId, isContinue) => {
         // One opening flow at a time, including callbacks fired before a rerender.
-        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current) return;
+        if (!mountedRef.current || currentViewRef.current !== 'active' || activeClaimId.current !== null || batchClaimPending.current || loadError || modeLoading || modeChoosing || modeError) return;
+        const task = tasks.find(item => Number(item.id) === Number(orderId));
+        const taskStage = task?.task_type;
+        if (!task || !canWork(user, taskStage) || workMode !== taskStage) return;
         if (isContinue) {
-            navigate(`/order/${orderId}`);
+            navigate(orderWorkUrl(orderId, taskStage));
             return;
         }
         const claimContext = claimContextRef.current;
@@ -706,13 +714,13 @@ export function TaskDashboard({ user }) {
         activeClaimId.current = orderId;
         setClaimingId(orderId);
         try {
-            await apiClient.post(`/api/orders/${orderId}/claim`, undefined, { timeout: 15000 });
+            await apiClient.post(`/api/orders/${orderId}/claim`, { stage: taskStage }, { timeout: 15000 });
             // The accepted claim remains on the server if the operator has left.
             // Do not redirect their newer workflow or replay the request.
             if (!canFollowUp()) return;
             soundNotification.play('taskClaimed');
             toast.success('任務認領成功，正在開啟訂單');
-            navigate(`/order/${orderId}`);
+            navigate(orderWorkUrl(orderId, taskStage));
         } catch (error) {
             if (!canFollowUp()) return;
             soundNotification.play('error');
@@ -739,10 +747,28 @@ export function TaskDashboard({ user }) {
         () => filterTasks(tasks, { status: statusFilter, urgentOnly, group: taskGroup, user, view: currentView }),
         [tasks, statusFilter, urgentOnly, taskGroup, user, currentView]
     );
+    const changeWorkMode = async nextStage => {
+        if (batchClaimPending.current || activeClaimId.current !== null || loading || loadError || searchPending || navigator.onLine === false) return false;
+        const accepted = await selectStage(nextStage);
+        if (accepted && mountedRef.current && currentViewRef.current === 'active') {
+            claimContextRef.current += 1;
+            setBatchMode(false);
+            setSelectedTasks([]);
+            setTaskGroup('all');
+            setStatusFilter('all');
+        }
+        return accepted;
+    };
+    const chooseTaskGroup = async group => {
+        if (currentView === 'active' && ['pick','pack'].includes(group) && workMode !== group && canWork(user, group)) {
+            if (!loading && !searchPending && !await changeWorkMode(group)) return;
+        }
+        setTaskGroup(group);
+    };
     const statusOptions = Object.entries(statusConfig)
         .filter(([status]) => currentView === 'completed'
-            ? (user?.role === 'packer' ? status === 'completed' : ['picked', 'packing', 'completed'].includes(status))
-            : status !== 'completed' && (user?.role === 'picker' ? ['pending', 'picking'].includes(status) : user?.role === 'packer' ? ['picked', 'packing'].includes(status) : true))
+            ? ['picked', 'packing', 'completed'].includes(status)
+            : status !== 'completed' && (workMode === 'pick' ? ['pending', 'picking'].includes(status) : workMode === 'pack' ? ['picked', 'packing'].includes(status) : true))
         .map(([value, config]) => ({ value, label: config.text }));
     // 依置頂/緊急排序後，再切分揀貨/裝箱
     const sortedVisibleTasks = useMemo(() => {
@@ -844,13 +870,13 @@ export function TaskDashboard({ user }) {
                       <NotificationCenter onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
-                      {currentView === 'active' && batchStagesForRole(user).map(stage => (
+                      {currentView === 'active' && batchStagesForRole(user).filter(stage => stage === workMode).map(stage => (
                         <Button
                             key={stage}
                             variant={batchMode === stage ? 'primary' : 'secondary'}
                             size="sm"
                             onClick={() => toggleBatchMode(stage)}
-                            disabled={isBatchClaiming || claimingId !== null}
+                            disabled={isBatchClaiming || claimingId !== null || modeLoading || modeChoosing || !!modeError}
                             leadingIcon={ListChecks}
                             aria-pressed={batchMode === stage}
                         >
@@ -870,6 +896,8 @@ export function TaskDashboard({ user }) {
                     </div>
                   )}
                 />
+
+                {currentView === 'active' && <WorkModeControls prompt={!workMode} onSelect={changeWorkMode} disabled={isBatchClaiming || claimingId !== null || loading || !!loadError || searchPending || navigator.onLine === false} />}
 
                 <TaskListFilters
                     search={search} onSearch={setSearch}
@@ -903,7 +931,7 @@ export function TaskDashboard({ user }) {
                     const Icon = c.icon;
                     return (
                       <button type="button" key={c.group} aria-label={`查看${c.label}`} aria-pressed={taskGroup === c.group}
-                        onClick={() => { setTaskGroup(c.group); setSelectedTasks([]); }}
+                        onClick={() => { setSelectedTasks([]); return chooseTaskGroup(c.group); }}
                         className={`corely-task-stat corely-task-stat--${c.group} relative group text-left overflow-hidden bg-white rounded-xl p-3 sm:p-4 border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${taskGroup === c.group ? 'border-blue-600 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-400'}`}>
                         
                         
@@ -948,9 +976,9 @@ export function TaskDashboard({ user }) {
                         </div>
                     </div>
                 ) : currentView === 'active' ? (
-                <div className={`grid grid-cols-1 ${['picker', 'packer'].includes(user?.role) ? '' : 'lg:grid-cols-2'} gap-6 lg:gap-8`}>
+                <div className={`grid grid-cols-1 ${workMode ? '' : 'lg:grid-cols-2'} gap-6 lg:gap-8`}>
                     {/* 揀貨任務區 */}
-                    {user?.role !== 'packer' && taskGroup !== 'pack' && (
+                    {(currentView === 'completed' || ['admin','superadmin','dispatcher'].includes(user?.role) || workMode !== 'pack') && taskGroup !== 'pack' && (
                     <section className="animate-slide-up flex flex-col h-full">
                         <div className="mb-4 lg:sticky lg:top-20 z-20">
                             <div className="bg-orange-50 rounded-xl px-4 py-3 flex items-center justify-between border border-orange-100/50">
@@ -983,7 +1011,7 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask}
                                             isClaiming={claimingId === task.id}
-                                            claimDisabled={claimingId !== null || isBatchClaiming}
+                                            claimDisabled={claimingId !== null || isBatchClaiming || workMode !== task.task_type || modeLoading || modeChoosing || !!modeError || loading || !!loadError || searchPending}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}
@@ -1011,7 +1039,7 @@ export function TaskDashboard({ user }) {
                     )}
 
                     {/* 裝箱任務區 */}
-                    {user?.role !== 'picker' && taskGroup !== 'pick' && (
+                    {(currentView === 'completed' || ['admin','superadmin','dispatcher'].includes(user?.role) || workMode !== 'pick') && taskGroup !== 'pick' && (
                     <section className="animate-slide-up flex flex-col h-full" style={{ animationDelay: '100ms' }}>
                         <div className="mb-4 lg:sticky lg:top-20 z-20">
                             <div className="bg-emerald-50 rounded-xl px-4 py-3 flex items-center justify-between border border-emerald-100/50">
@@ -1044,7 +1072,7 @@ export function TaskDashboard({ user }) {
                                             task={task} 
                                             onClaim={handleClaimTask}
                                             isClaiming={claimingId === task.id}
-                                            claimDisabled={claimingId !== null || isBatchClaiming}
+                                            claimDisabled={claimingId !== null || isBatchClaiming || workMode !== task.task_type || modeLoading || modeChoosing || !!modeError || loading || !!loadError || searchPending}
                                             user={user} 
                                             onDelete={handleDeleteOrder}
                                             batchMode={batchMode}

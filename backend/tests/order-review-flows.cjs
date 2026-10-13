@@ -17,7 +17,7 @@ module.exports = async ({t,api,ok,pool,users,tokens,observedEvents}) => {
         // Deliberately stale elevated token: effective scope must come from DB.
         tokens[key] = jwt.sign({id:users[key],role:'superadmin'},process.env.JWT_SECRET,{expiresIn:'10m'});
     }
-    users.unrelatedPicker=(await pool.query("INSERT INTO users(username,password,name,role) VALUES('unrelatedPicker','unused','Unrelated','picker') RETURNING id")).rows[0].id;
+    users.unrelatedPicker=(await pool.query("INSERT INTO users(username,password,name,role,can_pick,can_pack) VALUES('unrelatedPicker','unused','Unrelated','picker',true,false) RETURNING id")).rows[0].id;
     tokens.unrelatedPicker=jwt.sign({id:users.unrelatedPicker,role:'picker'},process.env.JWT_SECRET,{expiresIn:'10m'});
     const change = (delta,extra={}) => ({barcode:'FIXTURE-BARCODE',productName:'Fixture',quantityChange:delta,noSn:true,...extra});
     const propose = (role,id,items) => api(role,'POST',`/api/orders/${id}/exceptions`,{type:'order_change',reasonText:'Fixture change',snapshot:{proposal:{note:'Fixture change',items}}});
@@ -26,11 +26,9 @@ module.exports = async ({t,api,ok,pool,users,tokens,observedEvents}) => {
     const count = async (table,id) => (await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE order_id=$1`,[id])).rows[0].n;
     const id = ok(await importOrder('REVIEW-DELETE',3),201).orderId;
     await pool.query("UPDATE orders SET status='picking',picker_id=$2,packer_id=$3 WHERE id=$1",[id,users.picker,users.packer]);
-    await t.test('management scope is current, editable only by superadmin, and blocks warehouse bypasses',async()=>{
+    await t.test('management scope stays current and protects review, administration and cancellation boundaries',async()=>{
         assert.equal(ok(await api('orderManager','GET','/api/auth/me')).user.management_scope,'orders');
         for(const [method,path,body] of [
-            ['POST',`/api/orders/${id}/claim`],['POST','/api/orders/batch/claim',{orderIds:[id],stage:'pick'}],
-            ['POST','/api/orders/update_item',{orderId:id,scanValue:'FIXTURE-BARCODE',type:'pick'}],
             ['PATCH',`/api/orders/${id}/void`,{reason:'bypass'}],['POST',`/api/orders/${id}/reconcile-picking`],
             ['GET','/api/admin/users'],['PUT',`/api/admin/users/${users.orderManager}`,{management_scope:'all'}],
         ]) assert.equal((await api('orderManager',method,path,body)).status,403,path);

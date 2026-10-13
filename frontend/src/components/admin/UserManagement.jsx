@@ -10,6 +10,7 @@ import { Users, PlusCircle, Edit, Trash2, ArrowLeft, Loader2, Shield, User as Us
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { PageHeader, Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Table, THead, TH, TBody, TR, TD, Modal, Input, Badge, EmptyState, Skeleton, SkeletonText } from '../../ui';
+import { workTypesFor, workStageLabel } from '@/utils/workCapabilities';
 
 const MySwal = withReactContent(Swal);
 
@@ -21,6 +22,8 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
         password: '',
         role: user?.role || 'picker',
         management_scope: user?.management_scope || (user ? 'all' : 'orders'),
+        can_pick: user ? workTypesFor(user).includes('pick') : true,
+        can_pack: user ? workTypesFor(user).includes('pack') : true,
     });
     const [isSaving, setIsSaving] = useState(false);
     const isEditMode = !!user;
@@ -28,7 +31,8 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData((prev) => ({ ...prev, [name]: value }));
+        setFormData((prev) => ({ ...prev, [name]: value,
+            ...(!isEditMode && name === 'role' ? { can_pick: value !== 'dispatcher', can_pack: value !== 'dispatcher' } : {}) }));
     };
 
     const handleSubmit = async (e) => {
@@ -113,10 +117,17 @@ const UserFormModal = ({ user, open, onClose, onSave, currentUser }) => {
                         <option value="all">跨部門管理員（訂單＋倉儲）</option>
                     </select>
                     <p className="mt-2 text-sm text-slate-600">{formData.management_scope === 'orders'
-                        ? '可拋單、提出訂單異動及填寫例外處理；核准與倉儲作業由倉儲管理員負責。'
+                        ? '可拋單及提出異動；異動核准由倉儲管理員負責。'
                         : '可拋單、提出訂單異動、填寫例外處理，並負責核准與倉儲作業。'}</p>
                     <p className="mt-2 text-sm text-slate-600">兩邊管理員都會收到異動明細與警示；通知不會自動核准異動。</p>
                 </div>}
+                <fieldset className="rounded-xl border border-slate-200 p-4">
+                    <legend className="px-1 text-sm font-semibold text-slate-800">可執行作業</legend>
+                    <div className="flex flex-wrap gap-5">{[['can_pick','揀貨'],['can_pack','裝箱']].map(([name,label]) => <label key={name} className="inline-flex min-h-11 items-center gap-2 text-sm">
+                        <input type="checkbox" name={name} checked={formData[name]} onChange={event => setFormData(previous => ({ ...previous, [name]: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-blue-600" />{label}
+                    </label>)}</div>
+                    <p className="mt-1 text-xs text-slate-500">同一帳號可勾選兩項，管理員分工不變。</p>
+                </fieldset>
             </form>
         </Modal>
     );
@@ -127,18 +138,32 @@ export function UserManagement({ currentUser }) {
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
+    const [operators, setOperators] = useState([]);
+    const [assignmentPending, setAssignmentPending] = useState(null);
 
     const fetchUsers = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await apiClient.get('/api/admin/users');
-            setUsers(response.data);
+            const [members, workers] = await Promise.allSettled([apiClient.get('/api/admin/users'), apiClient.get('/api/warehouse/operators')]);
+            if (members.status === 'rejected') throw members.reason;
+            setUsers(members.value.data);
+            if (workers.status === 'fulfilled') setOperators(workers.value.data.items || []);
         } catch (error) {
             toast.error('載入使用者列表失敗', { description: error.response?.data?.message });
         } finally {
             setLoading(false);
         }
     }, []);
+    const assignToday = async (worker, stage) => {
+        if (assignmentPending !== null || !['pick','pack'].includes(stage)) return;
+        setAssignmentPending(worker.id);
+        try {
+            const { data } = await apiClient.put(`/api/warehouse/operators/${worker.id}/today`, { stage }, { timeout: 15000 });
+            setOperators(current => current.map(item => item.id === worker.id ? { ...item, default_stage: data.default_stage || stage } : item));
+            toast.success(`${worker.name || worker.username}：今天${workStageLabel(stage)}`);
+        } catch (error) { toast.error(error.response?.data?.message || '今日安排未確認，請重新整理後核對。'); }
+        finally { setAssignmentPending(null); }
+    };
 
     useEffect(() => {
         fetchUsers();
@@ -271,6 +296,8 @@ export function UserManagement({ currentUser }) {
                                         <TH>使用者名稱</TH>
                                         <TH>姓名</TH>
                                         <TH>角色</TH>
+                                        <TH>作業能力</TH>
+                                        <TH>今日預設</TH>
                                         <TH>建立時間</TH>
                                         <TH className="text-right">操作</TH>
                                     </THead>
@@ -299,6 +326,13 @@ export function UserManagement({ currentUser }) {
                                                         {managementRoleLabel(user)}
                                                     </Badge>
                                                 </TD>
+                                                <TD><span className="text-sm text-slate-600">{workTypesFor(user).map(workStageLabel).join('、') || '—'}</span></TD>
+                                                <TD>{(() => {
+                                                    const worker = operators.find(item => Number(item.id) === Number(user.id));
+                                                    return worker?.work_types?.length ? <select aria-label={`${user.name || user.username}的今日預設`} value={worker.default_stage || worker.today_stage || ''} disabled={assignmentPending !== null} onChange={event => assignToday(worker, event.target.value)} className="min-h-11 rounded-lg border border-slate-200 bg-white px-2 text-sm">
+                                                        <option value="" disabled>未安排</option>{worker.work_types.map(stage => <option key={stage} value={stage}>{workStageLabel(stage)}</option>)}
+                                                    </select> : <span className="text-slate-400">—</span>;
+                                                })()}</TD>
                                                 <TD className="text-xs text-gray-600">{new Date(user.created_at).toLocaleDateString('zh-TW')}</TD>
                                                 <TD className="text-right">
                                                     <div className="flex justify-end gap-2">

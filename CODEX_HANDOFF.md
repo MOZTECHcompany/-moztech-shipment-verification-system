@@ -18,6 +18,8 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_WORKER_MODES_2026-10-13.md`：同帳號雙工序、今日預設、進度保留與交接、實際人員／工序快照；現有帳號密碼與歷史不合併、不改寫。發布狀態及回復界線請讀該文件與即時Cloud Run。
+
 - `docs/WMS_SIGNED_IMPORT_2026-10-02.md`：ERP 全負數／正負混合理貨單匯入為獨立新核對訂單、正負數列印／匯出、絕對件數完成判斷；原訂單不更動。正式 revision `corely-wms-signed-import-20261002`（100%），部署程式 `e4f3af6`；套用 additive migration 030。正負單產生後只能回復支援方向的映像，請讀該文件與即時 Cloud Run。
 
 - `docs/WMS_MANAGER_NOTICES_2026-09-30.md`：管理員雙向通知與異動前後明細、兩邊填寫例外處理、成員編輯表單修正；正式 revision `corely-wms-manager-notices-20260930`（100%），程式 `315add5`。

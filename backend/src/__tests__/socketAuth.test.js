@@ -63,8 +63,8 @@ test.each([
 test('verified token uses current DB identity/role and only then receives existing company events', async () => {
     const socket = client({ token: signed(), id: 999, role: 'superadmin' });
     const connected = event(socket, 'connect'); socket.connect(); await connected;
-    expect(latestSocket.data.user).toEqual({ ...account, management_scope: 'all' });
-    expect(pool.query).toHaveBeenCalledWith({ text: 'SELECT id, username, name, role, management_scope FROM users WHERE id = $1', values: [7], query_timeout: 5000 });
+    expect(latestSocket.data.user).toEqual({ ...account, management_scope: 'all', can_pick:null,can_pack:null,work_types:['pick','pack'] });
+    expect(pool.query).toHaveBeenCalledWith({ text: 'SELECT id, username, name, role, management_scope, can_pick, can_pack FROM users WHERE id = $1', values: [7], query_timeout: 5000 });
     const received = event(socket, 'new_task');
     io.emit('new_task', { id: 42 });
     expect(await received).toEqual({ id: 42 });
@@ -88,13 +88,14 @@ test('database failure denies the handshake without exposing query details', asy
     expect(io.of('/').sockets.size).toBe(0);
 });
 
-test.each(['deleted', 'role changed', 'database failure'])('%s ends an already connected session on its next account check', async change => {
+test.each(['deleted', 'role changed', 'work capability changed', 'database failure'])('%s ends an already connected session on its next account check', async change => {
     const socket = client({ token: signed() });
     const connected = event(socket, 'connect'); socket.connect(); await connected;
     const expiry = event(socket, 'session_expired');
     const disconnected = event(socket, 'disconnect');
     if (change === 'deleted') activeUser = null;
     else if (change === 'role changed') activeUser.role = 'admin';
+    else if (change === 'work capability changed') activeUser.can_pack = false;
     else pool.query.mockRejectedValue(new Error('DB unavailable'));
     expect((await expiry).code).toBe(change === 'database failure' ? 'SOCKET_AUTH_UNAVAILABLE' : 'SOCKET_AUTH_REQUIRED');
     await disconnected;
