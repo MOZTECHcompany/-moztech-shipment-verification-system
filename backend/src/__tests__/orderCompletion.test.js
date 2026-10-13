@@ -155,6 +155,8 @@ function scanFixture({ status = 'packing', items, instances }) {
         release: jest.fn(),
         query: jest.fn(async (sql, params = []) => {
             const q = sql.replace(/\s+/g, ' ').trim();
+            if (q.includes('FROM wms_carton_allocations')) return rows([]); // Existing unit-only orders remain unchanged.
+            if (q.includes('pg_advisory_xact_lock') || q.includes('FROM wms_carton_serials')) return rows([]);
             if (q === 'BEGIN') { transaction = structuredClone(committed); return rows([]); }
             if (q.startsWith('SET LOCAL')) return rows([]);
             if (q === 'COMMIT') { committed = transaction; transaction = undefined; return rows([]); }

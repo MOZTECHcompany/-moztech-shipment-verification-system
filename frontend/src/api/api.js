@@ -11,6 +11,12 @@ const apiClient = axios.create({
         'Content-Type': 'application/json',
     },
 });
+apiClient.getSessionIdentity = () => {
+    let actor;
+    try { const user = JSON.parse(localStorage.getItem('wms_user')); actor = [user?.id, user?.role, user?.management_scope]; }
+    catch { actor = null; }
+    return JSON.stringify([actor, localStorage.getItem('wms_token')]);
+};
 
 // 2. 新增一個「請求攔截器 (Request Interceptor)」
 // 這會在【每一次】請求發送前，自動執行這個函數

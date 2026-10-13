@@ -1,4 +1,10 @@
 const xlsx = require('xlsx');
+const { parseExactSerialList } = require('../utils/serialNumber');
+const isActualSNHeader = value => ['實際sn','actualsn','actual_sn'].includes(String(value ?? '').trim().replace(/\s/g,'').toLowerCase());
+function exactSerials(value, quantity) {
+    try { return parseExactSerialList(value, Math.abs(Number(quantity))); }
+    catch(error) { throw invalid(error.message); }
+}
 
 const IMPORT_LIMITS = Object.freeze({
     fileBytes: 10 * 1024 * 1024,
@@ -111,7 +117,10 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const nameIndex = header.findIndex(value => String(value).includes('品項名稱'));
     const quantityIndex = header.findIndex(value => String(value).includes('數量'));
     const modelIndex = header.findIndex(value => /品項型號|型號|Product Code/.test(String(value)));
-    const summaryIndex = header.findIndex(value => /摘要|SN|序號/i.test(String(value)));
+    const summaryIndex = header.findIndex(value => !isActualSNHeader(value) && /摘要|SN|序號/i.test(String(value)));
+    const actualIndices = header.flatMap((value,index) => isActualSNHeader(value) ? [index] : []);
+    if(actualIndices.length>1)throw invalid('實際SN表頭重複');
+    const actualSNIndex=actualIndices[0]??-1;
     const dedicatedSerialColumn = summaryIndex >= 0 && !String(header[summaryIndex]).includes('摘要');
     const items = [];
     const seenSerials = new Set();
@@ -142,7 +151,11 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
             productCode ||= barcode;
             if (!productName) throw invalid('品項名稱不可為空');
             if ([barcode, productCode, productName].some(value => value.length > 255)) throw invalid('品項編碼、型號與名稱不可超過 255 字');
-            const serials = parseSerials(summaryIndex >= 0 ? row[summaryIndex] : '', barcode, Math.abs(quantity), dedicatedSerialColumn);
+            const exact = exactSerials(actualSNIndex >= 0 ? row[actualSNIndex] : '', quantity);
+            const legacy = parseSerials(summaryIndex >= 0 ? row[summaryIndex] : '', barcode, Math.abs(quantity), dedicatedSerialColumn);
+            if(exact.length&&legacy.length&&JSON.stringify([...exact].sort())!==JSON.stringify([...legacy].sort()))throw invalid('實際SN與舊SN欄不一致');
+            const serials=exact.length?exact:legacy;
+            const serialMode=exact.length?'exact':'legacy';
             for (const serial of serials) {
                 if (seenSerials.has(serial)) throw invalid(`SN ${serial} 在其他品項已出現，請勿重複匯入`);
                 seenSerials.add(serial);
@@ -151,7 +164,7 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
             if (items.length >= IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
             if (seenSerials.size > IMPORT_LIMITS.serials) throw invalid(`每單最多 ${IMPORT_LIMITS.serials} 筆 SN`, 413);
             if (totalQuantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
-            items.push({ barcode, productCode, productName, quantity, serials, sourceRow: index + 1 });
+            items.push({ barcode, productCode, productName, quantity, serials, serialMode,sourceRow: index + 1 });
         } catch (error) {
             if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${index + 1} 列：${error.message}`;
             throw error;

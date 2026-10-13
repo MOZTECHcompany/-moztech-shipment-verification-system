@@ -87,6 +87,7 @@ async function reviewChange({ pool, io, orderId, exceptionId, user, decision, no
         if (!order || row?.type !== 'order_change') throw fail(404, '找不到異動申請');
         const deletion = isDeletionRequest(row);
         if (row.status !== 'open') throw fail(409, '此異動申請已審核，請重新整理');
+        if (decision === 'approve') await require('./cartonGuards').assertNoCartonAllocations(db, orderId);
         if (decision==='approve' && !deletion && order.document_type && order.document_type!=='shipment') throw fail(409, '此理貨單含 ERP 負數數量，請在 ERP 修正後匯入新的理貨單，不可直接改動品項數量');
         if (decision === 'approve' && (order.status === 'voided' || (deletion && order.status === 'completed'))) throw fail(409, '訂單狀態已變更，請駁回此申請後重新確認');
         let item;
@@ -142,6 +143,7 @@ async function resolveException({pool,io,orderId,exceptionId,user,action,note,re
         const row=(await db.query('SELECT * FROM order_exceptions WHERE id=$1 AND order_id=$2 FOR UPDATE',[exceptionId,orderId])).rows[0];
         if(!row) throw fail(404,'找不到例外事件');
         if(row.status!=='ack') throw fail(409,'例外必須先核可才能結案');
+        if (['short_ship','restock','exchange','void'].includes(action)) await require('./cartonGuards').assertNoCartonAllocations(db, orderId);
         const item=(await db.query(`UPDATE order_exceptions SET status='resolved',resolved_by=$1,resolved_at=NOW(),resolution_action=$2,resolution_note=$3
             WHERE id=$4 RETURNING id,type,status,resolved_at`,[user.id,action,note,exceptionId])).rows[0];
         await logOperation({db,io:events,userId:user.id,orderId,operationType:'exception_resolve',details:{exceptionId:row.id,status:'resolved',resolutionAction:action,note,requestId}});
