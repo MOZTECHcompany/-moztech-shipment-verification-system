@@ -852,7 +852,7 @@ export function TaskDashboard({ user, token }) {
                                                 </div>
                                             )}
 
-                      <NotificationCenter onOpenChat={handleOpenChat} />
+                      <NotificationCenter user={user} onOpenChat={handleOpenChat} />
                       
                       {/* 批次操作按鈕 */}
                       {currentView === 'active' && batchStagesForRole(user).map(stage => (
@@ -912,7 +912,6 @@ export function TaskDashboard({ user, token }) {
                     serverSearch pageIndex={pageIndex} pageSize={TASK_PAGE_SIZE} hasMore={pageInfo.hasMore}
                 />
                 {batchMode && <p className="text-sm text-slate-700 mb-4">請勾選待{batchLabel}任務。認領後逐筆開啟作業。</p>}
-                {currentView === 'completed' && <p className="text-xs text-slate-600 mb-4">依台灣時間的訂單更新日期查詢；包含已完成揀貨與裝箱的階段，搜尋涵蓋所有符合條件的訂單。</p>}
                 {listChanged && !loading && (
                     <div role="status" className="flex flex-wrap items-center justify-between gap-2 mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                         <span>任務有更新，統計與清單可能已變動。請重新整理以取得最新資料。</span>
@@ -926,7 +925,6 @@ export function TaskDashboard({ user, token }) {
                     </div>
                 )}
 
-                <p className="sr-only">統計涵蓋目前權限、搜尋、狀態與日期條件下的全部任務；點選卡片可篩選下方清單。</p>
                 {/* 本頁統計 */}
                                 {['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3 mb-5">
                                     {statCards.map((c)=>{

@@ -9,6 +9,8 @@ import soundNotification from '../utils/soundNotification';
 import { installNativeRuntime } from './nativeRuntime';
 import { createWorkspaceSession, exactWorkspaceOrigin, validateWorkspaceManifest, workspacePath } from './contract.mjs';
 import '../index.css';
+import 'sonner/dist/styles.css';
+import './nativeTheme.css';
 
 export const sourceCommit = import.meta.env.VITE_SOURCE_COMMIT || 'development';
 let activeMount = null;

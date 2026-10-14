@@ -7,13 +7,29 @@ import axios from 'axios';
 
 const source = await readFile(new URL('../src/api/api.js', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'js', format: 'cjs' });
-function fixture() {
+function fixture({ native = false } = {}) {
     const module = { exports: {} };
+    const toasts = [], reports = [];
     const values = new Map([['wms_token', JSON.stringify('token-A')], ['wms_user', JSON.stringify({ id: 7, role: 'dispatcher' })]]);
     vm.runInNewContext(code, { module, exports: module.exports, AbortController, console, sessionStorage: { getItem: key => values.get(key) },
-        require: name => name === 'axios' ? axios : name === './origin' ? { API_ORIGIN: '' } : name === 'sonner' ? { toast: { error() {} } } : { captureException() {} } });
-    return module.exports;
+        require: name => name === 'axios' ? axios : name === './origin' ? { API_ORIGIN: '' } : name === '../workspace/nativeRuntime' ? { getNativeRuntime: () => native ? {} : null } : name === 'sonner' ? { toast: { error: (...args) => toasts.push(args) } } : { captureException: (...args) => reports.push(args) } });
+    return { ...module.exports, toasts, reports };
 }
+
+test('native errors keep the failure and diagnostic Request ID without displaying it in the toast', async () => {
+    for (const native of [false, true]) {
+        const { default: api, configureWorkspaceTransport, toasts, reports } = fixture({ native });
+        const restore = configureWorkspaceTransport(async () => ({ status: 403, data: { code: 'FORBIDDEN', message: '沒有此儲運操作權限' }, headers: { 'x-request-id': 'synthetic-request-id' } }));
+        await assert.rejects(api.get('/api/tasks'), error => error.response.status === 403 && error.requestId === 'synthetic-request-id' && error.code === 'FORBIDDEN');
+        assert.equal(toasts.length, 1);
+        assert.equal(toasts[0][0], '沒有此儲運操作權限');
+        assert.equal(toasts[0][1].description, native ? undefined : 'Request ID: synthetic-request-id');
+        assert.equal(reports.length, 1);
+        assert.equal(reports[0][1].tags.requestId, 'synthetic-request-id');
+        assert.equal(reports[0][1].extra.url, '/api/tasks');
+        restore();
+    }
+});
 test('native adapter preserves transformed mutation body, original credentials, response and no automatic retry', async () => {
     const { default: api, configureWorkspaceTransport } = fixture();
     const calls = [];

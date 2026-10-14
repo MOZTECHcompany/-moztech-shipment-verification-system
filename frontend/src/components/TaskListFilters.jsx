@@ -16,8 +16,7 @@ export default function TaskListFilters({ search, onSearch, status, onStatus, ur
                             type="search"
                             value={search}
                             onChange={(event) => onSearch(event.target.value)}
-                            placeholder="搜尋工作單、批次或客戶（不會認領）"
-                            aria-describedby="task-search-help"
+                            placeholder="搜尋工作單、批次或客戶"
                             autoComplete="off"
                             className="w-full h-11 pl-10 pr-10 rounded-xl border border-slate-200 bg-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
                         />
@@ -37,7 +36,6 @@ export default function TaskListFilters({ search, onSearch, status, onStatus, ur
                 </Button>
             </div>
             <div className="flex flex-wrap justify-between items-center gap-2 mt-3">
-                <p id="task-search-help" className="sr-only">{serverSearch ? '搜尋所有符合條件的單號與客戶；商品條碼請進入訂單後核對。' : '搜尋目前清單的單號與客戶；商品條碼請進入訂單後核對。'}</p>
                 <div className="flex items-center gap-3 text-xs">
                     <span role="status" className="text-slate-600">{loading ? '正在取得任務…' : serverSearch ? `第 ${pageIndex + 1} 頁 · 本頁 ${matched} 筆${hasMore ? ' · 尚有下一頁' : ''}` : `顯示 ${matched} / ${total} 筆`}</span>
                     {hasFilters && <button type="button" onClick={onReset} className="font-semibold text-blue-700 underline underline-offset-4 min-h-8">清除篩選</button>}

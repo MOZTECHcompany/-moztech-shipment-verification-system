@@ -1,0 +1,17 @@
+/* Native warehouse cards use a light surface in either OS appearance. */
+:host {
+    color-scheme: light;
+    --background: 0 0% 98%;
+    --foreground: 218 51% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 218 51% 14%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 45%;
+    --accent: 0 0% 96%;
+    --accent-foreground: 218 51% 14%;
+}
+
+/* Keep small error text readable on Sonner's light red surface. */
+:host [data-sonner-toaster][data-theme='light'] {
+    --error-text: #b91c1c;
+}

@@ -6,8 +6,10 @@ import apiClient from '@/api/api';
 import {socket} from '@/api/socket';
 import soundNotification from '@/utils/soundNotification';
 import {formatMessageTimestamp} from '@/utils/messageTimestamp';
+import {isNativeViewer} from '@/workspace/nativeRuntime';
 
 export default function OrderReviewAlerts({user}) {
+    const enabled = !isNativeViewer(user);
     const [summary,setSummary] = useState({items:[],total:0,canReview:false});
     const [inbox,setInbox] = useState({items:[],total:0});
     const [failed,setFailed] = useState(false);
@@ -19,12 +21,18 @@ export default function OrderReviewAlerts({user}) {
     // Kept across refreshes and route changes; one alarm per newly observed batch.
     const [seen] = useState(() => new Set());
     useEffect(()=>{
+        if (!enabled) {
+            setSummary({items:[],total:0,canReview:false});setInbox({items:[],total:0});setFailed(false);
+            return;
+        }
         let alive=true, fetching=false, queued=false;
+        const controller = new AbortController();
         const refresh=async()=>{
+            if(!alive)return;
             if(fetching){queued=true;return;}
             fetching=true;
             try {
-                const [review,notices]=await Promise.all([apiClient.get('/api/order-reviews'),apiClient.get('/api/order-change-notices')]);
+                const [review,notices]=await Promise.all([apiClient.get('/api/order-reviews',{signal:controller.signal}),apiClient.get('/api/order-change-notices',{signal:controller.signal})]);
                 if(!alive)return;
                 setSummary(review.data);setInbox(notices.data);setFailed(false);
                 const fresh=notices.data.items.filter(item=>!seen.has(item.id));
@@ -43,8 +51,8 @@ export default function OrderReviewAlerts({user}) {
         refresh();const interval=setInterval(refresh,15000);
         socket.on('order_change_notice',notice);socket.on('connect',refresh);socket.on('order_exception_changed',refresh);
         window.addEventListener('online',refresh);document.addEventListener('visibilitychange',foreground);
-        return()=>{alive=false;clearInterval(interval);socket.off('order_change_notice',notice);socket.off('connect',refresh);socket.off('order_exception_changed',refresh);window.removeEventListener('online',refresh);document.removeEventListener('visibilitychange',foreground);};
-    },[user?.id,refreshVersion,seen]);
+        return()=>{alive=false;controller.abort();clearInterval(interval);socket.off('order_change_notice',notice);socket.off('connect',refresh);socket.off('order_exception_changed',refresh);window.removeEventListener('online',refresh);document.removeEventListener('visibilitychange',foreground);};
+    },[user?.id,user?.role,enabled,refreshVersion,seen]);
     const enableSound=async()=>{
         try {
             soundNotification.setUser(user?.id);
@@ -66,7 +74,7 @@ export default function OrderReviewAlerts({user}) {
         } catch {toast.error('確認未送出，請重試；通知仍會保留。');}
         finally {setConfirming(false);}
     };
-    if(!summary.total&&!inbox.total&&!failed)return null;
+    if(!enabled||!summary.total&&!inbox.total&&!failed)return null;
     return <>
         <section aria-label="訂單異動提醒" className="border-b-2 border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-950">
             <div className="flex flex-wrap items-center gap-3">

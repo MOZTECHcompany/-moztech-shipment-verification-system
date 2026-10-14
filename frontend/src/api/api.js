@@ -3,6 +3,7 @@ import axios from 'axios';
 import { API_ORIGIN } from './origin';
 import { toast } from 'sonner';
 import * as Sentry from '@sentry/react';
+import { getNativeRuntime } from '../workspace/nativeRuntime';
 
 // 1. 建立一個自訂的 axios 實例
 const apiClient = axios.create({
@@ -108,7 +109,7 @@ apiClient.interceptors.response.use(
         // 視情況提示（避免對某些頁面重複彈出可在呼叫端關閉）
         if (status >= 500 || status === 401 || status === 403) {
             toast.error(message, {
-                description: requestId ? `Request ID: ${requestId}` : undefined,
+                description: !getNativeRuntime() && requestId ? `Request ID: ${requestId}` : undefined,
             });
         }
 

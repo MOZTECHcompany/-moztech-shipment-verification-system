@@ -33,6 +33,18 @@ function mount(options) {
 }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
+test('operational widget gating applies only to the native viewer entry', () => {
+    const { portal } = browser();
+    assert.equal(runtime.isNativeViewer({ role: 'viewer' }), false, 'standalone viewer behavior stays intact');
+    const dispose = mount({ portalTarget: portal });
+    assert.equal(runtime.isNativeViewer({ role: 'viewer' }), true);
+    for (const role of ['picker', 'packer', 'dispatcher', 'admin', 'superadmin']) {
+        assert.equal(runtime.isNativeViewer({ role }), false, `${role} retains operational widgets`);
+    }
+    dispose();
+    assert.equal(runtime.isNativeViewer({ role: 'viewer' }), false);
+});
+
 test('one native lease owns cleanup and an old dispose cannot clear a newer workspace', () => {
     const { portal } = browser();
     const first = mount({ portalTarget: portal });

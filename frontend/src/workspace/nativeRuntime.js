@@ -18,6 +18,9 @@ export function installNativeRuntime(options) {
 }
 
 export const getNativeRuntime = () => activeRuntime;
+// The delegated viewer entry permits task reads, not operational widgets.
+// Standalone WMS roles keep their existing behavior.
+export const isNativeViewer = user => Boolean(activeRuntime) && user?.role === 'viewer';
 export const isNativeSessionCurrent = (runtime = activeRuntime) =>
     !runtime || (runtime === activeRuntime && runtime.isSessionCurrent?.() !== false);
 export const getPortalTarget = () => activeRuntime?.portalTarget || (typeof document === 'undefined' ? null : document.body);

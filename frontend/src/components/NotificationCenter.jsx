@@ -1,13 +1,15 @@
 // NotificationCenter.jsx - 現代化通知中心
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Bell, MessageSquare, AlertTriangle, X, Check, ChevronRight, Inbox } from 'lucide-react';
 import { toast } from 'sonner';
 import apiClient from '@/api/api.js';
 import { socket } from '@/api/socket.js';
 import { Button, EmptyState, Skeleton } from '../ui';
 import { MessageTimestamp } from './MessageTimestamp';
+import { isNativeViewer } from '@/workspace/nativeRuntime';
 
-const NotificationCenter = ({ onOpenChat }) => {
+const NotificationCenter = ({ onOpenChat, user }) => {
+    const enabled = !isNativeViewer(user);
     const [isOpen, setIsOpen] = useState(false);
     const [unreadSummary, setUnreadSummary] = useState({
         total_unread: 0,
@@ -16,40 +18,44 @@ const NotificationCenter = ({ onOpenChat }) => {
     });
     const [loading, setLoading] = useState(false);
     const panelRef = useRef(null);
+    const readContext = useRef(null);
 
     // 獲取未讀統計
-    const fetchUnreadSummary = async () => {
+    const fetchUnreadSummary = useCallback(async () => {
+        const context = readContext.current;
+        if (!enabled || !context?.active) return;
+        const current = () => context.active && readContext.current === context;
         setLoading(true);
         try {
-            const response = await apiClient.get('/api/comments/unread-summary');
-            setUnreadSummary(response.data);
+            const response = await apiClient.get('/api/comments/unread-summary', { signal: context.controller.signal });
+            if (current()) setUnreadSummary(response.data);
         } catch (error) {
-            console.error('獲取未讀統計失敗:', error);
+            if (current()) console.error('獲取未讀統計失敗:', error);
         } finally {
-            setLoading(false);
+            if (current()) setLoading(false);
         }
-    };
+    }, [enabled]);
 
     useEffect(() => {
+        setUnreadSummary({ total_unread: 0, total_urgent: 0, orders: [] });
+        setIsOpen(false);
+        setLoading(false);
+        if (!enabled) return;
+        const context = { active: true, controller: new AbortController() };
+        readContext.current = context;
         fetchUnreadSummary();
         const interval = setInterval(fetchUnreadSummary, 30000); // 每30秒更新一次
-        return () => clearInterval(interval);
-    }, []);
-
-    // 監聽新評論
-    useEffect(() => {
-        const handleNewComment = () => {
-            fetchUnreadSummary();
-        };
-
-        socket.on('new_comment', handleNewComment);
-        socket.on('new_mention', handleNewComment);
-
+        socket.on('new_comment', fetchUnreadSummary);
+        socket.on('new_mention', fetchUnreadSummary);
         return () => {
-            socket.off('new_comment', handleNewComment);
-            socket.off('new_mention', handleNewComment);
+            context.active = false;
+            context.controller.abort();
+            clearInterval(interval);
+            if (readContext.current === context) readContext.current = null;
+            socket.off('new_comment', fetchUnreadSummary);
+            socket.off('new_mention', fetchUnreadSummary);
         };
-    }, []);
+    }, [enabled, user?.id, user?.role, fetchUnreadSummary]);
 
     // 點擊外部關閉
     useEffect(() => {
@@ -87,6 +93,7 @@ const NotificationCenter = ({ onOpenChat }) => {
     const totalUnread = unreadSummary.total_unread || 0;
     const totalUrgent = unreadSummary.total_urgent || 0;
 
+    if (!enabled) return null;
     return (
         <div className="relative">
             {/* 通知鈴鐺 */}
