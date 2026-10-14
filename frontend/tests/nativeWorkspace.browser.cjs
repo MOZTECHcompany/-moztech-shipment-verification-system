@@ -90,13 +90,17 @@ const close = server => new Promise(resolve => server.close(resolve));
         await page.evaluate(() => window.handle.navigate('/warehouse-intakes/42', { replace: true }));
         await page.getByRole('button', { name: '一鍵列印', exact: true }).click();
         await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(frame => frame.contentDocument?.body?.querySelector('svg')));
+        await page.emulateMedia({ media: 'print' });
         const printed = await page.evaluate(() => {
             const frame = [...document.querySelectorAll('iframe')].find(item => item.contentDocument?.body?.querySelector('svg'));
             const body = frame.contentDocument.body;
-            return { bodyClass: body.className, barcodeCount: body.querySelectorAll('svg[role="img"]').length, text: body.textContent, sidebarCount: body.querySelectorAll('.corely-sidebar').length, borderBox: frame.contentWindow.getComputedStyle(body.querySelector('table')).boxSizing };
+            const paperStyle = frame.contentWindow.getComputedStyle(body);
+            return { bodyClass: body.className, barcodeCount: body.querySelectorAll('svg[role="img"]').length, text: body.textContent, sidebarCount: body.querySelectorAll('.corely-sidebar').length, borderBox: frame.contentWindow.getComputedStyle(body.querySelector('table')).boxSizing, paperBackground: paperStyle.backgroundColor, paperColor: paperStyle.color };
         });
+        await page.emulateMedia({ media: 'screen' });
         assert.match(printed.bodyClass, /wms-native-portal/); assert.ok(printed.barcodeCount >= 3); assert.match(printed.text, /SYNTHETIC-ERP-42/); assert.match(printed.text, /Synthetic recipient/);
         assert.equal(printed.sidebarCount, 0); assert.equal(printed.borderBox, 'border-box');
+        assert.equal(printed.paperBackground, 'rgb(255, 255, 255)'); assert.equal(printed.paperColor, 'rgb(0, 0, 0)');
         await page.waitForFunction(() => document.querySelectorAll('iframe').length === 0);
         await page.evaluate(() => window.handle.navigate('/tasks', { replace: true }));
         await page.getByRole('button', { name: '申請刪除訂單 SYNTHETIC-31' }).click();
@@ -136,7 +140,7 @@ const close = server => new Promise(resolve => server.close(resolve));
         assert.equal(await page.evaluate(() => sessionStorage.getItem('wms_token')), null);
         assert.ok(handshakes.length >= 1); assert.ok(handshakes.every(auth => Object.keys(auth).join(',') === 'token'));
         assert.deepEqual(failures, []);
-        console.log(JSON.stringify({ passed: true, manifestSourceCommit: manifest.sourceCommit, nativeRoutes: ['tasks', 'marketplace-converter', 'warehouse-intakes'], dialogValidation: true, syntheticMutationCount: 2, nativePrintStyled: true, bootstrapAbort: true, manifestMismatchRejected: true, portalCleaned: true, authExpiredInPlace: true }));
+        console.log(JSON.stringify({ passed: true, manifestSourceCommit: manifest.sourceCommit, nativeRoutes: ['tasks', 'marketplace-converter', 'warehouse-intakes'], dialogValidation: true, syntheticMutationCount: 2, nativePrintStyled: true, nativePaperWhite: true, bootstrapAbort: true, manifestMismatchRejected: true, portalCleaned: true, authExpiredInPlace: true }));
     } catch (error) {
         if (page) console.error('Synthetic browser diagnostic:', await page.evaluate(() => ({ workspaceText: document.querySelector('#workspace')?.shadowRoot?.textContent?.slice(-2000), requests: window.requests, paths: window.paths, auth: window.auth })));
         throw error;

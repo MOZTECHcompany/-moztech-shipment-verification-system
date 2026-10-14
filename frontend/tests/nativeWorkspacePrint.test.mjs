@@ -14,7 +14,19 @@ test('native print clone inherits scoped theme while original print guards and c
     const native = withWorkspacePrintOptions(options);
     assert.equal(native.bodyClass, 'original-print wms-native-portal');
     assert.equal(native.onBeforePrint, before); assert.equal(native.print, print); assert.equal(native.documentTitle, options.documentTitle);
+    assert.ok(native.pageStyle.startsWith(options.pageStyle));
+    assert.match(native.pageStyle, /@media print \{ body\.wms-native-portal \{ background: #fff !important; color: #000 !important; \} \}/);
     assert.equal(withWorkspacePrintOptions(native).bodyClass, native.bodyClass);
+    assert.equal(withWorkspacePrintOptions(native).pageStyle, native.pageStyle);
+});
+test('standalone print settings keep their original style and native default paper styling is scoped to print', t => {
+    const options = { bodyClass: 'standalone', pageStyle: '@media print { body { color: blue } }', onAfterPrint() {} };
+    assert.equal(withWorkspacePrintOptions(options), options);
+    const dispose = nativeRuntime.installNativeRuntime({ portalTarget: {} }); t.after(dispose);
+    const native = withWorkspacePrintOptions({ onAfterPrint: options.onAfterPrint });
+    assert.match(native.pageStyle, /^\n@media print \{ body\.wms-native-portal/);
+    assert.equal(native.onAfterPrint, options.onAfterPrint);
+    assert.equal(native.bodyClass, 'wms-native-portal');
 });
 test('native DEV banner shows its label without changing the ERP document title', async t => {
     const source = await readFile(new URL('../src/components/EnvironmentBanner.jsx', import.meta.url), 'utf8');
