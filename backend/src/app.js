@@ -171,6 +171,7 @@ app.use('/api/logistics-callbacks/ecpay', require('./routes/logisticsRoutes').cr
 // 認證路由（無需認證）
 app.use('/api/auth', authRoutes);
 app.use('/api/carton-items', authenticateToken, require('./routes/cartonItemRoutes').createCartonItemRouter({ pool }));
+app.use('/api/box-specs', authenticateToken, require('./routes/boxSpecRoutes').createBoxSpecRouter({ pool }));
 const { createCartonRouter, createOrderCartonRouter } = require('./routes/cartonRoutes');
 app.use('/api/cartons', authenticateToken, createCartonRouter({ pool }));
 app.use('/api/orders', authenticateToken, createOrderCartonRouter({ pool }));

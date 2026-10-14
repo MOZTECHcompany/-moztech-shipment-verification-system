@@ -1621,7 +1621,7 @@ function AuthenticatedOrderWorkView({ user }) {
         completedStagesRef.current.delete(scan.type);
         const complete = (scan.type === 'pick' && snapshot.order.status === 'picked') || (scan.type === 'pack' && snapshot.order.status === 'completed');
         if (complete) announceStageComplete(scan.type);
-        if (snapshot.order.status === 'completed' || (snapshot.order.status === 'picked' && user.role === 'picker')) {
+        if (complete) {
             MySwal.fire({ title: scan.type === 'pick' ? '揀貨完成' : '裝箱核對完成', icon: 'success', timer: 1500, showConfirmButton: false }).then(() => {
                 if (mountedRef.current) navigate('/tasks', { state: { view: 'completed' } });
             });

@@ -5,7 +5,8 @@ const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletio
 const { deferredEvents } = require('../utils/transactionEvents');
 const { lockCartonSerials } = require('./cartonGuards');
 const { readCartonShipmentReferences } = require('./cartonShipmentReferences');
-const { assertWork, assertScanWork, actorSnapshot } = require('../utils/warehouseWork');
+const { assertWork, assertScanWork, actorSnapshot, taipeiWorkDate } = require('../utils/warehouseWork');
+const { assertCartonManager, assertAllocationManager } = require('../utils/cartonAccess');
 
 const asCarton = row => ({ cartonId: row.carton_id, sourceSystem: row.source_system, sourceReference: row.source_reference,
     status: row.status, contentRevision: row.content_revision, stateRevision: row.state_revision, sealedAt: row.sealed_at,
@@ -35,7 +36,7 @@ function expectedActor(body, user, required = false) {
     }
 }
 function createCartonService({ pool }) {
-    async function transaction(work, { readOnly = false, io } = {}) {
+    async function transaction(work, { readOnly = false, io, creation = false } = {}) {
         const db = await pool.connect();
         const events = deferredEvents(io);
         let open = false, attempted = false, releaseError;
@@ -52,7 +53,12 @@ function createCartonService({ pool }) {
             if (open) {
                 try { await db.query('ROLLBACK'); open = false; } catch (cleanup) { releaseError = cleanup; }
             }
-            if (attempted || releaseError) throw fail('SCAN_RESULT_UNKNOWN', '結果尚未確認，請重新載入核對並使用原 command ID 查詢；請勿直接重刷', 503);
+            if (attempted || releaseError) {
+                releaseError ||= error;
+                throw fail(creation ? 'CARTON_CREATION_RESULT_UNKNOWN' : 'SCAN_RESULT_UNKNOWN', creation
+                    ? '建箱結果尚未確認，請使用「重新確認建箱結果」，不要重新新增'
+                    : '結果尚未確認，請重新載入核對並使用原 command ID 查詢；請勿直接重刷', 503);
+            }
             if (error.code === '55P03' || error.code === '57014') throw fail('CARTON_BUSY', '箱號作業忙碌，請重新載入後重試');
             if (error.code === '23505') throw fail('CARTON_ID_OR_SN_CONFLICT', '箱號或 SN 已被登記，請重新查詢核對');
             error.scanNotApplied = !readOnly;
@@ -63,9 +69,8 @@ function createCartonService({ pool }) {
         const user = (await db.query('SELECT id,username,name,role,management_scope,can_pick,can_pack FROM users WHERE id=$1', [actor?.id])).rows[0];
         if (!user) throw fail('AUTH_REQUIRED', '需要有效登入', 401);
         if (!['admin','superadmin','dispatcher','picker','packer'].includes(user.role)) throw fail('CARTON_FORBIDDEN', '權限不足', 403);
-        if (manage && !(user.role === 'superadmin' || (user.role === 'admin' && user.management_scope !== 'orders'))) {
-            throw fail('CARTON_FORBIDDEN', '箱內容變更需倉儲管理員權限', 403);
-        }
+        if (manage === true) assertCartonManager(user);
+        if (manage === 'allocation') assertAllocationManager(user);
         return user;
     }
     async function readCarton(db, cartonId, lock = false) {
@@ -84,6 +89,7 @@ function createCartonService({ pool }) {
     }
     async function resolve(db, value) {
         const raw = text(value, '掃描內容', { max: 102000 });
+        if (/^BOX-SPEC:/i.test(raw)) throw fail('BOX_SPEC_NOT_PHYSICAL_CARTON', '這是箱規碼，請掃實體箱 QR', 400);
         const id = raw.replace(/^CARTON:/i, '').trim();
         const direct = (await db.query('SELECT carton_id FROM wms_cartons WHERE carton_id=$1', [id])).rows[0];
         if (direct) return direct.carton_id;
@@ -167,6 +173,58 @@ function createCartonService({ pool }) {
             return { format: 'corely-cartons-v1', items: results };
         });
     }
+    async function createFromSpec(specId, body, actor) {
+        specId = text(specId, '箱規編號', { max: 128 });
+        const count = positive(body?.count, '建立箱數');
+        if (count > 100) throw fail('CARTON_INVALID_INPUT', '每次最多建立 100 個實體箱', 400);
+        const numbered = body.prefix !== undefined || body.startNumber !== undefined;
+        const prefix = numbered ? body.prefix : null, startNumber = numbered ? body.startNumber : null;
+        if (numbered && (typeof prefix !== 'string' || !/^[A-Z][A-Z0-9_-]{0,24}$/.test(prefix)
+            || !Number.isSafeInteger(startNumber) || startNumber < 1 || startNumber + count - 1 > 9999999)) {
+            throw fail('CARTON_INVALID_INPUT', '請提供英文大寫箱號前綴與 1–9999999 的整數起號，整批編號不可超過 9999999', 400);
+        }
+        revision(body?.expectedContentRevision);
+        if (typeof body?.creationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.creationId)) {
+            throw fail('CARTON_INVALID_INPUT', '建箱識別無效，請重新載入', 400);
+        }
+        const creationId = body.creationId.toLowerCase();
+        const requestHash = digest(['box-spec-cartons-v2', specId, count, prefix, startNumber, body.expectedContentRevision, body.expectedActorId]);
+        return transaction(async db => {
+            const user = await staff(db, actor, true);
+            expectedActor(body, user, true);
+            await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-box-spec-creation'),hashtext($1))", [`${user.id}:${creationId}`]);
+            const saved = (await db.query('SELECT * FROM wms_box_spec_batch_commands WHERE user_id=$1 AND command_id=$2', [user.id, creationId])).rows[0];
+            if (saved) {
+                if (saved.request_hash !== requestHash) throw fail('BOX_SPEC_COMMAND_CONFLICT', '同一建箱識別不可用於不同箱規、數量或版本');
+                const cartons = [];
+                for (const id of saved.carton_ids) cartons.push(await readCarton(db, id));
+                return { creationId, replayed: true, boxSpec: { specId: saved.spec_id, contentRevision: saved.content_revision }, cartons };
+            }
+            const spec = (await db.query('SELECT * FROM wms_box_specs WHERE spec_id=$1 FOR SHARE', [specId])).rows[0];
+            if (!spec) throw fail('BOX_SPEC_NOT_FOUND', '找不到箱規', 404);
+            if (spec.status !== 'active') throw fail('BOX_SPEC_NOT_ACTIVE', '此箱規尚未啟用，請先確認並啟用');
+            if (spec.content_revision !== body.expectedContentRevision) throw fail('BOX_SPEC_CONTENT_CHANGED', '箱規內容已更新，請重新載入後核對');
+            const lines = normalizeLines(spec.lines);
+            if (lines.some(line => line.actualSN.length)) throw fail('BOX_SPEC_SN_NOT_ALLOWED', '箱規不能預填或重複使用 SN；實際 SN 必須逐箱登記');
+            if (count * lines.length > 1000) throw fail('CARTON_INVALID_INPUT', '整批箱內容最多 1000 個品項列，請減少建立箱數', 400);
+            const date = taipeiWorkDate().replace(/-/g, '');
+            const cartonIds = Array.from({ length: count }, (_, index) => numbered ? `${prefix}${startNumber + index}` : `CTN-${date}-${randomUUID()}`);
+            const existing = (await db.query('SELECT carton_id FROM wms_cartons WHERE carton_id=ANY($1::text[]) ORDER BY carton_id', [cartonIds])).rows;
+            if (existing.length) throw fail('BOX_SPEC_NUMBER_EXISTS', `箱號編號已存在：${existing.map(row => row.carton_id).join('、')}；整批未建立，請更換起號`);
+            const cartons = [];
+            for (let index = 0; index < count; index++) {
+                const cartonId = cartonIds[index];
+                const input = { cartonId, sourceSystem: 'corely-box-spec',
+                    sourceReference: JSON.stringify({ specId, contentRevision: spec.content_revision, batchNumber: numbered ? startNumber + index : index + 1 }), lines };
+                await insertCarton(db, input, user);
+                await sealed(db, await readCarton(db, cartonId), user);
+                cartons.push(await readCarton(db, cartonId));
+            }
+            await db.query(`INSERT INTO wms_box_spec_batch_commands(user_id,command_id,spec_id,request_hash,content_revision,carton_ids)
+                VALUES($1,$2,$3,$4,$5,$6)`, [user.id, creationId, specId, requestHash, spec.content_revision, JSON.stringify(cartons.map(carton => carton.cartonId))]);
+            return { creationId, replayed: false, boxSpec: { specId, contentRevision: spec.content_revision }, cartons };
+        }, { creation: true });
+    }
     async function list(query, actor) {
         const limit = query?.limit === undefined ? 25 : Number(query.limit);
         if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw fail('CARTON_INVALID_INPUT', '查詢數量無效', 400);
@@ -189,28 +247,83 @@ function createCartonService({ pool }) {
     async function lookup(scanValue, actor) {
         return transaction(async db => { await staff(db, actor); return readCarton(db, await resolve(db, scanValue)); }, { readOnly: true });
     }
+    async function searchSerials(query, actor) {
+        if (query?.q !== undefined && typeof query.q !== 'string') throw fail('CARTON_INVALID_INPUT', 'SN 查詢文字無效', 400);
+        const q = (query?.q || '').trim(), match = query?.match ?? 'exact';
+        const limit = query?.limit === undefined ? 30 : Number(query.limit);
+        if (q.length > 100 || q && !/^[!-~]+$/.test(q) || !['exact','contains'].includes(match)
+            || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+            throw fail('CARTON_INVALID_INPUT', '請輸入 1–100 字實際 SN，查詢模式或筆數無效', 400);
+        }
+        return transaction(async db => {
+            await staff(db, actor);
+            if (!q) return { items: [], hasMore: false, match };
+            // Literal and case-sensitive: no wildcard expansion, padding, uppercasing or inferred SN.
+            const rows = (await db.query(`SELECT s.serial_number,s.available,l.carton_id,l.item_code,l.product_name,
+                l.quantity,l.remaining_quantity,c.status,c.content_revision,c.state_revision
+                FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id
+                JOIN wms_cartons c ON c.carton_id=l.carton_id
+                WHERE ${match === 'exact' ? 's.serial_number=$1' : 'POSITION($1 IN s.serial_number)>0'}
+                ORDER BY s.serial_number,l.carton_id,l.id LIMIT $2`, [q, limit + 1])).rows;
+            return { items: rows.slice(0, limit).map(row => ({ serialNumber: row.serial_number, cartonId: row.carton_id,
+                cartonStatus: row.status, itemCode: row.item_code, productName: row.product_name,
+                quantity: row.quantity, remainingQuantity: row.remaining_quantity, available: row.available,
+                readyForPicking: row.available && row.status === 'sealed' && row.remaining_quantity > 0,
+                contentRevision: row.content_revision, stateRevision: row.state_revision })), hasMore: rows.length > limit, match };
+        }, { readOnly: true });
+    }
     async function edit(cartonId, body, actor) {
+        cartonId = text(cartonId, '箱號', { max: 128 });
+        if (body.cartonId !== undefined && body.cartonId !== cartonId) throw fail('CARTON_ID_IMMUTABLE', '建立後不可更改箱號；請在原箱號進行內容異動');
         const lines = normalizeLines(body.lines);
         revision(body.expectedContentRevision);
+        if (body.expectedStateRevision !== undefined) revision(body.expectedStateRevision);
+        const reason = text(body.reason, '異動原因', { optional: true, max: 1000 });
         return transaction(async db => {
             const user = await staff(db, actor, true), carton = await readCarton(db, cartonId, true);
             expectedActor(body, user);
             if (carton.contentRevision !== body.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入');
+            if (body.expectedStateRevision !== undefined && carton.stateRevision !== body.expectedStateRevision) throw fail('CARTON_STATE_CHANGED', '箱狀態已更新，請重新載入');
             if (carton.status !== 'draft' || carton.allocations.length) throw fail('CARTON_CONTENT_LOCKED', '封箱或已分配的內容不能改寫；請保留原紀錄');
             await db.query('DELETE FROM wms_carton_lines WHERE carton_id=$1', [cartonId]);
             await insertLines(db, cartonId, lines);
             await db.query('UPDATE wms_cartons SET content_revision=content_revision+1,state_revision=state_revision+1,updated_at=NOW(),updated_by=$2 WHERE carton_id=$1', [cartonId, user.id]);
-            await history(db, cartonId, 'contents_revised', user, { before: carton.lines, after: lines });
+            await history(db, cartonId, 'contents_revised', user, { before: carton.lines, after: lines, ...(reason ? { reason } : {}) });
             return readCarton(db, cartonId);
         });
     }
     async function seal(cartonId, body, actor) {
         revision(body.expectedContentRevision);
+        if (body.expectedStateRevision !== undefined) revision(body.expectedStateRevision);
         return transaction(async db => {
             const user = await staff(db, actor, true), carton = await readCarton(db, cartonId, true);
             expectedActor(body, user);
             if (carton.contentRevision !== body.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入');
+            if (body.expectedStateRevision !== undefined && carton.stateRevision !== body.expectedStateRevision) throw fail('CARTON_STATE_CHANGED', '箱狀態已更新，請重新載入');
             await sealed(db, carton, user);
+            return readCarton(db, cartonId);
+        });
+    }
+    async function reopen(cartonId, body, actor) {
+        cartonId = text(cartonId, '箱號', { max: 128 });
+        const reason = text(body?.reason, '內容異動原因', { max: 1000 });
+        revision(body?.expectedContentRevision);
+        revision(body?.expectedStateRevision);
+        return transaction(async db => {
+            const user = await staff(db, actor, true), carton = await readCarton(db, cartonId, true);
+            expectedActor(body, user);
+            if (carton.contentRevision !== body.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入');
+            if (carton.stateRevision !== body.expectedStateRevision) throw fail('CARTON_STATE_CHANGED', '箱狀態已更新，請重新載入');
+            if (carton.status !== 'sealed') throw fail('CARTON_REOPEN_NOT_SEALED', '只有已封箱且未曾分配的箱，才需要開啟內容異動');
+            if (carton.allocations.length || carton.lines.some(line => line.remainingQuantity !== line.quantity
+                || line.remainingSN.length !== line.actualSN.length)) {
+                throw fail('CARTON_CONTENT_LOCKED', '此箱已有分配或作業紀錄，不能重新開啟或改寫原內容');
+            }
+            const before = { status: carton.status, sealedAt: carton.sealedAt,
+                contentRevision: carton.contentRevision, stateRevision: carton.stateRevision };
+            await db.query("UPDATE wms_cartons SET status='draft',sealed_at=NULL,state_revision=state_revision+1,updated_by=$2,updated_at=NOW() WHERE carton_id=$1", [cartonId, user.id]);
+            await history(db, cartonId, 'contents_reopened', user, { reason, before,
+                after: { status: 'draft', sealedAt: null, contentRevision: carton.contentRevision, stateRevision: carton.stateRevision + 1 }, contents_unchanged: true });
             return readCarton(db, cartonId);
         });
     }
@@ -398,7 +511,7 @@ function createCartonService({ pool }) {
         if (typeof allocationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(allocationId)) throw fail('CARTON_INVALID_INPUT', '分配編號無效', 400);
         const reason = text(body.reason, '退回分配原因', { max: 1000 });
         return transaction(async (db, events) => {
-            const user = await staff(db, actor, true);
+            const user = await staff(db, actor, 'allocation');
             expectedActor(body, user, true);
             const found = (await db.query('SELECT * FROM wms_carton_allocations WHERE id=$1', [allocationId])).rows[0];
             if (!found) throw fail('CARTON_ALLOCATION_NOT_FOUND', '找不到箱分配', 404);
@@ -453,6 +566,6 @@ function createCartonService({ pool }) {
                 }) })) };
         }, { readOnly: true });
     }
-    return { create, importManifest, list, get, lookup, edit, seal, preview, scan, release, shipments };
+    return { create, importManifest, createFromSpec, list, get, lookup, searchSerials, edit, seal, reopen, preview, scan, release, shipments };
 }
 module.exports = { createCartonService };

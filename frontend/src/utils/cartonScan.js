@@ -1,4 +1,4 @@
-export const isCartonScan = value => /^(?:CARTON:|CTN-)/i.test(String(value).trim()) || String(value).includes(',');
+export const isCartonScan = value => /^(?:CARTON:|BOX-SPEC:|CTN-)/i.test(String(value).trim()) || String(value).includes(',');
 export const cartonSessionKey = (api, user) => JSON.stringify([user?.id, user?.role, user?.management_scope,
     user?.can_pick, user?.can_pack, user?.work_types,
     api.getSessionIdentity?.() ?? api.defaults?.headers?.common?.Authorization ?? '']);

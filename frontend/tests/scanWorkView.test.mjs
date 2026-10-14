@@ -35,6 +35,7 @@ function workView({ role = 'picker', deferRead = false, initialData, stage, work
     const reads = [];
     const listeners = new Map();
     const offCalls = [];
+    const navigation = [];
     const react = {
         createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
         useState(initial) {
@@ -77,7 +78,7 @@ function workView({ role = 'picker', deferRead = false, initialData, stage, work
         '@/utils/managementScope': managementScope,
         '@/utils/orderChangePresentation': orderChangePresentation,
         react,
-        'react-router-dom': { useParams: () => ({ orderId: '1' }), useNavigate: () => noop, useSearchParams:()=>[new URLSearchParams({stage:stage||(role==='packer'?'pack':'pick')}),noop] },
+        'react-router-dom': { useParams: () => ({ orderId: '1' }), useNavigate: () => (...args) => navigation.push(args), useSearchParams:()=>[new URLSearchParams({stage:stage||(role==='packer'?'pack':'pick')}),noop] },
         '@/contexts/WorkModeContext': {useWorkMode:()=>({selectStage:async()=>true})},
         '@/utils/workCapabilities': workCapabilities,
         '@/utils/warehouseWork': warehouseWork,
@@ -118,7 +119,7 @@ function workView({ role = 'picker', deferRead = false, initialData, stage, work
     const type = text => input().props.onChange({ target: { value: text } });
     const enter = () => input().props.onKeyDown({ key: 'Enter', preventDefault: noop });
     const camera = () => find(render(), node => node.type === 'CameraScanner');
-    return { find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[fixtureStateIndex] };
+    return { find, fixture, posts, reads, sounds, spoken, warnings, navigation, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[fixtureStateIndex] };
 }
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -412,3 +413,13 @@ test('paused work and a transferred-away task cannot send another barcode', asyn
         assert.equal(view.posts.length,0);assert.equal(view.currentData().items[0].picked_quantity,1);
     }
 });
+
+for(const [role,stage,complete] of [['admin','pick','picked'],['packer','pick','picked'],['picker','pack','completed'],['admin','pack','completed']]) {
+    test(`carton ${stage} completion returns ${role} to the board according to the actual stage`,async()=>{
+        const view=workView({role,stage,workTypes:['pick','pack'],initialData:{order:{id:1,status:stage==='pick'?'picking':'packing',picker_id:1,packer_id:1},items:[{id:11,quantity:10,picked_quantity:stage==='pick'?0:10,packed_quantity:0}],instances:[]}});
+        const control=view.find(view.render(),node=>node.type==='CartonWorkControls');assert.ok(control);
+        const snapshot=structuredClone(view.fixture);snapshot.order.status=complete;snapshot.items[0][stage==='pick'?'picked_quantity':'packed_quantity']=10;
+        control.props.onResponse(snapshot,{value:'N1',type:stage,amount:10});await settle();
+        assert.deepEqual(view.spoken,[['complete',stage]]);assert.equal(view.navigation[0][0],'/tasks');
+    });
+}

@@ -5,13 +5,15 @@ const { randomBytes } = require('node:crypto');
 const { runMigrations } = require('../src/maintenance/migrationRunner');
 const { createCartonService } = require('../src/services/cartonService');
 const { createCartonRouter, createOrderCartonRouter } = require('../src/routes/cartonRoutes');
+const { createCartonItemRouter } = require('../src/routes/cartonItemRoutes');
 const { staffUser } = require('../src/utils/warehouseWork');
+const { createBoxSpecRouter } = require('../src/routes/boxSpecRoutes');
 
 async function createCartonFixture({ postgres = false } = {}) {
     let db, nativePool, control, database;
     if (postgres) {
         const { Pool, Client } = require('pg');
-        const config = { host: '127.0.0.1', port: 55441, user: 'wms_replay', password: 'wms_replay_local_only', database: 'postgres' };
+        const config = require('./local-pg-config.cjs')();
         control = new Client(config); await control.connect();
         database = `wms_carton_${randomBytes(8).toString('hex')}`;
         await control.query(`CREATE DATABASE "${database}"`);
@@ -25,7 +27,7 @@ async function createCartonFixture({ postgres = false } = {}) {
     // of real multi-session PostgreSQL row/advisory locking.
     let tail = Promise.resolve(), failQuery, failAfterQuery;
     const pool = {
-        query: (sql, values) => db.query(sql, values),
+        query: (sql, values) => typeof sql === 'object' ? db.query(sql.text,sql.values) : db.query(sql, values),
         async connect() {
             if (nativePool) {
                 const client = await nativePool.connect();
@@ -60,7 +62,9 @@ async function createCartonFixture({ postgres = false } = {}) {
         (3,'fixture-packer','unused','Fixture Packer','packer','all'),
         (4,'fixture-dispatcher','unused','Fixture Dispatcher','dispatcher','all'),
         (5,'fixture-order-manager','unused','Fixture Order Manager','admin','orders'),
-        (6,'fixture-other-picker','unused','Fixture Other Picker','picker','all')`);
+        (6,'fixture-other-picker','unused','Fixture Other Picker','picker','all'),
+        (7,'fixture-system-admin','unused','Fixture System Admin','admin','all'),
+        (8,'fixture-superadmin','unused','Fixture Superadmin','superadmin','all')`);
     const service = createCartonService({ pool });
     const app = express();
     app.use(express.json({ limit: '2mb' }));
@@ -83,6 +87,8 @@ async function createCartonFixture({ postgres = false } = {}) {
         if (!user) return res.status(401).json({ message: 'Fixture login required' });
         res.json({ user: staffUser(user) });
     });
+    app.use('/api/box-specs',createBoxSpecRouter({pool}));
+    app.use('/api/carton-items', createCartonItemRouter({ pool }));
     app.use('/api/cartons', createCartonRouter({ pool }));
     app.use('/api/orders', createOrderCartonRouter({ pool }));
     async function seedOrder({ quantity = 10, itemCode = 'ITEM', barcode = '4710000000010', actualSN = [], sign = 1, serialMode = 'legacy',

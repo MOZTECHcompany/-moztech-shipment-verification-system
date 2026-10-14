@@ -142,6 +142,32 @@ module.exports = async ({ t, api, ok, pool, users, tokens, password, observedEve
         ok(await claim('orderManager', own.order, 'pack')); ok(await scan('orderManager', own.order, 'pack'));
         const managed = await snapshot(own.order); assert.equal(managed.order.picker_id, users.orderManager); assert.equal(managed.order.packer_id, users.orderManager);
     });
+    await t.test('full-permission admin keeps identity and actual stage for owned ordinary and SN batch packing', async () => {
+        const serial = 'ADMINALLCONFIRMSN01';
+        const rows = [await fixture(1), await fixture(1, [serial])], orderIds = rows.map(row => row.order);
+        const identity = (await pool.query('SELECT username,password,role,management_scope FROM users WHERE id=$1', [users.admin])).rows[0];
+        assert.equal(identity.role, 'admin'); assert.equal(identity.management_scope, 'all');
+        for (const stage of ['pick', 'pack']) {
+            ok(await api('admin', 'PUT', '/api/warehouse/work-mode', { stage }));
+            const route = stage === 'pick' ? '/api/orders/batch-claim' : '/api/orders/batch/claim';
+            const claimed = ok(await api('admin', 'POST', route, { orderIds, stage }));
+            assert.deepEqual((claimed.orders || []).map(row => row.id).concat(claimed.results?.success || []), orderIds);
+            ok(await scan('admin', rows[0].order, stage)); ok(await scan('admin', rows[1].order, stage, 1, serial));
+        }
+        for (const row of rows) {
+            const after = await stored(row.order); assert.equal(after.order.status, 'completed');
+            assert.equal(after.order.picker_id, users.admin); assert.equal(after.order.packer_id, users.admin);
+            const logs = (await audit(row.order)).filter(log => ['pick','pack'].includes(log.action_type));
+            assert.deepEqual(logs.map(log => [log.user_id,log.work_type]), [[users.admin,'pick'],[users.admin,'pack']]);
+            for (const log of logs) {
+                assert.equal(log.actor_snapshot.id, users.admin); assert.equal(log.actor_snapshot.role, 'admin'); assert.equal(log.actor_snapshot.management_scope, 'all');
+                const details = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+                assert.equal(details.operation_context, 'owner');
+                if (row.order === rows[1].order) { assert.ok(details.instanceId); assert.equal(details.after.status, log.work_type === 'pick' ? 'picked' : 'packed'); }
+            }
+        }
+        assert.deepEqual((await pool.query('SELECT username,password,role,management_scope FROM users WHERE id=$1', [users.admin])).rows[0], identity);
+    });
     await t.test('supervisor handoff records the actual old owner, receiver, performer and pre-handoff progress, including opposite legacy roles', async () => {
         const { order } = await fixture(3);
         ok(await claim('dualWorker', order, 'pick')); ok(await scan('dualWorker', order, 'pick'));
@@ -251,6 +277,24 @@ module.exports = async ({ t, api, ok, pool, users, tokens, password, observedEve
         const unused = (await pool.query("INSERT INTO users(username,password,name,role) VALUES('unused-dual-removal','fixture-only','Unused worker','picker') RETURNING id")).rows[0].id;
         ok(await api('superadmin', 'DELETE', `/api/admin/users/${unused}`));
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM users WHERE id=$1', [unused])).rows[0].n, 0);
+    });
+    await t.test('a manager with only box/specification creation history cannot be deleted; an entirely unused manager remains removable', async () => {
+        const maker=(await pool.query("INSERT INTO users(username,password,name,role,management_scope) VALUES('only-box-spec-maker',$1,'Only box specification maker','admin','orders') RETURNING *",[await bcrypt.hash(password,4)])).rows[0];
+        users.boxSpecMaker=maker.id;tokens.boxSpecMaker=ok(await api(null,'POST','/api/auth/login',{username:maker.username,password})).accessToken;
+        const spec=ok(await api('boxSpecMaker','POST','/api/box-specs',{specId:'BOX-SPEC-ONLY-MAKER',activate:true,lines:[{itemCode:'ONLY-MAKER-CODE',productName:'Synthetic specification goods',quantity:10}],expectedActorId:maker.id}),201);
+        const cartons=ok(await api('boxSpecMaker','POST','/api/box-specs/'+spec.specId+'/cartons',{prefix:'SPECMAKER',startNumber:1,count:1,creationId:randomUUID(),expectedContentRevision:spec.contentRevision,expectedActorId:maker.id}),201);assert.equal(cartons.cartons[0].cartonId,'SPECMAKER1');
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM operation_logs WHERE user_id=$1',[maker.id])).rows[0].n,0);
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders WHERE picker_id=$1 OR packer_id=$1',[maker.id])).rows[0].n,0);
+        const preserved={user:(await pool.query('SELECT * FROM users WHERE id=$1',[maker.id])).rows[0],cartonHistory:(await pool.query('SELECT * FROM wms_carton_history WHERE actor_id=$1 ORDER BY id',[maker.id])).rows,specHistory:(await pool.query('SELECT * FROM wms_box_spec_history WHERE actor_id=$1 ORDER BY id',[maker.id])).rows,commands:(await pool.query('SELECT * FROM wms_box_spec_batch_commands WHERE user_id=$1 ORDER BY command_id',[maker.id])).rows};
+        assert.ok(preserved.cartonHistory.length&&preserved.specHistory.length&&preserved.commands.length);
+        const blocked=await api('superadmin','DELETE',`/api/admin/users/${maker.id}`);assert.equal(blocked.status,409);assert.match(blocked.data.message,/紀錄|記錄|歷史|作業/);
+        assert.deepEqual((await pool.query('SELECT * FROM users WHERE id=$1',[maker.id])).rows[0],preserved.user);
+        assert.deepEqual((await pool.query('SELECT * FROM wms_carton_history WHERE actor_id=$1 ORDER BY id',[maker.id])).rows,preserved.cartonHistory);
+        assert.deepEqual((await pool.query('SELECT * FROM wms_box_spec_history WHERE actor_id=$1 ORDER BY id',[maker.id])).rows,preserved.specHistory);
+        assert.deepEqual((await pool.query('SELECT * FROM wms_box_spec_batch_commands WHERE user_id=$1 ORDER BY command_id',[maker.id])).rows,preserved.commands);
+        assert.equal(ok(await api('boxSpecMaker','GET','/api/auth/me')).user.id,maker.id);
+        const unused=(await pool.query("INSERT INTO users(username,password,name,role) VALUES('unused-spec-admin','fixture-only','Unused specification manager','admin') RETURNING id")).rows[0].id;
+        ok(await api('superadmin','DELETE',`/api/admin/users/${unused}`));assert.equal((await pool.query('SELECT count(*)::int AS n FROM users WHERE id=$1',[unused])).rows[0].n,0);
     });
     await t.test('unresolved order changes still stop both stages and transfers never bypass warehouse approvals', async () => {
         const { order } = await fixture(2);

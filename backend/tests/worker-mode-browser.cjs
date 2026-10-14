@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
 module.exports = async ({ step, pageFor, response, api, ok, pool, users, webBase, prefix, output, cleanupOrders }) => {
     let sequence = 0;
@@ -83,6 +84,49 @@ module.exports = async ({ step, pageFor, response, api, ok, pool, users, webBase
         assert.deepEqual(logs.map(row => [row.user_id, row.work_type]), [[users.dualWorker, 'pick'], [users.dualWorker, 'pick'], [users.dualWorker, 'pack'], [users.dualWorker, 'pack']]);
         await second.screenshot({ path: output + '/dual-work-completed.png', fullPage: true });
         await page.close(); await second.close();
+    });
+    await step('browser: one unchanged picker account batch-picks, switches to packing, batch-claims two orders and completes packing in the same session', async () => {
+        const rows = [await fixture(1),await fixture(1)];
+        const identityBefore = (await pool.query('SELECT username,password,role,management_scope FROM users WHERE id=$1',[users.dualWorker])).rows[0];
+        assert.equal(identityBefore.role,'picker');
+        const page = await pageFor('dualWorker');
+        let tokenBefore;
+        const evidence = { kind:'synthetic_loopback_real_Chrome_same_session',actorId:users.dualWorker,role:'picker',orders:rows,stages:[] };
+        for (const stage of ['pick','pack']) {
+            const label = stage === 'pick' ? '揀貨' : '裝箱';
+            await page.goto(webBase+'/tasks');
+            if (tokenBefore === undefined) tokenBefore = await page.evaluate(() => localStorage.getItem('wms_token'));
+            await page.getByRole('button',{name:'進行中',exact:true}).click();
+            const mode = page.getByRole('region',{name:'目前作業',exact:true});await mode.waitFor();
+            await selectStage(page,stage,stage === 'pick');
+            await Promise.all([page.waitForResponse(r => new URL(r.url()).searchParams.get('q') === prefix+'-DUAL'),page.getByLabel('查找任務',{exact:true}).fill(prefix+'-DUAL')]);
+            await Promise.all([page.waitForResponse(r => new URL(r.url()).pathname === '/api/tasks' && new URL(r.url()).searchParams.get('group') === stage),page.getByRole('button',{name:'批次'+label,exact:true}).click()]);
+            for (const row of rows) await page.getByRole('checkbox',{name:'選取'+label+'任務 '+row.voucher,exact:true}).check();
+            await page.screenshot({path:output+'/same-picker-batch-'+stage+'-selected.png',fullPage:true});
+            const route = stage === 'pick' ? '/api/orders/batch-claim' : '/api/orders/batch/claim';
+            const claimed = await response(page,route,'POST',() => page.getByRole('button',{name:'認領 2 個'+label+'任務',exact:true}).click());
+            const submitted = claimed.request().postDataJSON();assert.equal(submitted.stage,stage);assert.deepEqual(submitted.orderIds.map(Number).sort((a,b)=>a-b),rows.map(row=>row.order).sort((a,b)=>a-b));
+            const result = await claimed.json();assert.equal((result.failed || result.results?.failed || []).length,0);
+            assert.deepEqual((result.orders || []).map(row=>row.id).concat(result.results?.success || []).sort((a,b)=>a-b),rows.map(row=>row.order).sort((a,b)=>a-b));
+            await page.getByRole('button',{name:'批次'+label,exact:true}).waitFor();
+            for (const row of rows) {
+                assert.equal((await work(row.order))[stage === 'pick' ? 'picker_id' : 'packer_id'],users.dualWorker);
+                await page.goto(webBase+'/order/'+row.order+'?stage='+stage);
+                const accepted = await scan(page);assert.equal(accepted.request().postDataJSON().type,stage);
+                await page.waitForURL('**/tasks');
+                assert.equal((await work(row.order)).status,stage === 'pick' ? 'picked' : 'completed');
+                assert.deepEqual(await count(row.order),{picked_quantity:1,packed_quantity:stage === 'pack' ? 1 : 0});
+            }
+            evidence.stages.push({stage,route,claimedOrderIds:submitted.orderIds.map(Number),completedOrderIds:rows.map(row=>row.order)});
+        }
+        assert.equal((await page.evaluate(() => localStorage.getItem('wms_token'))) === tokenBefore,true,'No logout, second password or role change is used');
+        assert.deepEqual((await pool.query('SELECT username,password,role,management_scope FROM users WHERE id=$1',[users.dualWorker])).rows[0],identityBefore);
+        const logs = (await pool.query("SELECT order_id,user_id,work_type,actor_snapshot FROM operation_logs WHERE order_id=ANY($1::int[]) AND action_type IN ('pick','pack') ORDER BY order_id,id",[rows.map(row=>row.order)])).rows;
+        assert.equal(logs.length,4);for(const row of rows)assert.deepEqual(logs.filter(log=>log.order_id===row.order).map(log=>[log.user_id,log.work_type]),[[users.dualWorker,'pick'],[users.dualWorker,'pack']]);
+        for(const log of logs){assert.equal(log.actor_snapshot.id,users.dualWorker);assert.equal(log.actor_snapshot.role,'picker');}
+        evidence.identityUnchanged=true;evidence.sameSession=true;evidence.operations=logs;evidence.passed=true;
+        fs.writeFileSync(output+'/same-picker-batch-evidence.json',JSON.stringify(evidence,null,2));
+        await page.screenshot({path:output+'/same-picker-batch-completed.png',fullPage:true});await page.close();
     });
     await step('browser: warehouse supervisor explicitly hands over work to a packing account with picking capability and sees preserved progress and truthful names', async () => {
         const item = await fixture(3, 'picking', users.dualWorker);
