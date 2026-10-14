@@ -16,7 +16,7 @@ function serials(value = []) {
     if (!Array.isArray(value) || value.length > 1000) throw fail('CARTON_INVALID_INPUT', 'SN 清單無效或超過 1000 筆', 400);
     const out = value.map(value => {
         const sn = text(value, 'SN', { max: 100 });
-        if (!/^[!-~]+$/.test(sn) || sn.includes(',') || /^(CARTON:|CTN-)/i.test(sn)) throw fail('CARTON_INVALID_INPUT', 'SN 必須是 1–100 字可列印 ASCII，不含空白、逗號或箱號前綴', 400);
+        if (!/^[!-~]+$/.test(sn) || sn.includes(',') || /^(CARTON:|CTN-|BOX-SPEC:)/i.test(sn)) throw fail('CARTON_INVALID_INPUT', 'SN 必須是 1–100 字可列印 ASCII，不含空白、逗號或箱號前綴', 400);
         return sn;
     });
     if (new Set(out).size !== out.length) throw fail('CARTON_DUPLICATE_SN', '箱內 SN 不可重複', 400);

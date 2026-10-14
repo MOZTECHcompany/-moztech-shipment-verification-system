@@ -37,12 +37,17 @@ async function suite(t, postgres) {
         await assertSchemaReady(f.pool);
         assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM orders')).rows[0].n, 0);
     });
-    await t.test('HTTP rechecks DB role: anonymous, picker and scoped order manager cannot mutate cartons', async () => {
+    await t.test('HTTP rechecks DB role: every manager scope can manage cartons and warehouse staff cannot', async () => {
         assert.equal((await api(null, 'get', '/api/cartons')).status, 401);
         assert.equal((await api(2, 'post', '/api/cartons', box('NO-PICKER'))).status, 403);
-        assert.equal((await api(5, 'post', '/api/cartons', box('NO-ORDER-MANAGER'))).status, 403);
+        for (const actor of [3,4]) assert.equal((await api(actor, 'post', '/api/cartons', box('NO-STAFF-'+actor))).status, 403);
+        for (const actor of [1,5,7,8]) {
+            const carton = ok(await api(actor, 'post', '/api/cartons', box('MANAGER-'+actor)),201);
+            assert.equal(carton.status,'sealed');
+            assert.equal(ok(await api(actor,'get','/api/carton-items?q=Fixture')).items.length,0);
+        }
         await assert.rejects(f.service.create(box('FORGED-PICKER'), { id: 2, role: 'superadmin' }), error => error.status === 403);
-        assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM wms_cartons')).rows[0].n, 0);
+        assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM wms_cartons')).rows[0].n, 4);
     });
     await t.test('the same worker explicitly claims both stages, carton pack never auto-claims, and actor responsibility is immutable', async () => {
         const carton = await create(box('SAME-WORKER', 2));
@@ -93,7 +98,7 @@ async function suite(t, postgres) {
         await f.db.query('UPDATE users SET can_pack=NULL WHERE id=2');
         await scan(order.id, { ...input, type: 'pack' });
     });
-    await t.test('order administration scope preserves work capabilities and records assisted scans while carton editing stays warehouse-only', async () => {
+    await t.test('order administration scope can manage cartons while scan work capabilities and responsibility stay independent', async () => {
         const carton = await create(box('ORDER-ADMIN-WORK', 1));
         const { order } = await f.seedOrder({ quantity: 1 });
         await f.db.query('UPDATE users SET can_pick=TRUE,can_pack=FALSE WHERE id=5');
@@ -102,9 +107,128 @@ async function suite(t, postgres) {
         const log = (await f.db.query("SELECT actor_snapshot,work_type,details::jsonb AS details FROM operation_logs WHERE order_id=$1 AND action_type='pick'", [order.id])).rows[0];
         assert.equal(log.actor_snapshot.management_scope, 'orders'); assert.equal(log.work_type, 'pick');
         assert.equal(log.details.operation_context, 'assistance');
-        assert.equal((await api(5, 'post', '/api/cartons', box('ORDER-ADMIN-NO-EDIT'))).status, 403);
+        assert.equal((await api(5, 'post', '/api/cartons', box('ORDER-ADMIN-CAN-EDIT'))).status, 201);
         assert.equal((await api(5, 'post', `/api/orders/${order.id}/carton-preview`, { scanValue: carton.cartonId, type: 'pack' })).status, 403);
         await f.db.query('UPDATE users SET can_pick=NULL,can_pack=NULL WHERE id=5');
+    });
+    await t.test('three unique physical boxes verify a five-unit tail plus two ten-unit boxes for a twenty-five-unit shipment without duplicate deduction', async () => {
+        const cartons = [];
+        for (const suffix of ['A','B','C']) cartons.push(await create(box('TAIL-25-'+suffix,10)));
+        const first = await f.seedOrder({ quantity:5,packerId:null });
+        const split = await scan(first.order.id,{scanValue:cartons[0].cartonId,type:'pick',mode:'split',selections:[{lineId:cartons[0].lines[0].lineId,quantity:5}]},2);
+        assert.equal(split.order.status,'picked');
+        await scan(first.order.id,{scanValue:cartons[0].cartonId,type:'pack'},2);
+        assert.equal(ok(await api(1,'get','/api/cartons/'+cartons[0].cartonId)).lines[0].remainingQuantity,5);
+        const second = await f.seedOrder({ quantity:25,packerId:null });
+        for (const [index,carton] of cartons.entries()) {
+            const picked = await scan(second.order.id,{scanValue:carton.cartonId,type:'pick'},2);
+            assert.equal(picked.allocation.lines.reduce((sum,line)=>sum+line.quantity,0),index === 0 ? 5 : 10);
+            assert.equal(picked.items[0].picked_quantity,[5,15,25][index]);
+            if (index === 0) {
+                const duplicate = await api(2,'post',`/api/orders/${second.order.id}/carton-preview`,{scanValue:carton.cartonId,type:'pick'});
+                assert.equal(duplicate.status,409);
+                const freshCarton = ok(await api(1,'get','/api/cartons/'+carton.cartonId));
+                const retry = await api(2,'post',`/api/orders/${second.order.id}/carton-scan`,{scanValue:carton.cartonId,type:'pick',commandId:randomUUID(),expectedState:picked.stateToken,expectedCartonRevision:freshCarton.stateRevision});
+                assert.equal(retry.status,409);
+                assert.equal((await f.db.query('SELECT picked_quantity FROM order_items WHERE order_id=$1',[second.order.id])).rows[0].picked_quantity,5);
+            }
+        }
+        for (const [index,carton] of cartons.entries()) {
+            const packed = await scan(second.order.id,{scanValue:carton.cartonId,type:'pack'},2);
+            assert.equal(packed.items[0].packed_quantity,[5,15,25][index]);
+            assert.equal(packed.order.status,index === 2 ? 'completed' : 'packing');
+        }
+        const references = ok(await api(1,'get',`/api/orders/${second.order.id}/carton-shipments`));
+        assert.equal(references.allocations.length,3);assert.ok(references.allocations.every(row=>row.status==='packed'));
+        for(const carton of cartons)assert.equal(ok(await api(1,'get','/api/cartons/'+carton.cartonId)).lines[0].remainingQuantity,0);
+        assert.equal((await f.db.query("SELECT COUNT(*)::int AS n FROM wms_carton_allocations WHERE carton_id=$1 AND status='packed'",[cartons[0].cartonId])).rows[0].n,2,'The tail carton has two distinct real-order custody allocations');
+        const logs=(await f.db.query("SELECT actor_snapshot,work_type,details::jsonb AS details FROM operation_logs WHERE order_id=$1 AND action_type IN ('pick','pack') ORDER BY id",[second.order.id])).rows;
+        assert.deepEqual(logs.map(row=>row.work_type),['pick','pick','pick','pack','pack','pack']);assert.ok(logs.every(row=>row.actor_snapshot.id===2&&row.actor_snapshot.role==='picker'));
+    });
+    await t.test('an unused sealed box reopens only with a reason and current revisions without changing its identity or exact contents', async () => {
+        const before=await create(box('REOPEN-UNUSED',2,['000Ab/01','000ab+02']));
+        const input={expectedContentRevision:before.contentRevision,expectedStateRevision:before.stateRevision};
+        assert.equal((await api(5,'post','/api/cartons/REOPEN-UNUSED/reopen',input)).status,400);
+        assert.equal((await api(2,'post','/api/cartons/REOPEN-UNUSED/reopen',{...input,reason:'Unauthorized'})).status,403);
+        assert.equal((await api(5,'post','/api/cartons/REOPEN-UNUSED/reopen',{...input,expectedStateRevision:before.stateRevision+1,reason:'Stale'})).status,409);
+        assert.equal((await api(5,'patch','/api/cartons/REOPEN-UNUSED',{cartonId:'RENAMED',expectedContentRevision:before.contentRevision,lines:box('unused',2,['000Ab/01','000ab+02']).lines})).status,409);
+        const reopened=ok(await api(5,'post','/api/cartons/REOPEN-UNUSED/reopen',{...input,reason:'Physical count corrected'}));
+        assert.equal(reopened.cartonId,before.cartonId);assert.equal(reopened.status,'draft');assert.equal(reopened.contentRevision,before.contentRevision);assert.equal(reopened.stateRevision,before.stateRevision+1);assert.deepEqual(reopened.lines,before.lines);
+        const history=reopened.history.find(row=>row.event_type==='contents_reopened');assert.ok(history);assert.equal(history.actor_id,5);assert.equal(history.details.reason,'Physical count corrected');
+        ok(await api(5,'post','/api/cartons/REOPEN-UNUSED/seal',{expectedContentRevision:reopened.contentRevision}));
+        const {order}=await f.seedOrder({quantity:2,packerId:null,actualSN:before.lines[0].actualSN,serialMode:'exact'});await scan(order.id,{scanValue:'REOPEN-UNUSED',type:'pick'});
+        const current=ok(await api(5,'get','/api/cartons/REOPEN-UNUSED'));
+        assert.equal((await api(5,'post','/api/cartons/REOPEN-UNUSED/reopen',{expectedContentRevision:current.contentRevision,expectedStateRevision:current.stateRevision,reason:'Cannot rewrite used custody'})).status,409);
+        assert.deepEqual(ok(await api(5,'get','/api/cartons/REOPEN-UNUSED')),current);
+    });
+    await t.test('authorized staff can read exact SN case, zeros and punctuation while carton writes stay manager-only', async () => {
+        const sns=['000Case/01','000case/01','Zero-0002+X'];
+        await create(box('SN-LOOKUP-EXACT',3,sns));
+        for(const actor of [1,5,7,8]) {
+            const exact=ok(await api(actor,'get','/api/cartons/serials?q='+encodeURIComponent(sns[0])+'&match=exact'));
+            assert.equal(exact.items.length,1);assert.equal(exact.items[0].serialNumber,sns[0]);assert.equal(exact.items[0].cartonId,'SN-LOOKUP-EXACT');assert.equal(exact.items[0].readyForPicking,true);
+        }
+        for(const actor of [2,3,4])assert.equal((await api(actor,'get','/api/cartons/serials?q=000Case&match=contains')).status,200);
+        assert.equal(ok(await api(5,'get','/api/cartons/serials?q=000CASE%2F01&match=exact')).items.length,0);
+        const partial=ok(await api(5,'get','/api/cartons/serials?q=000&match=contains'));assert.ok(partial.items.some(row=>row.serialNumber===sns[0]));assert.ok(partial.items.some(row=>row.serialNumber===sns[1]));
+        assert.equal(ok(await api(5,'get','/api/cartons/serials?q=Zero-0002%2BX&match=exact')).items[0].serialNumber,sns[2]);
+    });
+    await t.test('box specifications create distinct sealed physical cartons atomically, replay the same batch and retain their original contents after a template edit', async () => {
+        const spec=ok(await api(5,'post','/api/box-specs',{specId:'SPEC-TEN-PHYSICAL',activate:true,lines:box('ignored',10).lines}),201);
+        assert.equal(spec.status,'active');assert.equal(spec.lines[0].quantity,10);assert.equal(Object.hasOwn(spec.lines[0],'actualSN'),false);
+        const command={prefix:'N',startNumber:1,count:20,creationId:randomUUID(),expectedContentRevision:spec.contentRevision};
+        const created=ok(await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',command),201);
+        assert.equal(created.cartons.length,20);assert.deepEqual(created.cartons.map(row=>row.cartonId),Array.from({length:20},(_,i)=>'N'+(i+1)));assert.equal(created.cartons.reduce((sum,row)=>sum+row.lines[0].quantity,0),200);
+        for(const carton of created.cartons){assert.equal(carton.status,'sealed');assert.equal(carton.lines[0].quantity,10);assert.equal(carton.lines[0].remainingQuantity,10);assert.equal(carton.sourceSystem,'corely-box-spec');assert.equal(JSON.parse(carton.sourceReference).specId,spec.specId);}
+        const replay=ok(await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',command),201);assert.equal(replay.replayed,true);assert.deepEqual(replay.cartons,created.cartons);
+        const originalBoxes=created.cartons.map(row=>row.cartonId);
+        const next=ok(await api(2,'get','/api/box-specs/next-number?prefix=N'));assert.deepEqual(next,{prefix:'N',nextNumber:21});
+        const collision=await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',{...command,creationId:randomUUID()});assert.equal(collision.status,409);assert.equal(collision.body.code,'BOX_SPEC_NUMBER_EXISTS');
+        const partlyOverlapping=await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',{...command,startNumber:20,count:2,creationId:randomUUID()});assert.equal(partlyOverlapping.status,409);assert.equal((await api(5,'get','/api/cartons/N21')).status,404);
+        const subsequent=ok(await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',{...command,startNumber:21,count:2,creationId:randomUUID()}),201);assert.deepEqual(subsequent.cartons.map(row=>row.cartonId),['N21','N22']);
+        assert.equal((await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',{...command,count:2})).status,409);
+        for(const count of [0,101,1.5])assert.equal((await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',{...command,creationId:randomUUID(),count})).status,400);
+        const {order}=await f.seedOrder({quantity:10,packerId:null});
+        assert.equal((await api(2,'post',`/api/orders/${order.id}/carton-preview`,{scanValue:'BOX-SPEC:'+spec.specId,type:'pick'})).status,400);
+        f.attachLegacyRoutes();
+        const blocked=await api(2,'post','/api/orders/update_item',{orderId:order.id,scanValue:'BOX-SPEC:'+spec.specId,type:'pick'});assert.equal(blocked.status,400);assert.equal(blocked.body.code,'SCAN_NOT_APPLIED');assert.match(blocked.body.message,/箱規不能直接計入出貨數量/);
+        await f.db.query('UPDATE order_items SET barcode=$1,product_code=$1 WHERE order_id=$2',['BOX-SPEC:'+spec.specId,order.id]);
+        assert.equal((await api(2,'post','/api/orders/update_item',{orderId:order.id,scanValue:'BOX-SPEC:'+spec.specId,type:'pick',amount:10})).status,400);
+        assert.equal((await f.db.query('SELECT picked_quantity FROM order_items WHERE order_id=$1',[order.id])).rows[0].picked_quantity,0);
+        const renamed=await api(5,'patch','/api/box-specs/'+spec.specId,{specId:'RENAMED',expectedContentRevision:spec.contentRevision,reason:'No replacement ID',lines:box('ignored',12).lines});assert.equal(renamed.status,400);
+        assert.equal((await api(5,'patch','/api/box-specs/'+spec.specId,{expectedContentRevision:spec.contentRevision,lines:box('ignored',12).lines})).status,400);
+        const edited=ok(await api(5,'patch','/api/box-specs/'+spec.specId,{expectedContentRevision:spec.contentRevision,reason:'Packing specification corrected',lines:box('ignored',12).lines}));assert.equal(edited.specId,spec.specId);assert.equal(edited.status,'draft');assert.equal(edited.contentRevision,spec.contentRevision+1);
+        assert.equal((await api(5,'post','/api/box-specs/'+spec.specId+'/cartons',{...command,creationId:randomUUID(),expectedContentRevision:edited.contentRevision})).status,409);
+        const history=ok(await api(5,'get','/api/box-specs/'+spec.specId)).history.find(row=>row.event_type==='contents_revised');assert.equal(history.details.reason,'Packing specification corrected');assert.equal(history.details.before[0].quantity,10);assert.equal(history.details.after[0].quantity,12);
+        for(const id of originalBoxes)assert.equal(ok(await api(5,'get','/api/cartons/'+id)).lines[0].quantity,10,'A specification correction does not rewrite an existing physical box');
+    });
+    await t.test('box specification reads remain staff-accessible but all writes recheck real manager identity and never accept actual SN templates', async () => {
+        for(const actor of [1,5,7,8]) {
+            const spec=ok(await api(actor,'post','/api/box-specs',{specId:'SPEC-MANAGER-'+actor,lines:box('ignored',10).lines}),201);assert.equal(spec.status,'draft');
+            ok(await api(actor,'post','/api/box-specs/'+spec.specId+'/activate',{expectedContentRevision:spec.contentRevision}));
+        }
+        for(const actor of [2,3,4]){
+            assert.equal((await api(actor,'get','/api/box-specs')).status,200);
+            assert.equal((await api(actor,'get','/api/box-specs/SPEC-MANAGER-1')).status,200);
+            assert.equal((await api(actor,'post','/api/box-specs',{specId:'SPEC-STAFF-'+actor,lines:box('ignored',10).lines})).status,403);
+            assert.equal((await api(actor,'post','/api/box-specs/SPEC-MANAGER-1/cartons',{prefix:'STAFF',startNumber:1,creationId:randomUUID(),count:1,expectedContentRevision:1})).status,403);
+        }
+        assert.equal((await api(5,'post','/api/box-specs',{specId:'SPEC-SN-FORBIDDEN',lines:box('ignored',1,['Exact-SN-01']).lines})).status,400);
+        await f.db.query("UPDATE users SET role='dispatcher' WHERE id=7");
+        try { assert.equal((await api(7,'post','/api/box-specs',{specId:'SPEC-DEMOTED',lines:box('ignored',10).lines})).status,403);await assert.rejects(f.service.create(box('FALSE-ADMIN'),{id:7,role:'superadmin'}),error=>error.status===403); }
+        finally { await f.db.query("UPDATE users SET role='admin' WHERE id=7"); }
+    });
+    await t.test('failed box-spec batch creation leaves no physical boxes or receipt and the original command safely retries', async () => {
+        const spec=ok(await api(1,'post','/api/box-specs',{specId:'SPEC-BATCH-ROLLBACK',activate:true,lines:box('ignored',10).lines}),201);
+        const before=(await f.db.query('SELECT COUNT(*)::int AS n FROM wms_cartons')).rows[0].n;
+        const command={prefix:'R',startNumber:1,count:3,creationId:randomUUID(),expectedContentRevision:spec.contentRevision};let insertCount=0;
+        f.failNext(sql=>sql.includes('INSERT INTO wms_carton_lines')&&++insertCount===2);
+        assert.equal((await api(1,'post','/api/box-specs/'+spec.specId+'/cartons',command)).status,500);
+        assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM wms_cartons')).rows[0].n,before);
+        assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM wms_box_spec_batch_commands WHERE command_id=$1',[command.creationId])).rows[0].n,0);
+        const retry=ok(await api(1,'post','/api/box-specs/'+spec.specId+'/cartons',command),201);assert.equal(retry.cartons.length,3);
+        const replay=ok(await api(1,'post','/api/box-specs/'+spec.specId+'/cartons',command),201);assert.deepEqual(replay.cartons.map(row=>row.cartonId),retry.cartons.map(row=>row.cartonId));
+        assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM wms_cartons')).rows[0].n,before+3);
     });
     await t.test('manifest imports draft, inherits batch provenance, replays exact content and does not reset remaining', async () => {
         const manifest = { format: 'corely-cartons-v1', sourceSystem: 'ERP', sourceReference: 'BATCH-1', cartons: [box('MANIFEST')] };

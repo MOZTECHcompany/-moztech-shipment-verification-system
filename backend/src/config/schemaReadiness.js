@@ -1,6 +1,9 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    wms_box_specs: ['spec_id','status','content_revision','lines','created_by','updated_by'],
+    wms_box_spec_history: ['id','spec_id','event_type','content_revision','actor_id','details'],
+    wms_box_spec_batch_commands: ['user_id','command_id','spec_id','request_hash','content_revision','carton_ids'],
     wms_cartons: ['carton_id','status','content_revision','state_revision','source_system','source_reference'],
     wms_carton_lines: ['id','carton_id','item_code','international_barcode','internal_scan_code','code_type','quantity','remaining_quantity','actual_sns'],
     wms_carton_serials: ['serial_number','line_id','available'],

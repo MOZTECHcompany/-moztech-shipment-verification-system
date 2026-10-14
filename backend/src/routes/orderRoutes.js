@@ -606,6 +606,9 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
 
     try { assertWork(req.user, type); } catch (error) { return res.status(error.status).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
     const scanRaw = String(scanValue ?? '').trim();
+    if (/^BOX-SPEC:/i.test(scanRaw)) {
+        return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '這是箱規碼，請掃描實體箱 QR；箱規不能直接計入出貨數量' });
+    }
     if (!scanRaw) {
         scanOutcome = 'invalid_input';
         return res.status(400).json({ message: '掃描值不可為空' });

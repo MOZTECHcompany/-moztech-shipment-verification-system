@@ -8,9 +8,9 @@ const bcrypt = require('bcryptjs');
 const xlsx = require('xlsx');
 const { io: socketClient } = require('socket.io-client');
 
-test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_PARITY_PG_TEST !== '1', timeout: 180000 }, async t => {
+test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_PARITY_PG_TEST !== '1', timeout: 300000 }, async t => {
     const database = `wms_parity_${randomBytes(6).toString('hex')}`;
-    const config = { host: '127.0.0.1', port: 55441, user: 'wms_replay', password: 'wms_replay_local_only', database: 'postgres' };
+    const config = require('./local-pg-config.cjs')();
     const control = new Client(config);
     await control.connect();
     await control.query(`CREATE DATABASE "${database}"`);

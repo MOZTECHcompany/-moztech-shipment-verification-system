@@ -7,7 +7,7 @@ const { createCartonItemRouter } = require('../src/routes/cartonItemRoutes');
 const { parseOrderRows } = require('../src/services/orderImportParser');
 const { matchesItem } = require('../src/services/cartonContents');
 
-test('native carton item search preserves imported identity and warehouse permissions', async t => {
+test('native carton item search preserves imported identity and manager permissions', async t => {
     const db = new PGlite();
     await db.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,role TEXT,management_scope TEXT);
         CREATE TABLE order_items(product_code TEXT,product_name TEXT,barcode TEXT);
@@ -22,10 +22,11 @@ test('native carton item search preserves imported identity and warehouse permis
     app.use('/api/carton-items', createCartonItemRouter({ pool }));
     const search = (q, actor = 1) => request(app).get('/api/carton-items').query({ q }).set('x-test-actor', String(actor));
     try {
-        await t.test('authentication and current warehouse scope are required', async () => {
+        await t.test('authentication and current administrator identity are required', async () => {
             assert.equal((await request(app).get('/api/carton-items?q=MODEL')).status, 401);
-            for (const id of [2, 3, 999]) assert.equal((await search('MODEL', id)).status, id === 999 ? 401 : 403);
+            for (const id of [2, 999]) assert.equal((await search('MODEL', id)).status, id === 999 ? 401 : 403);
             assert.equal((await search('MODEL', 4)).status, 200);
+            assert.equal((await search('MODEL', 3)).status, 200, 'An order manager can manage and search cartons');
         });
         await t.test('deduplicates exact triples without merging different scan keys or losing zeros/case', async () => {
             const result = await search('model-A02');
@@ -52,8 +53,10 @@ test('native carton item search preserves imported identity and warehouse permis
         });
         await t.test('rechecks a demoted actor rather than trusting a stale caller role', async () => {
             await db.query("UPDATE users SET management_scope='orders' WHERE id=1");
+            assert.equal((await search('MODEL')).status, 200);
+            await db.query("UPDATE users SET role='picker' WHERE id=1");
             assert.equal((await search('MODEL')).status, 403);
-            await db.query("UPDATE users SET management_scope='warehouse' WHERE id=1");
+            await db.query("UPDATE users SET role='admin',management_scope='warehouse' WHERE id=1");
         });
         await t.test('exact imported model is usable for both barcode and no-EAN carton matching', async () => {
             const parsed = parseOrderRows([['憑證號碼：SYNTHETIC-NATIVE'],

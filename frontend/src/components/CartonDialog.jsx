@@ -5,7 +5,7 @@ export function CartonDialog({ open, title, onClose, children, footer }) {
     const ref = useRef(null);
     useEffect(() => {
         const dialog = ref.current;
-        if (open && !dialog.open) dialog.showModal();
+        if (open && !dialog.open) { dialog.showModal(); dialog.querySelector('[data-carton-autofocus]')?.focus(); }
         else if (!open && dialog.open) dialog.close();
     }, [open]);
     return <dialog ref={ref} aria-label={title} onCancel={event => { event.preventDefault(); onClose(); }} className="w-[min(96vw,48rem)] max-h-[90vh] overflow-y-auto rounded-xl border-0 p-0 shadow-xl backdrop:bg-slate-900/30">

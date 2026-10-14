@@ -594,7 +594,7 @@ module.exports = async function browserFeatures({ t, api, ok, pool, users, token
         });
         await require('./worker-mode-browser.cjs')({ step, pageFor, response, api, ok, pool, users, webBase, prefix, output, cleanupOrders });
     } finally {
-        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 24 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
+        report.finishedAt = new Date().toISOString(); report.passed = report.checks.length === 25 && report.checks.every(c=>c.passed) && !report.pageErrors.length && !report.failedResponses.some(r => !r.expected);
         fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(output + '/browser-acceptance.json', JSON.stringify(report, null, 2));
         for (const context of contexts) await context.close();
         await browser.close(); if (vite) await vite.close(); process.chdir(originalCwd);

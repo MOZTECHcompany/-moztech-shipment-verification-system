@@ -5,13 +5,14 @@ const bcrypt = require('bcryptjs');
 (async () => {
     if (process.env.WMS_CARTON_LOCAL_DEV !== '1') throw new Error('Set WMS_CARTON_LOCAL_DEV=1 for synthetic loopback DEV');
     const fixture = await createCartonFixture({ postgres: true });
+    const local = require('./local-pg-config.cjs')();
     const database = (await fixture.db.query('SELECT current_database() AS name')).rows[0].name;
     const password = 'carton-dev-fixture-only';
     await fixture.db.query('UPDATE users SET password=$1', [await bcrypt.hash(password, 4)]);
-    Object.assign(process.env, { NODE_ENV: 'test', DATABASE_URL: '', PGHOST: '127.0.0.1', PGPORT: '55441',
+    Object.assign(process.env, { NODE_ENV: 'test', DATABASE_URL: '', PGHOST: local.host, PGPORT: String(local.port),
         PGUSER: 'wms_replay', PGPASSWORD: 'wms_replay_local_only', PGDATABASE: database,
         JWT_SECRET: 'local-carton-fixture-not-a-production-secret', DB_POOL_MAX: '4', DB_SSL_MODE: 'disable',
-        STORAGE_BACKEND: 'local', CORS_ORIGINS: 'http://127.0.0.1:55771',
+        STORAGE_BACKEND: 'local', CORS_ORIGINS: `http://127.0.0.1:${process.env.WMS_CARTON_WEB_PORT || 55771}`,
         WMS_ECPAY_ACCOUNTS_JSON: '[]', WMS_ECPAY_CALLBACKS_ENABLED: 'false' });
     const cases = [
         { cartonId: 'CTN-261012-M1-001', itemCode: 'SN-ITEM', barcode: '4710000000010', quantity: 10,
@@ -34,8 +35,10 @@ const bcrypt = require('bcryptjs');
     }
     const { app, server, io } = require('../src/app');
     app.locals.cartonFixture = true;
-    await new Promise(resolve => server.listen(55452, '127.0.0.1', resolve));
-    process.stdout.write(JSON.stringify({ status: 'local-dev-ready', api: 'http://127.0.0.1:55452', cases: seeded })+'\n');
+    const apiPort = Number(process.env.WMS_CARTON_API_PORT || 55452);
+    if (!Number.isSafeInteger(apiPort) || apiPort < 55000 || apiPort > 55999) throw Error('Dedicated local API port required');
+    await new Promise(resolve => server.listen(apiPort, '127.0.0.1', resolve));
+    process.stdout.write(JSON.stringify({ status: 'local-dev-ready', api: `http://127.0.0.1:${apiPort}`, cases: seeded })+'\n');
     let stopped = false;
     const stop = async () => {
         if (stopped) return; stopped = true;

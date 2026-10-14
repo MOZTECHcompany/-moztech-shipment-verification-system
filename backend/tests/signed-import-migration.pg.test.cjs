@@ -11,7 +11,7 @@ test('signed import migration preserves preexisting warehouse rows on isolated P
 },async t=>{
     const database=`wms_signed_migration_${randomBytes(6).toString('hex')}`;
     // Fixed disposable loopback server; never read production connection env.
-    const config={host:'127.0.0.1',port:55441,user:'wms_replay',password:'wms_replay_local_only',database:'postgres'};
+    const config=require('./local-pg-config.cjs')();
     const control=new Client(config);await control.connect();
     await control.query(`CREATE DATABASE "${database}"`);
     const pool=new Pool({...config,database,max:1});
@@ -26,12 +26,13 @@ test('signed import migration preserves preexisting warehouse rows on isolated P
     const comment=(await pool.query("INSERT INTO task_comments(order_id,user_id,content) VALUES($1,$2,'Legacy message') RETURNING *",[order.id,user])).rows[0];
     const log=(await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'pick','{\"quantity\":2}') RETURNING *",[order.id,user])).rows[0];
     const result=await runMigrations({pool,targetDatabase:database,manifest});
-    assert.deepEqual(result.applied,['030_signed_import_quantities.sql','031_worker_modes.sql']);
+    assert.deepEqual(result.applied,['030_signed_import_quantities.sql','031_worker_modes.sql','040_wms_cartons.sql','041_box_specifications.sql']);
     await assertSchemaReady(pool);
+    for(const table of ['wms_box_specs','wms_box_spec_history','wms_box_spec_batch_commands']) assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n,0,'041 adds empty tables without manufacturing historical cartons or specifications');
     const afterOrder=(await pool.query('SELECT * FROM orders WHERE id=$1',[order.id])).rows[0];
     const afterLine=(await pool.query('SELECT * FROM order_items WHERE id=$1',[line.id])).rows[0];
     assert.deepEqual(afterOrder,{...order,document_type:'shipment',pick_paused_at:null,pack_paused_at:null});
-    assert.deepEqual(afterLine,{...line,quantity_sign:1});
+    assert.deepEqual(afterLine,{...line,quantity_sign:1,carton_serial_binding:false,serial_identity_mode:'legacy'});
     for (const [table,before] of [['order_item_instances',instance],['task_comments',comment],['operation_logs',log]]) {
         assert.deepEqual((await pool.query(`SELECT * FROM ${table} WHERE id=$1`,[before.id])).rows[0],table==='operation_logs'?{...before,actor_snapshot:null,work_type:null}:before);
     }

@@ -145,6 +145,9 @@ class UserService {
                     OR EXISTS(SELECT 1 FROM task_assignments WHERE from_user_id=$1 OR to_user_id=$1 OR performed_by=$1)
                     OR EXISTS(SELECT 1 FROM wms_scan_commands WHERE user_id=$1)
                     OR EXISTS(SELECT 1 FROM product_defects WHERE user_id=$1)
+                    OR EXISTS(SELECT 1 FROM wms_carton_history WHERE actor_id=$1)
+                    OR EXISTS(SELECT 1 FROM wms_box_spec_history WHERE actor_id=$1)
+                    OR EXISTS(SELECT 1 FROM wms_box_spec_batch_commands WHERE user_id=$1)
                 ) AS has_history`, [userId]);
                 if (history.rows[0]?.has_history) throw Object.assign(new Error('此帳號已有作業或交接紀錄，不能刪除，以保留責任追溯。'), {status:409});
                 return db.query('DELETE FROM users WHERE id = $1 RETURNING username', [userId]);
