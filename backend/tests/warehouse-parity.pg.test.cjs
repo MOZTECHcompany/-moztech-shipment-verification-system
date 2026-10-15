@@ -317,6 +317,7 @@ test('warehouse workflows on real isolated PostgreSQL', { skip: process.env.WMS_
     await require('./order-review-flows.cjs')({t,api,ok,pool,users,tokens,importOrder,observedEvents});
     await require('./order-signed-import-flows.cjs')({t,api,ok,pool,users,observedEvents});
     await require('./warehouse-worker-mode-flows.cjs')({t,api,ok,pool,users,tokens,observedEvents,password});
+    await require('./ecount-reference-app-flows.cjs')({t,api,ok,pool,users});
     await require('./legacy-feature-flows.cjs')({ t, api, ok, pool, users, importOrder, observedEvents, snOrder });
     await require('./order-completion-flows.cjs')({ t, api, ok, pool, users, observedEvents });
     await require('./comment-time-flows.cjs')({ t, api, ok, pool, users });

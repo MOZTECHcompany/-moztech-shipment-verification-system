@@ -24,6 +24,8 @@ import {
 
 // 操作類型的中文對照和顏色
 const actionTypeMap = {
+    ecount_reference_saved: {label:'保存銷貨對照',icon:'📝'},
+    ecount_reference_manually_checked: {label:'人工核對銷貨對照',icon:'✓'},
     work_pause: {label:'暫停作業',icon:'⏸'},
     work_resume: {label:'繼續作業',icon:'▶'},
     transfer: {label:'任務交接',icon:'↔'},

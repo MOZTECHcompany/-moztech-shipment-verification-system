@@ -18,6 +18,8 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_ECOUNT_CARTON_REFERENCE_2026-10-15.md`：既有 ECOUNT 銷貨單與 WMS 已裝箱明細對照、公司／單號參考、人工明細核對、防重送與內容變動失效。只保存追溯，不新增銷貨或扣正式庫存；人工核對不是官方自動回寫成功。實際發布狀態仍須讀回 Cloud Run。
+- `docs/WMS_CARTON_WORKFLOW_2026-10-15.md`：三步建箱、箱規、N1～N20 等流水實體箱、拆箱餘量及貼紙尺寸。取代下列 10/13 原生箱號介面的使用說明；保留既有雙工序／SN／箱分配歷史。
 - `docs/WMS_NATIVE_CARTONS_2026-10-13.md`：現用 WMS 原生自建箱號、草稿編輯／封存、QR 貼紙及 ECOUNT 理貨單整箱／拆箱核對；正式 revision `corely-wms-carton-native-84f7f6e`（100%）、部署程式 `84f7f6e`，套用 additive migration040。保留下列031雙工序／暫停與交接；ECOUNT維持正式銷貨與庫存帳，掃箱不再扣正式庫存。新箱分配使用後不得直接退回忽略箱保護的舊映像。
 - `docs/WMS_WORKER_MODES_2026-10-13.md`：同帳號雙工序、今日預設、進度保留與交接、實際人員／工序快照；現有帳號密碼與歷史不合併、不改寫。正式revision `corely-wms-worker-modes-20261013`（100%）、部署程式 `69abd18`，套用031；26帳號的原身分與密碼完整保留。回復界線請讀該文件與即時Cloud Run。
 
