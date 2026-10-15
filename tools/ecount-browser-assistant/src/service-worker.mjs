@@ -5,6 +5,7 @@ import { inspectEcountCompany,validateCompanyMappings } from './company-evidence
 
 const controllers = new Map();
 const running = new Set();
+let bindingMutation=false;
 const activeReceipts = new Map();
 const replyError = code => ({ ok:false, errorCode:code });
 const controllerKey=id=>`controller:${id}`;
@@ -164,7 +165,7 @@ async function handlePage(message, sender) {
     const probe = await inspect(binding, { operation:'probe' });
     return { ok:true, result:{ bound:true,companyVerified:!!binding.companyEvidence, mode:'preview', saveEnabled:false, ...probe.diagnostic, errorCode:probe.ok ? null : probe.errorCode } };
   }
-  if (running.has(sender.tab.id)) return replyError('ASSISTANT_BUSY');
+  if (running.has(sender.tab.id)||bindingMutation) return replyError('ASSISTANT_BUSY');
   running.add(sender.tab.id);
   let engineStarted=false;
   try {
@@ -212,7 +213,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const popupSender=sender.url===`chrome-extension://${chrome.runtime.id}/popup.html`&&(!sender.tab||sender.frameId===0);
     // A DOM save already dispatched to Chrome cannot be recalled. Do not allow another binding
     // to start a second writer, or imply that disconnecting could cancel that external action.
-    if(popupSender&&['POPUP_BIND','POPUP_UNBIND','POPUP_VERIFY_COMPANY'].includes(message?.type)&&running.size)return replyError('ASSISTANT_BUSY');
+    const changesBinding=popupSender&&['POPUP_BIND','POPUP_UNBIND','POPUP_VERIFY_COMPANY'].includes(message?.type);
+    if(changesBinding){if(running.size||bindingMutation)return replyError('ASSISTANT_BUSY');bindingMutation=true;}
+    try{
     if (message?.type === 'POPUP_STATUS' && popupSender) {
       const [tab] = await chrome.tabs.query({ active:true, currentWindow:true });
       return { ok:true, result:{ canBind:!!tab && isErpUrl(tab.url), controllers:(await registeredControllers()).map(([tabId,c]) => ({ tabId, actorId:c.actorId, label:c.label,canVerifyCompany:c.companyMappings.length>0 })), bound:(await chrome.storage.session.get('operatorBinding')).operatorBinding || null } };
@@ -245,6 +248,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (message?.type === 'POPUP_UNBIND' && popupSender) { await chrome.storage.session.remove('operatorBinding'); activeReceipts.clear(); return { ok:true }; }
     return handlePage(message || {}, sender);
+    }finally{if(changesBinding)bindingMutation=false;}
   };
   task().then(sendResponse, error => sendResponse(replyError(error.code || 'ASSISTANT_FAILED')));
   return true;

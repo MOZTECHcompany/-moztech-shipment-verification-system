@@ -67,3 +67,14 @@ test('popup cannot rebind, unbind or verify company during an in-flight run and 
   assert.equal((await s.popup({type:'POPUP_UNBIND'})).ok,true);
   assert.equal(s.stores.session.has('operatorBinding'),false);delete globalThis.chrome;
 });
+
+test('a popup mutation holds its lock across native scripting awaits so a run cannot start with the old binding',async()=>{
+  const s=await setup();let release,entered;
+  const ready=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  s.onInjection(async operation=>{if(operation==='probe'){entered();await gate;}});
+  const binding=s.popup({type:'POPUP_BIND',controllerTabId:1});await ready;
+  assert.deepEqual(await s.send('READ_DOCUMENT',{companyCode:s.plan.companyCode,voucherNumber:s.plan.voucherNumber}),{ok:false,errorCode:'ASSISTANT_BUSY'});
+  assert.deepEqual(await s.popup({type:'POPUP_UNBIND'}),{ok:false,errorCode:'ASSISTANT_BUSY'});
+  release();assert.equal((await binding).ok,true);s.onInjection(null);
+  assert.equal((await s.send('READ_DOCUMENT',{companyCode:s.plan.companyCode,voucherNumber:s.plan.voucherNumber})).ok,true);delete globalThis.chrome;
+});
