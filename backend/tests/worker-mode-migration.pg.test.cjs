@@ -28,7 +28,7 @@ test('worker mode migration preserves identities, credentials, history and in-pr
     const log = (await pool.query("INSERT INTO operation_logs(user_id,order_id,action_type,details) VALUES($1,$2,'pack','{\"quantity\":1}') RETURNING *", [people[1].id, order.id])).rows[0];
     const comment = (await pool.query("INSERT INTO task_comments(user_id,order_id,content) VALUES($1,$2,'Legacy pinned context') RETURNING *", [people[0].id, order.id])).rows[0];
     const handoff = (await pool.query("INSERT INTO task_assignments(order_id,from_user_id,to_user_id,task_type,reason) VALUES($1,$2,$3,'pack','Legacy transfer') RETURNING *", [order.id, people[0].id, people[1].id])).rows[0];
-    assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, ['031_worker_modes.sql','040_wms_cartons.sql','041_box_specifications.sql']);
+    assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, ['031_worker_modes.sql','040_wms_cartons.sql','041_box_specifications.sql','042_ecount_carton_references.sql']);
     await assertSchemaReady(pool);
     for(const table of ['wms_box_specs','wms_box_spec_history','wms_box_spec_batch_commands']) assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n,0,'041 adds empty tables without manufacturing historical cartons or specifications');
     for (const person of people) assert.deepEqual((await pool.query('SELECT * FROM users WHERE id=$1', [person.id])).rows[0], { ...person, can_pick: null, can_pack: null });

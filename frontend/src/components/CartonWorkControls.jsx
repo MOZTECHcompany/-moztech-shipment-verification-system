@@ -6,7 +6,8 @@ import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
 import { applyCartonResponse, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey } from '@/utils/cartonScan';
 import { CartonDialog } from './CartonDialog';
-import { buildCartonShipmentTrace } from '@/utils/cartonShipmentTrace.mjs';
+import { buildCartonShipmentTrace, buildPackedCartonShipmentTrace, cartonTraceNotes } from '@/utils/cartonShipmentTrace.mjs';
+import { EcountReferenceCard } from './EcountReferenceCard';
 
 const message = err => err.response?.data?.message || err.message || '箱號作業失敗';
 const field = 'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm';
@@ -97,19 +98,20 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         if (!selected.length) { setError('請選擇要出貨的數量或 SN'); return; }
         submit(scanValue.trim(), 'pick', { mode: 'split', selections: selected });
     };
-    const exportFile = async () => {
+    const exportFile = async (history = false) => {
         const session = cartonSessionKey(api, user);
         try {
-            const data = await loadShipments();
+            const data = history ? await loadShipments() : (await api.get(`/api/orders/${orderId}/ecount-reference`, { timeout: 15000 })).data;
             if (!data || !alive.current) return;
-            const table = buildCartonShipmentTrace(data);
+            const table = history ? buildCartonShipmentTrace(data) : buildPackedCartonShipmentTrace(data);
             const rows = table.rows;
-            if (!rows.length) throw new Error('此單尚無箱號作業紀錄');
+            if (!rows.length) throw new Error(history ? '此單尚無箱號作業紀錄' : '此單尚無已裝箱內容');
             const xlsx = await import('xlsx');
             if (!alive.current || session !== cartonSessionKey(api, user)) return;
             const workbook = xlsx.utils.book_new();
             xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet([table.headers, ...rows]), table.name);
-            xlsx.writeFile(workbook, `出貨箱號對照-${String(orderData.order.voucher_number).replace(/[^\w\u4e00-\u9fff-]/g, '_')}.xlsx`);
+            xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(table.notes || cartonTraceNotes(data)), '說明');
+            xlsx.writeFile(workbook, `${history ? '完整箱號作業紀錄' : '已裝箱對照'}-${String(orderData.order.voucher_number).replace(/[^\w\u4e00-\u9fff-]/g, '_')}.xlsx`);
         } catch (err) { if (alive.current) toast.error(message(err)); }
     };
     const releaseAllocation = () => {
@@ -135,21 +137,22 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         });
         if (result.accepted) { onBusy(true, release.cartonId); void result.completion; }
     };
-    return <section className="rounded-xl border bg-white p-4 space-y-3">
+    return <div className="space-y-3"><section className="rounded-xl border bg-white p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold flex items-center gap-2"><Box size={18} />箱號作業</h3><Button size="sm" variant="secondary" disabled={blocked || !stage} onClick={() => { setScanValue(''); clearLookup(); setError(''); setOpen(true); }}>掃箱／拆箱</Button></div>
-        <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" disabled={reading} onClick={() => { setError(''); setDetailsOpen(true); loadShipments().catch(err => setError(message(err))); }}>箱號明細</Button><Button size="sm" variant="secondary" disabled={reading} onClick={exportFile}><FileDown size={14} />匯出對照</Button></div>
+        <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" disabled={reading} onClick={() => { setError(''); setDetailsOpen(true); loadShipments().catch(err => setError(message(err))); }}>箱號明細</Button><Button size="sm" variant="secondary" disabled={reading} onClick={() => exportFile(false)}><FileDown size={14} />已裝箱對照</Button><Button size="sm" variant="secondary" disabled={reading} onClick={() => exportFile(true)}>完整作業紀錄</Button></div>
         <CartonDialog open={open} title={stage === 'pack' ? '箱號裝箱核對' : '箱號揀貨'} onClose={() => { if (!blocked) { clearLookup(); setOpen(false); } }} footer={<><Button variant="secondary" disabled={blocked || !scanValue.trim()} onClick={() => submit(scanValue.trim(), stage)}>整箱{stage === 'pack' ? '裝箱' : '揀貨'}</Button>{stage === 'pick' && box && <Button disabled={blocked} onClick={split}>確認拆箱揀貨</Button>}</>}>
             <div className="flex gap-2"><input autoFocus aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submit(scanValue.trim(), stage); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
             {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
             {box?.lines.map(line => <SplitLine key={line.lineId} line={line} selections={selections} setSelections={setSelections} items={orderData.items} stage={stage} />)}
         </CartonDialog>
-        <CartonDialog open={detailsOpen} title="出貨箱號明細" onClose={() => setDetailsOpen(false)} footer={<Button variant="secondary" onClick={exportFile}>匯出對照</Button>}>
+        <CartonDialog open={detailsOpen} title="出貨箱號明細" onClose={() => setDetailsOpen(false)} footer={<><Button variant="secondary" onClick={() => exportFile(false)}>已裝箱對照</Button><Button variant="secondary" onClick={() => exportFile(true)}>完整作業紀錄</Button></>}>
             {error && <p role="alert" className="text-red-700 mb-3">{error}</p>}
+            {shipments?.referenceWarning && <p role="alert" className="mb-3 text-sm text-amber-800">{shipments.referenceWarning}</p>}
             {(shipments?.allocations || []).map(a => <div key={a.allocationId || a.id} className="mb-3 rounded-lg border p-3"><div className="flex flex-wrap justify-between gap-2"><strong>{a.cartonId}</strong><span className="text-sm">{a.status === 'packed' ? '裝箱核對完成' : a.status === 'released' ? '已解除' : '已揀貨'}</span></div>{a.lines.map(l => <p key={`${l.lineId}:${l.orderItemId}`} className="text-sm mt-1">{l.itemCode} × {l.quantity}{l.actualSN?.length ? ` · ${l.actualSN.join('、')}` : ''}</p>)}{isWarehouseAdmin(user) && a.status === 'picked' && <button type="button" className="mt-2 text-sm text-red-700 underline" onClick={() => { setRelease(a); setReason(''); }}>解除分配</button>}</div>)}
             {shipments && !shipments.allocations?.length && <p className="text-sm text-slate-500">尚無箱號作業紀錄</p>}
         </CartonDialog>
         <CartonDialog open={!!release} title="解除箱號分配" onClose={() => !blocked && setRelease(null)} footer={<Button disabled={!reason.trim() || blocked} onClick={releaseAllocation}>確認解除</Button>}>
             <p className="mb-3">{release?.cartonId}</p><label className="text-sm">原因<input autoFocus className={field} value={reason} onChange={e => setReason(e.target.value)} /></label>{error && <p role="alert" className="mt-3 text-red-700">{error}</p>}
         </CartonDialog>
-    </section>;
+    </section><EcountReferenceCard orderData={orderData} user={user} refreshKey={shipments} referenceWarning={shipments?.referenceWarning} /></div>;
 });
