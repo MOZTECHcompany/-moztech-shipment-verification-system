@@ -31,7 +31,9 @@ const root = path.resolve(__dirname, '../..');
         page.on('pageerror', e => report.pageErrors.push(e.message));
         page.on('request', req => { const url = new URL(req.url()); if (/^\/api\/(cartons|box-specs)/.test(url.pathname) && ['POST','PATCH'].includes(req.method())) report.managementRequests.push({path:url.pathname,method:req.method(),body:req.postDataJSON()}); });
         await page.goto(webBase + '/login'); await page.locator('#corely-username').fill(username); await page.locator('#corely-password').fill('carton-dev-fixture-only');
-        await page.getByRole('button',{name:'登入系統',exact:true}).click(); await page.waitForURL('**/tasks'); return page;
+        await page.getByRole('button',{name:'登入系統',exact:true}).click(); await page.waitForURL('**/tasks');
+        await page.waitForFunction(name => { try { return JSON.parse(localStorage.getItem('wms_token')) && JSON.parse(localStorage.getItem('wms_user'))?.username === name; } catch { return false; } }, username);
+        return page;
     }
     async function api(page, method, url, data, status=200) {
         const token = await page.evaluate(() => JSON.parse(localStorage.getItem('wms_token')));
@@ -82,7 +84,7 @@ const root = path.resolve(__dirname, '../..');
         }
         if(process.env.WMS_CARTON_QR_DEBUG === '1') {
             await admin.goto(webBase+'/cartons');
-            for(const id of ['N1','N2','N10','N20']) { await admin.getByRole('button',{name:id,exact:true}).click();await visibleDialog(admin,id).getByRole('button',{name:'列印貼紙',exact:true}).click();await visibleDialog(admin,'箱號貼紙').waitFor();console.log(id+': '+await decoded(admin));await admin.screenshot({path:path.join(output,'debug-'+id+'.png'),fullPage:true});await closeDialogs(admin); }
+            for(const id of ['N1','N2','N10','N20']) { await admin.getByRole('button',{name:id,exact:true}).click();await visibleDialog(admin,id).getByRole('button',{name:'重印此箱貼紙',exact:true}).click();await visibleDialog(admin,'箱號貼紙').waitFor();console.log(id+': '+await decoded(admin));await admin.screenshot({path:path.join(output,'debug-'+id+'.png'),fullPage:true});await closeDialogs(admin); }
             return;
         }
         await step('three-step carton editor autofocuses scanner, keeps quantity blank and fixed ID readonly; cancel never creates',async()=>{const before=await api(admin,'GET','/api/cartons');const d=await editor(admin);assert.equal(await d.getByLabel('掃描或搜尋商品',{exact:true}).evaluate(e=>e===document.activeElement),true);assert.equal(await d.getByLabel('每箱數量',{exact:true}).inputValue(),'');assert.equal(await d.getByLabel('箱號',{exact:true}).count(),0);assert.equal(await d.getByText('商品掃描碼（選填）',{exact:true}).evaluate(e=>e.parentElement.open),false);await d.getByRole('button',{name:'取消',exact:true}).click();assert.equal((await api(admin,'GET','/api/cartons')).items.length,before.items.length);});

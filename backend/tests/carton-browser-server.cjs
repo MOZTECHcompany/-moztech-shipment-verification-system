@@ -38,7 +38,7 @@ const bcrypt = require('bcryptjs');
     const apiPort = Number(process.env.WMS_CARTON_API_PORT || 55452);
     if (!Number.isSafeInteger(apiPort) || apiPort < 55000 || apiPort > 55999) throw Error('Dedicated local API port required');
     await new Promise(resolve => server.listen(apiPort, '127.0.0.1', resolve));
-    process.stdout.write(JSON.stringify({ status: 'local-dev-ready', api: `http://127.0.0.1:${apiPort}`, cases: seeded })+'\n');
+    process.stdout.write(JSON.stringify({ status: 'local-dev-ready', api: `http://127.0.0.1:${apiPort}`, database, cases: seeded })+'\n');
     let stopped = false;
     const stop = async () => {
         if (stopped) return; stopped = true;

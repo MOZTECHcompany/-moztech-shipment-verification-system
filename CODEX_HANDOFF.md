@@ -18,6 +18,7 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_CARTON_MANAGEMENT_UPDATE_2026-10-15.md`：箱號管理分頁閃跳修正、箱規用途、接續建箱與持久原批重印。ECOUNT 官方 OAPI 不支援修改已登錄單據，且目前沒有客製 API；自動回寫未啟用，不得用新增銷貨替代。
 - `docs/WMS_ECOUNT_CARTON_REFERENCE_2026-10-15.md`：既有 ECOUNT 銷貨單與 WMS 已裝箱明細對照、公司／單號參考、人工明細核對、防重送與內容變動失效。只保存追溯，不新增銷貨或扣正式庫存；人工核對不是官方自動回寫成功。實際發布狀態仍須讀回 Cloud Run。
 - `docs/WMS_CARTON_WORKFLOW_2026-10-15.md`：三步建箱、箱規、N1～N20 等流水實體箱、拆箱餘量及貼紙尺寸。取代下列 10/13 原生箱號介面的使用說明；保留既有雙工序／SN／箱分配歷史。
 - `docs/WMS_NATIVE_CARTONS_2026-10-13.md`：現用 WMS 原生自建箱號、草稿編輯／封存、QR 貼紙及 ECOUNT 理貨單整箱／拆箱核對；正式 revision `corely-wms-carton-native-84f7f6e`（100%）、部署程式 `84f7f6e`，套用 additive migration040。保留下列031雙工序／暫停與交接；ECOUNT維持正式銷貨與庫存帳，掃箱不再扣正式庫存。新箱分配使用後不得直接退回忽略箱保護的舊映像。

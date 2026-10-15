@@ -14,6 +14,8 @@ function createBoxSpecRouter({ pool }) {
     router.get('/', handle(req => service.list(req.query, req.user)));
     router.post('/', handle(req => service.create(req.body, req.user), 201));
     router.get('/next-number', handle(req => service.nextNumber(req.query, req.user)));
+    router.get('/:specId/batches', handle(req => cartons.specBatches(req.params.specId, req.query, req.user)));
+    router.get('/:specId/batches/:creatorId/:creationId', handle(req => cartons.specBatchCartons(req.params.specId, req.params.creatorId, req.params.creationId, req.user)));
     router.get('/:specId', handle(req => service.get(req.params.specId, req.user)));
     router.patch('/:specId', handle(req => service.edit(req.params.specId, req.body, req.user)));
     router.post('/:specId/activate', handle(req => service.activate(req.params.specId, req.body, req.user)));
