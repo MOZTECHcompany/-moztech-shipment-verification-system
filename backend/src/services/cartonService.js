@@ -5,6 +5,7 @@ const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletio
 const { deferredEvents } = require('../utils/transactionEvents');
 const { lockCartonSerials } = require('./cartonGuards');
 const { readCartonShipmentReferences } = require('./cartonShipmentReferences');
+const { enqueueEcountBrowserSafely } = require('./ecountBrowserService');
 const { assertWork, assertScanWork, actorSnapshot, taipeiWorkDate } = require('../utils/warehouseWork');
 const { assertCartonManager, assertAllocationManager } = require('../utils/cartonAccess');
 
@@ -512,6 +513,7 @@ function createCartonService({ pool }) {
             const open = (await db.query("SELECT 1 FROM order_exceptions WHERE order_id=$1 AND status='open' LIMIT 1", [orderId])).rows.length;
             if (!open) {
                 await db.query("UPDATE orders SET status='completed',completed_at=NOW(),updated_at=NOW(),packer_id=COALESCE(packer_id,$2) WHERE id=$1", [orderId, user.id]);
+                await enqueueEcountBrowserSafely(db, orderId);
                 events.emit('task_status_changed', { orderId, newStatus: 'completed' });
             }
         } else if (result.allPicked && ['picking','pending'].includes(snapshot.order.status)) {

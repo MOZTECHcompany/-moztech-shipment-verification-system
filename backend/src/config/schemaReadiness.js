@@ -1,6 +1,9 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    wms_ecount_browser_jobs: ['id','order_id','company_code','voucher_number','reference_revision','manifest_fingerprint','manifest','status','claimed_by','worker_id','lease_token_hash','lease_expires_at','before_snapshot','plan','plan_fingerprint','after_snapshot','last_error','verified_at'],
+    wms_ecount_browser_commands: ['actor_id','command_id','request_hash','response'],
+    wms_ecount_browser_events: ['id','job_id','actor_id','actor_snapshot','event_type','details'],
     wms_ecount_order_references: ['order_id','company_code','voucher_number','revision','manifest_fingerprint','confirmed_fingerprint','confirmation_kind','confirmation_evidence','confirmed_actor_snapshot','updated_actor_snapshot'],
     wms_ecount_reference_history: ['id','order_id','revision','event_type','actor_id','actor_snapshot','before_state','after_state','evidence'],
     wms_ecount_reference_commands: ['user_id','command_id','order_id','request_hash','reference_revision'],
