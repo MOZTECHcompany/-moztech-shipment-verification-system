@@ -1,0 +1,3 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Corely ECOUNT 箱號助手</title><link rel="stylesheet" href="popup.css"></head>
+<body><h1>ECOUNT 箱號助手</h1><p id="status" role="status">正在確認分頁…</p><label>WMS 操作人員<select id="controller"></select></label><button id="bind" disabled>綁定目前 ECOUNT 分頁</button><button id="verify" class="secondary" disabled>讀取公司識別</button><button id="unbind" class="secondary">解除綁定</button><p class="note">先在 WMS 助手連線，再切到 ECOUNT 綁定分頁。TEST 驗收前開啟「公司基本資訊」讀取公司識別，再開指定原銷貨單。正式自動儲存尚未啟用。</p><script type="module" src="src/popup.mjs"></script></body></html>

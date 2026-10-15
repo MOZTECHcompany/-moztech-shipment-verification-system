@@ -134,6 +134,7 @@ app.use((req, res, next) => {
 
 app.use(cors(corsOptions));
 app.use('/api/cartons', express.json({ limit: '2mb' }));
+app.use('/api/ecount-browser-assistant', express.json({ limit: '2mb' }));
 app.post('/api/orders/:orderId/ecount-reference', express.json({ limit: '2mb' }));
 app.use(express.json());
 app.use(require('./middleware/requestPerformance').requestPerformance(pool));
@@ -177,6 +178,7 @@ const { createCartonRouter, createOrderCartonRouter } = require('./routes/carton
 app.use('/api/cartons', authenticateToken, createCartonRouter({ pool }));
 app.use('/api/orders', authenticateToken, createOrderCartonRouter({ pool }));
 app.use('/api/orders', authenticateToken, require('./routes/ecountReferenceRoutes').createEcountReferenceRouter({ pool }));
+app.use('/api/ecount-browser-assistant', authenticateToken, require('./routes/ecountBrowserRoutes').createEcountBrowserRouter({ pool }));
 
 // 以下路由需要認證
 app.use('/api/logistics', authenticateToken, require('./routes/logisticsRoutes').createLogisticsRouter({pool}));

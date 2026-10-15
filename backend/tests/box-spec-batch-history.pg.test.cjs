@@ -8,14 +8,14 @@ const { loadMigrationManifest } = require('../src/config/migrationManifest');
 const { runMigrations } = require('../src/maintenance/migrationRunner');
 const { assertSchemaReady } = require('../src/config/schemaReadiness');
 
-async function snapshot(db) {
+async function snapshot(db, { ignoreBrowser = false } = {}) {
     const names = (await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name<>'wms_schema_migrations' ORDER BY table_name")).rows.map(r => r.table_name);
     const tables = {};
-    for (const name of names) {
+    for (const name of names.filter(name => !ignoreBrowser || !name.startsWith('wms_ecount_browser_'))) {
         assert.match(name, /^[a-z0-9_]+$/);
         tables[name] = (await db.query(`SELECT to_jsonb(t) row FROM "${name}" t ORDER BY to_jsonb(t)::text`)).rows;
     }
-    return { tables, sequences: (await db.query("SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename")).rows };
+    return { tables, sequences: (await db.query("SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename")).rows.filter(row => !ignoreBrowser || !row.sequencename.startsWith('wms_ecount_browser_')) };
 }
 
 test('saved original box-spec batches on real isolated PostgreSQL', {
@@ -159,12 +159,12 @@ test('043 adds only its batch-history index and preserves historical rows, crede
     const line = (await pool.query("INSERT INTO wms_carton_lines(carton_id,position,item_code,code_type,quantity,remaining_quantity,actual_sns) VALUES('OLD-N1',1,'OLD-SKU','legacy',2,1,'[\"000Case/01\",\"000case+02\"]') RETURNING id")).rows[0].id;
     await pool.query("INSERT INTO wms_carton_serials(serial_number,line_id,available) VALUES('000Case/01',$1,FALSE),('000case+02',$1,TRUE)", [line]);
     await pool.query("INSERT INTO wms_box_spec_batch_commands(user_id,command_id,spec_id,request_hash,content_revision,carton_ids) VALUES(1,$1,'OLD-SPEC','historic-request',1,'[\"OLD-N1\"]')", [randomUUID()]);
-    const before = await snapshot(pool), oldIndexes = (await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' ORDER BY indexname")).rows;
-    assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, ['043_box_spec_batch_history_index.sql']);
-    await assertSchemaReady(pool); assert.deepEqual(await snapshot(pool), before);
-    const indexes = (await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' ORDER BY indexname")).rows;
+    const before = await snapshot(pool, { ignoreBrowser: true }), oldIndexes = (await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename NOT LIKE 'wms_ecount_browser_%' ORDER BY indexname")).rows;
+    assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, ['043_box_spec_batch_history_index.sql','044_ecount_browser_assistant.sql']);
+    await assertSchemaReady(pool); assert.deepEqual(await snapshot(pool, { ignoreBrowser: true }), before);
+    const indexes = (await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename NOT LIKE 'wms_ecount_browser_%' ORDER BY indexname")).rows;
     assert.deepEqual(indexes.filter(i => i.indexname !== 'idx_wms_box_spec_batch_history'), oldIndexes);
     assert.match(indexes.find(i => i.indexname === 'idx_wms_box_spec_batch_history').indexdef, /spec_id, created_at DESC, user_id DESC, command_id DESC/);
     assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, []);
-    assert.deepEqual(await snapshot(pool), before);
+    assert.deepEqual(await snapshot(pool, { ignoreBrowser: true }), before);
 });

@@ -11,6 +11,7 @@ const { authorizeAdmin, authorizeRoles } = require('../middleware/auth');
 const { logOperation } = require('../services/operationLogService');
 const { normalizeSerialScanInput, pickExactSerial } = require('../utils/serialNumber');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
+const { enqueueEcountBrowserSafely } = require('../services/ecountBrowserService');
 const { deferredEvents } = require('../utils/transactionEvents');
 const { assertNoCartonAllocations, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
 
@@ -338,7 +339,10 @@ router.get('/orders/:orderId', async (req, res, next) => {
                     [orderId, order.status]
                 );
                 statusChanged = updated.rowCount > 0;
-                if (statusChanged) newStatus = 'completed';
+                if (statusChanged) {
+                    newStatus = 'completed';
+                    await enqueueEcountBrowserSafely(client, Number(orderId), { logger });
+                }
             }
         } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
             updateAttempted = true;
@@ -913,6 +917,7 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
                     "UPDATE orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, packer_id = COALESCE(packer_id, $1) WHERE id = $2",
                     [userId, orderId]
                 );
+                await enqueueEcountBrowserSafely(client, Number(orderId), { logger });
             }
         } else if (allPicked && (order.status === 'picking' || order.status === 'pending')) {
             finalStatus = 'picked';

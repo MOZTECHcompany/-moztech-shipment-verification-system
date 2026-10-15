@@ -2,18 +2,12 @@ const { fail, text } = require('./cartonContents');
 const { actorSnapshot } = require('../utils/warehouseWork');
 const { buildEcountManifest, digest, ordered, compare } = require('./ecountReferenceManifest');
 const { readCartonShipmentReferences } = require('./cartonShipmentReferences');
+const { enqueueEcountBrowserSafely } = require('./ecountBrowserService');
 const canManage = user => ['dispatcher','admin','superadmin'].includes(user?.role);
 const validId = value => Number.isSafeInteger(value) && value > 0;
 const iso = value => value ? new Date(value).toISOString() : null;
 const referenceColumns = 'order_id,company_code,voucher_number,revision,manifest_fingerprint,confirmed_fingerprint,confirmation_kind,confirmed_at,confirmed_actor_snapshot,updated_at,updated_actor_snapshot';
-function normalizedVoucher(value) {
-    const literal = text(value, 'ECOUNT 既有銷貨單號', { max: 100 });
-    const match = /^(\d{4})\s*[\/.-]\s*(\d{1,2})\s*[\/.-]\s*(\d{1,2})\s*[-－–—]\s*(\d{1,9})$/.exec(literal);
-    if (!match) return { value: literal, dated: false };
-    const [year, month, day, number] = match.slice(1).map(Number), date = new Date(Date.UTC(year, month - 1, day));
-    if (year < 1000 || number < 1 || date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return { value: literal, dated: false };
-    return { value: `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}-${number}`, dated: true };
-}
+const { normalizedVoucher } = require('./ecountReferenceIdentity');
 function referenceView(row) {
     return row ? { companyCode: row.company_code, voucherNumber: row.voucher_number, revision: row.revision,
         manifestFingerprint: row.manifest_fingerprint, confirmedFingerprint: row.confirmed_fingerprint,
@@ -139,6 +133,7 @@ function createEcountReferenceService({ pool }) {
                 // Preserve its original confirmation, fingerprint and reservation.
                 await db.query('INSERT INTO wms_ecount_reference_commands(user_id,command_id,order_id,request_hash,reference_revision) VALUES($1,$2,$3,$4,$5)',
                     [user.id, input.commandId, orderId, requestHash, before.revision]);
+                await enqueueEcountBrowserSafely(db, orderId);
                 return { ...await output(db, loaded, user), commandId: input.commandId, replayed: false, unchanged: true };
             }
             if (input.confirmation) {
@@ -174,6 +169,7 @@ function createEcountReferenceService({ pool }) {
                 JSON.stringify({ companyCode: input.companyCode, voucherNumber: input.voucherNumber, revision, fingerprint: loaded.manifest.fingerprint,
                     confirmationKind: confirmation?.kind || null, externalSystemWritten: false, inventoryPosted: false, commandId: input.commandId }), JSON.stringify(snapshot)]);
             await db.query('INSERT INTO wms_ecount_reference_commands(user_id,command_id,order_id,request_hash,reference_revision) VALUES($1,$2,$3,$4,$5)', [user.id, input.commandId, orderId, requestHash, revision]);
+            await enqueueEcountBrowserSafely(db, orderId);
             return { ...await output(db, loaded, user), commandId: input.commandId, replayed: false, unchanged: false };
         });
     }
