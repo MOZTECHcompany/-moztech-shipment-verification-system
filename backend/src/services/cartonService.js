@@ -15,6 +15,30 @@ const asAllocation = row => ({ allocationId: row.id, cartonId: row.carton_id, or
     contentRevision: row.content_revision, status: row.status, lines: row.lines, pickedBy: row.picked_by,
     pickedAt: row.picked_at, packedBy: row.packed_by, packedAt: row.packed_at, releasedBy: row.released_by,
     releasedAt: row.released_at, releaseReason: row.release_reason });
+const batchTimestamp = "to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')";
+const batchUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function batchView(row) {
+    const ids = row.carton_ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || new Set(ids).size !== ids.length
+        || ids.some(id => typeof id !== 'string' || !id || id.length > 128)) {
+        throw fail('BOX_SPEC_BATCH_INCOMPLETE', '原批建箱紀錄不完整，請核對原箱號；未建立或修改任何箱', 409);
+    }
+    return { specId: row.spec_id, creatorId: row.user_id, creationId: row.command_id,
+        createdAt: row.batch_created_at, contentRevision: row.content_revision, cartonIds: ids, count: ids.length };
+}
+function batchCursor(value, specId) {
+    if (value === undefined) return null;
+    const invalid = () => fail('BOX_SPEC_INVALID_CURSOR', '建箱批次頁碼無效，請重新載入', 400);
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,1024}$/.test(value)) throw invalid();
+    let cursor;
+    try { cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')); } catch { throw invalid(); }
+    if (!Array.isArray(cursor) || cursor.length !== 5 || cursor[0] !== 1 || cursor[1] !== specId
+        || typeof cursor[2] !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(cursor[2])
+        || !Number.isFinite(Date.parse(cursor[2])) || !Number.isSafeInteger(cursor[3]) || cursor[3] < 1
+        || cursor[3] > 2147483647 || typeof cursor[4] !== 'string' || !batchUuid.test(cursor[4])) throw invalid();
+    if (new Date(cursor[2]).toISOString() !== `${cursor[2].slice(0, 23)}Z`) throw invalid();
+    return { createdAt: cursor[2], creatorId: cursor[3], creationId: cursor[4].toLowerCase() };
+}
 function revision(value) {
     if (!Number.isSafeInteger(value) || value < 1) throw fail('CARTON_INVALID_INPUT', '箱內容版本無效', 400);
     return value;
@@ -224,6 +248,65 @@ function createCartonService({ pool }) {
                 VALUES($1,$2,$3,$4,$5,$6)`, [user.id, creationId, specId, requestHash, spec.content_revision, JSON.stringify(cartons.map(carton => carton.cartonId))]);
             return { creationId, replayed: false, boxSpec: { specId, contentRevision: spec.content_revision }, cartons };
         }, { creation: true });
+    }
+    async function specBatches(specId, query, actor) {
+        specId = text(specId, '箱規編號', { max: 128 });
+        const limit = query?.limit === undefined ? 20 : Number(query.limit), cursor = batchCursor(query?.cursor, specId);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw fail('BOX_SPEC_INVALID_INPUT', '每頁建箱批次需為 1–20 筆', 400);
+        return transaction(async db => {
+            await staff(db, actor);
+            if (!(await db.query('SELECT spec_id FROM wms_box_specs WHERE spec_id=$1', [specId])).rows.length) throw fail('BOX_SPEC_NOT_FOUND', '找不到箱規', 404);
+            // Preserve PostgreSQL's full timestamp precision in the cursor. A JS
+            // Date would discard microseconds and could skip batches on a page.
+            const rows = (await db.query(`SELECT spec_id,user_id,command_id,content_revision,carton_ids,${batchTimestamp} AS batch_created_at
+                FROM wms_box_spec_batch_commands WHERE spec_id=$1
+                ${cursor ? 'AND (created_at,user_id,command_id)<($3::timestamptz,$4::integer,$5::uuid)' : ''}
+                ORDER BY created_at DESC,user_id DESC,command_id DESC LIMIT $2`,
+            cursor ? [specId, limit + 1, cursor.createdAt, cursor.creatorId, cursor.creationId] : [specId, limit + 1])).rows;
+            const items = rows.slice(0, limit).map(batchView), hasMore = rows.length > limit, last = items.at(-1);
+            return { items, hasMore, nextCursor: hasMore ? Buffer.from(JSON.stringify([1, specId, last.createdAt, last.creatorId, last.creationId])).toString('base64url') : null };
+        }, { readOnly: true });
+    }
+    async function specBatchCartons(specId, creatorId, creationId, actor) {
+        specId = text(specId, '箱規編號', { max: 128 });
+        if (typeof creatorId !== 'string' || !/^[1-9][0-9]{0,9}$/.test(creatorId) || Number(creatorId) > 2147483647
+            || typeof creationId !== 'string' || !batchUuid.test(creationId)) throw fail('BOX_SPEC_INVALID_INPUT', '建箱批次識別無效', 400);
+        return transaction(async db => {
+            await staff(db, actor);
+            const row = (await db.query(`SELECT spec_id,user_id,command_id,content_revision,carton_ids,${batchTimestamp} AS batch_created_at
+                FROM wms_box_spec_batch_commands WHERE spec_id=$1 AND user_id=$2 AND command_id=$3`, [specId, Number(creatorId), creationId.toLowerCase()])).rows[0];
+            if (!row) throw fail('BOX_SPEC_BATCH_NOT_FOUND', '找不到這位建立人員的原批建箱紀錄', 404);
+            const batch = batchView(row), ids = batch.cartonIds;
+            const records = (await db.query('SELECT * FROM wms_cartons WHERE carton_id=ANY($1::text[])', [ids])).rows;
+            const lines = (await db.query('SELECT * FROM wms_carton_lines WHERE carton_id=ANY($1::text[]) ORDER BY carton_id,position', [ids])).rows;
+            const sns = (await db.query(`SELECT s.* FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id
+                WHERE l.carton_id=ANY($1::text[])`, [ids])).rows;
+            const recordsById = new Map(records.map(record => [record.carton_id, record])), linesByCarton = new Map(), availableByLine = new Map();
+            for (const line of lines) {
+                if (!linesByCarton.has(line.carton_id)) linesByCarton.set(line.carton_id, []);
+                linesByCarton.get(line.carton_id).push(line);
+            }
+            for (const sn of sns) {
+                if (!sn.available) continue;
+                if (!availableByLine.has(sn.line_id)) availableByLine.set(sn.line_id, new Set());
+                availableByLine.get(sn.line_id).add(sn.serial_number);
+            }
+            const cartons = ids.map(id => {
+                const record = recordsById.get(id), contents = linesByCarton.get(id) || [];
+                let source;
+                try { source = JSON.parse(record?.source_reference); } catch { /* Incomplete provenance fails the whole batch below. */ }
+                if (!record || record.source_system !== 'corely-box-spec' || source?.specId !== specId
+                    || source?.contentRevision !== batch.contentRevision || !contents.length) {
+                    throw fail('BOX_SPEC_BATCH_INCOMPLETE', '原批實體箱或來源內容不完整，請核對原箱號；未建立或修改任何箱', 409);
+                }
+                if (record.status !== 'sealed') throw fail('BOX_SPEC_BATCH_NOT_SEALED', '原批包含尚未確認或已停用的實體箱，請先核對箱內內容', 409);
+                return { ...asCarton(record), lines: contents.map(line => ({ lineId: line.id, itemCode: line.item_code, productName: line.product_name,
+                    ean: line.international_barcode, internalScanCode: line.internal_scan_code, codeType: line.code_type,
+                    quantity: line.quantity, remainingQuantity: line.remaining_quantity, actualSN: line.actual_sns,
+                    remainingSN: line.actual_sns.filter(sn => availableByLine.get(line.id)?.has(sn)) })) };
+            });
+            return { ...batch, cartons };
+        }, { readOnly: true });
     }
     async function list(query, actor) {
         const limit = query?.limit === undefined ? 25 : Number(query.limit);
@@ -566,6 +649,6 @@ function createCartonService({ pool }) {
                 }) })) };
         }, { readOnly: true });
     }
-    return { create, importManifest, createFromSpec, list, get, lookup, searchSerials, edit, seal, reopen, preview, scan, release, shipments };
+    return { create, importManifest, createFromSpec, specBatches, specBatchCartons, list, get, lookup, searchSerials, edit, seal, reopen, preview, scan, release, shipments };
 }
 module.exports = { createCartonService };

@@ -26,7 +26,7 @@ test('signed import migration preserves preexisting warehouse rows on isolated P
     const comment=(await pool.query("INSERT INTO task_comments(order_id,user_id,content) VALUES($1,$2,'Legacy message') RETURNING *",[order.id,user])).rows[0];
     const log=(await pool.query("INSERT INTO operation_logs(order_id,user_id,action_type,details) VALUES($1,$2,'pick','{\"quantity\":2}') RETURNING *",[order.id,user])).rows[0];
     const result=await runMigrations({pool,targetDatabase:database,manifest});
-    assert.deepEqual(result.applied,['030_signed_import_quantities.sql','031_worker_modes.sql','040_wms_cartons.sql','041_box_specifications.sql','042_ecount_carton_references.sql']);
+    assert.deepEqual(result.applied,['030_signed_import_quantities.sql','031_worker_modes.sql','040_wms_cartons.sql','041_box_specifications.sql','042_ecount_carton_references.sql','043_box_spec_batch_history_index.sql']);
     await assertSchemaReady(pool);
     for(const table of ['wms_box_specs','wms_box_spec_history','wms_box_spec_batch_commands']) assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n,0,'041 adds empty tables without manufacturing historical cartons or specifications');
     const afterOrder=(await pool.query('SELECT * FROM orders WHERE id=$1',[order.id])).rows[0];

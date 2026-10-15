@@ -36,7 +36,7 @@ test('042 adds empty reference metadata without altering any historical table, c
     })));
     const before = await snapshot();
     const sequences = (await pool.query("SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename")).rows;
-    assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, ['042_ecount_carton_references.sql']);
+    assert.deepEqual((await runMigrations({ pool, targetDatabase: database, manifest })).applied, ['042_ecount_carton_references.sql','043_box_spec_batch_history_index.sql']);
     await assertSchemaReady(pool);
     assert.deepEqual(await snapshot(), before);
     for (const old of sequences) assert.deepEqual((await pool.query("SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public' AND sequencename=$1", [old.sequencename])).rows[0], old);
