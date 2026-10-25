@@ -35,7 +35,7 @@ function saveRecovery(key, value) {
     } catch { /* No file contents or customer information are persisted here. */ }
 }
 
-export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
+export function AdminDashboard({ user, embedded = false, batchId, onMatched, importTitle = '匯入理貨／出貨單', importButtonLabel = '選擇訂單檔案' }) {
     const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
     const requestedIntakeId = batchId ? String(batchId) : new URLSearchParams(getWorkspaceLocation().search).get('intakeId');
     const intakeId = /^[1-9]\d{0,9}$/.test(requestedIntakeId || '') ? requestedIntakeId : '';
@@ -197,7 +197,7 @@ export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
     const importPanel = (<section aria-labelledby="import-title" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7 lg:col-span-2">
                         <div className="flex items-start gap-3">
                             <div className="rounded-xl bg-blue-50 p-3 text-blue-600"><UploadCloud size={22} /></div>
-                            <h2 id="import-title" className="text-xl font-semibold text-slate-900">匯入理貨／出貨單</h2>
+                            <h2 id="import-title" className="text-xl font-semibold text-slate-900">{importTitle}</h2>
                         </div>
                         <div data-testid="import-dropzone" onDrop={handleDrop} onDragOver={event => { event.preventDefault(); event.stopPropagation(); }} aria-busy={importState.phase === 'uploading'}
                             className={`mt-5 rounded-xl border-2 border-dashed p-6 text-center ${importBlocked ? 'border-slate-200 bg-slate-50' : 'border-blue-200 bg-blue-50/40'}`}>
@@ -205,7 +205,7 @@ export function AdminDashboard({ user, embedded = false, batchId, onMatched }) {
                             <p className="text-sm font-medium text-slate-700">拖曳 ECOUNT 理貨／出貨單到這裡</p>
                             <Button type="button" disabled={importBlocked} onClick={() => fileInputRef.current?.click()} className="mt-4 gap-2" variant="secondary">
                                 {importState.phase === 'uploading' && <Loader2 size={16} className="animate-spin" />}
-                                {importState.phase === 'uploading' ? '正在處理訂單' : '選擇訂單檔案'}
+                                {importState.phase === 'uploading' ? '正在處理訂單' : importButtonLabel}
                             </Button>
                             <input data-testid="import-file" type="file" ref={fileInputRef} onChange={handleExcelImport} disabled={importBlocked} accept=".xlsx,.xls,.csv" className="hidden" aria-label="訂單檔案" />
                             <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援原有出貨單格式及 ECOUNT 理貨明細（.xlsx、.xls、.csv），最大 10 MiB。</p><p className="mt-2">ECOUNT 明細每列需包含相同理貨單號、商城訂單編號、品項編碼（SKU）、國際條碼、品項名稱與數量；商城回匯必須保留平台、店鋪及來源明細號。一張理貨單保留一個 ERP 匯入批次，依平台、店鋪及商城訂單編號拆成可獨立認領的工作單。</p><p className="mt-2">每個匯入檔最多 5,000 列、1,000 個品項、10,000 筆 SN，總數量 50,000。沒有商城訂單欄位的舊格式仍可匯入。</p></details>

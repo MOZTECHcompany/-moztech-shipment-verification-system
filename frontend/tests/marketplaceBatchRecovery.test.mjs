@@ -330,3 +330,82 @@ test('a sales download already in flight is discarded before a shipping-only ori
  assert.doesNotMatch(view.text(view.render()),/old-sales-file|銷貨檔已下載|下載彙總銷貨檔/);
  assert.ok(view.button('保存收件資料'));
 });
+
+const resumeQuery='batch=19&order=%23SYN-ORIGINAL&view=resume';
+test('original-sale continuation exposes full original-batch return without a sale, auto-update, or unrelated order',async()=>{
+ const view=await manager({params:resumeQuery}),before=structuredClone(view.records.get(19));
+ const importer=view.find(view.render(),node=>node.type==='AdminDashboard');
+ assert.ok(importer);assert.equal(importer.props.batchId,19);assert.equal(importer.props.embedded,true);
+ assert.equal(importer.props.importTitle,'匯入原 ECOUNT 理貨單');
+ assert.equal(importer.props.importButtonLabel,'匯入原 ECOUNT 理貨單');
+ assert.match(view.text(view.render()),/回匯核對範圍：原批次全部\s+2\s+筆訂單/);
+ assert.equal(view.order('#SYN-OTHER'),undefined);assert.ok(view.button('更新收件資料','#SYN-ORIGINAL'));
+ assert.equal(view.requests.filter(r=>r.url==='/api/marketplace-intakes').length,0);
+ assert.equal(posts(view).length,0);assert.equal(view.button('下載銷貨檔'),undefined);
+ assert.doesNotMatch(view.text(view.render()),/其他下載|彙總銷貨|沒有符合條件/);
+ assert.deepEqual(view.records.get(19),before);
+});
+
+test('an old shipping-refresh query cannot turn original-sale continuation into an automatic platform request',async()=>{
+ const view=await manager({params:resumeQuery+'&shipping=refresh'});
+ assert.equal(posts(view).length,0);
+ assert.ok(view.find(view.render(),node=>node.type==='AdminDashboard'));
+ assert.ok(view.scrolls.includes('接續原銷貨單'));
+});
+
+test('confirmed original sales continue to the existing print and prepick route without a return importer',async()=>{
+ const view=await manager({params:resumeQuery,flow:{erp_confirmed_at:'2026-10-05'}});
+ assert.equal(view.find(view.render(),node=>node.type==='AdminDashboard'),undefined);
+ assert.equal(view.button('列印與預揀').props.to,'/warehouse-intakes/19');
+ assert.match(view.text(view.render()),/原批次理貨已核對/);assert.equal(posts(view).length,0);
+});
+
+test('missing, archived, and already linked original records never mount a new return importer',async()=>{
+ const cases=[
+  {params:'batch=19&order=%23MISSING&view=resume',expected:/找不到原訂單/},
+  {record:{...fixture,archivedAt:'2026-10-05'},expected:/原批次已封存/},
+  {record:{...fixture,links:[{source_order_number:'#SYN-ORIGINAL',order_id:37,status:'pending',import_batch_id:8}]},expected:/已有理貨作業/},
+  {record:{...fixture,links:[{source_order_number:'#SYN-OTHER',order_id:38,status:'packing'}]},expected:/已有理貨作業/},
+ ];
+ for(const scenario of cases){
+  const view=await manager({params:resumeQuery,...scenario});
+  assert.equal(view.find(view.render(),node=>node.type==='AdminDashboard'),undefined);
+  assert.match(view.text(view.render()),scenario.expected);assert.equal(posts(view).length,0);
+ }
+ const linked=await manager({params:resumeQuery,record:cases[2].record});
+ assert.equal(linked.button('開啟原理貨批次').props.to,'/batches/8');
+ assert.equal(linked.button('開啟原工作單').props.to,'/order/37');
+});
+
+test('legacy shipping-only navigation can resume original sales and discards the old preview decision',async()=>{
+ const view=await manager({params:shippingQuery});const save=view.button('保存收件資料');
+ assert.ok(save);await view.button('接續原銷貨單').props.onClick();await view.flush();
+ assert.equal(view.query().get('view'),'resume');assert.equal(view.query().get('shipping'),null);
+ assert.ok(view.find(view.render(),node=>node.type==='AdminDashboard'));
+ await save.props.onClick();await view.flush();
+ assert.equal(posts(view).length,1);assert.equal(view.button('保存收件資料'),undefined);
+ assert.equal(view.records.get(19).orders[0].shipping.phone,'0900000000');
+});
+
+test('resuming the same original order rejects retained sale callbacks and late return callbacks',async()=>{
+ const view=await manager(),download=view.button('下載銷貨檔');
+ view.navigate(resumeQuery);await view.flush();await download.props.onClick();
+ assert.equal(posts(view).length,0);
+ const importer=view.find(view.render(),node=>node.type==='AdminDashboard');
+ const reads=view.requests.filter(r=>r.url==='/api/marketplace-intakes/19').length;
+ view.navigate('batch=20&order=%23SYN-OTHER&view=resume');await view.flush();
+ importer.props.onMatched();await view.flush();
+ assert.equal(view.requests.filter(r=>r.url==='/api/marketplace-intakes/19').length,reads);
+ assert.equal(posts(view).length,0);
+});
+
+test('an in-flight original sales download is discarded on resume without issuing an automatic shipping preview',async()=>{
+ const wait=defer();const view=await manager({postResponder:async()=>{
+  await wait.promise;return {data:{url:'/old-full-batch-sales'}};
+ }});
+ const download=view.button('下載銷貨檔').props.onClick();view.navigate(resumeQuery);await view.flush();
+ wait.resolve();await download;await view.flush();
+ assert.equal(posts(view).length,1);assert.equal(view.button('保存收件資料'),undefined);
+ assert.doesNotMatch(view.text(view.render()),/old-full-batch-sales|銷貨檔已下載/);
+ assert.ok(view.find(view.render(),node=>node.type==='AdminDashboard'));
+});

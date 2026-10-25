@@ -24,20 +24,24 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  const [fileLink,setFileLink]=useState(null);
  const [shippingReview,setShippingReview]=useState(null),[shippingStatus,setShippingStatus]=useState(null),[shippingBusy,setShippingBusy]=useState('');
  const detailRef=useRef(null),orderRef=useRef(null);
- const [params,setParams]=useSearchParams();const selected=params.get('batch'),focusedOrder=params.get('order'),shippingRefresh=params.get('shipping')==='refresh';
+ const [params,setParams]=useSearchParams();const selected=params.get('batch'),focusedOrder=params.get('order');
+ const resumeOriginal=!!selected&&!!focusedOrder&&params.get('view')==='resume';
+ const shippingRefresh=params.get('shipping')==='refresh'&&!resumeOriginal;
+ const originalOrderFlow=shippingRefresh||resumeOriginal;
  const alive=useRef(true),session=useRef(currentSession),pending=useRef(false),dialog=useRef(null);session.current=currentSession;
  const shippingGeneration=useRef(0),shippingPending=useRef(null),shippingReviewRef=useRef(null),shippingContext=useRef(''),shippingAutoIntent=useRef(null);
- const shippingContextKey=JSON.stringify([enabled,selected,focusedOrder,shippingRefresh,user?.id,user?.role,refreshKey]);
+ const shippingContextKey=JSON.stringify([enabled,selected,focusedOrder,shippingRefresh,resumeOriginal,user?.id,user?.role,refreshKey]);
  shippingContext.current=shippingContextKey;shippingReviewRef.current=shippingReview;
  const valid=()=>alive.current&&session.current();
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
  useEffect(()=>{
   shippingGeneration.current++;setShippingReview(null);setShippingStatus(null);setShippingBusy('');
+  setNotice('');setFileLink(null);setDeleting(null);
   if(shippingPending.current!==null){shippingPending.current=null;pending.current=false;setBusy(false);}
  },[shippingContextKey]);
  useEffect(()=>{if(!enabled){setData({intakes:[],facets:[],total:0,orders:0,pageSize:20});setDetail(null);setDeleting(null);}},[enabled]);
  useEffect(()=>{
-  if(!enabled||shippingRefresh){setLoading(false);return;}let cancelled=false;setLoading(true);
+  if(!enabled||originalOrderFlow){setLoading(false);return;}let cancelled=false;setLoading(true);
   apiClient.get('/api/marketplace-intakes',{params:filters}).then(r=>{
    if(cancelled||!valid())return;
    const pages=Math.max(1,Math.ceil(r.data.total/r.data.pageSize));
@@ -45,16 +49,17 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    setData(r.data);
   }).catch(e=>{if(!cancelled&&valid()){setData(d=>({...d,intakes:[]}));setNotice(e.response?.data?.message||'批次載入失敗，請重新整理。');}}).finally(()=>{if(!cancelled&&valid())setLoading(false);});
   return()=>{cancelled=true;};
- },[enabled,shippingRefresh,filters,refreshKey,revision]);
+ },[enabled,originalOrderFlow,filters,refreshKey,revision]);
  useEffect(()=>{
   setDetail(null);if(!selected||!enabled)return;let cancelled=false;
   Promise.all([apiClient.get(`/api/marketplace-intakes/${encodeURIComponent(selected)}`),apiClient.get(`/api/warehouse-intakes/${encodeURIComponent(selected)}`)]).then(([r,w])=>{if(!cancelled&&valid())setDetail({...r.data,warehouseFlow:w.data.flow});}).catch(e=>{if(!cancelled&&valid())setNotice(e.response?.data?.message||'無法開啟批次明細。');});
   return()=>{cancelled=true;};
  },[enabled,selected,revision]);
- useEffect(()=>{if(detail)(detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)?orderRef.current:detailRef.current)?.scrollIntoView({behavior:'smooth',block:'start'});},[detail,focusedOrder]);
+ useEffect(()=>{if(detail)(!resumeOriginal&&detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)?orderRef.current:detailRef.current)?.scrollIntoView({behavior:'smooth',block:'start'});},[detail,focusedOrder,resumeOriginal]);
  useEffect(()=>{if(deleting)dialog.current?.showModal();else dialog.current?.close();},[deleting]);
  const filter=(key,value)=>setFilters(f=>({...f,[key]:value,...(key==='platform'?{store:''}:{}),page:1}));
  const closeDetail=()=>setParams(p=>{p.delete('batch');p.delete('view');p.delete('order');p.delete('shipping');return p;},{replace:true});
+ const resumeOriginalOrder=()=>{if(!valid()||shippingContext.current!==shippingContextKey)return;setParams(p=>{p.set('view','resume');p.delete('shipping');return p;},{replace:true});};
  const shippingEditable=orderNumber=>{
   const link=detail?.links?.find(value=>value.source_order_number===orderNumber&&value.order_id);
   return detail?.platform==='Shopify'&&!detail.archivedAt&&(!link||link.status==='pending');
@@ -102,18 +107,18 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   if(shippingEditable(focusedOrder))shippingAction(focusedOrder);
  },[enabled,selected,focusedOrder,shippingRefresh,user?.id,user?.role,detail,busy]);
  const operate=async(record,action)=>{
-  if(pending.current||!valid())return;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
+  if(pending.current||!valid()||originalOrderFlow||shippingContext.current!==shippingContextKey)return;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
   try{
    if(action==='delete')await apiClient.delete(`/api/marketplace-intakes/${record.id}`,{data:{confirmed:true,batchNumber:record.batch_number}});
    else await apiClient.patch(`/api/marketplace-intakes/${record.id}/${action}`);
-   if(!valid())return;
+   if(!valid()||shippingContext.current!==shippingContextKey)return;
    if(action==='delete'){setDeleting(null);if(String(record.id)===selected)closeDetail();}
    setRevision(v=>v+1);setNotice(action==='delete'?'批次已永久刪除。':action==='archive'?'批次已封存，仍可供理貨回匯比對。':'批次已取消封存。');
   }catch(e){if(valid())setNotice(e.response?.data?.message||'操作結果尚未確認，請重新讀取批次後再操作。');}
   finally{pending.current=false;if(valid())setBusy(false);}
  };
  const download=async(id,kind)=>{
-  if(pending.current||!valid()||shippingContext.current!==shippingContextKey||shippingRefresh&&String(id)===selected)return;const context=shippingContextKey;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
+  if(pending.current||!valid()||shippingContext.current!==shippingContextKey||originalOrderFlow)return;const context=shippingContextKey;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
   try{
    const label=kind==='ecount-grouped'?'下載彙總銷貨檔':kind==='ecount'?'下載原保存格式':'下載預揀與訂單明細 Excel';
    if(getNativeRuntime()){
@@ -132,10 +137,15 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  const groups=Object.groupBy(data.intakes,r=>r.sales_date);
  let salesView=null,salesWarning='';if(detail&&!detail.financialWarning){try{salesView=prepareEcountFinancials(groupedSalesRecord(detail));}catch(e){salesWarning=e.message;}}
  const displayFinancials=salesView?.financials||detail?.financials;
+ const focusedOriginal=detail?.orders.find(order=>order.sourceOrderNumber===focusedOrder);
+ const canResumeOriginal=enabled&&!!focusedOriginal&&!detail?.archivedAt&&String(detail?.id)===selected;
+ const originalLinks=(detail?.links||[]).filter(link=>link.order_id);
+ const originalBatchLinks=[...new Map(originalLinks.filter(link=>link.import_batch_id).map(link=>[link.import_batch_id,link])).values()];
+ const originalTargetLinks=originalLinks.filter(link=>link.source_order_number===focusedOrder);
  const pages=Math.max(1,Math.ceil(data.total/data.pageSize));
  return <section id="saved-batches" className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6" aria-label="批次管理">
-  <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{shippingRefresh?'原訂單':`已保存批次（${data.total}）`}</h2></div>
-  {!shippingRefresh&&<><div className="mt-5 grid gap-3 sm:grid-cols-3">
+  <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{originalOrderFlow?'原訂單':`已保存批次（${data.total}）`}</h2></div>
+  {!originalOrderFlow&&<><div className="mt-5 grid gap-3 sm:grid-cols-3">
    <label className="text-sm">批次搜尋<input className={control} placeholder="批次編號或追蹤單號" value={filters.q} onChange={e=>filter('q',e.target.value)}/></label>
    <label className="text-sm">平台<select className={control} value={filters.platform} onChange={e=>filter('platform',e.target.value)}><option value="">全部平台</option>{['Shopify','1Shop','SHOPLINE'].map(p=><option key={p}>{p}</option>)}</select></label>
    <label className="text-sm">狀態<select className={control} value={filters.status} onChange={e=>filter('status',e.target.value)}><option value="active">未封存</option><option value="archived">已封存</option><option value="all">全部批次</option></select></label>
@@ -144,8 +154,8 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    <label className="text-sm">結束銷貨日期<input type="date" className={control} value={filters.to} onChange={e=>filter('to',e.target.value)}/></label>
   </div></details>
   <button className={textButton+' mt-2'} onClick={()=>setFilters(initial)}>清除篩選</button></>}
-  {notice&&<div role="status" className="my-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-950"><p>{notice}</p>{fileLink&&(fileLink.native?<button type="button" disabled={busy} className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={()=>download(fileLink.id,fileLink.kind)}>{fileLink.label}</button>:<a href={fileLink.url} download className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={e=>{if(!valid())e.preventDefault();}}>{fileLink.label}</a>)}</div>}
-  {!shippingRefresh&&<>{loading?<p role="status" className="py-8 text-center text-slate-500">載入批次中…</p>:Object.entries(groups).map(([date,rows])=><section key={date} className="mt-4" aria-label={`${date} 銷貨批次`}>
+  {notice&&<div role="status" className="my-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-950"><p>{notice}</p>{fileLink&&!originalOrderFlow&&(fileLink.native?<button type="button" disabled={busy} className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={()=>download(fileLink.id,fileLink.kind)}>{fileLink.label}</button>:<a href={fileLink.url} download className="mt-2 inline-flex min-h-10 items-center font-semibold underline" onClick={e=>{if(!valid())e.preventDefault();}}>{fileLink.label}</a>)}</div>}
+  {!originalOrderFlow&&<>{loading?<p role="status" className="py-8 text-center text-slate-500">載入批次中…</p>:Object.entries(groups).map(([date,rows])=><section key={date} className="mt-4" aria-label={`${date} 銷貨批次`}>
    <h3 className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold">{date}</h3>
    <div className="mt-3 grid gap-4 lg:grid-cols-2">{rows.map(r=><article key={r.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${String(r.id)===selected?'border-blue-500 ring-1 ring-blue-100':'border-slate-200'}`} aria-label={`批次 ${r.batch_number}`}>
     <div className="p-5"><div className="flex items-center justify-between gap-2"><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{r.source_platform}</span><span className="text-xs text-slate-500">{r.archived_at?'已封存':r.warehouse_flow?(r.warehouse_flow.prepickCompletedAt?'預揀完成':r.warehouse_flow.erpConfirmedAt?'理貨已核對':'待 ECOUNT 回匯'):Number(r.linked_count)===Number(r.order_count)?'已回匯理貨':Number(r.linked_count)>0?'理貨回匯中':'待 ECOUNT 回匯'}</span></div>
@@ -164,15 +174,25 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   </section>)}
   {!loading&&!data.intakes.length&&<div className="py-10 text-center text-sm text-slate-500"><Search className="mx-auto mb-2"/>沒有符合條件的批次。</div>}
   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-sm"><span>每頁 {data.pageSize} 批 · 第 {filters.page}／{pages} 頁</span><div className="flex gap-2"><Button variant="secondary" disabled={loading||filters.page<=1} onClick={()=>setFilters(f=>({...f,page:f.page-1}))}><ChevronLeft size={16}/>上一頁</Button><Button variant="secondary" disabled={loading||filters.page>=pages} onClick={()=>setFilters(f=>({...f,page:f.page+1}))}>下一頁<ChevronRight size={16}/></Button></div></div></>}
-  {selected&&<section ref={detailRef} id="batch-detail" className="mt-6 scroll-mt-4 rounded-xl border border-blue-200 p-4" aria-label="批次明細"><div className="flex items-center justify-between"><h3 className="font-semibold">批次 #{selected} 明細</h3><button className={textButton} onClick={closeDetail}><X size={16}/>關閉明細</button></div>{!detail?<p className="mt-3 text-sm">正在讀取批次；若失敗請查看上方訊息。</p>:<>
-   {!shippingRefresh&&<div className="my-4 space-y-4" aria-label="本批出貨流程">
+  {selected&&<section ref={detailRef} id="batch-detail" className="mt-6 scroll-mt-4 rounded-xl border border-blue-200 p-4" aria-label={resumeOriginal?'接續原銷貨單':'批次明細'}><div className="flex items-center justify-between"><h3 className="font-semibold">{resumeOriginal?'接續原銷貨單':`批次 #${selected} 明細`}</h3><button className={textButton} onClick={closeDetail}><X size={16}/>關閉明細</button></div>{!detail?<p className="mt-3 text-sm">正在讀取批次；若失敗請查看上方訊息。</p>:<>
+   {originalOrderFlow&&<div className="my-4 space-y-3" aria-label="原批次出貨流程">
+    <p className="break-all text-sm font-medium">{detail.batchNumber} · {detail.platform} · {detail.store}</p>
+    {(detail.reviewWarning||detail.financialWarning||salesWarning)&&<p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{[detail.reviewWarning,detail.financialWarning,salesWarning].filter(Boolean).join('；')}</p>}
+    {!focusedOriginal?<p role="alert" className="text-sm text-amber-900">找不到原訂單。</p>:detail.archivedAt?<p role="alert" className="text-sm text-amber-900">原批次已封存，請先由批次管理確認。</p>:<>
+     <p className="text-sm text-slate-700">回匯核對範圍：原批次全部 {detail.orders.length} 筆訂單</p>
+     {shippingRefresh?<Button variant="secondary" disabled={busy||!enabled} onClick={resumeOriginalOrder}>接續原銷貨單</Button>:canResumeOriginal&&<>
+      {detail.warehouseFlow?.erp_confirmed_at?<div className="flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-slate-700">原批次理貨已核對</span><Button as={Link} to={`/warehouse-intakes/${detail.id}`}>列印與預揀</Button></div>:originalLinks.length?<div className="space-y-2"><p className="text-sm text-slate-700">已有理貨作業，請開啟原理貨批次。</p><div className="flex flex-wrap gap-3">{originalBatchLinks.map(link=><Button key={link.import_batch_id} as={Link} to={`/batches/${link.import_batch_id}`}>開啟原理貨批次</Button>)}{originalTargetLinks.map(link=><Button key={link.order_id} as={Link} variant="secondary" to={`/order/${link.order_id}`}>開啟原工作單</Button>)}{!originalBatchLinks.length&&!originalTargetLinks.length&&<Button as={Link} variant="secondary" to={`/warehouse-intakes/${detail.id}`}>查看原批次作業</Button>}</div></div>:user&&<AdminDashboard key={`resume:${user.id}:${detail.id}:${focusedOrder}`} user={user} embedded batchId={detail.id} importTitle="匯入原 ECOUNT 理貨單" importButtonLabel="匯入原 ECOUNT 理貨單" onMatched={()=>{if(valid()&&shippingContext.current===shippingContextKey)setRevision(v=>v+1);}}/>}
+     </>}
+    </>}
+   </div>}
+   {!originalOrderFlow&&<div className="my-4 space-y-4" aria-label="本批出貨流程">
     {(detail.reviewWarning||detail.financialWarning||salesWarning)&&<p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{[detail.reviewWarning,detail.financialWarning,salesWarning].filter(Boolean).join("；")}</p>}
     <ol className="flex flex-wrap gap-x-5 gap-y-2 border-b border-slate-200 pb-3 text-sm"><li>1 商城訂單已保存</li><li>2 下載銷貨檔</li><li className="font-semibold text-blue-700">3 {detail.warehouseFlow?.erp_confirmed_at?'理貨已核對':'待 ECOUNT 回匯'}</li><li>4 列印與預揀</li></ol>
     <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold">{detail.platform} · {detail.store}</p><p className="mt-1 break-all text-sm text-slate-600">{detail.batchNumber} · {detail.orders.length} 筆訂單</p></div>{!detail.warehouseFlow?.erp_confirmed_at&&<Button disabled={busy||!!detail.reviewWarning||!!detail.financialWarning||!!salesWarning} onClick={()=>download(detail.id,'ecount-grouped')}>下載銷貨檔</Button>}</div>
-    {detail.warehouseFlow?.erp_confirmed_at?<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-blue-50 p-4"><strong>理貨核對完成 · {detail.orders.length} 筆訂單</strong><Button as={Link} to={`/warehouse-intakes/${detail.id}`}>列印與預揀</Button></div>:!(detail.links||[]).some(link=>link.order_id)&&user&&<AdminDashboard key={`${user.id}:${detail.id}`} user={user} embedded batchId={detail.id} onMatched={()=>{if(valid())setRevision(v=>v+1);}}/>}
+    {detail.warehouseFlow?.erp_confirmed_at?<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-blue-50 p-4"><strong>理貨核對完成 · {detail.orders.length} 筆訂單</strong><Button as={Link} to={`/warehouse-intakes/${detail.id}`}>列印與預揀</Button></div>:!(detail.links||[]).some(link=>link.order_id)&&user&&<AdminDashboard key={`${user.id}:${detail.id}`} user={user} embedded batchId={detail.id} onMatched={()=>{if(valid()&&shippingContext.current===shippingContextKey)setRevision(v=>v+1);}}/>}
    </div>}
-   <details className="mt-4" open={detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)||undefined}><summary className="cursor-pointer font-semibold">{shippingRefresh?'原訂單資料':'訂單、商品與金額'}</summary>
-   <p className="mt-2 break-all text-sm">{detail.batchNumber} · {detail.platform} · {detail.store}</p>{!shippingRefresh&&<><p className="mt-1 text-xs text-slate-500">銷貨日期 {detail.settings.date} · 保存於 {dateTime(detail.createdAt)}{detail.archivedAt?` · 封存於 ${dateTime(detail.archivedAt)}`:''}</p>
+   <details className="mt-4" open={detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)||undefined}><summary className="cursor-pointer font-semibold">{originalOrderFlow?'原訂單資料':'訂單、商品與金額'}</summary>
+   <p className="mt-2 break-all text-sm">{detail.batchNumber} · {detail.platform} · {detail.store}</p>{!originalOrderFlow&&<><p className="mt-1 text-xs text-slate-500">銷貨日期 {detail.settings.date} · 保存於 {dateTime(detail.createdAt)}{detail.archivedAt?` · 封存於 ${dateTime(detail.archivedAt)}`:''}</p>
    <p className="mt-2 text-sm">轉檔建立者：{detail.handler?.name||detail.handler?.username||'未記錄'}{detail.handler?.username?`（${detail.handler.username}）`:''}{detail.handler?.legacy?' · 依原建立者帳號查得':''}</p><p className="mt-2 text-sm">{detail.summary.orderCount} 筆訂單 · {detail.settings.currency} {formatMinor(detail.summary.sourceTotalMinor??detail.summary.totalMinor??detail.summary.ecountTotalMinor)}（訂單總額不代表已收款）</p>
    <p className="mt-2 text-sm">專案負責人：{detail.settings.projectOwner||'未指定'} · 業務負責人：{detail.settings.salesOwner||'未指定'}</p>
    {displayFinancials&&<div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm"><p>稅前 {formatMinor(displayFinancials.netMinor)} ＋ 營業稅 {formatMinor(displayFinancials.taxMinor)} ＝ 含稅 {formatMinor(displayFinancials.grossMinor)}</p>{!!displayFinancials.roundingDeltaMinor&&<p className="mt-1">來源 {formatMinor(displayFinancials.sourceTotalMinor)} · 整元尾差 {formatMinor(displayFinancials.roundingDeltaMinor)}</p>}{detail.financials.recalculatedLegacy&&<p className="mt-2 text-amber-900">此舊批次下載時會補上稅前金額與營業稅，原保存資料保留不變。若已匯入 ERP，請核對並修正原銷貨單，勿再次匯入扣庫存。</p>}</div>}
@@ -180,8 +200,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    {salesView&&<details className="my-4 rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer font-semibold">彙總銷貨（{salesView.rows.length} 列，每列最多 200 件）</summary><div className="mt-3 overflow-x-auto"><table className="min-w-[680px] w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['品項編碼','商品','數量','含稅均價','稅前金額','營業稅','含稅金額'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{salesView.rows.map(r=><tr key={r[15]} className="border-t border-slate-100"><td className="p-3">{r[11]}</td><td className="p-3">{r[16]}</td><td className="p-3 font-semibold">{r[19]}</td><td className="p-3">{r[21]}</td><td className="p-3">{r[23]}</td><td className="p-3">{r[24]}</td><td className="p-3">{((r[23]+r[24])).toFixed(2)}</td></tr>)}</tbody></table></div></details>}
    <details className="my-4 rounded-xl border border-slate-200 p-4" open={params.get('view')==='prepick'||undefined}><summary className="cursor-pointer font-semibold">預揀總表 · 商品合計</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['ERP 品項編碼','商品名稱','已確認條碼','總數量','訂單數'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{(detail.prepick?.rows||[]).map((r,i)=><tr key={i} className="border-t border-slate-100"><td className="p-3">{r[2]}</td><td className="p-3">{r[4]}</td><td className="p-3">{r[3]||'待確認'}</td><td className="p-3 font-semibold">{r[5]}</td><td className="p-3">{r[6]}</td></tr>)}</tbody></table></div></details>
    <div className="mt-3 flex flex-wrap gap-4">{[...new Map((detail.links||[]).filter(l=>l.import_batch_id).map(l=>[l.import_batch_id,l])).values()].map(l=><Link key={l.import_batch_id} className={textButton} to={`/batches/${l.import_batch_id}`}>理貨單 {l.voucher_number}：列印預揀／揀貨／裝箱明細</Link>)}</div></>}
-   {shippingRefresh&&!detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)&&<p role="alert" className="mt-3 text-sm text-amber-900">找不到原訂單。</p>}
-   <div className="mt-4 grid gap-3">{(shippingRefresh?detail.orders.filter(order=>order.sourceOrderNumber===focusedOrder):detail.orders).map((o,index)=>{
+   <div className="mt-4 grid gap-3">{(originalOrderFlow?detail.orders.filter(order=>order.sourceOrderNumber===focusedOrder):detail.orders).map((o,index)=>{
     const review=shippingReview?.context===shippingContextKey&&shippingReview.orderNumber===o.sourceOrderNumber?shippingReview:null;
     const status=shippingStatus?.context===shippingContextKey&&shippingStatus.orderNumber===o.sourceOrderNumber?shippingStatus:null;
     const editableShipping=shippingEditable(o.sourceOrderNumber);

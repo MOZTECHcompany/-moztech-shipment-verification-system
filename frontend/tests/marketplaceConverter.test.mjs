@@ -748,16 +748,16 @@ test('preview distinguishes API verification from file-only checks and uses the 
 const savedShopifyOrder = {orderNumber:'#REVIEW-1',intakeId:19,workOrderId:null,state:'pending',message:'已保存，收件資料可更新',canUpdateShipping:true};
 const shopifyProfile = {...storeProfile,platform:'Shopify'};
 
-test('all saved Shopify orders provide immediate original-order update links without a new sales file or empty warning', async () => {
+test('all saved Shopify orders provide immediate original-sale continuation links without a new sales file or empty warning', async () => {
     const reimports = [savedShopifyOrder,{...savedShopifyOrder,orderNumber:'#REVIEW-2'}];
     const view = await converter({profiles:[shopifyProfile],reimports}); await view.select(file(shopifyBarcodeRows));
     const text = view.text(view.render());
     assert.match(text,/已保存 2 筆 · 新增 0 筆/);
     assert.doesNotMatch(text,/沒有可轉換|進階設定與核對表|下載金額核對表|含稅 TWD 0/);
     assert.equal(downloadSales(view),undefined); assert.equal(view.button('下載新單銷貨檔'),undefined);
-    const links=view.all(node=>node.type==='Button'&&view.text(node)==='更新原訂單');
+    const links=view.all(node=>node.type==='Button'&&view.text(node)==='接續原銷貨單');
     assert.equal(links.length,2);
-    assert.equal(links[0].props.to,'?batch=19&order=%23REVIEW-1&shipping=refresh#batch-detail');
+    assert.equal(links[0].props.to,'?batch=19&order=%23REVIEW-1&view=resume#batch-detail');
     assert.equal(links[0].props.disabled,false);
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/download-link')).length,0);
     assert.equal(view.downloads.length,0);
@@ -779,17 +779,26 @@ test('mixed Shopify upload shows new-only quantity and money while retaining ori
     assert.equal(view.downloads.length,1);
 });
 
+test('saved pending orders retain business-change warnings and a continuation entry when shipping updates are blocked',async()=>{
+    const view=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,canUpdateShipping:false,message:'商品或金額已變更，請另行核對'}]});
+    await view.select(file(shopifyBarcodeRows));
+    const card=view.find(view.render(),node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1');
+    assert.match(view.text(card),/商品或金額已變更/);
+    assert.equal(view.button('接續原銷貨單').props.to,'?batch=19&order=%23REVIEW-1&view=resume#batch-detail');
+    assert.equal(view.requests.filter(r=>r.url.endsWith('/shipping-update')).length,0);
+});
+
 test('completed, partial, cancelled, busy, and uncertain saved orders offer view-only navigation', async () => {
     for(const [state,label] of [['completed','已出貨'],['warehouse_completed','裝箱完成'],['partial','部分出貨'],['cancelled','已取消'],['voided','已作廢'],['in_progress','作業中'],['needs_review','待核對']]){
         const view=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,state,canUpdateShipping:false}]});await view.select(file(shopifyBarcodeRows));
         const card=view.find(view.render(),node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1');
-        assert.match(view.text(card),new RegExp(label));assert.equal(view.button('更新原訂單'),undefined);
+        assert.match(view.text(card),new RegExp(label));assert.equal(view.button('接續原銷貨單'),undefined);
         assert.equal(view.button('查看原訂單').props.to,'?batch=19&order=%23REVIEW-1#batch-detail');
     }
     const legacy=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:null,workOrderId:37}]});await legacy.select(file(shopifyBarcodeRows));
-    assert.equal(legacy.button('查看原訂單').props.to,'/order/37');assert.equal(legacy.button('更新原訂單'),undefined);
+    assert.equal(legacy.button('查看原訂單').props.to,'/order/37');assert.equal(legacy.button('接續原銷貨單'),undefined);
     const invalid=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:'javascript:bad'}]});await invalid.select(file(shopifyBarcodeRows));
-    assert.equal(invalid.button('更新原訂單'),undefined);assert.equal(invalid.button('查看原訂單'),undefined);
+    assert.equal(invalid.button('接續原銷貨單'),undefined);assert.equal(invalid.button('查看原訂單'),undefined);
 });
 
 test('all-saved success after a save race never requests a download link or creates an anchor and refreshes the original-order list', async () => {
@@ -799,33 +808,60 @@ test('all-saved success after a save race never requests a download link or crea
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,1);
     assert.equal(view.requests.filter(request=>request.url.endsWith('/download-link')).length,0);
     assert.equal(previewCalls(view).length,2);assert.equal(view.downloads.length,0);
-    assert.match(view.text(view.render()),/已保存 2 筆 · 新增 0 筆/);assert.ok(view.button('更新原訂單'));
+    assert.match(view.text(view.render()),/已保存 2 筆 · 新增 0 筆/);assert.ok(view.button('接續原銷貨單'));
 });
 
-test('a new upload clears the previous original-order refresh route and replaces the saved-order list', async () => {
-    const view=await converter({params:'batch=19&order=%23REVIEW-1&shipping=refresh',profiles:[shopifyProfile],reimports:raw=>raw.orders.some(order=>order.sourceOrderNumber==='#REVIEW-1')?[savedShopifyOrder]:[]});
-    await view.select(file(shopifyBarcodeRows));assert.equal(view.query().get('shipping'),null);
-    view.navigate('batch=19&order=%23REVIEW-1&shipping=refresh');
-    const next=shopifyBarcodeRows.map(row=>[...row]);next[1][0]='#NEW-FIRST';next[2][0]='#NEW-SECOND';
-    await view.select(file(next));
-    for(const key of ['batch','order','shipping'])assert.equal(view.query().get(key),null);
-    assert.equal(view.button('更新原訂單'),undefined);assert.doesNotMatch(view.text(view.render()),/#REVIEW-1|已保存 1 筆/);
-    assert.equal(downloadSales(view).props.disabled,false);
+test('returning from original-order continuation restores upload and replaces the previous saved-order list', async () => {
+    for (const context of ['shipping=refresh','view=resume']) {
+        const view=await converter({profiles:[shopifyProfile],reimports:raw=>raw.orders.some(order=>order.sourceOrderNumber==='#REVIEW-1')?[savedShopifyOrder]:[]});
+        await view.select(file(shopifyBarcodeRows));
+        view.navigate(`batch=19&order=%23REVIEW-1&${context}`);
+        assert.equal(view.find(view.render(),node=>node.type==='input'&&node.props.type==='file'),undefined);
+        assert.equal(view.button('下載新單銷貨檔'),undefined);
+        await view.button('返回訂單轉檔').props.onClick();view.render();
+        for(const key of ['batch','order','view','shipping'])assert.equal(view.query().get(key),null);
+        const next=shopifyBarcodeRows.map(row=>[...row]);next[1][0]='#NEW-FIRST';next[2][0]='#NEW-SECOND';
+        await view.select(file(next));
+        assert.equal(view.button('接續原銷貨單'),undefined);assert.doesNotMatch(view.text(view.render()),/#REVIEW-1|已保存 1 筆/);
+        assert.equal(downloadSales(view).props.disabled,false);
+    }
 });
 
 test('new-order barcode issues retain their download gate while a saved order still has its own update entry', async () => {
     const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));
-    assert.equal(view.button('下載新單銷貨檔').props.disabled,true);assert.ok(view.button('更新原訂單'));
+    assert.equal(view.button('下載新單銷貨檔').props.disabled,true);assert.ok(view.button('接續原銷貨單'));
     await view.button('下載新單銷貨檔').props.onClick();
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,0);assert.equal(view.downloads.length,0);
 });
 
 test('session changes discard saved-order update links and reject their retained callbacks', async () => {
     const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});await view.select(file(shopifyBarcodeRows));
-    const link=view.button('更新原訂單');let prevented=0;
+    const link=view.button('接續原銷貨單');let prevented=0;
     view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));link.props.onClick({preventDefault(){prevented++;}});
     assert.equal(prevented,1);view.listeners.get('storage')();view.render();
-    assert.equal(view.button('更新原訂單'),undefined);assert.equal(view.downloads.length,0);
+    assert.equal(view.button('接續原銷貨單'),undefined);assert.equal(view.downloads.length,0);
+});
+
+test('original-sale continuation never displays another batch new-sale upload status',async()=>{
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});
+    await view.select(file(shopifyBarcodeRows));await view.button('下載新單銷貨檔').props.onClick();view.render();
+    assert.match(view.text(view.render()),/已保存・待 ECOUNT 匯入/);
+    const oldDownload=view.button('下載新單銷貨檔');
+    view.navigate('batch=19&order=%23REVIEW-1&view=resume');
+    assert.doesNotMatch(view.text(view.render()),/已保存・待 ECOUNT 匯入|下載新單銷貨檔/);
+    const saves=view.requests.filter(r=>r.url==='/api/marketplace-intakes').length;
+    await oldDownload.props.onClick();
+    assert.equal(view.requests.filter(r=>r.url==='/api/marketplace-intakes').length,saves);
+});
+
+test('original-sale continuation retains the sign-in change error and blocks a previous-account entry',async()=>{
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});
+    await view.select(file(shopifyBarcodeRows));
+    view.navigate('batch=19&order=%23REVIEW-1&view=resume');
+    view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));view.listeners.get('storage')();view.render();
+    assert.match(view.text(view.render()),/登入人員已變更/);
+    assert.ok(view.find(view.render(),node=>node.props?.role==='alert'));
+    assert.equal(view.requests.filter(r=>r.url==='/api/marketplace-intakes').length,0);
 });
 
 

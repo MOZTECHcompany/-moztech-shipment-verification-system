@@ -36,8 +36,8 @@ const originalOrderLink = data => {
 };
 const reimportLink = order => {
   const link = originalOrderLink({ ...order, code: 'MARKETPLACE_SOURCE_EXISTS' });
-  const refresh = link?.startsWith('?batch=') && order.state === 'pending' && order.canUpdateShipping === true;
-  return { link: refresh ? link.replace('#batch-detail', '&shipping=refresh#batch-detail') : link, refresh };
+  const resume = link?.startsWith('?batch=') && order.state === 'pending';
+  return { link: resume ? link.replace('#batch-detail', '&view=resume#batch-detail') : link, resume };
 };
 const reimportStates = { pending: '待出貨', completed: '已出貨', warehouse_completed: '裝箱完成', partial: '部分出貨', cancelled: '已取消', voided: '已作廢', in_progress: '作業中', needs_review: '待核對' };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -69,6 +69,9 @@ export function MarketplaceConverter({ user }) {
 }
 function ConverterPage({ user }) {
   const [params, setParams] = useSearchParams();
+  const originalOrderFlow = !!params.get('batch') && !!params.get('order') && (params.get('view') === 'resume' || params.get('shipping') === 'refresh');
+  const routeContextKey = JSON.stringify([params.get('batch'), params.get('order'), params.get('view'), params.get('shipping')]);
+  const routeContext = useRef(routeContextKey); routeContext.current = routeContextKey;
   const [input, setInput] = useState(null), [settings, setSettings] = useState(initialSettings), [name, setName] = useState('');
   const [prepared, setPrepared] = useState(null), [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false), [access, setAccess] = useState('loading');
@@ -84,7 +87,7 @@ function ConverterPage({ user }) {
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); setExistingOrderLink(null); };
   const currentSession = () => batchSessionMatches(sessionStorage, actor.current, token.current);
   const clearReimportFocus = () => {
-    if (params.get('shipping') !== 'refresh') return;
+    if (params.get('shipping') !== 'refresh' && params.get('view') !== 'resume') return;
     setParams(current => { for (const key of ['batch', 'order', 'view', 'shipping']) current.delete(key); return current; }, { replace: true });
   };
   const loadRecords = async () => {
@@ -289,7 +292,7 @@ function ConverterPage({ user }) {
   };
   const writeAudit = async () => {
     const XLSX = await import('xlsx');
-    if (!mounted.current || !currentSession()) throw Error('登入已變更，未下載資料。');
+    if (!mounted.current || !currentSession() || routeContext.current !== routeContextKey) throw Error('目前作業已變更，未下載資料。');
     const book = XLSX.utils.book_new();
     const add = (title, rows) => {
       const sheet = XLSX.utils.aoa_to_sheet(rows); sheet['!cols'] = (rows[0] || []).map(() => ({ wch: 24 }));
@@ -305,7 +308,7 @@ function ConverterPage({ user }) {
     XLSX.writeFile(book, `預揀與金額核對_${settings.batchNumber}.xlsx`);
   };
   const download = async kind => {
-    if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession()) return;
+    if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession() || originalOrderFlow || routeContext.current !== routeContextKey) return;
     if (kind === 'ecount' && (!prepared.parsed.orders.length || !prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
     if (kind === 'audit' && (!prepared.audit.ok || !prepared.prepick.ok)) return;
     inFlight.current = true; setBusy(true); showMessage('');
@@ -315,7 +318,7 @@ function ConverterPage({ user }) {
           rows: input.source.rows, settings, ...(profileId ? { profileId } : {}),
           ...(prepared.verification?.currentFingerprint ? { previewFingerprint: prepared.verification.currentFingerprint } : {}),
         }, { timeout: 75000 });
-        if (!mounted.current || !currentSession()) return;
+        if (!mounted.current || !currentSession() || routeContext.current !== routeContextKey) return;
         if (response.data?.salesDownloadAllowed === false || response.data?.newOrderCount === 0) {
           setSaved(null);
           const sequence = ++request.current;
@@ -325,28 +328,28 @@ function ConverterPage({ user }) {
         }
         setSaved(response.data);
         if (getNativeRuntime()) {
-          if (!await downloadNativeMarketplaceFile({ id: response.data.id, kind: 'ecount' }, { isCurrent: () => mounted.current && currentSession() })) return;
+          if (!await downloadNativeMarketplaceFile({ id: response.data.id, kind: 'ecount' }, { isCurrent: () => mounted.current && currentSession() && routeContext.current === routeContextKey })) return;
         } else {
           const link = await apiClient.post(`/api/marketplace-intakes/${response.data.id}/download-link`, { kind: 'ecount' }, { withCredentials: true });
-          if (!mounted.current || !currentSession()) return;
+          if (!mounted.current || !currentSession() || routeContext.current !== routeContextKey) return;
           const anchor = document.createElement('a'); anchor.href = `${API_ORIGIN}${link.data.url}`; anchor.download = '';
           document.body.appendChild(anchor); anchor.click(); anchor.remove();
         }
-        if (!await loadRecords()) return;
+        if (!await loadRecords() || !mounted.current || !currentSession() || routeContext.current !== routeContextKey) return;
         showMessage('已保存・待 ECOUNT 匯入');
         // Reuse validated customer/warehouse settings on the next file. Profile
         // persistence is secondary to the already-saved immutable sales batch.
         try {
           const stored = await apiClient.post('/api/marketplace-intakes/store-profiles', { platform: prepared.parsed.platform, settings });
-          if (mounted.current && currentSession()) {
+          if (mounted.current && currentSession() && routeContext.current === routeContextKey) {
             setProfiles(current => [...current.filter(value => value.id !== stored.data.id), stored.data]); setProfileId(String(stored.data.id));
           }
         } catch {
-          if (mounted.current && currentSession()) showMessage('已保存・待 ECOUNT 匯入；店鋪設定未保存，下次請重新選擇。');
+          if (mounted.current && currentSession() && routeContext.current === routeContextKey) showMessage('已保存・待 ECOUNT 匯入；店鋪設定未保存，下次請重新選擇。');
         }
-      } else { await writeAudit(); if (mounted.current && currentSession()) showMessage('核對表已下載'); }
+      } else { await writeAudit(); if (mounted.current && currentSession() && routeContext.current === routeContextKey) showMessage('核對表已下載'); }
     } catch (error) {
-      if (mounted.current && currentSession()) {
+      if (mounted.current && currentSession() && routeContext.current === routeContextKey) {
         if (error.response?.data?.code === 'SHOPIFY_PREVIEW_CHANGED') {
           const sequence = ++request.current;
           setPreviewDirty(true); setSaved(null);
@@ -366,9 +369,9 @@ function ConverterPage({ user }) {
   const needsStore = !settings.store || !settings.customerCode;
   return <main className="mx-auto max-w-7xl space-y-5 pb-8 text-slate-900" data-testid="marketplace-converter">
     <Link to="/admin" className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16} />返回出貨管理</Link>
-    <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title="商城訂單轉檔" /><a href="#saved-batches" onClick={event => handleWorkspaceAnchor(event, 'saved-batches')} className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a></div>
-    {message && <div role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}><p>{message}</p>{existingOrderLink && <Button as={Link} to={existingOrderLink} variant="secondary" className="mt-3" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>查看原訂單</Button>}</div>}
-    <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300'}`} onDragOver={event => { event.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); selectFiles(Array.from(event.dataTransfer.files || [])); }} aria-label="商城訂單檔案區">
+    <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title={originalOrderFlow ? '原訂單出貨' : '商城訂單轉檔'} />{originalOrderFlow ? <Button variant="secondary" disabled={locked} onClick={clearReimportFocus}>返回訂單轉檔</Button> : <a href="#saved-batches" onClick={event => handleWorkspaceAnchor(event, 'saved-batches')} className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a>}</div>
+    {message && (!originalOrderFlow || access === 'denied') && <div role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}><p>{message}</p>{existingOrderLink && <Button as={Link} to={existingOrderLink} variant="secondary" className="mt-3" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>查看原訂單</Button>}</div>}
+    {!originalOrderFlow && <><section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300'}`} onDragOver={event => { event.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); selectFiles(Array.from(event.dataTransfer.files || [])); }} aria-label="商城訂單檔案區">
       <div className="flex flex-col items-center py-3 text-center"><UploadCloud size={32} className="mb-3 text-blue-600" /><h2 className="text-lg font-semibold">{dragging ? '放開檔案，開始核對' : '拖曳商城訂單到這裡'}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p>
         <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={() => fileRef.current?.click()}>{busy ? <Loader2 className="mr-2 animate-spin" size={18} /> : <FileSpreadsheet className="mr-2" size={18} />}{busy ? '核對中…' : name ? '更換訂單檔' : '選擇訂單檔'}</Button>
       </div>
@@ -400,8 +403,8 @@ function ConverterPage({ user }) {
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>
       {reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
-        const { link, refresh } = reimportLink(order);
-        return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>{refresh ? '更新原訂單' : '查看原訂單'}</Button>}</div>;
+        const { link, resume } = reimportLink(order);
+        return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
       })}</div></section>}
       {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
         const key = barcodeConflictKey(conflict);
@@ -470,7 +473,7 @@ function ConverterPage({ user }) {
         {warnings.length > 0 && <details className="mt-4 text-sm text-slate-600"><summary className="cursor-pointer">提醒（{warnings.length}）</summary><ul className="mt-2 space-y-1">{warnings.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.message}</li>)}</ul></details>}
         {catalog?.sync && <p className="mt-4 text-xs text-slate-500">商品對照更新：{new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
       </details>}
-    </>}
+    </>}</>}
     <MarketplaceBatchManager user={user} enabled={access === 'ready'} currentSession={currentSession} refreshKey={records} />
   </main>;
 }
