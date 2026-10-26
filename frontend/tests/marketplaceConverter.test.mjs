@@ -37,7 +37,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, reimports = [], saveResponse = null, params = '' } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, reimports = [], saveResponse = null, params = '' } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -75,7 +75,8 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             const activeReimports = typeof reimports === 'function' ? reimports(raw, body) : reimports;
             const savedNumbers = new Set(activeReimports.map(order => order.orderNumber));
             const fresh = {...raw, orders:raw.orders.filter(order => !savedNumbers.has(order.sourceOrderNumber)), items:raw.items.filter(item => !savedNumbers.has(item.sourceOrderNumber)), issues:raw.issues.filter(issue => !savedNumbers.has(issue.orderNumber))};
-            const products = resolved?.products || Object.fromEntries(fresh.items.map(item => [item.sku, {status:'matched',matches:[{erp_sku:item.sku,product_name:item.productName,barcode:item.sku,spec:''}]}]));
+            const resolvedCatalog = typeof resolved === 'function' ? resolved(body) : resolved;
+            const products = resolvedCatalog?.products || Object.fromEntries(fresh.items.map(item => [item.sku, {status:'matched',matches:[{erp_sku:item.sku,product_name:item.productName,barcode:item.sku,spec:''}]}]));
             effectiveSettings.skuMappings = {...body.settings.skuMappings};
             for (const [sku, item] of Object.entries(products)) if (item.status === 'matched') {
                 const matched = item.matches[0];
@@ -88,11 +89,12 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
                 else if (conflict?.targetOptions?.length > 1) effectiveSettings.skuMappings[sku] = {...provided,erpSku:'',erpName:'',barcode:'',confirmed:false,barcodeConfirmed:false};
                 if(conflict?.requiresInternalScanCode)effectiveSettings.skuMappings[sku]={...effectiveSettings.skuMappings[sku],barcode:'',barcodeConfirmed:false,scanCodeType:'internal',internalScanCode:conflict.internalScanCode||'',internalScanConfirmed:confirmedBarcodes.has(conflict.fingerprint)};
             }
+            if (serverMappings) effectiveSettings.skuMappings = {...effectiveSettings.skuMappings,...serverMappings};
             const prepared = unified.prepareUnifiedMarketplace(fresh,effectiveSettings);
             latestPrepared = prepared;
             prepared.audit = unified.prepareUnifiedMarketplace(raw,effectiveSettings).audit;
             prepared.choices.push(...activeReimports.map(order => ({number:order.orderNumber,eligible:false,reason:order.message || '已保存'})));
-            return {data:{...prepared,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolved?.sync || null,products},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            return {data:{...prepared,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         if (saveResponse) return {data:typeof saveResponse === 'function' ? saveResponse(body) : saveResponse};
@@ -668,6 +670,101 @@ test('inactive ERP code stays unchanged and blocks sales despite a matched compa
     assert.match(view.text(view.render()), /00124：ECOUNT 已中止使用/);
     assert.match(view.text(view.render()), /NEW00123/);
     assert.equal(downloadSales(view).props.disabled,true);
+});
+
+test('a saved confirmed mapping absent from the reference stays visible and cannot be confirmed or downloaded', async () => {
+    const missingCode = '47111299274572';
+    const message = `ECOUNT 品項 ${missingCode} 不在商品主檔，請核對品號，或請管理員更新主檔`;
+    const view = await converter({
+        resolved:{sync:{created_at:'2026-09-15T18:55:50.843Z'},products:{
+            '00123':{status:'missing',matches:[]},
+            [missingCode]:{status:'missing',matches:[]},
+            '00124':{status:'matched',matches:[{erp_sku:'00124',product_name:'ERP B',barcode:'00124',active:true}]},
+        },mappingIssues:[{code:'ECOUNT_TARGET_MISSING',sku:'00123',erpSku:missingCode,severity:'error',message}]},
+        serverMappings:{'00123':{erpSku:missingCode,erpName:'Saved product',confirmed:true,barcode:'00123',barcodeConfirmed:true}},
+    });
+    await view.select(file());
+    const panel = view.all(node => node.type === 'details' && node.props.id === 'product-mapping')[0];
+    assert.ok(panel?.props.open, 'a stale confirmed mapping must be correctable in the open panel');
+    assert.match(view.text(panel), /00123/); assert.match(view.text(panel), new RegExp(message));
+    assert.match(view.text(panel), /ECOUNT 主檔更新：\s*2026/);
+    const targetInput = view.find(panel, node => node.type === 'input' && node.props.value === missingCode);
+    assert.equal(targetInput.props.readOnly, false);
+    const confirm = view.find(view.all(node => node.type === 'label' && view.text(node).includes('確認 ECOUNT 品項'))[0], node => node.type === 'input');
+    assert.equal(confirm.props.disabled, true); assert.equal(confirm.props.checked, false);
+    await confirm.props.onChange({target:{checked:true}}); view.render();
+    assert.equal(downloadSales(view).props.disabled, true);
+    await downloadSales(view).props.onClick();
+    assert.equal(view.requests.filter(request => request.url === '/api/marketplace-intakes').length,0);
+    const jumps = [], before = view.requests.length;
+    const dispose = nativeRuntime.installNativeRuntime({portalTarget:{},workspaceRoot:{getElementById:id => {jumps.push(id);return {scrollIntoView:options => jumps.push(options)};}}});
+    try {
+        const link = view.all(node => node.type === 'a' && node.props.href === '#product-mapping')[0];
+        await link.props.onClick({preventDefault:() => jumps.push('prevented')});
+        assert.deepEqual(jumps,['prevented','product-mapping',{block:'start'}]);
+        assert.equal(view.requests.length,before,'opening the correction panel must not issue a request');
+    } finally { dispose(); }
+});
+
+test('a missing source can be corrected to an existing exact active ERP target after rechecking', async () => {
+    const view = await converter({resolved:body => {
+        const corrected = body.settings.skuMappings?.['00123']?.erpSku === 'ERP-00123';
+        return {sync:{created_at:'2026-10-27T00:00:00Z'},products:{
+            '00123':{status:'missing',matches:[]},
+            '00124':{status:'matched',matches:[{erp_sku:'00124',product_name:'ERP B',barcode:'00124',active:true}]},
+            ...(corrected ? {'ERP-00123':{status:'matched',matches:[{erp_sku:'ERP-00123',product_name:'ERP A',barcode:'00123',active:true}]}} : {}),
+        },mappingIssues:corrected ? [] : [{code:'ECOUNT_SOURCE_MISSING',sku:'00123',erpSku:'00123',severity:'error',message:'來源貨號不在 ECOUNT 商品主檔，請填寫已存在的 ECOUNT 品號，或請管理員更新主檔'}]};
+    }});
+    await view.select(file());
+    assert.match(view.text(view.render()), /來源貨號不在 ECOUNT 商品主檔/);
+    const overview = () => view.all(node => node.props?.['aria-label'] === '轉檔檢查結果')[0];
+    assert.equal(view.all(node => node.type === 'a' && node.props.href === '#product-mapping').length,1);
+    assert.doesNotMatch(view.text(overview()), /SKU 00123 必須確認 ERP 品項編碼|項商品需對照/,'the catalog correction link replaces the duplicate mapping-required issue');
+    const confirmation = () => view.find(view.all(node => node.type === 'label' && view.text(node).includes('確認 ECOUNT 品項'))[0], node => node.type === 'input');
+    assert.equal(confirmation().props.disabled,true);
+    await view.change('ECOUNT 品項編碼','ERP-00123');
+    await view.button('重新核對').props.onClick(); view.render();
+    assert.equal(confirmation().props.disabled,false, 'an exact active reference target allows manual confirmation');
+    assert.match(view.text(overview()), /1 項商品需對照/,'ordinary manual confirmation stays required after the catalog error is corrected');
+    await view.change('確認 ECOUNT 品項',true);
+    await view.button('重新核對').props.onClick(); view.render();
+    assert.equal(downloadSales(view).props.disabled,false);
+    assert.doesNotMatch(view.text(view.render()), /待對照商品/);
+    assert.equal(previewCalls(view).at(-1).body.settings.skuMappings['00123'].erpSku,'ERP-00123');
+    await downloadSales(view).props.onClick(); view.render();
+    const saved = view.requests.find(request => request.url === '/api/marketplace-intakes');
+    assert.equal(saved.body.settings.skuMappings['00123'].erpSku,'ERP-00123');
+    assert.equal(saved.body.settings.skuMappings['00123'].confirmed,true);
+    assert.equal(saved.body.rows[1][2],'00123','manual ERP selection preserves the original source SKU');
+    assert.equal(saved.body.rows[1][4],'1');
+    assert.equal(view.requests.filter(request => request.url.endsWith('/download-link')).length,1);
+    assert.equal(view.downloads.length,1);
+});
+
+test('an active manual target cannot bypass an inactive or ambiguous reference source', async () => {
+    for (const status of ['inactive','ambiguous']) {
+        const view = await converter({resolved:{sync:{created_at:'2026-10-27T00:00:00Z'},products:{
+            '00123':{status,matches:[]},
+            'ERP-00123':{status:'matched',matches:[{erp_sku:'ERP-00123',product_name:'ERP A',barcode:'00123',active:true}]},
+            '00124':{status:'matched',matches:[{erp_sku:'00124',product_name:'ERP B',barcode:'00124',active:true}]},
+        },mappingIssues:[{code:`ECOUNT_SOURCE_${status.toUpperCase()}`,sku:'00123',erpSku:'ERP-00123',severity:'error',message:'來源貨號需核對 ECOUNT 主檔'}]},
+        serverMappings:{'00123':{erpSku:'ERP-00123',erpName:'ERP A',confirmed:true,barcode:'00123',barcodeConfirmed:true}}});
+        await view.select(file());
+        const confirm = view.find(view.all(node => node.type === 'label' && view.text(node).includes('確認 ECOUNT 品項'))[0], node => node.type === 'input');
+        assert.equal(confirm.props.disabled,true,status);
+        assert.equal(downloadSales(view).props.disabled,true,status);
+    }
+});
+
+test('an unconfigured reference preserves the legacy manual confirmation workflow', async () => {
+    const view = await converter({resolved:{products:{'00123':{status:'missing',matches:[]},'00124':{status:'matched',matches:[{erp_sku:'00124',product_name:'ERP B',barcode:'00124'}]}}}});
+    await view.select(file());
+    const confirm = view.find(view.all(node => node.type === 'label' && view.text(node).includes('確認 ECOUNT 品項'))[0], node => node.type === 'input');
+    assert.equal(confirm.props.disabled,false);
+    await view.change('ECOUNT 品項編碼','00123');
+    await view.change('確認 ECOUNT 品項',true);
+    await view.button('重新核對').props.onClick(); view.render();
+    assert.equal(downloadSales(view).props.disabled,false);
 });
 
 test('matched ERP identifiers and master barcodes are display-only while a missing physical barcode remains editable', async () => {

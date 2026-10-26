@@ -60,8 +60,8 @@ const initialSettings = () => ({
 function Field({ label, children, ...props }) {
   return <label className="block min-w-0 text-sm font-medium text-slate-800">{label}{children || <input className={inputClass} {...props} />}</label>;
 }
-function Check({ children, checked, onChange }) {
-  return <label className="flex min-h-11 cursor-pointer items-start gap-3 py-2 text-sm leading-6 text-slate-800"><input type="checkbox" checked={!!checked} onChange={event => onChange(event.target.checked)} className="mt-1 h-4 w-4 shrink-0" /><span>{children}</span></label>;
+function Check({ children, checked, onChange, disabled = false }) {
+  return <label className="flex min-h-11 cursor-pointer items-start gap-3 py-2 text-sm leading-6 text-slate-800"><input type="checkbox" checked={!!checked} disabled={disabled} onChange={event => { if (!disabled) onChange(event.target.checked); }} className="mt-1 h-4 w-4 shrink-0" /><span>{children}</span></label>;
 }
 export function MarketplaceConverter({ user }) {
   if (!MARKETPLACE_ROLES.includes(user?.role)) return <Navigate to="/tasks" replace />;
@@ -124,25 +124,30 @@ function ConverterPage({ user }) {
   const reimportNumbers = new Set(reimports.map(order => order.orderNumber));
   const onlyReimports = reimports.length > 0 && prepared.parsed.summary.orderCount === 0;
   const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason && !reimportNumbers.has(choice.number)) : [];
+  const catalogMappingIssues = (catalog?.mappingIssues || []).filter(issue => issue.severity === 'error');
+  const catalogMappingIssueSkus = new Set(catalogMappingIssues.map(issue => issue.sku));
   const issueGroups = useMemo(() => {
     const groups = new Map();
     for (const issue of prepared?.output?.issues || []) {
       if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && (emptyExclusions.length || reimports.length))) continue;
       if (issue.code === 'BARCODE_MISMATCH' && barcodeBlocked) continue;
+      if (issue.code === 'PRODUCT_MAPPING_REQUIRED' && catalogMappingIssueSkus.has(issue.sku)) continue;
+      if (catalogMappingIssues.some(value => value.code === issue.code && value.sku === issue.sku)) continue;
       const key = `${issue.code}:${issue.field || ''}`;
       if (!groups.has(key)) groups.set(key, { key, items: [] });
       groups.get(key).items.push(issue);
     }
     return [...groups.values()].map(group => ({ ...group, title: group.items[0].code === 'PRODUCT_MAPPING_REQUIRED' ? `${group.items.length} 項商品需對照` : group.items[0].message }));
-  }, [prepared]);
+  }, [prepared, catalog]);
   const catalogIssues = products.flatMap(item => {
+    if (catalogMappingIssueSkus.has(item.sku)) return [];
     const result = catalog?.products?.[item.sku];
     return result?.status === 'inactive' ? [`${item.sku}：ECOUNT 已中止使用。`]
       : result?.status === 'ambiguous' ? [`${item.sku}：ECOUNT 有多個對應品項。`] : [];
   });
-  const catalogBlocked = catalogIssues.length > 0;
+  const catalogBlocked = catalogIssues.length > 0 || catalogMappingIssues.length > 0;
   const barcodeReviewSkus = new Set(barcodeConflicts.map(conflict => conflict.sourceSku));
-  const unresolvedProducts = products.filter(item => !barcodeReviewSkus.has(item.sku) && (!settings.skuMappings?.[item.sku]?.confirmed || ['inactive', 'ambiguous'].includes(catalog?.products?.[item.sku]?.status)));
+  const unresolvedProducts = products.filter(item => catalogMappingIssueSkus.has(item.sku) || !barcodeReviewSkus.has(item.sku) && (!settings.skuMappings?.[item.sku]?.confirmed || ['inactive', 'ambiguous'].includes(catalog?.products?.[item.sku]?.status)));
   const raw = prepared?.raw || input?.parsed;
   const warnings = prepared?.output?.issues?.filter(issue => issue.severity === 'warning') || [];
   const applyPreview = data => {
@@ -398,6 +403,7 @@ function ConverterPage({ user }) {
         {!previewDirty && (issueGroups.length > 0 || catalogBlocked || emptyExclusions.length > 0) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">{issueGroups.length || catalogBlocked ? '待處理' : '本批無可銷貨訂單'}</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
           {emptyExclusions.map(choice => <li key={choice.number}>{choice.number}：{choice.reason}</li>)}
           {catalogIssues.map(value => <li key={value}>{value}</li>)}
+          {catalogMappingIssues.length > 0 && <li><a href="#product-mapping" onClick={event => handleWorkspaceAnchor(event, 'product-mapping')} className="font-medium underline">{catalogMappingIssueSkus.size} 項商品需核對 ECOUNT 品號</a></li>}
           {issueGroups.map(group => <li key={group.key}>{group.items.length > 1 ? <details><summary className="cursor-pointer">{group.title}{group.items[0].code !== 'PRODUCT_MAPPING_REQUIRED' ? `（${group.items.length} 筆）` : ''}</summary><ul className="mt-2 space-y-1 pl-4">{group.items.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.sourceRow ? `第 ${issue.sourceRow} 列：` : ''}{issue.message}</li>)}</ul></details> : <>{group.items[0].orderNumber ? `${group.items[0].orderNumber}：` : ''}{group.items[0].sourceRow ? `第 ${group.items[0].sourceRow} 列：` : ''}{group.title}</>}</li>)}
         </ul></div>}
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
@@ -443,10 +449,15 @@ function ConverterPage({ user }) {
         </div>;
       })}</div></section>}
       {!onlyReimports && (needsStore || storeSetupOpen || choosingStore) && <section className={sectionClass} aria-label="店鋪設定"><h2 className="font-semibold">{matchingProfiles.length ? '確認銷貨店鋪' : '首次店鋪設定'}</h2><fieldset disabled={locked}><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{settingsField('商城店鋪', 'store')}{settingsField('ECOUNT 銷貨客戶編碼', 'customerCode')}{settingsField('ECOUNT 客戶名稱', 'customerName')}</div></fieldset></section>}
-      {unresolvedProducts.length > 0 && <details className={sectionClass} open><summary className="cursor-pointer font-semibold">待對照商品（{unresolvedProducts.length} 項）</summary><fieldset disabled={locked}><div className="mt-4 space-y-3">{unresolvedProducts.map(item => {
+      {unresolvedProducts.length > 0 && <details id="product-mapping" className={sectionClass} open><summary className="cursor-pointer font-semibold">待對照商品（{unresolvedProducts.length} 項）</summary>{catalog?.sync?.created_at && <p className="mt-2 text-sm text-slate-600">ECOUNT 主檔更新：{new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}<fieldset disabled={locked}><div className="mt-4 space-y-3">{unresolvedProducts.map(item => {
         const mapped = settings.skuMappings?.[item.sku] || {};
-        const masterMatched = catalog?.products?.[item.sku]?.status === 'matched';
-        return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName} <span className="text-sm text-slate-500">{item.sku}</span></p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="ECOUNT 品項編碼" readOnly={masterMatched} value={mapped.erpSku || item.sku} onChange={event => mapping(item.sku, 'erpSku', event.target.value)} /><Field label="ECOUNT 品項名稱" readOnly={masterMatched} value={mapped.erpName || item.productName} onChange={event => mapping(item.sku, 'erpName', event.target.value)} /></div>{!masterMatched && <Check checked={mapped.confirmed} onChange={value => mapping(item.sku, 'confirmed', value)}>確認 ECOUNT 品項</Check>}</div>;
+        const issues = catalogMappingIssues.filter(issue => issue.sku === item.sku);
+        const sourceMatch = catalog?.products?.[item.sku];
+        const masterMatched = sourceMatch?.status === 'matched' && !issues.length;
+        const targetCode = String(mapped.erpSku || item.sku).trim();
+        const exactActiveTarget = Object.values(catalog?.products || {}).some(result => result.matches?.some(product => product.erp_sku === targetCode && product.active === true));
+        const canConfirm = !catalog?.sync || exactActiveTarget && !['inactive', 'ambiguous'].includes(sourceMatch?.status);
+        return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName} <span className="text-sm text-slate-500">{item.sku}</span></p>{issues.map(issue => <p key={issue.code} className="mt-2 text-sm text-amber-950">{issue.message}</p>)}<div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="ECOUNT 品項編碼" readOnly={masterMatched} value={mapped.erpSku || item.sku} onChange={event => mapping(item.sku, 'erpSku', event.target.value)} /><Field label="ECOUNT 品項名稱" readOnly={masterMatched} value={mapped.erpName || item.productName} onChange={event => mapping(item.sku, 'erpName', event.target.value)} /></div>{!masterMatched && <Check checked={mapped.confirmed && canConfirm} disabled={!canConfirm} onChange={value => mapping(item.sku, 'confirmed', value)}>確認 ECOUNT 品項</Check>}</div>;
       })}</div></fieldset>{previewDirty && <Button className="mt-3" variant="secondary" disabled={locked} onClick={() => refreshPreview()}>核對商品</Button>}</details>}
       <details className={sectionClass}><summary className="cursor-pointer font-semibold">訂單明細{raw.orders.length - reimports.length > prepared.parsed.summary.orderCount ? `・排除 ${raw.orders.length - reimports.length - prepared.parsed.summary.orderCount} 筆` : ''}</summary>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[880px] w-full text-sm" aria-label="來源訂單與金額"><thead className="bg-slate-50"><tr>{['商城訂單', '付款／出貨狀態', '商品金額', '運費', '訂單總額', '本批處理'].map(value => <th key={value} className={`${cell} whitespace-nowrap`}>{value}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{raw.orders.map(order => {
@@ -471,7 +482,7 @@ function ConverterPage({ user }) {
         })}</div></details>
       </fieldset><div className="mt-4 flex flex-wrap gap-3">{previewDirty && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>套用設定</Button>}<Button variant="secondary" disabled={locked || previewDirty || !prepared.audit.ok || !prepared.prepick.ok} onClick={() => download('audit')}>下載金額核對表</Button></div>
         {warnings.length > 0 && <details className="mt-4 text-sm text-slate-600"><summary className="cursor-pointer">提醒（{warnings.length}）</summary><ul className="mt-2 space-y-1">{warnings.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.message}</li>)}</ul></details>}
-        {catalog?.sync && <p className="mt-4 text-xs text-slate-500">商品對照更新：{new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
+        {catalog?.sync && !unresolvedProducts.length && <p className="mt-4 text-xs text-slate-500">商品對照更新：{new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
       </details>}
     </>}</>}
     <MarketplaceBatchManager user={user} enabled={access === 'ready'} currentSession={currentSession} refreshKey={records} />

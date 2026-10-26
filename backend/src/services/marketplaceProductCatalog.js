@@ -56,6 +56,33 @@ async function lookupProducts(skus, reader = readReference) {
  const reference = await reader();
  return { sync: reference ? { product_count: reference.products.length, created_at: reference.capturedAt, source_note: reference.source } : null, products: resolveProducts(skus, reference?.products || []) };
 }
+// Check the same exact ERP target used at save time while the user can still
+// correct it. An unconfigured reference retains the legacy manual workflow.
+function previewCatalogMappingIssues(settings, skus, catalog, extraCatalogs = []) {
+ if (!catalog?.sync) return [];
+ const byCode = new Map([catalog, ...extraCatalogs].flatMap(value => Object.values(value?.products || {})
+  .flatMap(result => result?.matches || [])).map(product => [product.erp_sku, product]));
+ return skus.flatMap(sku => {
+  const source = catalog.products?.[sku], erpSku = String(settings.skuMappings?.[sku]?.erpSku || '').trim();
+  let code, message;
+  if (source?.status === 'inactive') {
+   code = 'ECOUNT_SOURCE_INACTIVE'; message = '來源貨號對應的 ECOUNT 品項已中止使用，請核對主檔';
+  } else if (source?.status === 'ambiguous') {
+   code = 'ECOUNT_SOURCE_AMBIGUOUS'; message = '來源貨號對應多個 ECOUNT 品項，請核對主檔';
+  } else {
+   const target = byCode.get(erpSku);
+   if (target && target.active !== true) {
+    code = 'ECOUNT_TARGET_INACTIVE'; message = `ECOUNT 品項 ${erpSku} 已中止使用，請填寫正確的啟用品號`;
+   } else if (!target) {
+    const missingSource = source?.status === 'missing' && (!erpSku || erpSku === sku);
+    code = missingSource ? 'ECOUNT_SOURCE_MISSING' : 'ECOUNT_TARGET_MISSING';
+    message = missingSource ? '來源貨號不在 ECOUNT 商品主檔，請填寫已存在的 ECOUNT 品號，或請管理員更新主檔'
+     : `ECOUNT 品項 ${erpSku || '（未填）'} 不在商品主檔，請核對品號，或請管理員更新主檔`;
+   }
+  }
+  return code ? [{ code, sku, erpSku, severity: 'error', message }] : [];
+ });
+}
 function createProductRouter({ reader = readReference } = {}) {
  const router = express.Router(); router.use(authorizeRoles('admin', 'dispatcher'));
  router.post('/resolve', async (req, res, next) => {
@@ -100,4 +127,4 @@ async function verifyCatalogMappings(_pool, settings, skus = Object.keys(setting
    throw fail(`商品 ${sku} 的已保存國際條碼對照已變更，請重新核對`);
  }
 }
-module.exports = { createReferenceReader, resolveProducts, exactReviewTargets, oneShopProductMatch, lookupProducts, createProductRouter, verifyCatalogMappings };
+module.exports = { createReferenceReader, resolveProducts, exactReviewTargets, oneShopProductMatch, lookupProducts, previewCatalogMappingIssues, createProductRouter, verifyCatalogMappings };

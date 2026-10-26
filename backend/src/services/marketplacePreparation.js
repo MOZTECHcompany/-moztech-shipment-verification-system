@@ -1,5 +1,5 @@
 const {createHash,randomBytes}=require('node:crypto');
-const {lookupProducts,oneShopProductMatch}=require('./marketplaceProductCatalog');
+const {lookupProducts,oneShopProductMatch,previewCatalogMappingIssues}=require('./marketplaceProductCatalog');
 const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
 const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
 const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
@@ -132,8 +132,8 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    if(apiBarcodes.has(i.sku)&&apiBarcodes.get(i.sku)!==i.barcode)throw fail(`商品 ${i.sku} 在 ${source.platform} 對應不同條碼，請核對商品設定`,'BARCODE_AMBIGUOUS');
    apiBarcodes.set(i.sku,i.barcode);
   }
-  const manualInternalTargets=skus.map(sku=>supplied.skuMappings?.[sku]).filter(m=>m?.scanCodeType==='internal').map(m=>clean(m.erpSku)).filter(Boolean);
-  const lookupSkus=[...new Set([...skus,...manualInternalTargets,...[...oneShopFormats.values()].filter(Boolean).map(format=>format.sourceBarcode)])];
+  const manualTargets=skus.map(sku=>clean(settingsInput.skuMappings?.[sku]?.erpSku)).filter(Boolean);
+  const lookupSkus=[...new Set([...skus,...manualTargets,...[...oneShopFormats.values()].filter(Boolean).map(format=>format.sourceBarcode)])];
   const catalog=!skus.length&&reimports.length?{products:{},sync:null}:await resolveProducts(lookupSkus);
   const productMatches=new Map(skus.map(sku=>[sku,oneShopFormats.get(sku)?oneShopProductMatch(sku,oneShopFormats.get(sku),catalog.products||{}):catalog.products?.[sku]]));
   // This barcode comes from the explicitly declared SKU format, not a
@@ -284,6 +284,11 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   }
   const settings=safeSettings(settingsInput);
   const prepared=prepareUnifiedMarketplace(salesRaw,settings);
+  catalog.mappingIssues=previewCatalogMappingIssues(settings,skus,catalog,[barcodeCatalog,physicalCatalog,internalCatalog]);
+  if(catalog.mappingIssues.length){
+   prepared.output={...prepared.output,ok:false,rows:[],issues:[...prepared.output.issues,...catalog.mappingIssues]};
+   prepared.prepick={...prepared.prepick,ok:false,rows:[],issues:[...prepared.prepick.issues,...catalog.mappingIssues]};
+  }
   const {buildMarketplaceAuditRows}=await import('./marketplaceIntake.mjs');
   prepared.audit=buildMarketplaceAuditRows(raw,prepared.effectiveSettings||settings);
   prepared.choices.push(...reimports.map(order=>({number:order.orderNumber,eligible:false,reason:order.message,existing:true})));
