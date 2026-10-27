@@ -10,8 +10,8 @@ export function Modal({ open, onClose, title, children, footer, className }) {
     <div className="fixed inset-0 z-50 animate-in fade-in duration-200">
       <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-all" onClick={onClose} />
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div role="dialog" aria-modal="true" aria-label={title} className={cx('w-full max-w-lg glass-panel rounded-2xl shadow-2xl transform transition-all animate-in zoom-in-95 duration-200', className)}>
-          <div className="px-6 py-5 border-b border-gray-100/50 flex items-center justify-between">
+        <div role="dialog" aria-modal="true" aria-label={title} className={cx('flex max-h-[calc(100vh-2rem)] supports-[height:100dvh]:max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden glass-panel rounded-2xl shadow-2xl transform transition-all animate-in zoom-in-95 duration-200', className)}>
+          <div className="shrink-0 px-6 py-5 border-b border-gray-100/50 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors rounded-full p-1 hover:bg-gray-100/50">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -20,8 +20,8 @@ export function Modal({ open, onClose, title, children, footer, className }) {
               </svg>
             </button>
           </div>
-          <div className="px-6 py-6">{children}</div>
-          <div className="px-6 py-5 border-t border-gray-100/50 flex items-center justify-end gap-3 bg-gray-50/30 rounded-b-2xl">
+          <div className="min-h-0 overflow-y-auto overscroll-contain px-6 py-6">{children}</div>
+          <div className="shrink-0 px-6 py-5 border-t border-gray-100/50 flex items-center justify-end gap-3 bg-gray-50/30 rounded-b-2xl">
             {footer || (
               <>
                 <Button variant="secondary" onClick={onClose}>取消</Button>
