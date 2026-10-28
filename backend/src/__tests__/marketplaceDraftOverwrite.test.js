@@ -19,7 +19,7 @@ async function setup(){
  CREATE TABLE warehouse_import_batches(id SERIAL PRIMARY KEY,voucher_number TEXT);
  CREATE TABLE marketplace_warehouse_events(id SERIAL PRIMARY KEY,intake_id INTEGER,action TEXT);`);
  await db.exec(fs.readFileSync(require.resolve('../../migrations/041_marketplace_draft_revisions.sql'),'utf8'));
- const h={db,calls:[],prepareCalls:0,commitAckLost:false,failUpdate:false,beforeConnect:null,live:{},failOmitted:false};
+ const h={db,calls:[],prepareCalls:0,commitAckLost:false,failUpdate:false,beforeConnect:null,live:{},failOmitted:false,enabled:true};
  const query=async(sql,args)=>{
   h.calls.push([sql,args]);
   if(sql.includes('pg_advisory_xact_lock'))return{rows:[{}],rowCount:1};
@@ -42,7 +42,7 @@ async function setup(){
   return{source:{platform:'Shopify',rows},raw,...prepared,settings:prepared.effectiveSettings,verification,sourceEvidence:{rows,verification,draftSourceReview:{mode:'operator-reviewed-csv-v1',fingerprint:'CSV-REVIEW'}},barcodeReviews:[],profileId:'1'};
  };
  h.prepare=jest.fn(async(body,options)=>{h.prepareCalls++;if(h.failOmitted&&!body.records)throw Error('synthetic API unavailable');return h.convert(body.records||body.rows.slice(1).map(values=>Object.fromEntries(body.rows[0].map((key,index)=>[key,values[index]]))));});
- h.service=createMarketplaceDraftOverwriteService({pool:h.pool,prepareMarketplace:h.prepare,validateSnapshot:async snapshot=>{const {prepareEcountFinancials}=await import('../services/marketplaceIntake.mjs');prepareEcountFinancials(snapshot);}});
+ h.service=createMarketplaceDraftOverwriteService({pool:h.pool,prepareMarketplace:h.prepare,enabled:()=>h.enabled,validateSnapshot:async snapshot=>{const {prepareEcountFinancials}=await import('../services/marketplaceIntake.mjs');prepareEcountFinancials(snapshot);}});
  h.addBatch=async(records,batchNumber='WMS-DRAFT-001')=>{
   const c=await h.convert(records,batchNumber),snapshot={platform:'Shopify',handler:{id:2,name:'原建立者'},settings:c.settings,sourceEvidence:c.sourceEvidence,barcodeReviews:[],summary:c.output.summary,headers:c.output.headers,rows:c.output.rows,reportHeaders:c.output.reportHeaders,reportRows:c.output.reportRows,orders:c.parsed.orders.map(order=>({...order,sourceFinancial:c.raw.orders.find(o=>o.sourceOrderNumber===order.sourceOrderNumber).financial})),items:c.parsed.items,prepick:c.prepick,...(c.output.salesLayout?{salesLayout:c.output.salesLayout}:{}),...(c.output.rounding?{rounding:c.output.rounding}:{})};
   const batch=(await db.query('INSERT INTO marketplace_intakes(batch_number,source_platform,source_store,fingerprint,created_by,snapshot) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[batchNumber,'Shopify',settings.store,batchNumber,2,snapshot])).rows[0];
@@ -62,6 +62,21 @@ describe('draft overwrite transaction with real PGlite SQL (advisory locks stubb
   expect(result.affectedBatches[0]).toMatchObject({canOverwrite:true,uploadedOrders:[{orderNumber:'#A',changed:true}],omittedOrders:[{orderNumber:'#B',decisionKey:'#B'}]});
   expect((await h.db.query('SELECT draft_active FROM marketplace_intake_orders')).rows).toEqual([{draft_active:true},{draft_active:true}]);
   expect((await h.db.query('SELECT * FROM marketplace_draft_revisions')).rows).toEqual([]);
+ });
+ test('disabled feature still provides a read-only preview with a clear unavailable action',async()=>{
+  h.enabled=false;const preview=await h.service.preview({rows:table([changed()]),records:[changed()],settings,enabled:true},actor);
+  expect(preview.affectedBatches[0]).toMatchObject({canOverwrite:false,blockedReasons:expect.arrayContaining(['轉檔修正功能發布檢查中，尚未開放覆蓋']),uploadedOrders:[{orderNumber:'#A'}]});
+  expect((await h.db.query('SELECT * FROM marketplace_draft_revisions')).rows).toHaveLength(0);
+ });
+ test('disabled direct confirm cannot be enabled by request data and does not reach API or writes',async()=>{
+  const body=await h.body();h.enabled=false;const apiCalls=h.prepareCalls,sqlCalls=h.calls.length;
+  await expect(h.service.apply({...body,enabled:true,WMS_DRAFT_OVERWRITE_ENABLED:'true'},actor)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_OVERWRITE_DISABLED',status:423});
+  expect(h.prepareCalls).toBe(apiCalls);expect(h.calls.slice(sqlCalls).every(([sql])=>sql.startsWith('SELECT request_hash,response'))).toBe(true);
+  expect((await h.db.query('SELECT * FROM marketplace_draft_revisions')).rows).toHaveLength(0);
+ });
+ test('disabled feature still reads a previously committed identical command before API',async()=>{
+  const body=await h.body(),response=await h.service.apply(body,actor),calls=h.prepareCalls;h.enabled=false;
+  expect(await h.service.apply(body,actor)).toEqual({...response,replayed:true});expect(h.prepareCalls).toBe(calls);
  });
  test('every omitted order requires an explicit answer and financial inconsistencies cannot be acknowledged away',async()=>{
   const body=await h.body();delete body.decisions['#B'];

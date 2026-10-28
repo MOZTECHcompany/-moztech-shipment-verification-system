@@ -91,7 +91,7 @@ async function buildSnapshot(batch,sources,conversion,decisions,user,omittedChec
  result.draftFingerprint=hash(result);return result;
 }
 
-function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,validateSnapshot=async snapshot=>{
+function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled=()=>process.env.WMS_DRAFT_OVERWRITE_ENABLED==='true',validateSnapshot=async snapshot=>{
  const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
  await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(item=>item.sku))],undefined,reviewed,snapshot);
 }}){
@@ -160,7 +160,8 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,validat
  async function preview(body,user){
   actor(user);const data=await collect(body,true),{context,conversion}=data;
   const validationErrors=conversion.output?.ok?[]:(conversion.output?.issues||[]).filter(issue=>issue.severity==='error').map(issue=>issue.message);
-  const affectedBatches=context.batches.map(({batch,sources,blockedReasons:reasons})=>({id:Number(batch.id),batchNumber:batch.batch_number,revision:Number(batch.snapshot.draftRevision||0),canOverwrite:reasons.length===0&&conversion.output?.ok===true,blockedReasons:[...reasons,...validationErrors],
+  const gateOpen=enabled()===true,gateReasons=gateOpen?[]:['轉檔修正功能發布檢查中，尚未開放覆蓋'];
+  const affectedBatches=context.batches.map(({batch,sources,blockedReasons:reasons})=>({id:Number(batch.id),batchNumber:batch.batch_number,revision:Number(batch.snapshot.draftRevision||0),canOverwrite:gateOpen&&reasons.length===0&&conversion.output?.ok===true,blockedReasons:[...gateReasons,...reasons,...validationErrors],
    uploadedOrders:sources.filter(source=>context.numbers.includes(source.source_order_number)).map(source=>{
     const number=source.source_order_number,before=summary(batch.snapshot,number,source),after=summary({orders:conversion.parsed.orders.map(order=>({...order,sourceFinancial:conversion.raw.orders.find(raw=>raw.sourceOrderNumber===order.sourceOrderNumber)?.financial})),items:conversion.parsed.items},number),diff=changes(before,after);
     const current=conversion.verification?.orders?.find(order=>order.number===number);
@@ -173,6 +174,7 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,validat
   const userId=actor(user);
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.commandId||'')||body.confirmed!==true||body.notImportedConfirmed!==true||!/^[a-f0-9]{64}$/.test(body.previewFingerprint||''))throw fail('請確認尚未匯入 ECOUNT 及覆蓋內容','MARKETPLACE_DRAFT_CONFIRMATION_REQUIRED',400);
   const requestHash=hash(body),previous=await command(pool,userId,body.commandId,requestHash);if(previous)return previous;
+  if(enabled()!==true)throw fail('轉檔修正功能發布檢查中，尚未開放覆蓋','MARKETPLACE_DRAFT_OVERWRITE_DISABLED',423);
   const data=await collect(body,true);
   if(data.previewFingerprint!==body.previewFingerprint)throw fail('原批次或商城資料已更新，請重新核對');
   if(data.conversion.output?.ok!==true)throw Object.assign(fail('新版訂單商品、折扣或金額尚未核對完成','MARKETPLACE_DRAFT_NOT_READY'),{issues:data.conversion.output?.issues||[]});
