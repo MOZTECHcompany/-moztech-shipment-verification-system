@@ -27,7 +27,7 @@ async function listBatches(pool,query){
  const rows=await pool.query(`SELECT i.id,i.batch_number,i.source_platform,i.source_store,i.created_at,i.archived_at,${dateExpr} AS sales_date,
  i.snapshot->'summary' AS summary,
  (SELECT json_build_object('erpConfirmedAt',f.erp_confirmed_at,'prepickCompletedAt',f.prepick_completed_at) FROM marketplace_warehouse_flows f WHERE f.intake_id=i.id) AS warehouse_flow,
- (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE o.intake_id=i.id) AS order_count,
+ (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE o.intake_id=i.id AND o.draft_active=TRUE) AS order_count,
  (SELECT COUNT(*)::int FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE o.intake_id=i.id) AS linked_count
  FROM marketplace_intakes i${f.where} ORDER BY ${dateExpr} DESC,i.id DESC LIMIT $${f.values.length+1} OFFSET $${f.values.length+2}`,[...f.values,f.pageSize,(f.page-1)*f.pageSize]);
  const status=query.status||'active';
@@ -39,7 +39,7 @@ async function batchLinks(pool,id){
  return (await pool.query(`SELECT o.source_order_number,l.order_id,w.import_batch_id,w.work_barcode,w.status,b.voucher_number
  FROM marketplace_intake_orders o LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=o.id
  LEFT JOIN orders w ON w.id=l.order_id LEFT JOIN warehouse_import_batches b ON b.id=w.import_batch_id
- WHERE o.intake_id=$1 ORDER BY o.id`,[id])).rows;
+ WHERE o.intake_id=$1 AND o.draft_active=TRUE ORDER BY o.id`,[id])).rows;
 }
 async function changeBatch(pool,id,action,actor,body){
  if(!validId(id))throw error('轉檔批次編號無效');

@@ -46,7 +46,7 @@ async function readFlow(db,id){
  LEFT JOIN users p ON p.id=f.print_owner_id LEFT JOIN users u ON u.id=f.prepick_owner_id LEFT JOIN users c ON c.id=f.erp_confirmed_by WHERE f.intake_id=$1`,[id])).rows[0]||null;
  const storedOrders=(await db.query(`SELECT s.*,l.order_id,w.status,w.picker_id,w.packer_id,p.name AS picker_name,k.name AS packer_name
  FROM marketplace_intake_orders s LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=s.id LEFT JOIN orders w ON w.id=l.order_id
- LEFT JOIN users p ON p.id=w.picker_id LEFT JOIN users k ON k.id=w.packer_id WHERE s.intake_id=$1 ORDER BY s.id`,[id])).rows;
+ LEFT JOIN users p ON p.id=w.picker_id LEFT JOIN users k ON k.id=w.packer_id WHERE s.intake_id=$1 AND s.draft_active=TRUE ORDER BY s.id`,[id])).rows;
  const orders=await warehouseOrderProductDetails(storedOrders,batch.snapshot);
  const snStats=(await db.query(`SELECT i.order_id,i.source_line_id,COUNT(s.id)::int AS sn_count FROM order_items i
  LEFT JOIN order_item_instances s ON s.order_item_id=i.id WHERE i.order_id=ANY($1::int[]) GROUP BY i.id`,[orders.filter(o=>o.order_id).map(o=>o.order_id)])).rows;

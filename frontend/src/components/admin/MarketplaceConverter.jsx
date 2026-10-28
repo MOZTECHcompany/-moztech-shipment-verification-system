@@ -7,6 +7,7 @@ import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime, handleWorkspaceAnchor } from '../../workspace/nativeRuntime.js';
 import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
+import MarketplaceDraftOverwrite from './MarketplaceDraftOverwrite';
 import { batchSessionMatches } from '../../utils/importBatches';
 import { formatMinor, ECOUNT_GROUPED_MODE } from '../../utils/marketplaceIntake.mjs';
 import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS } from '../../utils/unifiedMarketplace.mjs';
@@ -39,7 +40,7 @@ const reimportLink = order => {
   const resume = link?.startsWith('?batch=') && order.state === 'pending';
   return { link: resume ? link.replace('#batch-detail', '&view=resume#batch-detail') : link, resume };
 };
-const reimportStates = { pending: '待出貨', completed: '已出貨', warehouse_completed: '裝箱完成', partial: '部分出貨', cancelled: '已取消', voided: '已作廢', in_progress: '作業中', needs_review: '待核對' };
+const reimportStates = { pending: '待出貨', completed: '已出貨', warehouse_completed: '裝箱完成', partial: '部分出貨', cancelled: '已取消', voided: '已作廢', in_progress: '作業中', needs_review: '待核對', excluded: '本次不出貨' };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const batchNumber = () => `WMS-${today().replaceAll('-', '')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)), value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 const barcodeConflictKey = conflict => conflict.fingerprint;
@@ -82,6 +83,7 @@ function ConverterPage({ user }) {
   const [dragging, setDragging] = useState(false), [catalog, setCatalog] = useState(null);
   const [workbook, setWorkbook] = useState(null), [selectedSheet, setSelectedSheet] = useState('');
   const [barcodeChecks, setBarcodeChecks] = useState({});
+  const [draftOverwriteOpen, setDraftOverwriteOpen] = useState(false);
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); setExistingOrderLink(null); };
@@ -110,12 +112,14 @@ function ConverterPage({ user }) {
       setInput(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
       setBarcodeChecks({});
+      setDraftOverwriteOpen(false);
       setAccess('denied'); showMessage('登入人員已變更，請重新登入。', 'error');
     };
     window.addEventListener('storage', check);
     return () => { mounted.current = false; request.current++; window.removeEventListener('storage', check); };
   }, []);
-  const locked = busy || access !== 'ready';
+  useEffect(() => { setDraftOverwriteOpen(false); }, [routeContextKey]);
+  const locked = busy || access !== 'ready' || draftOverwriteOpen;
   const barcodeConflicts = prepared?.barcodeConflicts || [];
   const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
@@ -252,6 +256,7 @@ function ConverterPage({ user }) {
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
     setBarcodeChecks({});
+    setDraftOverwriteOpen(false);
   };
   const loadWorksheet = async (XLSX, book, sheetName, fileName, sequence) => {
     const result = parseMarketplaceWorksheet(XLSX, book, sheetName);
@@ -408,7 +413,13 @@ function ConverterPage({ user }) {
         </ul></div>}
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>
-      {reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
+      {reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><Button variant="secondary" disabled={locked || originalOrderFlow} onClick={() => { if (!locked && currentSession() && routeContext.current === routeContextKey) setDraftOverwriteOpen(true); }}>比對新版並重新產檔</Button></div><p className="mt-2 text-sm text-slate-600">尚未匯入 ECOUNT 的訂單有異動，可比對新版、回答差異提示後重新提供銷貨檔。</p>
+      {draftOverwriteOpen && !originalOrderFlow && <MarketplaceDraftOverwrite rows={input.source.rows} settings={settings} profileId={profileId}
+        isCurrent={() => mounted.current && currentSession() && routeContext.current === routeContextKey}
+        onBusyChange={value => { if (mounted.current) setBusy(value); }}
+        onClose={() => setDraftOverwriteOpen(false)}
+        onComplete={async () => { if (!await loadRecords() || !mounted.current || !currentSession() || routeContext.current !== routeContextKey) return; const sequence = ++request.current; await fetchPreview(input.source.rows, settings, profileId, sequence); }} />}
+      <div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
         const { link, resume } = reimportLink(order);
         return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
       })}</div></section>}

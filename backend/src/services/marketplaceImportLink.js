@@ -53,6 +53,7 @@ async function matchMarketplaceWorkOrders(db,groups,requiredIntakeId){
  for(const group of ordered){
   const record=await getRecord(db,group);
   if(!record){if(requiredIntakeId)throw fail(`商城訂單 ${group.sourceOrderNumber} 找不到對應轉檔資料，請核對平台、店鋪與訂單號`);continue;}
+  if(record.draft_active===false)throw fail(`商城訂單 ${group.sourceOrderNumber} 已由新版移出本次出貨，請使用最新版銷貨檔`);
   if(requiredIntakeId&&Number(record.intake_id)!==Number(requiredIntakeId))throw fail(`商城訂單 ${group.sourceOrderNumber} 不屬於指定轉檔批次`);
   if ((await db.query('SELECT 1 FROM marketplace_warehouse_flows WHERE intake_id=$1',[record.intake_id])).rowCount)throw fail('本批使用銷貨核對流程，請由批次頁回傳 ECOUNT 銷貨結果；不可用舊理貨入口繞過核對');
   await db.query('SELECT id FROM marketplace_intake_orders WHERE id=$1 FOR UPDATE',[record.id]);
@@ -62,7 +63,7 @@ async function matchMarketplaceWorkOrders(db,groups,requiredIntakeId){
   results.set(key(group),record);
  }
  if(requiredIntakeId){
-  const count=(await db.query('SELECT COUNT(*)::int AS count FROM marketplace_intake_orders WHERE intake_id=$1',[requiredIntakeId])).rows[0].count;
+  const count=(await db.query('SELECT COUNT(*)::int AS count FROM marketplace_intake_orders WHERE intake_id=$1 AND draft_active=TRUE',[requiredIntakeId])).rows[0].count;
   if(!count||count!==groups.length||results.size!==groups.length)throw fail('理貨單未包含指定轉檔批次的全部訂單，請核對是否漏單或選錯批次');
  }
  if(!requiredIntakeId&&results.size){
@@ -70,7 +71,7 @@ async function matchMarketplaceWorkOrders(db,groups,requiredIntakeId){
   const counts=new Map();
   for(const record of results.values())counts.set(record.intake_id,(counts.get(record.intake_id)||0)+1);
   for(const [id,received] of counts){
-   const expected=(await db.query('SELECT COUNT(*)::int AS count FROM marketplace_intake_orders WHERE intake_id=$1',[id])).rows[0].count;
+   const expected=(await db.query('SELECT COUNT(*)::int AS count FROM marketplace_intake_orders WHERE intake_id=$1 AND draft_active=TRUE',[id])).rows[0].count;
    if(expected!==received)throw fail(`轉檔批次 #${id} 的訂單未全部回匯，請核對是否漏單`);
   }
  }

@@ -53,7 +53,8 @@ async function classifyMarketplaceReimports({db,platform,store,raw,verification,
   else if(orders.some(task=>task.status==='voided')){state='voided';message='原工作單已作廢，請由主管處理';}
   else if(orders.some(task=>task.status!=='pending'||task.picker_id||task.packer_id||task.progress||task.history||task.labels||task.changes)){
    state='in_progress';message='原訂單作業中，請由主管處理';
-  }else if(source&&!source.batch.archived_at&&(!linked||order)){
+  }else if(source?.draft_active===false){state='excluded';message='已由新版移出本次出貨；整批尚未回匯或開始倉庫作業前可重新比對';}
+  else if(source&&!source.batch.archived_at&&(!linked||order)){
    state='pending';message='已保存，請開啟原訂單';
    try{
     // Use the same saved evidence and target-order guards as the update route.

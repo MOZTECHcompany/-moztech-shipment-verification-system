@@ -2,7 +2,7 @@ const express=require('express'),request=require('supertest');
 jest.mock('../services/marketplaceBarcodeReviews',()=>({readBarcodeReviews:jest.fn(async()=>[]),verifySavedBarcodeReviews:jest.fn(async()=>({}))}));
 jest.mock('../services/warehouseRelease',()=>({enableFlow:jest.fn(async()=>{})}));
 jest.mock('../services/marketplaceBatchNotifications',()=>({notifyMarketplaceBatch:jest.fn(async()=>{})}));
-jest.mock('../services/marketplaceProductCatalog',()=>({verifyCatalogMappings:jest.fn(async()=>{})}));
+jest.mock('../services/marketplaceProductCatalog',()=>({...jest.requireActual('../services/marketplaceProductCatalog'),verifyCatalogMappings:jest.fn(async()=>{})}));
 const {createMarketplacePreparation}=require('../services/marketplacePreparation');
 const {createMarketplaceRouter}=require('../routes/marketplaceRoutes');
 const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
@@ -66,6 +66,15 @@ test('all saved unshipped orders return their original owner without resolving p
  expect(response.status).toBe(200);expect(response.body).toMatchObject({newOrderCount:0,salesDownloadAllowed:false,reimports:preview.reimports});expect(response.body.id).toBeUndefined();
  expect(h.state.sources).toEqual(before);expect(h.state.saved).toEqual([]);noWrites(h.db);expect(h.db.query.mock.calls.map(([sql])=>sql)).toContain('ROLLBACK');
  const view=await request(h.app).post('/api/marketplace-intakes/preview').send(body);expect(view.body.sourceEvidence).toBeUndefined();expect(view.body.sourceClassification).toBeUndefined();
+});
+
+test('a draft-excluded source remains owned and can only return through explicit draft review',async()=>{
+ const h=await harness();h.state.sources[0].draft_active=false;
+ const preview=await h.prepare({rows:table([record()])});
+ expect(preview.reimports[0]).toMatchObject({orderNumber:'#OLD',intakeId:19,state:'excluded',canUpdateShipping:false});
+ expect(preview.parsed.orders).toEqual([]);expect(preview.output.rows).toEqual([]);expect(h.resolve).not.toHaveBeenCalled();
+ const result=await request(h.app).post('/api/marketplace-intakes').send({rows:table([record()]),previewFingerprint:preview.verification.currentFingerprint});
+ expect(result.status).toBe(200);expect(result.body.salesDownloadAllowed).toBe(false);expect(h.state.saved).toEqual([]);noWrites(h.db);
 });
 
 test('mixed uploads export and save only new orders while preserving the complete upload audit',async()=>{

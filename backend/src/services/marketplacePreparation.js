@@ -99,6 +99,12 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   }
   safeSettings(settingsInput);
   if(verification&&source.platform==='Shopify')settingsInput.shopifyShop=verification.shop;
+  let draftSourceReview=null;
+  if(options.overwriteOrderNumbers){
+   if(source.platform!=='Shopify')throw fail('目前僅支援 Shopify 原訂單草稿覆蓋','MARKETPLACE_DRAFT_PLATFORM');
+   const projection=require('./marketplaceDraftSource').projectDraftSource(source.rows,verifiedRows,verification,options.overwriteOrderNumbers);
+   verifiedRows=projection.rows;draftSourceReview=projection.review;
+  }
   const current=parseUnifiedMarketplace(verifiedRows);
   const raw=deliveryForOrders(current.source,current.parsed);
   // A cancelled order may have no remaining product rows. Keep its current
@@ -113,7 +119,8 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   }
   const sourceClassification={...await classifyReimports({db:pool,platform:source.platform,store:clean(settingsInput.store),raw,verification,profile,verifiedRows}),verifiedRows};
   const reimports=sourceClassification.reimports;
-  const salesRaw=newSalesSource(raw,reimports);
+  const replacing=new Set(options.overwriteOrderNumbers||[]);
+  const salesRaw=replacing.size?{...raw,orders:raw.orders.filter(o=>replacing.has(o.sourceOrderNumber)),items:raw.items.filter(i=>replacing.has(i.sourceOrderNumber)),issues:raw.issues.filter(i=>!i.orderNumber||replacing.has(i.orderNumber))}:newSalesSource(raw,reimports);
   if(verification&&source.platform==='Shopify')verification={...verification,currentFingerprint:digest([verification.currentFingerprint,sourceClassification.fingerprint,salesRaw.orders.map(order=>order.sourceOrderNumber).sort()])};
   // Determine eligibility before resolving products; removed and fulfilled
   // items cannot create new catalog exceptions for this shipment.
@@ -300,7 +307,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(prepared.parsed.items.length>1000||prepared.parsed.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
   if(prepared.parsed.orders.some(o=>!clean(o.sourceOrderNumber)||clean(o.sourceOrderNumber).length>100))throw fail('商城訂單號最多 100 字');
   if(clean(settings.store).length>100||clean(settings.customerCode).length>30||clean(settings.warehouseCode).length>30)throw fail('店鋪、客戶或倉庫欄位過長');
-  return {source,raw,...prepared,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification}};
+  return {source,raw,...prepared,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,...(draftSourceReview?{draftSourceReview}:{})}};
  };
 }
 module.exports={createMarketplacePreparation,deliveryForOrders,selectProfile};

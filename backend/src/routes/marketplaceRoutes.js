@@ -12,10 +12,16 @@ const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
 const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
-function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool})}){
+function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool}),draftOverwriteService=require('../services/marketplaceDraftOverwrite').createMarketplaceDraftOverwriteService({pool,prepareMarketplace})}){
  const router=express.Router();
  router.use(authorizeRoles('admin','dispatcher'));
  require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool);
+ for(const [path,method] of [['preview','preview'],['confirm','apply']]){
+  router.post(`/draft-overwrite/${path}`,async(req,res,next)=>{try{
+   const result=await draftOverwriteService[method](req.body||{},req.user);
+   res.set('Cache-Control','private, no-store').json(result);
+  }catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber});next(e);}});
+ }
  router.post('/preview',async(req,res,next)=>{try{
   const result=await prepareMarketplace(req.body||{});
   const {sourceEvidence,sourceClassification,barcodeReviewCandidates,...preview}=result;
@@ -61,7 +67,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))],undefined,reviewed,{...record.snapshot,platform:record.source_platform});
    try{(await import('../services/marketplaceBatchFiles.mjs')).savedBatchTables(record.snapshot,req.body.kind);}catch(e){throw Object.assign(e,{status:400});}
   }
-  require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id);
+  require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id,record.snapshot.draftRevision??0);
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  for(const [method,path,action] of [['patch','/:id/archive','archive'],['patch','/:id/restore','restore'],['delete','/:id','delete']]){
   router[method](path,async(req,res,next)=>{try{

@@ -87,7 +87,7 @@ function savedBusiness(verification,evidence,order,source,items){
 function savedShippingBaseline(batch,source,profiles,number){
   const snapshot=batch.snapshot,orders=snapshot?.orders?.filter(order=>order.sourceOrderNumber===number);
   if(orders?.length!==1||orders[0].sourcePlatform!=='Shopify'||snapshot.settings?.store!==batch.source_store)throw fail('原訂單平台或店鋪不一致');
-  if(!source||source.source_platform!=='Shopify'||source.source_store!==batch.source_store)throw fail('原批次找不到這筆 Shopify 訂單');
+  if(!source||source.draft_active===false||source.source_platform!=='Shopify'||source.source_store!==batch.source_store)throw fail('原批次找不到可出貨的這筆 Shopify 訂單');
   const verification=snapshot.sourceEvidence?.verification,old=verification?.orders?.filter(order=>order.number===number);
   if(verification?.platform!=='Shopify'||old?.length!==1||snapshot.settings.shopifyShop!==verification.shop)throw fail('原批次缺少可核對的 Shopify 店鋪或訂單證據');
   if(profiles.length!==1||profiles[0].settings?.shopifyShop!==verification.shop||profiles[0].settings.store!==batch.source_store)throw fail('店鋪連線設定已變更，請由主管核對');
