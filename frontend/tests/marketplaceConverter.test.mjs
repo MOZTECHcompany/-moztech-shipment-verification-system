@@ -849,9 +849,9 @@ test('all saved Shopify orders provide immediate original-sale continuation link
     const reimports = [savedShopifyOrder,{...savedShopifyOrder,orderNumber:'#REVIEW-2'}];
     const view = await converter({profiles:[shopifyProfile],reimports}); await view.select(file(shopifyBarcodeRows));
     const text = view.text(view.render());
-    assert.match(text,/已保存 2 筆 · 新增 0 筆/);
+    assert.match(text,/本次檔案 2 筆 · 已保存 2 筆 · 新單 0 筆/);
     assert.doesNotMatch(text,/沒有可轉換|進階設定與核對表|下載金額核對表|含稅 TWD 0/);
-    assert.equal(downloadSales(view),undefined); assert.equal(view.button('下載新單銷貨檔'),undefined);
+    assert.equal(downloadSales(view),undefined); assert.equal(view.button('下載新單銷貨檔'),undefined); assert.equal(view.button('比對並產生整份銷貨檔').props.disabled,false);
     const links=view.all(node=>node.type==='Button'&&view.text(node)==='接續原銷貨單');
     assert.equal(links.length,2);
     assert.equal(links[0].props.to,'?batch=19&order=%23REVIEW-1&view=resume#batch-detail');
@@ -860,20 +860,18 @@ test('all saved Shopify orders provide immediate original-sale continuation link
     assert.equal(view.downloads.length,0);
 });
 
-test('mixed Shopify upload shows new-only quantity and money while retaining original source rows at the server save boundary', async () => {
+test('mixed Shopify upload offers one complete-file comparison instead of a partial new-order export', async () => {
     const rows=shopifyBarcodeRows.map(row=>[...row]);rows[1][2]='OLD-ONLY-SKU';rows[1][3]='Old saved product';
     const view = await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]}); await view.select(file(rows));
-    assert.match(view.text(view.render()),/已保存 1 筆 · 新增 1 筆/);
-    assert.match(view.text(view.render()),/新單 2 件商品 ·\s*含稅\s+TWD\s+200/);
-    assert.doesNotMatch(view.text(view.render()),/Old saved product|OLD-ONLY-SKU/);
+    assert.match(view.text(view.render()),/本次檔案 2 筆 · 已保存 1 筆 · 新單 1 筆/);
+    assert.doesNotMatch(view.text(view.render()),/新單 2 件商品|含稅\s+TWD\s+200|下載新單銷貨檔/);
     assert.match(view.text(view.render()),/#REVIEW-1.*已保存 · 待出貨/s);
-    const button=view.button('下載新單銷貨檔');assert.equal(button.props.disabled,false);
+    const button=view.button('比對並產生整份銷貨檔');assert.equal(button.props.disabled,false);
     await button.props.onClick();view.render();
-    const save=view.requests.find(request=>request.url==='/api/marketplace-intakes');
-    assert.match(JSON.stringify(save.body.rows),/#REVIEW-1/);assert.match(JSON.stringify(save.body.rows),/#REVIEW-2/);
-    assert.equal(save.body.previewFingerprint,'verified-current-order-v1');
-    assert.equal(save.body.reimports,undefined);assert.equal(save.body.newOrderIds,undefined);
-    assert.equal(view.downloads.length,1);
+    const assistant=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');
+    assert.ok(assistant); assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-1/); assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-2/);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/download-link')).length,0);
+    assert.equal(view.downloads.length,0);
 });
 
 test('saved pending orders retain business-change warnings and a continuation entry when shipping updates are blocked',async()=>{
@@ -905,7 +903,7 @@ test('all-saved success after a save race never requests a download link or crea
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,1);
     assert.equal(view.requests.filter(request=>request.url.endsWith('/download-link')).length,0);
     assert.equal(previewCalls(view).length,2);assert.equal(view.downloads.length,0);
-    assert.match(view.text(view.render()),/已保存 2 筆 · 新增 0 筆/);assert.ok(view.button('接續原銷貨單'));
+    assert.match(view.text(view.render()),/本次檔案 2 筆 · 已保存 2 筆 · 新單 0 筆/);assert.ok(view.button('接續原銷貨單'));
 });
 
 test('returning from original-order continuation restores upload and replaces the previous saved-order list', async () => {
@@ -924,10 +922,11 @@ test('returning from original-order continuation restores upload and replaces th
     }
 });
 
-test('new-order barcode issues retain their download gate while a saved order still has its own update entry', async () => {
+test('mixed-file comparison stays available for full server review when new orders have barcode issues', async () => {
     const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));
-    assert.equal(view.button('下載新單銷貨檔').props.disabled,true);assert.ok(view.button('接續原銷貨單'));
-    await view.button('下載新單銷貨檔').props.onClick();
+    assert.equal(view.button('下載新單銷貨檔'),undefined);assert.ok(view.button('接續原銷貨單'));
+    const button=view.button('比對並產生整份銷貨檔');assert.equal(button.props.disabled,false);
+    await button.props.onClick();view.render();assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,0);assert.equal(view.downloads.length,0);
 });
 
@@ -939,15 +938,14 @@ test('session changes discard saved-order update links and reject their retained
     assert.equal(view.button('接續原銷貨單'),undefined);assert.equal(view.downloads.length,0);
 });
 
-test('original-sale continuation never displays another batch new-sale upload status',async()=>{
+test('original-sale continuation hides the complete-file action and rejects its retained callback',async()=>{
     const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});
-    await view.select(file(shopifyBarcodeRows));await view.button('下載新單銷貨檔').props.onClick();view.render();
-    assert.match(view.text(view.render()),/已保存・待 ECOUNT 匯入/);
-    const oldDownload=view.button('下載新單銷貨檔');
+    await view.select(file(shopifyBarcodeRows));const oldAction=view.button('比對並產生整份銷貨檔');
     view.navigate('batch=19&order=%23REVIEW-1&view=resume');
-    assert.doesNotMatch(view.text(view.render()),/已保存・待 ECOUNT 匯入|下載新單銷貨檔/);
+    assert.equal(view.button('比對並產生整份銷貨檔'),undefined);
     const saves=view.requests.filter(r=>r.url==='/api/marketplace-intakes').length;
-    await oldDownload.props.onClick();
+    await oldAction.props.onClick();view.render();
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);
     assert.equal(view.requests.filter(r=>r.url==='/api/marketplace-intakes').length,saves);
 });
 

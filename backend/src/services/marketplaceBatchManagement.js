@@ -1,4 +1,6 @@
 const validId=value=>/^[1-9]\d{0,9}$/.test(String(value))&&Number(value)<=2147483647;
+const {scopeSourcePredicate}=require('./marketplaceUploadScopes');
+const {currentScopePredicate}=require('./marketplaceScopeStatus');
 const error=(message,status=400)=>Object.assign(new Error(message),{status});
 const dateExpr="COALESCE(i.snapshot->'settings'->>'date',to_char(i.created_at AT TIME ZONE 'Asia/Taipei','YYYY-MM-DD'))";
 function listFilters(query){
@@ -26,9 +28,10 @@ async function listBatches(pool,query){
  const totals=(await pool.query(`SELECT COUNT(*)::int AS total,COALESCE(SUM((i.snapshot->'summary'->>'orderCount')::int),0)::int AS orders FROM marketplace_intakes i${f.where}`,f.values)).rows[0];
  const rows=await pool.query(`SELECT i.id,i.batch_number,i.source_platform,i.source_store,i.created_at,i.archived_at,${dateExpr} AS sales_date,
  i.snapshot->'summary' AS summary,
+ NOT COALESCE(${currentScopePredicate('i')},FALSE) AS superseded,
  (SELECT json_build_object('erpConfirmedAt',f.erp_confirmed_at,'prepickCompletedAt',f.prepick_completed_at) FROM marketplace_warehouse_flows f WHERE f.intake_id=i.id) AS warehouse_flow,
- (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE o.intake_id=i.id AND o.draft_active=TRUE) AS order_count,
- (SELECT COUNT(*)::int FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE o.intake_id=i.id) AS linked_count
+ CASE WHEN jsonb_typeof(i.snapshot->'orders')='array' THEN jsonb_array_length(i.snapshot->'orders') ELSE (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE ${scopeSourcePredicate('o','i.id')} AND o.draft_active=TRUE) END AS order_count,
+ (SELECT COUNT(*)::int FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE ${scopeSourcePredicate('o','i.id')}) AS linked_count
  FROM marketplace_intakes i${f.where} ORDER BY ${dateExpr} DESC,i.id DESC LIMIT $${f.values.length+1} OFFSET $${f.values.length+2}`,[...f.values,f.pageSize,(f.page-1)*f.pageSize]);
  const status=query.status||'active';
  const facetWhere=status==='all'?'':` WHERE archived_at IS ${status==='active'?'NULL':'NOT NULL'}`;
@@ -39,7 +42,7 @@ async function batchLinks(pool,id){
  return (await pool.query(`SELECT o.source_order_number,l.order_id,w.import_batch_id,w.work_barcode,w.status,b.voucher_number
  FROM marketplace_intake_orders o LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=o.id
  LEFT JOIN orders w ON w.id=l.order_id LEFT JOIN warehouse_import_batches b ON b.id=w.import_batch_id
- WHERE o.intake_id=$1 AND o.draft_active=TRUE ORDER BY o.id`,[id])).rows;
+ WHERE ${scopeSourcePredicate('o')} AND o.draft_active=TRUE ORDER BY o.id`,[id])).rows;
 }
 async function changeBatch(pool,id,action,actor,body){
  if(!validId(id))throw error('轉檔批次編號無效');
@@ -50,12 +53,13 @@ async function changeBatch(pool,id,action,actor,body){
   await db.query("SET LOCAL lock_timeout='2000ms'");await db.query("SET LOCAL statement_timeout='10000ms'");
   // Same lock ordering as conversion and ERP return: source identities first.
   // No physical deletion can race an import that is creating work-order links.
-  const identities=(await db.query('SELECT source_platform,source_store,source_order_number FROM marketplace_intake_orders WHERE intake_id=$1',[id])).rows.map(o=>JSON.stringify([o.source_platform,o.source_store,o.source_order_number])).sort((a,b)=>a.localeCompare(b));
+  const identities=(await db.query(`SELECT o.source_platform,o.source_store,o.source_order_number FROM marketplace_intake_orders o WHERE ${scopeSourcePredicate('o')}`,[id])).rows.map(o=>JSON.stringify([o.source_platform,o.source_store,o.source_order_number])).sort((a,b)=>a.localeCompare(b));
   for(const identity of identities)await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-marketplace-source'),hashtext($1))",[identity]);
   const record=(await db.query('SELECT * FROM marketplace_intakes WHERE id=$1 FOR UPDATE',[id])).rows[0];
   if(!record)throw error('找不到轉檔批次',404);
   if(action==='delete'){
    if(body?.confirmed!==true||body?.batchNumber!==record.batch_number)throw error('請確認要永久刪除的批次');
+   if(record.snapshot?.uploadScope||(await db.query('SELECT 1 FROM marketplace_intake_scope_orders m JOIN marketplace_intake_orders s ON s.id=m.intake_order_id WHERE s.intake_id=$1 OR m.intake_id=$1 LIMIT 1',[id])).rowCount)throw error('此批已有整份轉檔版本紀錄，請使用封存保留訂單對應。',409);
    if((await db.query('SELECT 1 FROM marketplace_warehouse_flows WHERE intake_id=$1 AND erp_confirmed_at IS NOT NULL',[id])).rowCount)throw error('此批已核對 ERP 並建立倉庫任務，請使用封存保留紀錄。',409);
    const linked=(await db.query(`SELECT 1 FROM marketplace_intake_orders o WHERE o.intake_id=$1 AND
     (EXISTS(SELECT 1 FROM marketplace_work_order_links l WHERE l.intake_order_id=o.id)
@@ -67,6 +71,7 @@ async function changeBatch(pool,id,action,actor,body){
    await db.query('DELETE FROM marketplace_intakes WHERE id=$1',[id]);
   }else{
    const archived=action==='archive';
+   if(archived&&(await db.query('SELECT 1 FROM marketplace_intake_scope_orders m JOIN marketplace_intake_orders s ON s.id=m.intake_order_id WHERE s.intake_id=$1 AND m.intake_id<>$1 LIMIT 1',[id])).rowCount)throw error('原訂單仍供新版轉檔使用，請保留此批次；可從最新轉檔批次進行封存。',409);
    if(Boolean(record.archived_at)===archived){await db.query('COMMIT');open=false;return {id:Number(id),action,unchanged:true};}
    await db.query('UPDATE marketplace_intakes SET archived_at=CASE WHEN $2 THEN NOW() ELSE NULL END,archived_by=CASE WHEN $2 THEN $3::integer ELSE NULL END WHERE id=$1',[id,archived,actor]);
   }

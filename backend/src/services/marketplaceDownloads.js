@@ -1,13 +1,15 @@
 const jwt=require('jsonwebtoken');
 const {validId,batchLinks}=require('./marketplaceBatchManagement');
+const {assertUploadScope}=require('./marketplaceUploadScopes');
 const COOKIE='wms_marketplace_download';
 const path=(id,kind)=>`/api/marketplace-files/${id}/${kind}`;
 const allowed=kind=>['ecount','ecount-grouped','prepick'].includes(kind);
-function issueDownload(res,id,kind,actor,draftRevision=0){
+function issueDownload(res,id,kind,actor,draftRevision=0,uploadScopeFingerprint){
  if(!validId(id)||!allowed(kind))throw Object.assign(new Error('下載類型或批次無效'),{status:400});
  const url=path(id,kind);
  // Deliberately no id/userId claim: this token cannot authenticate other APIs.
- const token=jwt.sign({downloadActor:actor,intakeId:Number(id),kind,draftRevision},process.env.JWT_SECRET,{algorithm:'HS256',audience:'wms-marketplace-file',expiresIn:120});
+ if(uploadScopeFingerprint!==undefined&&!/^[a-f0-9]{64}$/.test(uploadScopeFingerprint))throw Object.assign(new Error('本次訂單版本無效，請重新核對'),{status:409});
+ const token=jwt.sign({downloadActor:actor,intakeId:Number(id),kind,draftRevision,...(uploadScopeFingerprint?{uploadScopeFingerprint}:{})},process.env.JWT_SECRET,{algorithm:'HS256',audience:'wms-marketplace-file',expiresIn:120});
  res.cookie(COOKIE,token,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',maxAge:120000,path:url});
  res.set('Cache-Control','private, no-store').json({url,expiresIn:120});
 }
@@ -22,6 +24,8 @@ function downloadFile({pool}){return async(req,res,next)=>{
   const r=(await pool.query('SELECT * FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!r)return res.status(404).send('批次已刪除或不存在');
   if((claims.draftRevision??0)!==(r.snapshot.draftRevision??0))return res.status(409).send('銷貨版本已更新，請回批次頁核對後重新下載。');
+  await assertUploadScope(pool,r);
+  if(claims.uploadScopeFingerprint!==r.snapshot.uploadScope?.fingerprint)return res.status(409).send('本次訂單版本已更新，請重新核對並產檔。');
   let reviewWarning='';
   const physicalReview=r.snapshot.barcodeReviews?.some(review=>review?.evidence?.barcodeProof==='physical-scan-v1');
   try{const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,r.snapshot,undefined,{returnContext:true});await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))],undefined,reviewed,{...r.snapshot,platform:r.source_platform});}catch(e){if(req.params.kind==='prepick'&&e.status===400&&!physicalReview)reviewWarning=e.message;else throw e;}

@@ -4,6 +4,7 @@ const {reconcileSales}=require('./erpSalesReceipt');
 const {isWarehouseAdmin}=require('../utils/managementScope');
 const {notifyMarketplaceBatch}=require('./marketplaceBatchNotifications');
 const {deferredEvents}=require('../utils/transactionEvents');
+const {scopeSourcePredicate,assertUploadScope,readIntakeSources}=require('./marketplaceUploadScopes');
 const manager=user=>['admin','superadmin','dispatcher'].includes(user.role);
 const warehouseManager=user=>isWarehouseAdmin(user);
 const fail=(message,status=409)=>Object.assign(new Error(message),{status});
@@ -33,20 +34,22 @@ function marketplaceWorkItemName(item,expectedItems){
  return name;
 }
 async function enableFlow(db,id,actor){
- const linked=(await db.query('SELECT 1 FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE o.intake_id=$1 LIMIT 1',[id])).rowCount;
+ const sources=await readIntakeSources(db,id);
+ const linked=(await db.query(`SELECT 1 FROM marketplace_intake_orders o JOIN marketplace_work_order_links l ON l.intake_order_id=o.id WHERE ${scopeSourcePredicate('o')} LIMIT 1`,[id])).rowCount;
  if(linked)throw fail('此批已有舊理貨工作單，請從原理貨批次完成；不可重新建立任務');
  await db.query('INSERT INTO marketplace_warehouse_flows(intake_id,enabled_by) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,actor]);
- const orders=(await db.query('SELECT id FROM marketplace_intake_orders WHERE intake_id=$1 AND work_barcode IS NULL ORDER BY id',[id])).rows;
+ const orders=sources.filter(source=>!source.work_barcode);
  for(const o of orders)await db.query('UPDATE marketplace_intake_orders SET work_barcode=$2 WHERE id=$1',[o.id,createWorkBarcode()]);
 }
 async function readFlow(db,id){
  const batch=(await db.query('SELECT id,batch_number,source_platform,source_store,created_at,created_by,snapshot FROM marketplace_intakes WHERE id=$1',[id])).rows[0];
  if(!batch)throw fail('找不到批次',404);
+ await assertUploadScope(db,batch);
  const flow=(await db.query(`SELECT f.*,p.name AS print_owner_name,u.name AS prepick_owner_name,c.name AS erp_confirmed_name FROM marketplace_warehouse_flows f
  LEFT JOIN users p ON p.id=f.print_owner_id LEFT JOIN users u ON u.id=f.prepick_owner_id LEFT JOIN users c ON c.id=f.erp_confirmed_by WHERE f.intake_id=$1`,[id])).rows[0]||null;
  const storedOrders=(await db.query(`SELECT s.*,l.order_id,w.status,w.picker_id,w.packer_id,p.name AS picker_name,k.name AS packer_name
  FROM marketplace_intake_orders s LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=s.id LEFT JOIN orders w ON w.id=l.order_id
- LEFT JOIN users p ON p.id=w.picker_id LEFT JOIN users k ON k.id=w.packer_id WHERE s.intake_id=$1 AND s.draft_active=TRUE ORDER BY s.id`,[id])).rows;
+ LEFT JOIN users p ON p.id=w.picker_id LEFT JOIN users k ON k.id=w.packer_id WHERE ${scopeSourcePredicate('s')} AND s.draft_active=TRUE ORDER BY s.id`,[id])).rows;
  const orders=await warehouseOrderProductDetails(storedOrders,batch.snapshot);
  const snStats=(await db.query(`SELECT i.order_id,i.source_line_id,COUNT(s.id)::int AS sn_count FROM order_items i
  LEFT JOIN order_item_instances s ON s.order_item_id=i.id WHERE i.order_id=ANY($1::int[]) GROUP BY i.id`,[orders.filter(o=>o.order_id).map(o=>o.order_id)])).rows;
@@ -72,7 +75,7 @@ async function mutateFlow(pool,id,action,body,user,io){
   const previous=(await db.query('SELECT * FROM marketplace_warehouse_commands WHERE actor_id=$1 AND command_id=$2',[user.id,body.commandId])).rows[0];
   if(previous){if(previous.request_hash!==fingerprint)throw fail('同一操作識別不可用於不同內容');await db.query('ROLLBACK');open=false;return {...previous.response,reused:true};}
   // Same source-first lock order as legacy return, save and deletion.
-  const identities=(await db.query('SELECT source_platform,source_store,source_order_number FROM marketplace_intake_orders WHERE intake_id=$1',[id])).rows.map(o=>JSON.stringify([o.source_platform,o.source_store,o.source_order_number])).sort((a,b)=>a.localeCompare(b));
+  const identities=(await db.query(`SELECT s.source_platform,s.source_store,s.source_order_number FROM marketplace_intake_orders s WHERE ${scopeSourcePredicate('s')}`,[id])).rows.map(o=>JSON.stringify([o.source_platform,o.source_store,o.source_order_number])).sort((a,b)=>a.localeCompare(b));
   for(const key of identities)await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-marketplace-source'),hashtext($1))",[key]);
   if(!(await db.query('SELECT id FROM marketplace_intakes WHERE id=$1 FOR UPDATE',[id])).rowCount)throw fail('找不到批次',404);
   let f=(await db.query('SELECT * FROM marketplace_warehouse_flows WHERE intake_id=$1 FOR UPDATE',[id])).rows[0];

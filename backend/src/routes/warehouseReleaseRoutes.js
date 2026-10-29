@@ -1,6 +1,8 @@
 const express=require('express');
 const {readFlow,mutateFlow,manager,warehouseManager}=require('../services/warehouseRelease');
 const {validId}=require('../services/marketplaceBatchManagement');
+const {scopeSourcePredicate}=require('../services/marketplaceUploadScopes');
+const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const shippingFields=['recipient','phone','address','postalCode','method','storeName','storeCode','trackingNumber','note'];
 function warehouseShipping(value){
  if(!value||typeof value!=='object'||Array.isArray(value))return {};
@@ -19,10 +21,10 @@ function createWarehouseReleaseRouter({pool}){
  const handle=fn=>async(req,res,next)=>{try{await fn(req,res);}catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}};
  router.get('/',handle(async(req,res)=>{
   const rows=(await pool.query(`SELECT i.id,i.batch_number,i.source_platform,i.source_store,f.erp_confirmed_at,f.printed_at,f.prepick_completed_at,u.name AS prepick_owner_name,
-   (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE o.intake_id=i.id AND o.draft_active=TRUE) AS order_count,
-   (SELECT COALESCE(SUM((item->>'quantity')::int),0)::int FROM marketplace_intake_orders o CROSS JOIN LATERAL jsonb_array_elements(o.expected_items) item WHERE o.intake_id=i.id AND o.draft_active=TRUE) AS total_quantity
+   (SELECT COUNT(*)::int FROM marketplace_intake_orders o WHERE ${scopeSourcePredicate('o','i.id')} AND o.draft_active=TRUE) AS order_count,
+   (SELECT COALESCE(SUM((item->>'quantity')::int),0)::int FROM marketplace_intake_orders o CROSS JOIN LATERAL jsonb_array_elements(o.expected_items) item WHERE ${scopeSourcePredicate('o','i.id')} AND o.draft_active=TRUE) AS total_quantity
    FROM marketplace_warehouse_flows f JOIN marketplace_intakes i ON i.id=f.intake_id LEFT JOIN users u ON u.id=f.prepick_owner_id
-   WHERE i.archived_at IS NULL AND (NOT $3::boolean OR (f.erp_confirmed_at IS NOT NULL AND f.prepick_completed_at IS NULL)) AND ($1::boolean OR (f.prepick_owner_id=$2 AND f.prepick_completed_at IS NULL))
+   WHERE i.archived_at IS NULL AND ${currentScopePredicate('i')} AND (NOT $3::boolean OR (f.erp_confirmed_at IS NOT NULL AND f.prepick_completed_at IS NULL)) AND ($1::boolean OR (f.prepick_owner_id=$2 AND f.prepick_completed_at IS NULL))
    ORDER BY i.id DESC LIMIT 100`,[manager(req.user),req.user.id,req.query.ready==='1'])).rows;
   res.set('Cache-Control','private, no-store').json({batches:rows});
  }));

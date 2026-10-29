@@ -19,6 +19,7 @@ async function setup(){
  CREATE TABLE warehouse_import_batches(id SERIAL PRIMARY KEY,voucher_number TEXT);
  CREATE TABLE marketplace_warehouse_events(id SERIAL PRIMARY KEY,intake_id INTEGER,action TEXT);`);
  await db.exec(fs.readFileSync(require.resolve('../../migrations/041_marketplace_draft_revisions.sql'),'utf8'));
+ await db.exec(fs.readFileSync(require.resolve('../../migrations/042_marketplace_upload_scopes.sql'),'utf8'));
  const h={db,calls:[],prepareCalls:0,commitAckLost:false,failUpdate:false,beforeConnect:null,live:{},failOmitted:false,enabled:true};
  const query=async(sql,args)=>{
   h.calls.push([sql,args]);
@@ -95,6 +96,7 @@ describe('draft overwrite transaction with real PGlite SQL (advisory locks stubb
   const after=(await h.db.query('SELECT * FROM marketplace_intake_orders ORDER BY id')).rows;
   expect(after.map(r=>[r.id,r.intake_id,r.source_order_number,r.work_barcode])).toEqual(before.map(r=>[r.id,r.intake_id,r.source_order_number,r.work_barcode]));
   expect(after.map(r=>r.draft_active)).toEqual([true,false]);
+  expect(after.map(r=>r.draft_version)).toEqual([1,1]);
   const audit=(await h.db.query('SELECT * FROM marketplace_draft_revisions')).rows[0];expect(audit.before_snapshot).toEqual(h.batch.snapshot);expect(audit.before_sources.map(source=>source.id)).toEqual(before.map(source=>source.id));expect(audit.actor_id).toBe(1);expect(audit.after_hash).toMatch(/^[a-f0-9]{64}$/);
   expect((await h.db.query('SELECT * FROM orders')).rows).toEqual([]);
  });

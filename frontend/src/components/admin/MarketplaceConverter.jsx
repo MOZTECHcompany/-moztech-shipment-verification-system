@@ -319,6 +319,9 @@ function ConverterPage({ user }) {
   };
   const download = async kind => {
     if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession() || originalOrderFlow || routeContext.current !== routeContextKey) return;
+    // A file containing saved orders is confirmed and exported as one file.
+    // The new-order-only save route remains for files with no saved orders.
+    if (kind === 'ecount' && reimports.length > 0) { setDraftOverwriteOpen(true); return; }
     if (kind === 'ecount' && (!prepared.parsed.orders.length || !prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
     if (kind === 'audit' && (!prepared.audit.ok || !prepared.prepick.ok)) return;
     inFlight.current = true; setBusy(true); showMessage('');
@@ -396,11 +399,11 @@ function ConverterPage({ user }) {
         {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store} · {profile.settings.customerCode}</option>)}</select></Field></div>
           : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><h2 className="text-lg font-semibold">{reimports.length ? `已保存 ${reimports.length} 筆 · 新增 ${prepared.parsed.summary.orderCount} 筆` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{!onlyReimports && <p className="mt-2 text-sm text-slate-700">{reimports.length ? `新單 ${prepared.parsed.summary.totalQuantity} 件商品 · ` : ''}含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
-            {prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
-            {prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
+          <div><h2 className="text-lg font-semibold">{reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length} 筆` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{reimports.length ? <p className="mt-2 text-sm text-slate-700">比對整份檔案的新增與異動，確認後下載同一份銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
+            {!reimports.length && prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
+            {!reimports.length && prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
           </div>
-          {!onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reimports.length ? '下載新單銷貨檔' : '下載銷貨檔'}</Button>}
+          {reimports.length > 0 ? <Button disabled={locked || previewDirty || originalOrderFlow} onClick={() => download('ecount')}><Download size={16} className="mr-2" />比對並產生整份銷貨檔</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>}
         </div>
         {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
@@ -413,7 +416,7 @@ function ConverterPage({ user }) {
         </ul></div>}
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>
-      {reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><Button variant="secondary" disabled={locked || originalOrderFlow} onClick={() => { if (!locked && currentSession() && routeContext.current === routeContextKey) setDraftOverwriteOpen(true); }}>比對新版並重新產檔</Button></div><p className="mt-2 text-sm text-slate-600">尚未匯入 ECOUNT 的訂單有異動，可比對新版、回答差異提示後重新提供銷貨檔。</p>
+      {reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><p className="mt-2 text-sm text-slate-600">使用上方「比對並產生整份銷貨檔」，一併核對本次檔案的新單與已保存訂單。</p>
       {draftOverwriteOpen && !originalOrderFlow && <MarketplaceDraftOverwrite rows={input.source.rows} settings={settings} profileId={profileId}
         isCurrent={() => mounted.current && currentSession() && routeContext.current === routeContextKey}
         onBusyChange={value => { if (mounted.current) setBusy(value); }}

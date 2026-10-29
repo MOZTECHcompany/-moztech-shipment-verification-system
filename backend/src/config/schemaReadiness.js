@@ -1,6 +1,7 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    marketplace_intake_scope_orders: ['intake_id','intake_order_id','source_version'],
     marketplace_draft_commands: ['actor_id','command_id','request_hash','response','created_at'],
     marketplace_draft_revisions: ['id','intake_id','revision','before_snapshot','before_sources','after_hash','actor_id','command_id','reason','created_at'],
     wms_cartons: ['carton_id','status','content_revision','state_revision','source_system','source_reference'],
@@ -18,7 +19,7 @@ const requiredColumns = {
     marketplace_store_profiles: ['id','platform','store','settings','updated_by','updated_at'],
     marketplace_intakes: ['id', 'batch_number', 'source_platform', 'source_store', 'fingerprint', 'created_by', 'created_at', 'snapshot', 'archived_at', 'archived_by'],
     marketplace_intake_events: ['id', 'intake_id', 'batch_number', 'action', 'actor_id', 'created_at'],
-    marketplace_intake_orders: ['id', 'intake_id', 'source_platform', 'source_store', 'source_order_number', 'expected_items', 'nonstock_items', 'financial','draft_active'],
+    marketplace_intake_orders: ['id', 'intake_id', 'source_platform', 'source_store', 'source_order_number', 'expected_items', 'nonstock_items', 'financial','draft_active','draft_version'],
     marketplace_work_order_links: ['intake_order_id', 'order_id', 'linked_at'],
     warehouse_import_batches: ['id', 'voucher_number', 'created_by', 'created_at'],
     wms_claim_commands: ['user_id', 'command_id', 'request_hash', 'order_id', 'stage', 'response', 'created_at'],

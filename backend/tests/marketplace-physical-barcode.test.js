@@ -149,7 +149,7 @@ describe('Shopify blank barcode physical confirmation',()=>{
   const verification=jest.spyOn(service,'verifySavedBarcodeReviews').mockRejectedValue(Object.assign(new Error('AUDIT missing reference'),{status:400,code:'BARCODE_REVIEW_UNAVAILABLE'}));
   try{
    const token=jwt.sign({downloadActor:1,intakeId:1,kind},process.env.JWT_SECRET,{algorithm:'HS256',audience:'wms-marketplace-file',expiresIn:120});
-   const readOnlyPool={query:jest.fn(async sql=>({rows:sql.includes('SELECT role FROM users')?[{role:'dispatcher'}]:[{id:1,snapshot:saved,source_platform:'Shopify'}]}))};
+   const readOnlyPool={query:jest.fn(async sql=>({rows:sql.includes('SELECT role FROM users')?[{role:'dispatcher'}]:sql.startsWith('SELECT * FROM marketplace_intakes')?[{id:1,snapshot:saved,source_platform:'Shopify'}]:sql.startsWith('SELECT EXISTS(')?[{borrowed:false}]:[]}))};
    const res={status:jest.fn(),send:jest.fn()};res.status.mockReturnValue(res);
    await downloadFile({pool:readOnlyPool})({params:{id:'1',kind},headers:{cookie:`wms_marketplace_download=${token}`}},res,jest.fn());
    expect(res.status).toHaveBeenCalledWith(400);expect(res.send).toHaveBeenCalledWith('AUDIT missing reference');

@@ -5,6 +5,10 @@ const {validId}=require('./marketplaceBatchManagement');
 const fields=['recipient','phone','address','postalCode','method','storeName','storeCode','trackingNumber','note'];
 const clean=value=>String(value??'').trim();
 const fail=(message,code='MARKETPLACE_SHIPPING_NOT_AVAILABLE',status=409)=>Object.assign(new Error(message),{status,code});
+function assertShippingScope(batch,referenced=false){
+ if(Object.prototype.hasOwnProperty.call(batch?.snapshot||{},'uploadScope')||referenced===true)
+  throw fail('此訂單已納入整份轉檔版本，請依最新整份訂單檔重新轉檔','MARKETPLACE_SHIPPING_UPLOAD_SCOPE');
+}
 function canonical(value){
  if(Object.prototype.toString.call(value)==='[object Date]')return value.toISOString();
  if(Array.isArray(value))return value.map(canonical);
@@ -123,7 +127,12 @@ function createMarketplaceShippingService({pool,verifyShopify=createShopifyOrder
   const batch=(await db.query('SELECT * FROM marketplace_intakes WHERE id=$1'+(lock?' FOR UPDATE':''),[Number(id)])).rows[0];
   if(!batch)throw fail('找不到原批次','MARKETPLACE_SHIPPING_NOT_FOUND',404);
   if(batch.archived_at||batch.source_platform!=='Shopify')throw fail('請從未封存的 Shopify 原批次核對收件資料');
+  assertShippingScope(batch);
   const source=(await db.query('SELECT * FROM marketplace_intake_orders WHERE intake_id=$1 AND source_order_number=$2'+(lock?' FOR UPDATE':''),[Number(id),number])).rows[0];
+  if(source){
+   const references=await db.query('SELECT 1 FROM marketplace_intake_scope_orders WHERE intake_order_id=$1 LIMIT 1',[source.id]);
+   assertShippingScope(batch,references.rows.length>0);
+  }
   const profiles=(await db.query("SELECT id,platform,store,settings FROM marketplace_store_profiles WHERE platform='Shopify' AND store=$1"+(lock?' FOR SHARE':''),[batch.source_store])).rows;
   const baseline=savedShippingBaseline(batch,source,profiles,number);
   const flow=(await db.query('SELECT * FROM marketplace_warehouse_flows WHERE intake_id=$1'+(lock?' FOR UPDATE':''),[Number(id)])).rows[0]||null;
@@ -219,4 +228,4 @@ function createMarketplaceShippingService({pool,verifyShopify=createShopifyOrder
  }
  return {preview,apply};
 }
-module.exports={createMarketplaceShippingService,sourceRows,business,savedShippingBaseline,assertCurrentBusiness,assertAvailable};
+module.exports={createMarketplaceShippingService,sourceRows,business,savedShippingBaseline,assertCurrentBusiness,assertAvailable,assertShippingScope};

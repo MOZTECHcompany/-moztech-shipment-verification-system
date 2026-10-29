@@ -25,7 +25,7 @@ const apiError=message=>Object.assign(Error(message),{response:{data:{message}}}
 
 // Real component callbacks, real accounting snapshot, and local API responses.
 // No server, database, platform credentials, or real orders are used.
-async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,getWait=null,postResponder=null,changed=true,flow={erp_confirmed_at:null}}={}){
+async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,getWait=null,postResponder=null,patchResponder=null,listRecords=[],changed=true,flow={erp_confirmed_at:null}}={}){
  const {code}=await transform(source,{loader:'jsx',format:'cjs'});
  const hooks=[],effects=[],requests=[],scrolls=[],records=new Map([[19,structuredClone(record)],[20,{...structuredClone(record),id:20,batchNumber:'SYN-SECOND'}]]);
  let query=new URLSearchParams(params),cursor=0,dirty=false,tree,mounted=true,sessionValid=true,lateUpdates=0;
@@ -40,7 +40,7 @@ async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,g
  const api={
   get:async(url,options)=>{
    requests.push({method:'get',url,options});if(getWait)await getWait(url);
-   if(url==='/api/marketplace-intakes')return {data:{intakes:[],facets:[],total:0,orders:0,pageSize:20}};
+   if(url==='/api/marketplace-intakes')return {data:{intakes:structuredClone(listRecords),facets:[],total:listRecords.length,orders:0,pageSize:20}};
    if(url.startsWith('/api/warehouse-intakes/'))return {data:{flow}};
    const id=Number(url.split('/').at(-1));return {data:structuredClone(records.get(id))};
   },
@@ -51,7 +51,7 @@ async function manager({params='batch=19&order=%23SYN-ORIGINAL',record=fixture,g
    if(url.endsWith('/shipping-update')){records.get(id).orders.find(order=>order.sourceOrderNumber===body.orderNumber).shipping=structuredClone(currentShipping);return {data:{ok:true,intakeId:id,orderNumber:body.orderNumber,updated:true}};}
    throw Error(`Unexpected POST ${url}`);
   },
-  patch:async()=>{throw Error('Recovery must not archive or restore');},
+  patch:async(url,body)=>{requests.push({method:'patch',url,body});if(patchResponder)return await patchResponder(url,body);throw Error('Recovery must not archive or restore');},
   delete:async()=>{throw Error('Recovery must not delete orders');},
  };
  const imports={'../../workspace/nativeRuntime.js':nativeRuntime,'../../workspace/downloads.js':nativeDownloads,react,'react-router-dom':{Link:'Link',useSearchParams:()=>[query,(update)=>{query=typeof update==='function'?update(new URLSearchParams(query)):new URLSearchParams(update);dirty=true;}]},'lucide-react':{},'../../ui':{Button:'Button'},'@/api/api.js':api,'../../utils/marketplaceIntake.mjs':intake,'../../api/origin':{API_ORIGIN:''},'./AdminDashboard':{AdminDashboard:'AdminDashboard'}};
@@ -408,4 +408,44 @@ test('an in-flight original sales download is discarded on resume without issuin
  assert.equal(posts(view).length,1);assert.equal(view.button('保存收件資料'),undefined);
  assert.doesNotMatch(view.text(view.render()),/old-full-batch-sales|銷貨檔已下載/);
  assert.ok(view.find(view.render(),node=>node.type==='AdminDashboard'));
+});
+
+
+test('superseded batch history skips warehouse reads and offers no return, shipping, or executable sales flow',async()=>{
+ for(const params of ['batch=19','batch=19&order=%23SYN-ORIGINAL&view=resume','batch=19&order=%23SYN-ORIGINAL&shipping=refresh']){
+  const view=await manager({params,record:{...fixture,superseded:true},getWait:async url=>{if(url.startsWith('/api/warehouse-intakes/'))throw Error('Historical batch must not request an executable warehouse flow');}});
+  const text=view.text(view.render());assert.match(text,/已有更新版本/);assert.match(text,/此頁僅供查看歷史/);assert.match(text,/本次整份轉檔批次下載與回匯/);assert.match(text,/#SYN-ORIGINAL/);
+  assert.equal(view.requests.some(request=>request.url.startsWith('/api/warehouse-intakes/')),false);
+  assert.equal(view.all(node=>node.type==='AdminDashboard').length,0);assert.equal(view.button('更新收件資料'),undefined);assert.equal(view.button('接續原銷貨單'),undefined);
+  for(const button of view.all(node=>node.type==='Button'&&/下載/.test(view.text(node)))){assert.equal(button.props.disabled,true);await button.props.onClick();}
+  assert.equal(posts(view).length,0);
+ }
+});
+
+test('superseded saved-batch cards disable sales download, return, archive and delete while history remains available',async()=>{
+ const row={id:19,batch_number:'SYN-HISTORY',source_platform:'Shopify',source_store:'Local Store',sales_date:'2026-10-29',order_count:2,linked_count:0,summary:fixture.summary,superseded:true};
+ const view=await manager({params:'',listRecords:[row]});
+ assert.match(view.text(view.render()),/已有更新版本/);assert.ok(view.find(view.render(),node=>node.type==='Link'&&node.props.to==='?batch=19#batch-detail'));
+ const download=view.button('下載銷貨檔'),returned=view.button('匯回 ECOUNT 理貨單');assert.equal(download.props.disabled,true);assert.equal(returned.props.disabled,true);
+ let prevented=0;returned.props.onClick({preventDefault(){prevented++;}});assert.equal(prevented,1);await download.props.onClick();
+ for(const label of ['封存','刪除']){const control=view.find(view.render(),node=>node.type==='button'&&view.text(node).includes(label));assert.equal(control.props.disabled,true);}
+ assert.equal(posts(view).length,0);
+});
+
+test('a refreshed superseded flag blocks previously captured batch download and return callbacks',async()=>{
+ const listRecords=[{id:19,batch_number:'SYN-HISTORY',source_platform:'Shopify',source_store:'Local Store',sales_date:'2026-10-29',order_count:2,linked_count:0,summary:fixture.summary,superseded:false}];
+ const view=await manager({params:'',listRecords});const download=view.button('下載銷貨檔'),returned=view.button('匯回 ECOUNT 理貨單');
+ assert.equal(download.props.disabled,false);listRecords[0].superseded=true;view.setProps({refreshKey:1});await view.flush();
+ let prevented=0;returned.props.onClick({preventDefault(){prevented++;}});await download.props.onClick();
+ assert.equal(prevented,1);assert.equal(posts(view).length,0);assert.equal(view.button('下載銷貨檔').props.disabled,true);
+});
+
+
+test('an archived batch can be restored even when unavailable, without enabling its superseded sales actions',async()=>{
+ const listRecords=[{id:19,batch_number:'SYN-ARCHIVED',source_platform:'Shopify',source_store:'Local Store',sales_date:'2026-10-29',order_count:2,linked_count:0,summary:fixture.summary,superseded:true,archived_at:'2026-10-29T00:00:00Z'}];
+ const view=await manager({params:'',listRecords,patchResponder:async url=>{assert.equal(url,'/api/marketplace-intakes/19/restore');listRecords[0].archived_at=null;return {data:{id:19,action:'restore'}};}});
+ const restore=view.find(view.render(),node=>node.type==='button'&&view.text(node).includes('取消封存'));assert.equal(restore.props.disabled,false);
+ await restore.props.onClick();await view.flush();
+ assert.equal(view.requests.filter(request=>request.method==='patch').length,1);assert.match(view.text(view.render()),/批次已取消封存/);
+ assert.equal(view.button('下載銷貨檔').props.disabled,true);assert.equal(view.button('匯回 ECOUNT 理貨單').props.disabled,true);assert.equal(posts(view).length,0);
 });

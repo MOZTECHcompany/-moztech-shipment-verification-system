@@ -91,7 +91,7 @@ async function buildSnapshot(batch,sources,conversion,decisions,user,omittedChec
  result.draftFingerprint=hash(result);return result;
 }
 
-function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled=()=>process.env.WMS_DRAFT_OVERWRITE_ENABLED==='true',validateSnapshot=async snapshot=>{
+function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled=()=>process.env.WMS_DRAFT_OVERWRITE_ENABLED==='true',mixedEnabled=()=>process.env.WMS_MIXED_REEXPORT_ENABLED==='true',validateSnapshot=async snapshot=>{
  const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
  await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(item=>item.sku))],undefined,reviewed,snapshot);
 }}){
@@ -105,6 +105,7 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
   if(!numbers.length||new Set(numbers).size!==numbers.length)throw fail('來源訂單不完整');
   const owned=(await db.query('SELECT * FROM marketplace_intake_orders WHERE source_platform=$1 AND source_store=$2 AND source_order_number=ANY($3::text[]) ORDER BY id',[platform,store,numbers])).rows;
   if(owned.length!==numbers.length)throw fail('本次含未保存的新訂單，請先分開處理','MARKETPLACE_DRAFT_NEW_ORDERS');
+  if((await db.query('SELECT 1 FROM marketplace_intake_scope_orders WHERE intake_order_id=ANY($1::int[]) LIMIT 1',[owned.map(source=>Number(source.id))])).rowCount)throw fail('原訂單已納入整份轉檔版本，請使用新版比對重新產檔','MARKETPLACE_DRAFT_USE_UPLOAD_SCOPE');
   const ids=[...new Set(owned.map(source=>Number(source.intake_id)))].sort((a,b)=>a-b);
   if(batchIds&&hash(ids)!==hash(batchIds))throw fail('來源訂單批次已變更');
   const batches=[];
@@ -204,12 +205,12 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
     await db.query('UPDATE marketplace_intakes SET snapshot=$2 WHERE id=$1',[batch.id,JSON.stringify(next)]);
     for(const source of sources){
      const number=source.source_order_number,order=next.orders.find(value=>value.sourceOrderNumber===number);
-     if(!active.has(number)){await db.query('UPDATE marketplace_intake_orders SET draft_active=FALSE WHERE id=$1',[source.id]);continue;}
+     if(!active.has(number)){await db.query('UPDATE marketplace_intake_orders SET draft_active=FALSE,draft_version=draft_version+1 WHERE id=$1',[source.id]);continue;}
      const expected=next.items.filter(item=>item.sourceOrderNumber===number).map(item=>({sourceLineId:item.sourceLineId,sourceSku:item.sku,productCode:next.settings.skuMappings[item.sku].erpSku,...warehouseProductDetails(item,next.settings.skuMappings[item.sku]),quantity:item.quantity,...mappingScanIdentity(next.settings.skuMappings[item.sku]),groupName:item.groupName,...(item.sourceSkuFormat?{sourceSkuFormat:item.sourceSkuFormat,sourceBarcode:item.sourceBarcode,campaignGroupName:item.campaignGroupName,campaignRound:item.campaignRound}:{})}));
      const ids=new Set(expected.map(item=>item.sourceLineId));
      const nonstock=next.rows.filter(row=>row[12]===number&&!ids.has(row[15])).map(row=>({sourceLineId:row[15],productCode:row[11],quantity:row[19]}));
      const rounding=next.rounding?.orders.find(entry=>entry.identity[0]===order.sourcePlatform&&entry.identity[1]===number);
-     await db.query('UPDATE marketplace_intake_orders SET draft_active=TRUE,expected_items=$2,nonstock_items=$3,financial=$4 WHERE id=$1',[source.id,JSON.stringify(expected),JSON.stringify(nonstock),JSON.stringify({source:order.sourceFinancial,ecount:order.financial,...(rounding?{erpRounding:{policy:next.rounding.policy,...rounding}}:{})})]);
+     await db.query('UPDATE marketplace_intake_orders SET draft_active=TRUE,expected_items=$2,nonstock_items=$3,financial=$4,draft_version=draft_version+1 WHERE id=$1',[source.id,JSON.stringify(expected),JSON.stringify(nonstock),JSON.stringify({source:order.sourceFinancial,ecount:order.financial,...(rounding?{erpRounding:{policy:next.rounding.policy,...rounding}}:{})})]);
     }
     batches.push({id:Number(batch.id),batchNumber:batch.batch_number,draftRevision:next.draftRevision,draftFingerprint:next.draftFingerprint,activeOrderCount:next.orders.length,excludedOrderNumbers:sources.filter(source=>!active.has(source.source_order_number)).map(source=>source.source_order_number)});
    }
@@ -218,6 +219,7 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
    commitAttempted=true;await db.query('COMMIT');open=false;return response;
   }catch(error){if(open)try{await db.query('ROLLBACK');}catch{tainted=true;}if(commitAttempted)throw fail('覆蓋結果尚未確認，請以相同操作識別重試讀取結果','MARKETPLACE_DRAFT_RESULT_UNKNOWN',503);throw error;}finally{db.release(tainted);}
  }
- return {preview,apply};
+ const mixed=require('./marketplaceMixedReexport').createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled:mixedEnabled,validateSnapshot});
+ return {preview:(body,user)=>body?.scopeMode==='uploaded-file-v2'?mixed.preview(body,user):preview(body,user),apply:(body,user)=>body?.scopeMode==='uploaded-file-v2'?mixed.apply(body,user):apply(body,user)};
 }
-module.exports={createMarketplaceDraftOverwriteService};
+module.exports={createMarketplaceDraftOverwriteService,draftOverwriteTools:{canonical,hash,summary,changes,oldRaw,mergedRows,blockedReasons}};

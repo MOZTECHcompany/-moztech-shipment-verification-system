@@ -77,6 +77,24 @@ test('a draft-excluded source remains owned and can only return through explicit
  expect(result.status).toBe(200);expect(result.body.salesDownloadAllowed).toBe(false);expect(h.state.saved).toEqual([]);noWrites(h.db);
 });
 
+test.each(['scope-run','borrowed-canonical'])('%s never advertises shipping-only correction on re-upload',async(mode)=>{
+ const h=await harness();
+ if(mode==='scope-run')h.state.sources[0].batch.snapshot.uploadScope={version:'uploaded-file-v2'};
+ else h.state.sources[0].upload_scope_referenced=true;
+ const preview=await h.prepare({rows:table([record()])});
+ expect(preview.reimports[0]).toMatchObject({orderNumber:'#OLD',intakeId:19,state:'pending',canUpdateShipping:false,message:'此訂單已納入整份轉檔版本，請依最新整份訂單檔重新轉檔'});
+ expect(preview.output.rows).toEqual([]);expect(h.pool.connect).not.toHaveBeenCalled();expect(h.state.saved).toEqual([]);
+});
+
+test('a new scope reference changes the reimport ledger fingerprint before a normal save can use it',async()=>{
+ const h=await harness(),body={rows:table([record()])},before=await h.prepare(body);
+ h.state.sources[0].upload_scope_referenced=true;
+ const after=await h.prepare(body,{refresh:true});
+ expect(after.verification.currentFingerprint).not.toBe(before.verification.currentFingerprint);
+ expect(after.reimports[0].canUpdateShipping).toBe(false);
+ noWrites(h.db);
+});
+
 test('mixed uploads export and save only new orders while preserving the complete upload audit',async()=>{
  const mixed=await harness(),fresh=await harness(),rows=table([record(),record('#NEW')]);
  const preview=await mixed.prepare({rows}),newOnly=await fresh.prepare({rows:table([record('#NEW')])});

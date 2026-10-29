@@ -16,7 +16,8 @@ async function classifyMarketplaceReimports({db,platform,store,raw,verification,
  const numbers=[...new Set(raw.orders.map(order=>order.sourceOrderNumber))].sort();
  if(platform!=='Shopify'||!clean(store))return {reimports:[],identities:[],fingerprint:fingerprint([])};
  if(numbers.some(number=>typeof number!=='string'||!number||number.length>100)||numbers.length!==raw.orders.length)throw fail();
- const sources=(await db.query(`SELECT s.*,row_to_json(b) AS batch,row_to_json(f) AS flow,row_to_json(l) AS link
+ const sources=(await db.query(`SELECT s.*,row_to_json(b) AS batch,row_to_json(f) AS flow,row_to_json(l) AS link,
+  EXISTS(SELECT 1 FROM marketplace_intake_scope_orders m WHERE m.intake_order_id=s.id) AS upload_scope_referenced
   FROM marketplace_intake_orders s JOIN marketplace_intakes b ON b.id=s.intake_id
   LEFT JOIN marketplace_warehouse_flows f ON f.intake_id=s.intake_id
   LEFT JOIN marketplace_work_order_links l ON l.intake_order_id=s.id
@@ -59,7 +60,8 @@ async function classifyMarketplaceReimports({db,platform,store,raw,verification,
    try{
     // Use the same saved evidence and target-order guards as the update route.
     // The update route still re-reads Shopify and validates its own preview.
-    const {savedShippingBaseline,assertAvailable,assertCurrentBusiness,sourceRows}=require('./marketplaceShipping');
+    const {savedShippingBaseline,assertAvailable,assertCurrentBusiness,sourceRows,assertShippingScope}=require('./marketplaceShipping');
+    assertShippingScope(source.batch,source.upload_scope_referenced===true);
     const baseline=savedShippingBaseline(source.batch,source,profile?[profile]:[],number);
     const activity=Object.fromEntries(['progress','history','labels','changes'].map(key=>[key,orders.some(task=>task[key]===true)]));
     assertAvailable({flow:source.flow,link:linked,tasks:orders,activity});
@@ -74,7 +76,7 @@ async function classifyMarketplaceReimports({db,platform,store,raw,verification,
     canUpdateShipping=true;message='可更新原訂單收件資料';
    }catch(error){
     if(!error.status)throw error;
-    message=error.code==='MARKETPLACE_SHIPPING_BUSINESS_CHANGED'?'商品或金額已變更，請核對原銷貨單':'請由原訂單核對收件資料';
+    message=error.code==='MARKETPLACE_SHIPPING_UPLOAD_SCOPE'?error.message:error.code==='MARKETPLACE_SHIPPING_BUSINESS_CHANGED'?'商品或金額已變更，請核對原銷貨單':'請由原訂單核對收件資料';
    }
   }
   reimports.push({orderNumber:number,intakeId:source?Number(source.intake_id):null,workOrderId:order?Number(order.id):null,state,message,canUpdateShipping});

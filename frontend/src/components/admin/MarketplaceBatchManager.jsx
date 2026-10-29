@@ -22,6 +22,8 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  const [filters,setFilters]=useState(initial),[data,setData]=useState({intakes:[],facets:[],total:0,orders:0,pageSize:20});
  const [loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[detail,setDetail]=useState(null),[deleting,setDeleting]=useState(null),[revision,setRevision]=useState(0);
  const [fileLink,setFileLink]=useState(null);
+ const latestRecords=useRef({});latestRecords.current={rows:data.intakes,detail};
+ const superseded=id=>latestRecords.current.rows.some(row=>String(row.id)===String(id)&&row.superseded===true)||(String(latestRecords.current.detail?.id)===String(id)&&latestRecords.current.detail?.superseded===true);
  const [shippingReview,setShippingReview]=useState(null),[shippingStatus,setShippingStatus]=useState(null),[shippingBusy,setShippingBusy]=useState('');
  const detailRef=useRef(null),orderRef=useRef(null);
  const [params,setParams]=useSearchParams();const selected=params.get('batch'),focusedOrder=params.get('order');
@@ -52,9 +54,14 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  },[enabled,originalOrderFlow,filters,refreshKey,revision]);
  useEffect(()=>{
   setDetail(null);if(!selected||!enabled)return;let cancelled=false;
-  Promise.all([apiClient.get(`/api/marketplace-intakes/${encodeURIComponent(selected)}`),apiClient.get(`/api/warehouse-intakes/${encodeURIComponent(selected)}`)]).then(([r,w])=>{if(!cancelled&&valid())setDetail({...r.data,warehouseFlow:w.data.flow});}).catch(e=>{if(!cancelled&&valid())setNotice(e.response?.data?.message||'無法開啟批次明細。');});
+  apiClient.get(`/api/marketplace-intakes/${encodeURIComponent(selected)}`).then(async r=>{
+   if(cancelled||!valid())return;
+   if(r.data.superseded===true){setDetail({...r.data,warehouseFlow:null});return;}
+   const w=await apiClient.get(`/api/warehouse-intakes/${encodeURIComponent(selected)}`);
+   if(!cancelled&&valid())setDetail({...r.data,warehouseFlow:w.data.flow});
+  }).catch(e=>{if(!cancelled&&valid())setNotice(e.response?.data?.message||'無法開啟批次明細。');});
   return()=>{cancelled=true;};
- },[enabled,selected,revision]);
+ },[enabled,selected,revision,refreshKey]);
  useEffect(()=>{if(detail)(!resumeOriginal&&detail.orders.some(order=>order.sourceOrderNumber===focusedOrder)?orderRef.current:detailRef.current)?.scrollIntoView({behavior:'smooth',block:'start'});},[detail,focusedOrder,resumeOriginal]);
  useEffect(()=>{if(deleting)dialog.current?.showModal();else dialog.current?.close();},[deleting]);
  const filter=(key,value)=>setFilters(f=>({...f,[key]:value,...(key==='platform'?{store:''}:{}),page:1}));
@@ -62,7 +69,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  const resumeOriginalOrder=()=>{if(!valid()||shippingContext.current!==shippingContextKey)return;setParams(p=>{p.set('view','resume');p.delete('shipping');return p;},{replace:true});};
  const shippingEditable=orderNumber=>{
   const link=detail?.links?.find(value=>value.source_order_number===orderNumber&&value.order_id);
-  return detail?.platform==='Shopify'&&!detail.archivedAt&&(!link||link.status==='pending');
+  return detail?.platform==='Shopify'&&!detail.archivedAt&&!detail.superseded&&(!link||link.status==='pending');
  };
  const shippingCurrent=(context,generation)=>valid()&&shippingContext.current===context&&shippingGeneration.current===generation;
  const shippingAction=async(orderNumber,review=null)=>{
@@ -107,7 +114,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   if(shippingEditable(focusedOrder))shippingAction(focusedOrder);
  },[enabled,selected,focusedOrder,shippingRefresh,user?.id,user?.role,detail,busy]);
  const operate=async(record,action)=>{
-  if(pending.current||!valid()||originalOrderFlow||shippingContext.current!==shippingContextKey)return;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
+  if(pending.current||!valid()||originalOrderFlow||shippingContext.current!==shippingContextKey||(action!=='restore'&&superseded(record.id)))return;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
   try{
    if(action==='delete')await apiClient.delete(`/api/marketplace-intakes/${record.id}`,{data:{confirmed:true,batchNumber:record.batch_number}});
    else await apiClient.patch(`/api/marketplace-intakes/${record.id}/${action}`);
@@ -118,7 +125,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   finally{pending.current=false;if(valid())setBusy(false);}
  };
  const download=async(id,kind)=>{
-  if(pending.current||!valid()||shippingContext.current!==shippingContextKey||originalOrderFlow)return;const context=shippingContextKey;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
+  if(pending.current||!valid()||shippingContext.current!==shippingContextKey||originalOrderFlow||superseded(id))return;const context=shippingContextKey;pending.current=true;setBusy(true);setNotice('');setFileLink(null);
   try{
    const label=kind==='ecount-grouped'?'下載彙總銷貨檔':kind==='ecount'?'下載原保存格式':'下載預揀與訂單明細 Excel';
    if(getNativeRuntime()){
@@ -138,7 +145,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
  let salesView=null,salesWarning='';if(detail&&!detail.financialWarning){try{salesView=prepareEcountFinancials(groupedSalesRecord(detail));}catch(e){salesWarning=e.message;}}
  const displayFinancials=salesView?.financials||detail?.financials;
  const focusedOriginal=detail?.orders.find(order=>order.sourceOrderNumber===focusedOrder);
- const canResumeOriginal=enabled&&!!focusedOriginal&&!detail?.archivedAt&&String(detail?.id)===selected;
+ const canResumeOriginal=enabled&&!!focusedOriginal&&!detail?.archivedAt&&!detail?.superseded&&String(detail?.id)===selected;
  const originalLinks=(detail?.links||[]).filter(link=>link.order_id);
  const originalBatchLinks=[...new Map(originalLinks.filter(link=>link.import_batch_id).map(link=>[link.import_batch_id,link])).values()];
  const originalTargetLinks=originalLinks.filter(link=>link.source_order_number===focusedOrder);
@@ -158,25 +165,26 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
   {!originalOrderFlow&&<>{loading?<p role="status" className="py-8 text-center text-slate-500">載入批次中…</p>:Object.entries(groups).map(([date,rows])=><section key={date} className="mt-4" aria-label={`${date} 銷貨批次`}>
    <h3 className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold">{date}</h3>
    <div className="mt-3 grid gap-4 lg:grid-cols-2">{rows.map(r=><article key={r.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${String(r.id)===selected?'border-blue-500 ring-1 ring-blue-100':'border-slate-200'}`} aria-label={`批次 ${r.batch_number}`}>
-    <div className="p-5"><div className="flex items-center justify-between gap-2"><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{r.source_platform}</span><span className="text-xs text-slate-500">{r.archived_at?'已封存':r.warehouse_flow?(r.warehouse_flow.prepickCompletedAt?'預揀完成':r.warehouse_flow.erpConfirmedAt?'理貨已核對':'待 ECOUNT 回匯'):Number(r.linked_count)===Number(r.order_count)?'已回匯理貨':Number(r.linked_count)>0?'理貨回匯中':'待 ECOUNT 回匯'}</span></div>
+    <div className="p-5"><div className="flex items-center justify-between gap-2"><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{r.source_platform}</span><span className="text-xs text-slate-500">{r.superseded?'已有更新版本':r.archived_at?'已封存':r.warehouse_flow?(r.warehouse_flow.prepickCompletedAt?'預揀完成':r.warehouse_flow.erpConfirmedAt?'理貨已核對':'待 ECOUNT 回匯'):Number(r.linked_count)===Number(r.order_count)?'已回匯理貨':Number(r.linked_count)>0?'理貨回匯中':'待 ECOUNT 回匯'}</span></div>
      <Link className="mt-3 block break-all text-lg font-semibold text-slate-950 hover:text-blue-700" to={`?batch=${r.id}#batch-detail`}>{r.batch_number}</Link><p className="mt-1 text-sm text-slate-500">批次 #{r.id} · {r.source_store}</p>
      <p className="mt-3 text-sm">{r.order_count} 筆訂單 · {r.summary?.physicalQuantity??r.summary?.totalQuantity??0} 件商品{Number(r.linked_count)>0?` · ${r.linked_count} 張工作單`:null}</p>
      <p className="mt-3 text-sm text-slate-600">訂單總額 <strong className="text-slate-950">{formatMinor(r.summary?.sourceTotalMinor??r.summary?.totalMinor??r.summary?.ecountTotalMinor)}</strong></p>
      {!!r.summary?.roundingDeltaMinor&&<p className="mt-1 text-sm text-slate-600">ERP 含稅 {formatMinor(r.summary.ecountTotalMinor)} · 整元尾差 {formatMinor(r.summary.roundingDeltaMinor)}</p>}
-     <div className="mt-4 flex flex-wrap gap-2">{!r.warehouse_flow?.erpConfirmedAt&&Number(r.linked_count)===0?<>
-      <Button disabled={busy||!enabled} onClick={()=>download(r.id,'ecount-grouped')}><Download size={15} className="mr-1"/>下載銷貨檔</Button>
-      <Button as={Link} variant="secondary" to={`?batch=${r.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Button>
+     <div className="mt-4 flex flex-wrap gap-2">{r.superseded===true||(!r.warehouse_flow?.erpConfirmedAt&&Number(r.linked_count)===0)?<>
+      <Button disabled={busy||!enabled||r.superseded===true} onClick={()=>download(r.id,'ecount-grouped')}><Download size={15} className="mr-1"/>下載銷貨檔</Button>
+      <Button as={Link} variant="secondary" disabled={r.superseded===true} onClick={event=>{if(superseded(r.id))event.preventDefault();}} to={`?batch=${r.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Button>
      </>:<Button as={Link} to={r.warehouse_flow?.erpConfirmedAt?`/warehouse-intakes/${r.id}`:`?batch=${r.id}#batch-detail`}>{r.warehouse_flow?.prepickCompletedAt?'查看訂單任務':r.warehouse_flow?.erpConfirmedAt?'列印與預揀':'查看理貨批次'}</Button>}
      </div>
     </div>
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-2"><div className="flex gap-4"><button className={textButton} disabled={busy||!enabled} onClick={()=>operate(r,r.archived_at?'restore':'archive')}><Archive size={15}/>{r.archived_at?'取消封存':'封存'}</button><button className="inline-flex min-h-10 items-center gap-1 text-sm text-red-700 disabled:text-slate-400" disabled={busy||!enabled||r.linked_count>0||!!r.warehouse_flow?.erpConfirmedAt} title={r.linked_count>0?'已連結理貨工作單，請改用封存':'永久刪除批次'} onClick={()=>{setNotice('');setDeleting(r);}}><Trash2 size={15}/>刪除</button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-2"><div className="flex gap-4"><button className={textButton} disabled={busy||!enabled||(r.superseded===true&&!r.archived_at)} onClick={()=>operate(r,r.archived_at?'restore':'archive')}><Archive size={15}/>{r.archived_at?'取消封存':'封存'}</button><button className="inline-flex min-h-10 items-center gap-1 text-sm text-red-700 disabled:text-slate-400" disabled={busy||!enabled||r.superseded===true||r.linked_count>0||!!r.warehouse_flow?.erpConfirmedAt} title={r.linked_count>0?'已連結理貨工作單，請改用封存':'永久刪除批次'} onClick={()=>{setNotice('');setDeleting(r);}}><Trash2 size={15}/>刪除</button></div></div>
    </article>)}</div>
   </section>)}
   {!loading&&!data.intakes.length&&<div className="py-10 text-center text-sm text-slate-500"><Search className="mx-auto mb-2"/>沒有符合條件的批次。</div>}
   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-sm"><span>每頁 {data.pageSize} 批 · 第 {filters.page}／{pages} 頁</span><div className="flex gap-2"><Button variant="secondary" disabled={loading||filters.page<=1} onClick={()=>setFilters(f=>({...f,page:f.page-1}))}><ChevronLeft size={16}/>上一頁</Button><Button variant="secondary" disabled={loading||filters.page>=pages} onClick={()=>setFilters(f=>({...f,page:f.page+1}))}>下一頁<ChevronRight size={16}/></Button></div></div></>}
   {selected&&<section ref={detailRef} id="batch-detail" className="mt-6 scroll-mt-4 rounded-xl border border-blue-200 p-4" aria-label={resumeOriginal?'接續原銷貨單':'批次明細'}><div className="flex items-center justify-between"><h3 className="font-semibold">{resumeOriginal?'接續原銷貨單':`批次 #${selected} 明細`}</h3><button className={textButton} onClick={closeDetail}><X size={16}/>關閉明細</button></div>{!detail?<p className="mt-3 text-sm">正在讀取批次；若失敗請查看上方訊息。</p>:<>
-   {detail.draftRevision>0&&<div className="my-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" aria-label="銷貨修訂版本"><p className="font-semibold">目前使用修訂 {detail.draftRevision} · {detail.orders.length} 筆訂單</p><p className="mt-1">請使用這個版本的銷貨檔及預揀資料，上一版檔案請停止使用。</p>{detail.draftExcludedOrderNumbers?.length>0&&<p className="mt-1 break-words">本次不出貨：{detail.draftExcludedOrderNumbers.join('、')}</p>}</div>}
-   {originalOrderFlow&&<div className="my-4 space-y-3" aria-label="原批次出貨流程">
+   {detail.superseded&&<p role="status" className="my-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-950">已有更新版本。此頁僅供查看歷史，請回到本次整份轉檔批次下載與回匯。</p>}
+   {!detail.superseded&&detail.draftRevision>0&&<div className="my-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" aria-label="銷貨修訂版本"><p className="font-semibold">目前使用修訂 {detail.draftRevision} · {detail.orders.length} 筆訂單</p><p className="mt-1">請使用這個版本的銷貨檔及預揀資料，上一版檔案請停止使用。</p>{detail.draftExcludedOrderNumbers?.length>0&&<p className="mt-1 break-words">本次不出貨：{detail.draftExcludedOrderNumbers.join('、')}</p>}</div>}
+   {originalOrderFlow&&!detail.superseded&&<div className="my-4 space-y-3" aria-label="原批次出貨流程">
     <p className="break-all text-sm font-medium">{detail.batchNumber} · {detail.platform} · {detail.store}</p>
     {(detail.reviewWarning||detail.financialWarning||salesWarning)&&<p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{[detail.reviewWarning,detail.financialWarning,salesWarning].filter(Boolean).join('；')}</p>}
     {!focusedOriginal?<p role="alert" className="text-sm text-amber-900">找不到原訂單。</p>:detail.archivedAt?<p role="alert" className="text-sm text-amber-900">原批次已封存，請先由批次管理確認。</p>:<>
@@ -186,7 +194,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
      </>}
     </>}
    </div>}
-   {!originalOrderFlow&&<div className="my-4 space-y-4" aria-label="本批出貨流程">
+   {!originalOrderFlow&&!detail.superseded&&<div className="my-4 space-y-4" aria-label="本批出貨流程">
     {(detail.reviewWarning||detail.financialWarning||salesWarning)&&<p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{[detail.reviewWarning,detail.financialWarning,salesWarning].filter(Boolean).join("；")}</p>}
     <ol className="flex flex-wrap gap-x-5 gap-y-2 border-b border-slate-200 pb-3 text-sm"><li>1 商城訂單已保存</li><li>2 下載銷貨檔</li><li className="font-semibold text-blue-700">3 {detail.warehouseFlow?.erp_confirmed_at?'理貨已核對':'待 ECOUNT 回匯'}</li><li>4 列印與預揀</li></ol>
     <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold">{detail.platform} · {detail.store}</p><p className="mt-1 break-all text-sm text-slate-600">{detail.batchNumber} · {detail.orders.length} 筆訂單</p></div>{!detail.warehouseFlow?.erp_confirmed_at&&<Button disabled={busy||!!detail.reviewWarning||!!detail.financialWarning||!!salesWarning} onClick={()=>download(detail.id,'ecount-grouped')}>下載銷貨檔</Button>}</div>
@@ -197,7 +205,7 @@ export default function MarketplaceBatchManager({enabled,currentSession,refreshK
    <p className="mt-2 text-sm">轉檔建立者：{detail.handler?.name||detail.handler?.username||'未記錄'}{detail.handler?.username?`（${detail.handler.username}）`:''}{detail.handler?.legacy?' · 依原建立者帳號查得':''}</p><p className="mt-2 text-sm">{detail.summary.orderCount} 筆訂單 · {detail.settings.currency} {formatMinor(detail.summary.sourceTotalMinor??detail.summary.totalMinor??detail.summary.ecountTotalMinor)}（訂單總額不代表已收款）</p>
    <p className="mt-2 text-sm">專案負責人：{detail.settings.projectOwner||'未指定'} · 業務負責人：{detail.settings.salesOwner||'未指定'}</p>
    {displayFinancials&&<div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm"><p>稅前 {formatMinor(displayFinancials.netMinor)} ＋ 營業稅 {formatMinor(displayFinancials.taxMinor)} ＝ 含稅 {formatMinor(displayFinancials.grossMinor)}</p>{!!displayFinancials.roundingDeltaMinor&&<p className="mt-1">來源 {formatMinor(displayFinancials.sourceTotalMinor)} · 整元尾差 {formatMinor(displayFinancials.roundingDeltaMinor)}</p>}{detail.financials.recalculatedLegacy&&<p className="mt-2 text-amber-900">此舊批次下載時會補上稅前金額與營業稅，原保存資料保留不變。若已匯入 ERP，請核對並修正原銷貨單，勿再次匯入扣庫存。</p>}</div>}
-   <details className="my-4 text-sm"><summary className="cursor-pointer text-blue-700">其他下載</summary><div className="mt-2 flex flex-wrap gap-2"><Button variant="secondary" disabled={busy} onClick={()=>download(detail.id,'prepick')}>下載商品與訂單核對表</Button><Button variant="secondary" disabled={busy||!!detail.reviewWarning||!!detail.financialWarning} onClick={()=>download(detail.id,'ecount')}>下載原保存格式</Button></div></details>
+   <details className="my-4 text-sm"><summary className="cursor-pointer text-blue-700">其他下載</summary><div className="mt-2 flex flex-wrap gap-2"><Button variant="secondary" disabled={busy||detail.superseded===true} onClick={()=>download(detail.id,'prepick')}>下載商品與訂單核對表</Button><Button variant="secondary" disabled={busy||detail.superseded===true||!!detail.reviewWarning||!!detail.financialWarning} onClick={()=>download(detail.id,'ecount')}>下載原保存格式</Button></div></details>
    {salesView&&<details className="my-4 rounded-xl border border-slate-200 p-4"><summary className="cursor-pointer font-semibold">彙總銷貨（{salesView.rows.length} 列，每列最多 200 件）</summary><div className="mt-3 overflow-x-auto"><table className="min-w-[680px] w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['品項編碼','商品','數量','含稅均價','稅前金額','營業稅','含稅金額'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{salesView.rows.map(r=><tr key={r[15]} className="border-t border-slate-100"><td className="p-3">{r[11]}</td><td className="p-3">{r[16]}</td><td className="p-3 font-semibold">{r[19]}</td><td className="p-3">{r[21]}</td><td className="p-3">{r[23]}</td><td className="p-3">{r[24]}</td><td className="p-3">{((r[23]+r[24])).toFixed(2)}</td></tr>)}</tbody></table></div></details>}
    <details className="my-4 rounded-xl border border-slate-200 p-4" open={params.get('view')==='prepick'||undefined}><summary className="cursor-pointer font-semibold">預揀總表 · 商品合計</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['ERP 品項編碼','商品名稱','已確認條碼','總數量','訂單數'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{(detail.prepick?.rows||[]).map((r,i)=><tr key={i} className="border-t border-slate-100"><td className="p-3">{r[2]}</td><td className="p-3">{r[4]}</td><td className="p-3">{r[3]||'待確認'}</td><td className="p-3 font-semibold">{r[5]}</td><td className="p-3">{r[6]}</td></tr>)}</tbody></table></div></details>
    <div className="mt-3 flex flex-wrap gap-4">{[...new Map((detail.links||[]).filter(l=>l.import_batch_id).map(l=>[l.import_batch_id,l])).values()].map(l=><Link key={l.import_batch_id} className={textButton} to={`/batches/${l.import_batch_id}`}>理貨單 {l.voucher_number}：列印預揀／揀貨／裝箱明細</Link>)}</div></>}

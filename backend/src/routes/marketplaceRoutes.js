@@ -11,6 +11,8 @@ const {classifyMarketplaceReimports}=require('../services/marketplaceReimports')
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
 const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
+const {assertUploadScope}=require('../services/marketplaceUploadScopes');
+const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
 function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool}),draftOverwriteService=require('../services/marketplaceDraftOverwrite').createMarketplaceDraftOverwriteService({pool,prepareMarketplace})}){
  const router=express.Router();
@@ -49,25 +51,26 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  router.get('/:id',async(req,res,next)=>{try{
   if(!validId(req.params.id))return res.status(400).json({message:'轉檔批次編號無效'});
-  const rows=await pool.query('SELECT * FROM marketplace_intakes WHERE id=$1',[req.params.id]);
+  const rows=await pool.query(`SELECT i.*,NOT COALESCE(${currentScopePredicate('i')},FALSE) AS superseded FROM marketplace_intakes i WHERE i.id=$1`,[req.params.id]);
   if(!rows.rows.length)return res.status(404).json({message:'找不到轉檔批次'});
   let reviewWarning='';
   const snapshot=rows.rows[0].snapshot;
   try{const reviewed=await verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(i=>i.sku))],undefined,reviewed,{...snapshot,platform:rows.rows[0].source_platform});}catch(e){if(e.status===400)reviewWarning=e.message;else throw e;}
   let financials=null,financialWarning='';
   try{financials=(await import('../services/marketplaceIntake.mjs')).prepareEcountFinancials(snapshot).financials;}catch(e){financialWarning=e.message;}
-  res.set('Cache-Control','private, no-store').json({financials,financialWarning,...publicRecord(rows.rows[0]),handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
+  res.set('Cache-Control','private, no-store').json({financials,financialWarning,...publicRecord(rows.rows[0]),superseded:rows.rows[0].superseded,handler:await batchHandler(pool,rows.rows[0]),reviewWarning,links:await batchLinks(pool,req.params.id)});
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  router.post('/:id/download-link',async(req,res,next)=>{try{
   if(!validId(req.params.id))return res.status(400).json({message:'批次編號無效'});
   const record=(await pool.query('SELECT snapshot,source_platform FROM marketplace_intakes WHERE id=$1',[req.params.id])).rows[0];
   if(!record)return res.status(404).json({message:'找不到轉檔批次'});
+  await assertUploadScope(pool,{...record,id:Number(req.params.id)});
   if(['ecount','ecount-grouped'].includes(req.body?.kind)){
    const reviewed=await verifySavedBarcodeReviews(pool,record.snapshot,undefined,{returnContext:true});
    await require('../services/marketplaceProductCatalog').verifyCatalogMappings(pool,record.snapshot.settings,[...new Set(record.snapshot.items.map(i=>i.sku))],undefined,reviewed,{...record.snapshot,platform:record.source_platform});
    try{(await import('../services/marketplaceBatchFiles.mjs')).savedBatchTables(record.snapshot,req.body.kind);}catch(e){throw Object.assign(e,{status:400});}
   }
-  require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id,record.snapshot.draftRevision??0);
+  require('../services/marketplaceDownloads').issueDownload(res,req.params.id,req.body?.kind,req.user.id,record.snapshot.draftRevision??0,record.snapshot.uploadScope?.fingerprint);
  }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
  for(const [method,path,action] of [['patch','/:id/archive','archive'],['patch','/:id/restore','restore'],['delete','/:id','delete']]){
   router[method](path,async(req,res,next)=>{try{

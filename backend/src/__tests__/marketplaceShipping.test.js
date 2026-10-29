@@ -27,7 +27,7 @@ async function harness({legacy=false}={}){
  const state={batch:{id:19,batch_number:settings.batchNumber,source_platform:'Shopify',source_store:store,fingerprint:'original-batch-fingerprint',snapshot,archived_at:null},
   source:{id:101,intake_id:19,source_platform:'Shopify',source_store:store,source_order_number:number,expected_items:[{sourceLineId:originalEvidence.items[0].id,sourceSku:'4711299274237',productCode:'4711299274237',quantity:1,barcode:'4711299274237'}],financial:{source:structuredClone(savedOrder.sourceFinancial),ecount:structuredClone(savedOrder.financial)}},
   profile:{id:2,platform:'Shopify',store,settings:structuredClone(settings)},flow:{intake_id:19,enabled_at:'2026-10-05',erp_confirmed_at:null,import_batch_id:null,printed_at:null,prepick_completed_at:null,prepick_owner_id:null,prepick_counts:{}},
-  link:null,tasks:[],activity:{progress:false,history:false,labels:false,changes:false},commands:[],events:[],pending:[],lockedHook:null,commitError:false,auditError:false,
+  link:null,tasks:[],activity:{progress:false,history:false,labels:false,changes:false},commands:[],events:[],pending:[],scopeReferenced:false,lockedHook:null,commitError:false,auditError:false,
   current:{rows:table([{...original,'Shipping Phone':'0901111111'}]),verification:{version:'shopify-current-v2',shop,orders:[{...originalEvidence,updatedAt:'2026-10-05T09:00:00Z',fingerprint:'api-after'}]}}};
  async function query(sql,params=[]){
   if(sql==='BEGIN'){state.pending=[];return {rows:[]};}
@@ -44,6 +44,7 @@ async function harness({legacy=false}={}){
    return {rows:params[0]===19?[structuredClone(state.batch)]:[]};
   }
   if(sql.startsWith('SELECT * FROM marketplace_intake_orders'))return {rows:params[1]===number?[structuredClone(state.source)]:[]};
+  if(sql.startsWith('SELECT 1 FROM marketplace_intake_scope_orders'))return {rows:state.scopeReferenced?[{'?column?':1}]:[]};
   if(sql.startsWith('SELECT id,platform,store,settings FROM marketplace_store_profiles'))return {rows:state.profile?[structuredClone(state.profile)]:[]};
   if(sql.startsWith('SELECT * FROM marketplace_warehouse_flows'))return {rows:state.flow?[structuredClone(state.flow)]:[]};
   if(sql.startsWith('SELECT * FROM marketplace_work_order_links'))return {rows:state.link?[structuredClone(state.link)]:[]};
@@ -70,6 +71,32 @@ test('shipping preview reads the current API contact with no writes, preserving 
  expect(preview).toMatchObject({intakeId:19,orderNumber:number,changed:true,changedFields:['phone'],previousShipping:{phone:'0900000000'},currentShipping:{phone:'0901111111'}});
  expect(preview.previewFingerprint).toMatch(/^[a-f0-9]{64}$/);expect(preview.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/);
  expect(h.verify.mock.calls[0][0].slice(1).every(row=>row[0]===number)).toBe(true);expect(h.pool.connect).not.toHaveBeenCalled();expect(h.state).toEqual(before);
+});
+test.each(['scope-run','borrowed-canonical'])('%s refuses shipping preview and direct apply before API or writes',async(mode)=>{
+ const h=await harness();
+ if(mode==='scope-run')h.state.batch.snapshot.uploadScope={version:'uploaded-file-v2'};else h.state.scopeReferenced=true;
+ const before=structuredClone(h.state.batch),body=h.applyBody({previewFingerprint:'a'.repeat(64)});
+ await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({status:409,code:'MARKETPLACE_SHIPPING_UPLOAD_SCOPE',message:expect.stringContaining('最新整份訂單檔')});
+ await expect(h.service.apply(19,body,actor)).rejects.toMatchObject({status:409,code:'MARKETPLACE_SHIPPING_UPLOAD_SCOPE'});
+ expect(h.verify).not.toHaveBeenCalled();expect(h.state.batch).toEqual(before);expect(h.state.events).toEqual([]);expect(h.state.commands).toEqual([]);
+ expect(h.db.query.mock.calls.some(([sql])=>/^(?:INSERT|UPDATE|DELETE)/.test(sql))).toBe(false);
+});
+test('scope membership appearing after preview is checked again under the source lock and rolls back',async()=>{
+ const h=await harness(),preview=await h.service.preview(19,{orderNumber:number},actor),before=structuredClone(h.state.batch);
+ h.state.lockedHook=state=>{state.scopeReferenced=true;};
+ await expect(h.service.apply(19,h.applyBody(preview),actor)).rejects.toMatchObject({status:409,code:'MARKETPLACE_SHIPPING_UPLOAD_SCOPE'});
+ expect(h.state.batch).toEqual(before);expect(h.state.events).toEqual([]);expect(h.state.commands).toEqual([]);
+ expect(h.db.query.mock.calls.map(([sql])=>sql)).toContain('ROLLBACK');
+ expect(h.db.query.mock.calls.some(([sql])=>/^(?:INSERT|UPDATE|DELETE)/.test(sql))).toBe(false);
+});
+test('pure v1 revision without scope references still supports shipping changes and its receipt replays after scope adoption',async()=>{
+ const h=await harness({legacy:true});h.state.source.draft_version=7;
+ const preview=await h.service.preview(19,{orderNumber:number},actor),body=h.applyBody(preview),first=await h.service.apply(19,body,actor);
+ expect(first.updated).toBe(true);expect(h.state.source.draft_version).toBe(7);
+ h.state.scopeReferenced=true;h.verify.mockClear();h.db.query.mockClear();
+ expect(await h.service.apply(19,body,actor)).toEqual({...first,reused:true});expect(h.verify).not.toHaveBeenCalled();
+ expect(h.state.events).toHaveLength(1);expect(h.state.commands).toHaveLength(1);
+ expect(h.db.query.mock.calls.some(([sql])=>sql.includes('marketplace_intake_scope_orders'))).toBe(false);
 });
 test('apply rechecks API and only changes the target shipping path, retaining stock, amount, source and fingerprint',async()=>{
  const h=await harness(),before=beforeSale(h.state),source=structuredClone(h.state.source);
