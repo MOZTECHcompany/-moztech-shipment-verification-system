@@ -45,31 +45,45 @@ function ItemDifference({ change }) {
   return <li className="break-words"><span className="font-medium">{itemName(change.before)}</span>：{change.fields.map((change, index) => <React.Fragment key={change.field}>{index > 0 && '；'}{fieldLabels[change.field]} {fieldText(change.field, change.before)} → {fieldText(change.field, change.after)}</React.Fragment>)}</li>;
 }
 
-function OrderReviewFacts({ review }) {
+function OrderReviewFacts({ review, hideAmount = false }) {
   return <ul className="mt-1 space-y-1 text-sm leading-6" aria-label="取消與退款核對">
     {review.cancelledItems.map(item => <li key={item.id}>{item.name} 已取消 ×{item.quantity}，本次不出貨。</li>)}
-    {review.remainingItems.map(item => <li key={item.id}>剩餘 {item.name} {item.quantity} 件</li>)}
+    {review.remainingItems.length > 1 ? <li>本次出貨 {review.remainingItems.reduce((sum, item) => sum + item.quantity, 0)} 件</li> : review.remainingItems.map(item => <li key={item.id}>剩餘 {item.name} {item.quantity} 件</li>)}
     {review.decisionRequired ? <li className="font-medium">商城 NT$ {amount(review.live.totalMinor)} → 本次銷貨 NT$ {amount(review.proposal.salesTotalMinor)}／額外折讓 NT$ {amount(review.proposal.allowanceMinor)}</li>
-      : <li>本次銷貨 NT$ {amount(review.live.totalMinor)}</li>}
+      : !hideAmount && <li>本次銷貨 NT$ {amount(review.live.totalMinor)}</li>}
   </ul>;
 }
 
 function OrderReviewDetails({ review }) {
   return <><p className="mt-1">{review.summary}</p><p>原退款 NT$ {amount(review.live.refundedMinor)}／退款後實收 NT$ {amount(review.live.netPaymentMinor)}</p>
-    <ul>{[...review.cancelledItems, ...review.remainingItems].map(item => <li key={item.id} className="break-words">{item.name}・{item.sku}{item.reason ? `・${item.reason}` : ''}</li>)}</ul>
+    <ul>{[...review.cancelledItems, ...review.remainingItems].map(item => <li key={item.id} className="break-words">{item.name} ×{item.quantity}・{item.sku}{item.reason ? `・${item.reason}` : ''}</li>)}</ul>
   </>;
 }
 
 function OrderComparison({ order, review }) {
   const diff = orderDifferences(order);
+  const usedCancellations = new Set();
+  const itemChanges = diff.items.filter(change => {
+    if (!review || change.kind !== 'removed') return true;
+    const item = change.before;
+    if (!item.id && review.remainingItems.some(remaining => remaining.sku === item.sku)) return true;
+    const matches = review.cancelledItems.filter(cancelled => {
+      if (usedCancellations.has(cancelled.id) || item.quantity !== cancelled.quantity) return false;
+      if (item.id) return item.id === cancelled.id;
+      if (item.sku !== cancelled.sku) return false;
+      return itemName(item) === cancelled.name || diff.items.filter(value => value.kind === 'removed' && value.before.sku === item.sku).length === 1 && review.cancelledItems.filter(value => value.sku === item.sku).length === 1;
+    });
+    if (matches.length !== 1) return true;
+    usedCancellations.add(matches[0].id); return false;
+  });
   const changedItems = diff.items.flatMap(change => change.kind === 'group' ? [...change.before, ...change.after] : [change.before || change.after]);
   const skus = [...new Set(changedItems.map(item => item.sku).filter(Boolean))];
   const liveDifference = diff.liveMoneyChanged || diff.liveQuantityChanged;
   return <li className="py-4 first:pt-0 last:pb-0" aria-label={`訂單異動 ${order.orderNumber}`}><p className="text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="ml-2 text-slate-600">重複／{order.changed || order.restoring ? '有異動' : '需核對商城現況'}</span></p>
-    {review && <OrderReviewFacts review={review} />}
+    {review && <OrderReviewFacts review={review} hideAmount={diff.totalChanged} />}
     <ul className="mt-1 space-y-1 text-sm leading-6" aria-label="實質異動">
       {diff.restoring && <li>恢復出貨，使用本次檔案的內容。</li>}
-      {diff.items.map(change => <ItemDifference key={change.key} change={change} />)}
+      {itemChanges.map(change => <ItemDifference key={change.key} change={change} />)}
       {diff.quantityChanged && !diff.items.length && <li>商品件數 {valueText(order.before?.quantity)} → {valueText(order.after?.quantity)}</li>}
       {diff.totalChanged && <li>出貨金額 NT$ {amount(order.before?.totalMinor)} → NT$ {amount(order.after?.totalMinor)}{diff.liveMoneyChanged && `；商城仍 NT$ ${amount(order.live.totalMinor)}`}</li>}
       {!diff.totalChanged && diff.liveMoneyChanged && <li>出貨金額 NT$ {amount(order.after.totalMinor)}／商城 NT$ {amount(order.live.totalMinor)}</li>}

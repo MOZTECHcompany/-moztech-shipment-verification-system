@@ -418,7 +418,10 @@ test('officially removed chestnut strap stays excluded while the separate pink s
   data.summary={totalOrderCount:1,newOrderCount:0,changedOrderCount:1,unchangedOrderCount:0,quantity:4,totalMinor:310314};
   data.orderReviews=[{orderNumber:'#SYN-REMOVED',type:'removed_items',summary:'商城已取消栗子掛繩；其餘目前有效品項保留',cancelledItems:[{id:'cancelled',name:'栗子掛繩',sku:'STRAP-CHESTNUT',quantity:1,reason:'商城有效數量為零'}],remainingItems:items,live:{totalMinor:310314,refundedMinor:0,netPaymentMinor:0},decisionRequired:false,canConfirm:true,blockedReasons:[]}];
   const state=await view({previews:[data]});const main=state.visibleText(state.render());
-  assert.match(main,/栗子掛繩\s+已取消/);assert.match(main,/剩餘\s+粉色掛繩\s+1\s+件/);assert.match(main,/本次銷貨 NT\$\s+3,103.14/);
+  assert.match(main,/栗子掛繩\s+已取消/);assert.match(main,/本次出貨\s+4\s+件/);
+  assert.doesNotMatch(main,/剩餘|粉色掛繩|本次銷貨 NT\$|移除\s+栗子掛繩/);
+  assert.match(main,/出貨金額 NT\$\s+3,877\s+→ NT\$\s+3,103.14/);
+  assert.match(state.text(state.render()),/粉色掛繩\s+×\s*1\s*・\s*STRAP-PINK/);
   assert.equal(state.button(allowanceLabel),undefined);await state.click(confirmLabel);
   assert.equal(confirms(state)[0].body.reviewDecisions.length,0);assert.equal(state.downloads.length,1);
 });
@@ -436,4 +439,37 @@ test('an order-level refund blocker stays visible even when the top-level confir
   const data=refundFixture();data.orderReviews[0].canConfirm=false;data.orderReviews[0].blockedReasons=['栗子掛繩取消資料尚未完整，請重新取得商城訂單'];
   const state=await view({previews:[data]});assert.match(state.visibleText(state.render()),/#SYN-REFUND：栗子掛繩取消資料尚未完整/);
   assert.equal(state.button(allowanceLabel),undefined);assert.equal(state.button(confirmLabel),undefined);assert.equal(confirms(state).length,0);
+});
+
+
+test('cancelled-item deduplication keeps other actual quantity changes and added products visible', async () => {
+  const data=fixture();data.newOrders=[];data.reviewRequired=true;
+  const power={sku:'POWER',name:'其餘電源',quantity:1,unitMinor:9000,lineSubtotalMinor:9000},added={sku:'ADD',name:'新增配件',quantity:1,unitMinor:1000,lineSubtotalMinor:1000};
+  const order=data.affectedBatches[0].uploadedOrders[0];order.changed=true;
+  order.before={items:[{...power,quantity:2,lineSubtotalMinor:18000},{sku:'STRAP',name:'栗子掛繩',quantity:1,unitMinor:3000,lineSubtotalMinor:3000}],quantity:3,totalMinor:21000};order.after={items:[power,added],quantity:2,totalMinor:10000};
+  data.summary={totalOrderCount:1,newOrderCount:0,changedOrderCount:1,unchangedOrderCount:0,quantity:2,totalMinor:10000};
+  data.orderReviews=[{orderNumber:order.orderNumber,type:'removed_items',summary:'商城取消栗子掛繩',cancelledItems:[{id:'cancelled',sku:'STRAP',name:'栗子掛繩',quantity:1,reason:'商城取消'}],remainingItems:[{id:'power',...power},{id:'added',...added}],live:{totalMinor:10000,refundedMinor:0,netPaymentMinor:0},decisionRequired:false,canConfirm:true,blockedReasons:[]}];
+  const state=await view({previews:[data]}),main=state.visibleText(state.render());
+  assert.equal((main.match(/栗子掛繩/g)||[]).length,1);assert.match(main,/栗子掛繩\s+已取消/);assert.doesNotMatch(main,/移除\s+栗子掛繩|本次銷貨 NT\$/);
+  assert.match(main,/本次出貨\s+2\s+件/);assert.match(main,/其餘電源.*數量\s+2\s+→\s+1/);assert.match(main,/新增\s+新增配件/);
+  assert.ok(state.all(node=>node.type==='details').every(node=>!node.props.open));
+  await state.click(confirmLabel);assert.equal(confirms(state)[0].body.reviewDecisions.length,0);assert.equal(state.downloads.length,1);
+});
+
+test('a cancelled SKU consumes only its matching removal and does not hide another same-SKU residual row', async () => {
+  const data=fixture();data.newOrders=[];data.reviewRequired=true;const power={sku:'POWER',name:'合成電源',quantity:1,unitMinor:10000,lineSubtotalMinor:10000};
+  const order=data.affectedBatches[0].uploadedOrders[0];order.changed=true;
+  order.before={items:[power,{sku:'STRAP',name:'栗子掛繩',quantity:1,unitMinor:1000,lineSubtotalMinor:1000},{sku:'STRAP',name:'另一款掛繩',quantity:2,unitMinor:2000,lineSubtotalMinor:4000}],quantity:4,totalMinor:15000};order.after={items:[power],quantity:1,totalMinor:10000};
+  data.summary={totalOrderCount:1,newOrderCount:0,changedOrderCount:1,unchangedOrderCount:0,quantity:1,totalMinor:10000};
+  data.orderReviews=[{orderNumber:order.orderNumber,type:'removed_items',summary:'商城取消栗子掛繩',cancelledItems:[{id:'cancelled',sku:'STRAP',name:'栗子掛繩',quantity:1,reason:'商城取消'}],remainingItems:[{id:'power',...power}],live:{totalMinor:10000,refundedMinor:0,netPaymentMinor:0},decisionRequired:false,canConfirm:true,blockedReasons:[]}];
+  const state=await view({previews:[data]}),main=state.visibleText(state.render());
+  assert.equal((main.match(/栗子掛繩/g)||[]).length,1);assert.match(main,/移除\s+另一款掛繩\s+×\s*2/);assert.match(main,/剩餘\s+合成電源\s+1\s+件/);
+  order.before={items:[power,{id:'cancelled',sku:'STRAP',name:'舊掛繩',quantity:2,unitMinor:2000,lineSubtotalMinor:4000}],quantity:3,totalMinor:14000};
+  const priorQuantity=await view({previews:[data]});
+  assert.match(priorQuantity.visibleText(priorQuantity.render()),/移除\s+舊掛繩\s+×\s*2/,'Same ID with a different removed quantity must remain visible');
+  const activeStrap={...power,sku:'STRAP',name:'仍出貨掛繩'};
+  order.before={items:[activeStrap,{sku:'STRAP',name:'栗子掛繩',quantity:1,unitMinor:1000,lineSubtotalMinor:1000}],quantity:2,totalMinor:11000};order.after={items:[activeStrap],quantity:1,totalMinor:10000};
+  data.orderReviews[0].remainingItems=[{id:'active-strap',...activeStrap}];
+  const ambiguousIdentity=await view({previews:[data]});
+  assert.match(ambiguousIdentity.visibleText(ambiguousIdentity.render()),/移除\s+栗子掛繩/,'Without a line ID, an active same-SKU row keeps the residual removal visible');
 });
