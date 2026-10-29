@@ -56,6 +56,11 @@ async function setup(){
 }
 describe('one reviewed mixed upload using real PGlite SQL, advisory locks stubbed (no native concurrency claim)',()=>{
  let h;beforeEach(async()=>{h=await setup();});afterEach(async()=>{await h?.db.close();});
+ test('legacy v1 cannot acknowledge a server review offer using its older generic confirmation',async()=>{
+  const original=h.prepare.getMockImplementation();h.prepare.mockImplementation(async(...args)=>({...await original(...args),reviewRequired:true}));const body={rows:table([changed('#A')]),settings,profileId:'1'},before=await h.state();
+  await expect(h.service.preview(body,user)).rejects.toMatchObject({code:'SHOPIFY_REVIEW_REQUIRED'});
+  await expect(h.service.apply({...body,commandId:randomUUID(),confirmed:true,notImportedConfirmed:true,previewFingerprint:'a'.repeat(64)},user)).rejects.toMatchObject({code:'SHOPIFY_REVIEW_REQUIRED'});expect(await h.state()).toEqual(before);
+ });
  test('preview classifies the full file and retains omitted originals without decisions or writes',async()=>{
   const before=await h.state(),preview=await h.service.preview({scopeMode:'uploaded-file-v2',rows:table([changed('#A'),row('#C')]),settings,profileId:'1'},user);
   expect(preview).toMatchObject({canConfirm:true,summary:{totalOrderCount:2,newOrderCount:1,changedOrderCount:1,unchangedOrderCount:0,quantity:3,totalMinor:30000},newOrders:[{orderNumber:'#C',after:{quantity:2}}],affectedBatches:[{retainedOrderCount:1,uploadedOrders:[{orderNumber:'#A',changed:true}],omittedOrders:[{orderNumber:'#B',preserved:true}]}]});expect(await h.state()).toEqual(before);

@@ -4,7 +4,7 @@ import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime } from '../../workspace/nativeRuntime.js';
 import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
-import { comparisonOrders, completeComparison, liveDifferences, orderDifferences, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
+import { comparisonOrders, completeComparison, liveDifferences, orderDifferences, orderReviewState, reviewDecisions, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
 
 const endpoint = '/api/marketplace-intakes/draft-overwrite';
 const scopeMode = 'uploaded-file-v2';
@@ -45,12 +45,28 @@ function ItemDifference({ change }) {
   return <li className="break-words"><span className="font-medium">{itemName(change.before)}</span>：{change.fields.map((change, index) => <React.Fragment key={change.field}>{index > 0 && '；'}{fieldLabels[change.field]} {fieldText(change.field, change.before)} → {fieldText(change.field, change.after)}</React.Fragment>)}</li>;
 }
 
-function OrderComparison({ order }) {
+function OrderReviewFacts({ review }) {
+  return <ul className="mt-1 space-y-1 text-sm leading-6" aria-label="取消與退款核對">
+    {review.cancelledItems.map(item => <li key={item.id}>{item.name} 已取消 ×{item.quantity}，本次不出貨。</li>)}
+    {review.remainingItems.map(item => <li key={item.id}>剩餘 {item.name} {item.quantity} 件</li>)}
+    {review.decisionRequired ? <li className="font-medium">商城 NT$ {amount(review.live.totalMinor)} → 本次銷貨 NT$ {amount(review.proposal.salesTotalMinor)}／額外折讓 NT$ {amount(review.proposal.allowanceMinor)}</li>
+      : <li>本次銷貨 NT$ {amount(review.live.totalMinor)}</li>}
+  </ul>;
+}
+
+function OrderReviewDetails({ review }) {
+  return <><p className="mt-1">{review.summary}</p><p>原退款 NT$ {amount(review.live.refundedMinor)}／退款後實收 NT$ {amount(review.live.netPaymentMinor)}</p>
+    <ul>{[...review.cancelledItems, ...review.remainingItems].map(item => <li key={item.id} className="break-words">{item.name}・{item.sku}{item.reason ? `・${item.reason}` : ''}</li>)}</ul>
+  </>;
+}
+
+function OrderComparison({ order, review }) {
   const diff = orderDifferences(order);
   const changedItems = diff.items.flatMap(change => change.kind === 'group' ? [...change.before, ...change.after] : [change.before || change.after]);
   const skus = [...new Set(changedItems.map(item => item.sku).filter(Boolean))];
   const liveDifference = diff.liveMoneyChanged || diff.liveQuantityChanged;
   return <li className="py-4 first:pt-0 last:pb-0" aria-label={`訂單異動 ${order.orderNumber}`}><p className="text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="ml-2 text-slate-600">重複／{order.changed || order.restoring ? '有異動' : '需核對商城現況'}</span></p>
+    {review && <OrderReviewFacts review={review} />}
     <ul className="mt-1 space-y-1 text-sm leading-6" aria-label="實質異動">
       {diff.restoring && <li>恢復出貨，使用本次檔案的內容。</li>}
       {diff.items.map(change => <ItemDifference key={change.key} change={change} />)}
@@ -62,26 +78,29 @@ function OrderComparison({ order }) {
       {diff.otherChanged && <li>其他內容有異動，將使用本次檔案。</li>}
     </ul>
     {liveDifference && <p className="mt-1 text-xs text-slate-500">不會修改商城收款。</p>}
-    {(skus.length > 0 || diff.showLiveAmounts) && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">查看明細</summary>
+    {(review || skus.length > 0 || diff.showLiveAmounts) && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">查看明細</summary>
+      {review && <OrderReviewDetails review={review} />}
       {skus.length > 0 && <p className="mt-1 break-all">商品品號：{skus.join('、')}</p>}
       {diff.items.some(change => change.kind === 'group') && <p className="mt-1">同品號多筆明細以整組列出，未指定逐筆對應。</p>}
-      {diff.showLiveAmounts && <LiveAmounts order={order} />}
+      {!review && diff.showLiveAmounts && <LiveAmounts order={order} />}
     </details>}
   </li>;
 }
 
-function NewOrder({ order }) {
+function NewOrder({ order, review }) {
   const { money: moneyDiffers, quantity: quantityDiffers } = liveDifferences(order);
-  return <li className="py-2 first:pt-0 last:pb-0" aria-label={`新增訂單 ${order.orderNumber}`}><p className="text-sm"><strong className="break-all">{order.orderNumber}</strong>・{order.after.quantity} 件・NT$ {amount(order.after.totalMinor)}</p><ul className="mt-1 text-xs leading-5 text-slate-600">{list(order.after.items).map((item, index) => <li key={index} className="break-words">{itemLabel(item)} × {valueText(item.quantity)}</li>)}</ul>{moneyDiffers && <LiveAmounts order={order} />}{quantityDiffers && <p className="mt-1 text-xs text-slate-600">商城現況 {order.live.quantity} 件／本次出貨 {order.after.quantity} 件。</p>}</li>;
+  return <li className="py-2 first:pt-0 last:pb-0" aria-label={`新增訂單 ${order.orderNumber}`}><p className="text-sm"><strong className="break-all">{order.orderNumber}</strong>・{order.after.quantity} 件・NT$ {amount(order.after.totalMinor)}</p><ul className="mt-1 text-xs leading-5 text-slate-600">{list(order.after.items).map((item, index) => <li key={index} className="break-words">{itemLabel(item)} × {valueText(item.quantity)}</li>)}</ul>{!review && moneyDiffers && <LiveAmounts order={order} />}{quantityDiffers && <p className="mt-1 text-xs text-slate-600">商城現況 {order.live.quantity} 件／本次出貨 {order.after.quantity} 件。</p>}</li>;
 }
 
-function NewOrderReview({ order }) {
+function NewOrderReview({ order, review }) {
   const live = liveDifferences(order);
-  return <li className="py-4 first:pt-0 last:pb-0" aria-label={`新增訂單需核對 ${order.orderNumber}`}><p className="text-sm"><strong>{order.orderNumber}</strong><span className="ml-2 text-slate-600">新增／需核對商城現況</span></p>
+  return <li className="py-4 first:pt-0 last:pb-0" aria-label={`新增訂單需核對 ${order.orderNumber}`}><p className="text-sm"><strong>{order.orderNumber}</strong><span className="ml-2 text-slate-600">新增／{review ? '取消與退款核對' : '需核對商城現況'}</span></p>
+    {review && <OrderReviewFacts review={review} />}
     <ul className="mt-1 text-sm leading-6" aria-label="實質異動">
-      {live.money && <li>出貨金額 NT$ {amount(order.after.totalMinor)}／商城 NT$ {amount(order.live.totalMinor)}</li>}
+      {!review && live.money && <li>出貨金額 NT$ {amount(order.after.totalMinor)}／商城 NT$ {amount(order.live.totalMinor)}</li>}
       {live.quantity && <li>本次出貨 {order.after.quantity} 件／商城現況 {order.live.quantity} 件</li>}
     </ul><p className="mt-1 text-xs text-slate-500">不會修改商城收款。</p>
+    {review && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer">查看明細</summary><OrderReviewDetails review={review} /></details>}
   </li>;
 }
 
@@ -123,9 +142,11 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
   const retainedCount = validCount(preview?.retainedOrderCount) ? preview.retainedOrderCount : batches.reduce((sum, batch) => sum + (validCount(batch.retainedOrderCount) ? batch.retainedOrderCount : list(batch.omittedOrders).length), 0);
   const comparisonComplete = completeComparison(preview);
   const { uploaded, needsReview: changedOrders, unchanged } = comparisonOrders(preview);
-  const newReviews = newOrders.filter(order => liveDifferences(order).money || liveDifferences(order).quantity);
-  const reasons = uniqueBlockedReasons(preview?.blockedReasons);
-  const blocked = !comparisonComplete || preview?.canConfirm !== true || list(preview?.blockedReasons).length > 0;
+  const reviews = orderReviewState(preview), byNumber = new Map(reviews.reviews.map(review => [review.orderNumber, review]));
+  const newReviews = newOrders.filter(order => byNumber.has(order.orderNumber) || liveDifferences(order).money || liveDifferences(order).quantity);
+  const hasAllowance = reviews.reviews.some(review => review.decisionRequired);
+  const reasons = uniqueBlockedReasons([...list(preview?.blockedReasons), ...reviews.reasons]);
+  const blocked = !comparisonComplete || !reviews.valid || preview?.canConfirm !== true || list(preview?.blockedReasons).length > 0 || reviews.reviews.some(review => !review.canConfirm || review.blockedReasons.length > 0) || reasons.length > 0;
   const canConfirm = !!preview && !blocked && !busy && !unknown && !result;
   activePreview.current = preview;
 
@@ -144,6 +165,7 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
     if (!command.current) command.current = {
       ...sourceBody(), confirmed: true, notImportedConfirmed: true,
       commandId: crypto.randomUUID(), previewFingerprint: preview.previewFingerprint,
+      ...(reviews.reviews.length ? { reviewDecisions: reviewDecisions(preview) } : {}),
     };
     inFlight.current = true; const request = ++sequence.current;
     markBusy(true); setError('');
@@ -198,15 +220,15 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
     {preview && !result && <>
       {comparisonComplete && !blocked ? <>
         <div className="text-sm leading-6"><p className="font-medium">重複 {uploaded.length} 筆・需核對 {changedOrders.length + newReviews.length} 筆・新增 {newOrders.length} 筆</p><p className="text-xs text-slate-500">整份 {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p></div>
-        {(changedOrders.length > 0 || newReviews.length > 0) && <ul className="divide-y divide-slate-200" aria-label="需核對訂單">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} />)}{newReviews.map(order => <NewOrderReview key={numberOf(order)} order={order} />)}</ul>}
+        {(changedOrders.length > 0 || newReviews.length > 0) && <ul className="divide-y divide-slate-200" aria-label="需核對訂單">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}{newReviews.map(order => <NewOrderReview key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul>}
         {unchanged.length > 0 && <details className="text-sm text-slate-600" aria-label="相同訂單單號"><summary className="cursor-pointer">相同 {unchanged.length} 筆，一併轉檔・查看單號</summary><p className="mt-2 break-words text-xs leading-6">{unchanged.map(numberOf).join('、')}</p></details>}
-        {newOrders.length > 0 && <details className="text-sm text-slate-600"><summary className="cursor-pointer">新增 {newOrders.length} 筆，一併轉檔・查看明細</summary><ul className="mt-3 divide-y divide-slate-100">{newOrders.map(order => <NewOrder key={numberOf(order)} order={order} />)}</ul></details>}
+        {newOrders.length > 0 && <details className="text-sm text-slate-600"><summary className="cursor-pointer">新增 {newOrders.length} 筆，一併轉檔・查看明細</summary><ul className="mt-3 divide-y divide-slate-100">{newOrders.map(order => <NewOrder key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul></details>}
         {retainedCount > 0 && <p className="text-xs leading-5 text-slate-600">另有 {retainedCount} 筆舊單未上傳，保留原狀，不列入本次銷貨檔。</p>}
       </> : <p className="text-sm font-medium">尚無法完成比對</p>}
       {reasons.length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-2 pl-7 pr-3 text-sm text-amber-950">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
       {blocked && reasons.length === 0 && <p role="alert" className="text-sm text-amber-950">訂單資料尚未完成核對，請重新核對。</p>}
       {!unknown && <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 pt-4">
-        {blocked ? <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="text-xs leading-5 text-slate-600">確認此批尚未匯入 ECOUNT，新檔取代舊檔。</p><Button disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>確認未匯入並轉檔</Button></>}
+        {blocked ? <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="text-xs leading-5 text-slate-600">{hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}</p><Button disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>{hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}</Button></>}
       </div>}
     </>}
     {unknown && <Button disabled={busy} onClick={confirm}>核對同一筆操作結果</Button>}

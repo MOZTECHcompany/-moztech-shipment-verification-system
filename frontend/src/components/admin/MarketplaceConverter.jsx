@@ -125,6 +125,7 @@ function ConverterPage({ user }) {
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
   const matchingProfiles = profiles.filter(profile => profile.platform === input?.parsed.platform);
   const reimports = prepared?.reimports || [];
+  const reviewRequired = prepared?.reviewRequired === true;
   const reimportNumbers = new Set(reimports.map(order => order.orderNumber));
   const onlyReimports = reimports.length > 0 && prepared.parsed.summary.orderCount === 0;
   const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason && !reimportNumbers.has(choice.number)) : [];
@@ -321,7 +322,7 @@ function ConverterPage({ user }) {
     if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession() || originalOrderFlow || routeContext.current !== routeContextKey) return;
     // A file containing saved orders is confirmed and exported as one file.
     // The new-order-only save route remains for files with no saved orders.
-    if (kind === 'ecount' && reimports.length > 0) { setDraftOverwriteOpen(true); return; }
+    if (kind === 'ecount' && (reimports.length > 0 || reviewRequired)) { setDraftOverwriteOpen(true); return; }
     if (kind === 'ecount' && (!prepared.parsed.orders.length || !prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
     if (kind === 'audit' && (!prepared.audit.ok || !prepared.prepick.ok)) return;
     inFlight.current = true; setBusy(true); showMessage('');
@@ -399,15 +400,15 @@ function ConverterPage({ user }) {
         {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store} · {profile.settings.customerCode}</option>)}</select></Field></div>
           : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><h2 className="text-lg font-semibold">{reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length} 筆` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{reimports.length ? <p className="mt-2 text-sm text-slate-700">比對整份檔案的新增與異動，確認後下載同一份銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
+          <div><h2 className="text-lg font-semibold">{reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length} 筆` : reviewRequired ? `本次檔案 ${raw.orders.length} 筆・取消與退款待核對` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{reviewRequired ? <p className="mt-2 text-sm text-slate-700">核對取消品項與剩餘出貨內容後，產生整份銷貨檔。</p> : reimports.length ? <p className="mt-2 text-sm text-slate-700">比對整份檔案的新增與異動，確認後下載同一份銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
             {!reimports.length && prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
             {!reimports.length && prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
           </div>
-          {reimports.length > 0 ? <Button disabled={locked || previewDirty || originalOrderFlow} onClick={() => download('ecount')}><Download size={16} className="mr-2" />比對並產生整份銷貨檔</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>}
+          {reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>}
         </div>
         {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
-          : prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
+          : !reviewRequired && prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
         {!previewDirty && (issueGroups.length > 0 || catalogBlocked || emptyExclusions.length > 0) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">{issueGroups.length || catalogBlocked ? '待處理' : '本批無可銷貨訂單'}</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
           {emptyExclusions.map(choice => <li key={choice.number}>{choice.number}：{choice.reason}</li>)}
           {catalogIssues.map(value => <li key={value}>{value}</li>)}
@@ -421,7 +422,7 @@ function ConverterPage({ user }) {
         onBusyChange={value => { if (mounted.current) setBusy(value); }}
         onClose={() => setDraftOverwriteOpen(false)}
         onComplete={async () => { if (!await loadRecords() || !mounted.current || !currentSession() || routeContext.current !== routeContextKey) return; const sequence = ++request.current; await fetchPreview(input.source.rows, settings, profileId, sequence); }} />}
-      {!draftOverwriteOpen && reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><p className="mt-2 text-sm text-slate-600">使用上方「比對並產生整份銷貨檔」，一併核對本次檔案的新單與已保存訂單。</p><div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
+      {!draftOverwriteOpen && reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><p className="mt-2 text-sm text-slate-600">{reviewRequired ? '使用上方「核對取消與退款」，一次確認本批剩餘出貨內容。' : '使用上方「比對並產生整份銷貨檔」，一併核對本次檔案的新單與已保存訂單。'}</p><div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
         const { link, resume } = reimportLink(order);
         return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
       })}</div></section>}

@@ -10,6 +10,13 @@ const source = await readFile(new URL('../src/components/admin/MarketplaceDraftO
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
 const snapshot = (quantity = 4, totalMinor = 307800) => ({ quantity, totalMinor, items: [{ sku: '4711299273674', name: '掛繩充電線', quantity, unitMinor: 76950, lineSubtotalMinor: totalMinor }] });
 const fixture = () => ({ scopeMode: 'uploaded-file-v2', previewFingerprint: 'preview-one', summary: { totalOrderCount: 2, newOrderCount: 1, changedOrderCount: 0, unchangedOrderCount: 1, quantity: 3, totalMinor: 30000 }, newOrders: [{ orderNumber: '#NEW', after: snapshot(2, 20000), live: { totalMinor: 20000, receivedMinor: 20000, outstandingMinor: 0, quantity: 2 } }], canConfirm: true, blockedReasons: [], confirmationRequired: true, affectedBatches: [{ id: 52, batchNumber: 'WMS-TEST-52', revision: 1, retainedOrderCount: 1, uploadedOrders: [{ orderNumber: '#155116', changed: false, before: snapshot(1, 10000), after: snapshot(1, 10000), changes: [] }], omittedOrders: [{ orderNumber: '#155293', before: snapshot(), preserved: true }] }] });
+const refundFixture = () => {
+  const active = { id: 'active-1', name: '合成行動電源', sku: 'POWER-WHITE', quantity: 1 };
+  return { scopeMode:'uploaded-file-v2', previewFingerprint:'refund-preview-one', summary:{ totalOrderCount:1,newOrderCount:1,changedOrderCount:0,unchangedOrderCount:0,quantity:1,totalMinor:108000 },
+    newOrders:[{ orderNumber:'#SYN-REFUND',after:{ quantity:1,totalMinor:108000,items:[{ sku:active.sku,name:active.name,quantity:1,unitMinor:108000,lineSubtotalMinor:108000 }] },live:{ totalMinor:112037,receivedMinor:187900,outstandingMinor:0,quantity:1 } }],affectedBatches:[],canConfirm:true,blockedReasons:[],reviewRequired:true,
+    orderReviews:[{ orderNumber:'#SYN-REFUND',type:'partial_refund',summary:'官方取消掛繩，退款成功，依實收另列折讓',cancelledItems:[{ id:'cancelled-1',name:'栗子掛繩',sku:'STRAP-CHESTNUT',quantity:1,reason:'商城取消；退款成功' }],remainingItems:[active],live:{ totalMinor:112037,refundedMinor:79900,netPaymentMinor:108000 },decisionRequired:true,proposal:{ decision:'net-payment-with-allowance-v1',fingerprint:'a'.repeat(64),salesTotalMinor:108000,allowanceMinor:4037 },canConfirm:true,blockedReasons:[] }] };
+};
+const allowanceLabel = '確認實收與折讓並轉檔';
 const applied = () => { const exportBatch = { id: 90, batchNumber: 'WMS-FULL-90', activeOrderCount: 2, orderCount: 2, quantity: 3, totalMinor: 30000 }; return { applied: true, scopeMode: 'uploaded-file-v2', commandId: 'server-command', exportBatch, batches: [exportBatch], replayed: false }; };
 const fail = status => Object.assign(Error('synthetic failure'), { response: { status, data: { message: '合成失敗' } } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -365,4 +372,68 @@ test('ambiguous same-SKU group keeps every residual material value visible witho
   assert.doesNotMatch(main, /DUPLICATE-SKU|不變品項/);
   assert.equal((main.match(/→/g) || []).length, 1, 'Only the order total has an arrow; no invented per-row match');
   assert.match(state.text(state.render()), /DUPLICATE-SKU/);
+});
+
+
+test('a new partial-refund order shows the cancelled product and exact proposed allowance before one explicit conversion', async () => {
+  const state=await view({previews:[refundFixture()]});const main=state.visibleText(state.render());
+  assert.match(main,/#SYN-REFUND/);assert.match(main,/栗子掛繩\s+已取消\s+×\s*1\s*，本次不出貨/);
+  assert.match(main,/剩餘\s+合成行動電源\s+1\s+件/);
+  assert.match(main,/商城 NT\$\s+1,120.37\s+→ 本次銷貨 NT\$\s+1,080\s*／額外折讓 NT\$\s+40.37/);
+  assert.doesNotMatch(main,/原退款|799|STRAP-CHESTNUT|POWER-WHITE/);
+  assert.match(state.text(state.render()),/原退款 NT\$\s+799\s*／退款後實收 NT\$\s+1,080/);
+  assert.equal(state.checkbox(),undefined);assert.equal(confirms(state).length,0);assert.equal(state.downloads.length,0);
+  assert.equal(state.button(confirmLabel),undefined);const button=state.button(allowanceLabel);assert.ok(button);assert.equal(button.props.disabled,false);
+  const note=state.all(node=>node.props?.id===button.props['aria-describedby'])[0];assert.match(state.text(note),/尚未匯入 ECOUNT.*實收與額外折讓/);
+  await state.click(allowanceLabel);const body=confirms(state)[0].body;
+  assert.equal(body.reviewDecisions.length,1);assert.equal(body.reviewDecisions[0].orderNumber,'#SYN-REFUND');
+  assert.equal(body.reviewDecisions[0].decision,'net-payment-with-allowance-v1');assert.equal(body.reviewDecisions[0].fingerprint,'a'.repeat(64));
+  assert.deepEqual(Object.keys(body.reviewDecisions[0]).sort(),['decision','fingerprint','orderNumber']);
+  assert.equal(body.confirmed,true);assert.equal(body.notImportedConfirmed,true);assert.equal(state.downloads.length,1);
+});
+
+test('an uncertain refund confirmation preserves the complete decision and command UUID exactly', async () => {
+  const state=await view({previews:[refundFixture()],confirms:[fail(503),applied()]});
+  await state.click(allowanceLabel);assert.equal(state.button('取消').props.disabled,true);
+  await state.click('核對同一筆操作結果');
+  assert.equal(confirms(state).length,2);assert.equal(confirms(state)[0].body,confirms(state)[1].body);
+  assert.equal(confirms(state)[1].body.reviewDecisions[0].fingerprint,'a'.repeat(64));assert.equal(state.downloads.length,1);
+});
+
+test('a changed refund proposal requires another review and click; an old handler cannot authorize it', async () => {
+  const updated=refundFixture();updated.previewFingerprint='refund-preview-two';updated.orderReviews[0].proposal.fingerprint='b'.repeat(64);
+  updated.orderReviews[0].live.totalMinor=114000;updated.orderReviews[0].proposal.allowanceMinor=6000;updated.newOrders[0].live.totalMinor=114000;
+  const state=await view({previews:[refundFixture(),updated],confirms:[fail(409),applied()]});const old=state.button(allowanceLabel).props.onClick;
+  await state.click(allowanceLabel);assert.equal(previews(state).length,2);assert.equal(confirms(state).length,1);
+  assert.match(state.visibleText(state.render()),/額外折讓 NT\$\s+60/);await old();await state.settle();assert.equal(confirms(state).length,1);
+  await state.click(allowanceLabel);assert.equal(confirms(state)[1].body.reviewDecisions[0].fingerprint,'b'.repeat(64));
+  assert.notEqual(confirms(state)[0].body.commandId,confirms(state)[1].body.commandId);
+});
+
+test('officially removed chestnut strap stays excluded while the separate pink strap remains in the reviewed shipment', async () => {
+  const data=fixture();data.newOrders=[];data.reviewRequired=true;
+  const items=[['POWER','合成電源',95884],['PAD','合成墊片',9589],['SHAVER','合成刮鬍刀',124941],['STRAP-PINK','粉色掛繩',79900]].map(([sku,name,lineSubtotalMinor],index)=>({id:`active-${index}`,sku,name,quantity:1,unitMinor:lineSubtotalMinor,lineSubtotalMinor}));
+  const order=data.affectedBatches[0].uploadedOrders[0];order.orderNumber='#SYN-REMOVED';order.changed=true;order.after={items,quantity:4,totalMinor:310314};
+  order.before={items:[...items,{sku:'STRAP-CHESTNUT',name:'栗子掛繩',quantity:1,unitMinor:77386,lineSubtotalMinor:77386}],quantity:5,totalMinor:387700};
+  data.summary={totalOrderCount:1,newOrderCount:0,changedOrderCount:1,unchangedOrderCount:0,quantity:4,totalMinor:310314};
+  data.orderReviews=[{orderNumber:'#SYN-REMOVED',type:'removed_items',summary:'商城已取消栗子掛繩；其餘目前有效品項保留',cancelledItems:[{id:'cancelled',name:'栗子掛繩',sku:'STRAP-CHESTNUT',quantity:1,reason:'商城有效數量為零'}],remainingItems:items,live:{totalMinor:310314,refundedMinor:0,netPaymentMinor:0},decisionRequired:false,canConfirm:true,blockedReasons:[]}];
+  const state=await view({previews:[data]});const main=state.visibleText(state.render());
+  assert.match(main,/栗子掛繩\s+已取消/);assert.match(main,/剩餘\s+粉色掛繩\s+1\s+件/);assert.match(main,/本次銷貨 NT\$\s+3,103.14/);
+  assert.equal(state.button(allowanceLabel),undefined);await state.click(confirmLabel);
+  assert.equal(confirms(state)[0].body.reviewDecisions.length,0);assert.equal(state.downloads.length,1);
+});
+
+test('incomplete or inconsistent refund proposals stay blocked without fake confirmation or editable money', async () => {
+  for(const mutate of [d=>delete d.orderReviews[0].proposal.fingerprint,d=>d.orderReviews[0].proposal.decision='arbitrary',d=>d.orderReviews[0].proposal.salesTotalMinor=107999,d=>d.orderReviews[0].remainingItems[0].quantity=2,d=>d.orderReviews[0].orderNumber='#NOT-UPLOADED']){
+    const data=refundFixture();mutate(data);const state=await view({previews:[data]});
+    assert.equal(state.button(allowanceLabel),undefined);assert.equal(state.button(confirmLabel),undefined);assert.ok(state.button('重新核對'));
+    assert.match(state.visibleText(state.render()),/取消與退款核對資料未完整回傳/);assert.equal(confirms(state).length,0);assert.equal(state.downloads.length,0);
+    assert.equal(state.all(node=>node.type==='input').length,0);
+  }
+});
+
+test('an order-level refund blocker stays visible even when the top-level confirmation flag is inconsistent', async () => {
+  const data=refundFixture();data.orderReviews[0].canConfirm=false;data.orderReviews[0].blockedReasons=['栗子掛繩取消資料尚未完整，請重新取得商城訂單'];
+  const state=await view({previews:[data]});assert.match(state.visibleText(state.render()),/#SYN-REFUND：栗子掛繩取消資料尚未完整/);
+  assert.equal(state.button(allowanceLabel),undefined);assert.equal(state.button(confirmLabel),undefined);assert.equal(confirms(state).length,0);
 });

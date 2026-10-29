@@ -418,7 +418,7 @@ export function parseMarketplaceRows(rows, { platform, allowedOrderNumbers, allo
       if (f.subtotalMinor != null && sum(items.map((i) => i.lineSubtotalMinor ?? 0)) !== f.subtotalMinor) issues.push(issue('DISCOUNT_ALLOCATION_REQUIRED', '整單折扣尚未完整分攤至商品，不能自行平均或重複扣折扣', context, 'confirmation'));
       if (f.subtotalMinor != null && f.shippingMinor != null && f.taxMinor != null && f.totalMinor != null && f.subtotalMinor + f.shippingMinor + f.taxMinor !== f.totalMinor) issues.push(issue('SHIPPING_DISCOUNT_ALLOCATION_REQUIRED', '運費可能含折抵，須先取得運費折扣分攤再輸出 ECOUNT', context, 'confirmation'));
     }
-    if (order.paymentStatus !== 'paid') issues.push(issue('UNPAID_ORDER', '付款狀態未證實已付；測試轉檔不會變更付款或允許正式出貨', context, 'warning'));
+    if (order.paymentStatus !== 'paid'&&!verifiedShopifyRefundRemainder(order)) issues.push(issue('UNPAID_ORDER', '付款狀態未證實已付；測試轉檔不會變更付款或允許正式出貨', context, 'warning'));
   }
   if (footer && !excluded.size) {
     for (const [column, field] of [['訂單金額(不含金/物流手續費)', 'subtotalMinor'], ['訂單運費', 'shippingMinor'], ['總計金額', 'totalMinor']]) {
@@ -459,6 +459,11 @@ function mappingIssues(parsed, settings, requireBarcode = true) {
   return issues;
 }
 
+export function verifiedShopifyRefundRemainder(order) {
+  const proof=order.shopifyRefundRemainder,f=order.financial;
+  return order.sourcePlatform==='Shopify'&&order.paymentStatus==='partially_refunded'&&order.cancelled===false&&order.fulfillmentStatus==='unfulfilled'&&proof?.version==='shopify-refund-remainder-v1'&&/^[a-f0-9]{64}$/.test(proof.evidenceFingerprint||'')&&/^[a-f0-9]{64}$/.test(proof.proposalFingerprint||'')&&[proof.apiTotalMinor,proof.refundedMinor,proof.receivedMinor,proof.netPaymentMinor,proof.allowanceMinor].every(value=>Number.isSafeInteger(value)&&value>=0)&&proof.refundedMinor>0&&proof.netPaymentMinor>0&&proof.receivedMinor-proof.refundedMinor===proof.netPaymentMinor&&proof.apiTotalMinor-proof.allowanceMinor===proof.netPaymentMinor&&f.refundedMinor===proof.refundedMinor&&f.totalMinor===proof.netPaymentMinor&&f.outstandingMinor===0&&f.operatorAllowanceMinor===proof.allowanceMinor;
+}
+
 export function validateMarketplaceExport(parsed, settings = {}) {
   settings=normalizeMarketplaceSettings(parsed,settings);
   const issues = [...(parsed.issues || []).filter((i) => i.severity === 'error'), ...mappingIssues(parsed, settings, false)];
@@ -478,8 +483,8 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   }
   for (const order of parsed.orders || []) {
     const context = { orderNumber: order.sourceOrderNumber };
-    if (order.cancelled || !['unfulfilled'].includes(order.fulfillmentStatus) || !['paid', 'pending'].includes(order.paymentStatus) || (order.financial.refundedMinor ?? 0) > 0) issues.push(issue('ORDER_NOT_ELIGIBLE', '取消、退款、已履行或狀態不明訂單不能由此測試轉檔出貨', context));
-    if (order.paymentStatus !== 'paid' && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '請確認這是未付款訂單的限定測試，不代表已收款或正式放行', context));
+    if (!verifiedShopifyRefundRemainder(order)&&(order.cancelled || !['unfulfilled'].includes(order.fulfillmentStatus) || !['paid', 'pending'].includes(order.paymentStatus) || (order.financial.refundedMinor ?? 0) > 0)) issues.push(issue('ORDER_NOT_ELIGIBLE', '取消、退款、已履行或狀態不明訂單不能由此測試轉檔出貨', context));
+    if (order.paymentStatus !== 'paid' && !verifiedShopifyRefundRemainder(order) && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '請確認這是未付款訂單的限定測試，不代表已收款或正式放行', context));
     if (order.financial.currency && order.financial.currency !== settings.currency) issues.push(issue('CURRENCY_MISMATCH', '來源幣別與匯出設定不符', context));
     if ((order.financial.feeMinor ?? 0) !== 0) issues.push(issue('FEE_MAPPING_REQUIRED', '本次尚未設定金流手續費專用品項，不能漏列或併入商品', context));
     if ((order.financial.shippingMinor ?? 0) > 0 && (!settings.shippingSku?.confirmed || !settings.shippingSku?.nonStock || !text(settings.shippingSku?.erpSku))) issues.push(issue('SHIPPING_MAPPING_REQUIRED', '有運費時，須確認 ECOUNT 運費品項為非庫存／數量管理除外', context));
@@ -600,8 +605,8 @@ export function buildPrepickRows(parsed, settings = {}) {
   const hasInternal=Object.values(settings.skuMappings||{}).some(m=>m.scanCodeType==='internal');
   const preview = settings.preview === true;
   const issues = [...(parsed.issues || []).filter((i) => i.severity === 'error'), ...(preview ? [] : mappingIssues(parsed, settings))];
-  if (!preview && parsed.orders.some((o) => o.paymentStatus !== 'paid') && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '未付款訂單預揀表僅供明確確認的限定測試'));
-  if (!preview && parsed.orders.some((o) => o.cancelled || o.fulfillmentStatus !== 'unfulfilled' || !['paid', 'pending'].includes(o.paymentStatus) || (o.financial.refundedMinor ?? 0) > 0)) issues.push(issue('ORDER_NOT_ELIGIBLE', '此檔包含不能出貨的訂單狀態'));
+  if (!preview && parsed.orders.some((o) => o.paymentStatus !== 'paid'&&!verifiedShopifyRefundRemainder(o)) && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '未付款訂單預揀表僅供明確確認的限定測試'));
+  if (!preview && parsed.orders.some((o) => !verifiedShopifyRefundRemainder(o)&&(o.cancelled || o.fulfillmentStatus !== 'unfulfilled' || !['paid', 'pending'].includes(o.paymentStatus) || (o.financial.refundedMinor ?? 0) > 0))) issues.push(issue('ORDER_NOT_ELIGIBLE', '此檔包含不能出貨的訂單狀態'));
   const result = { ok: issues.length === 0, issues, headers: ['分類（對照設定）', '來源SKU', 'ECOUNT品項編碼', hasInternal?'商品掃描碼':preview ? '商品條碼（確認後顯示）' : '已確認國際條碼', '商品名稱', '實體數量', '商城訂單數', '來源商城訂單', '來源組合／分組', '用途', 'ECOUNT品項名稱', '規格', '來源團組名稱', '來源團次', ...(hasInternal?['掃描碼類型','國際條碼','內部掃描碼']:[])], rows: [], sourceSkuGroups: [], summary: { ...parsed.summary } };
   if (!result.ok) return result;
   const groups = new Map();

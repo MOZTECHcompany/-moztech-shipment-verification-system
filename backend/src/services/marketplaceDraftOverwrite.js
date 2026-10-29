@@ -154,6 +154,7 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
   const initial=await prepareMarketplace(body,{refresh});
   const context=await readContext(pool,initial);
   const conversion=await prepareMarketplace(body,{refresh:false,overwriteOrderNumbers:context.numbers});
+  if(conversion.reviewRequired===true)throw fail('請使用整份比對助理核對取消品項與本次轉檔內容','SHOPIFY_REVIEW_REQUIRED',400);
   conversion.uploadedNumbers=new Set(context.numbers);
   const omittedChecks=await checkOmitted(context,body);
   return {context,conversion,omittedChecks,previewFingerprint:fingerprint(context,conversion,body,omittedChecks)};

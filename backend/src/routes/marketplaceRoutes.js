@@ -82,6 +82,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   try{
    const conversion=await prepareMarketplace(req.body||{},{refresh:true});
    const {parsed,output,source,raw,settings,verification,sourceEvidence}=conversion;
+   if(conversion.reviewRequired===true)throw Object.assign(new Error('請先在比對助理核對取消品項與本次轉檔內容，再產生銷貨檔'),{status:400,code:'SHOPIFY_REVIEW_REQUIRED'});
    if(verification&&req.body?.previewFingerprint!==verification.currentFingerprint)throw Object.assign(new Error(`${source.platform} 訂單已更新，請重新核對後下載`),{status:409,code:source.platform==='Shopify'?'SHOPIFY_PREVIEW_CHANGED':'MARKETPLACE_PREVIEW_CHANGED'});
    const allReimports=parsed?.orders?.length===0&&conversion.reimports?.length>0&&raw.orders.length===conversion.reimports.length;
    if(!output.ok&&!allReimports)throw Object.assign(new Error('請先修正轉檔問題'),{status:400,code:'MARKETPLACE_NOT_READY',issues:output.issues});

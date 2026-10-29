@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { comparisonOrders, itemDifferences, liveDifferences, orderDifferences, completeComparison, uniqueBlockedReasons } from '../src/utils/marketplaceDraftDiff.mjs';
+import { orderReviewState, reviewDecisions, comparisonOrders, itemDifferences, liveDifferences, orderDifferences, completeComparison, uniqueBlockedReasons } from '../src/utils/marketplaceDraftDiff.mjs';
 const item = (sku = 'A', quantity = 1, unitMinor = 10000, lineSubtotalMinor = quantity * unitMinor, name = `商品${sku}`) => ({ sku, name, quantity, unitMinor, lineSubtotalMinor });
 const order = (before, after, extra = {}) => ({ changed: true, before: { quantity: 1, totalMinor: 10000, items: before, shipping: {} }, after: { quantity: 1, totalMinor: 10000, items: after, shipping: {} }, ...extra });
 
@@ -82,4 +82,31 @@ test('review partition includes actual API-only differences and preserves identi
   assert.deepEqual(result.needsReview.map(order => order.orderNumber), ['#API', '#RESTORE', '#CHANGE']);
   assert.deepEqual(result.unchanged.map(order => order.orderNumber), ['#SAME', '#MISSING']);
   assert.equal(result.uploaded.length, 5); assert.deepEqual(preview, original);
+});
+
+
+const reviewed = () => ({ reviewRequired:true,orderReviews:[{orderNumber:'#REFUND',type:'partial_refund',summary:'合成官方取消商品與實收折讓',cancelledItems:[{id:'cancelled',name:'栗子掛繩',sku:'STRAP',quantity:1,reason:'商城取消'}],remainingItems:[{id:'active',name:'行動電源',sku:'POWER',quantity:1}],live:{totalMinor:112037,refundedMinor:79900,netPaymentMinor:108000},decisionRequired:true,proposal:{decision:'net-payment-with-allowance-v1',fingerprint:'a'.repeat(64),salesTotalMinor:108000,allowanceMinor:4037},canConfirm:true,blockedReasons:[]}],newOrders:[{orderNumber:'#REFUND',after:{quantity:1,totalMinor:108000}}],affectedBatches:[] });
+
+test('refund decisions contain only the server enum and fingerprint, without client supplied amounts or mutation', () => {
+  const preview=reviewed(), original=structuredClone(preview);
+  assert.equal(orderReviewState(preview).valid,true);assert.deepEqual(reviewDecisions(preview),[{orderNumber:'#REFUND',decision:'net-payment-with-allowance-v1',fingerprint:'a'.repeat(64)}]);
+  assert.deepEqual(preview,original);
+  for(const mutate of [d=>d.orderReviews[0].proposal.fingerprint=null,d=>d.orderReviews[0].proposal.decision='client-amount',d=>d.orderReviews[0].proposal.allowanceMinor=0,d=>d.orderReviews[0].proposal.salesTotalMinor=108001,d=>d.newOrders[0].after.totalMinor=112037,d=>d.orderReviews[0].remainingItems[0].quantity=2,d=>d.orderReviews.push(d.orderReviews[0]),d=>d.orderReviews[0].blockedReasons=[null]]){
+    const malformed=reviewed();mutate(malformed);assert.equal(orderReviewState(malformed).valid,false);assert.equal(reviewDecisions(malformed),null);
+  }
+});
+
+test('cancelled-item reviews count as required even if saved draft fields are otherwise unchanged', () => {
+  const preview=reviewed();preview.newOrders=[];preview.affectedBatches=[{uploadedOrders:[{orderNumber:'#REFUND',changed:false,after:{quantity:1,totalMinor:108000},live:{quantity:1,totalMinor:108000}}]}];
+  assert.equal(comparisonOrders(preview).needsReview.length,1);assert.equal(comparisonOrders(preview).unchanged.length,0);
+});
+
+test('removed-only reviews produce no refund decision and order-level blockers stay attached to the correct order', () => {
+  const preview=reviewed(), review=preview.orderReviews[0];review.type='removed_items';review.decisionRequired=false;delete review.proposal;review.live={totalMinor:108000,refundedMinor:0,netPaymentMinor:0};
+  assert.deepEqual(reviewDecisions(preview),[]);
+  preview.newOrders[0].after.totalMinor=108001;assert.equal(orderReviewState(preview).valid,false);preview.newOrders[0].after.totalMinor=108000;
+  review.canConfirm=false;review.blockedReasons=['栗子掛繩取消資料尚未完整'];
+  assert.deepEqual(orderReviewState(preview).reasons,['#REFUND：栗子掛繩取消資料尚未完整']);assert.equal(reviewDecisions(preview),null);
+  assert.equal(orderReviewState({}).valid,true,'Legacy responses without refund reviews retain their existing flow');
+  assert.equal(orderReviewState({reviewRequired:true,orderReviews:[]}).valid,false);
 });

@@ -117,6 +117,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
     paymentMethod:'',shipping:{},financial:{subtotalMinor:order.subtotalMinor,totalMinor:order.totalMinor,shippingMinor:order.shippingMinor,
      discountMinor:order.discountMinor,taxMinor:0,refundedMinor:0,outstandingMinor:order.outstandingMinor,feeMinor:null}});
   }
+  const orderReview=require('./shopifyOrderReview').applyShopifyOrderReviews(raw,verification,draftSourceReview);
   const sourceClassification={...await classifyReimports({db:pool,platform:source.platform,store:clean(settingsInput.store),raw,verification,profile,verifiedRows}),verifiedRows};
   const reimports=sourceClassification.reimports;
   const replacing=new Set(options.overwriteOrderNumbers||[]);
@@ -307,7 +308,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(prepared.parsed.items.length>1000||prepared.parsed.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
   if(prepared.parsed.orders.some(o=>!clean(o.sourceOrderNumber)||clean(o.sourceOrderNumber).length>100))throw fail('商城訂單號最多 100 字');
   if(clean(settings.store).length>100||clean(settings.customerCode).length>30||clean(settings.warehouseCode).length>30)throw fail('店鋪、客戶或倉庫欄位過長');
-  return {source,raw,...prepared,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,...(draftSourceReview?{draftSourceReview}:{})}};
+  return {source,raw,...prepared,...orderReview,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,orderReviews:orderReview.orderReviews,...(draftSourceReview?{draftSourceReview}:{})}};
  };
 }
 module.exports={createMarketplacePreparation,deliveryForOrders,selectProfile};

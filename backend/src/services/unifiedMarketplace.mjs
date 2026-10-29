@@ -1,4 +1,4 @@
-import { productIdentifierIssue, parseMarketplaceRows, parseMoneyMinor, buildEcountRows, buildMarketplaceAuditRows, buildPrepickRows, normalizeMarketplaceSettings } from './marketplaceIntake.mjs';
+import { productIdentifierIssue, parseMarketplaceRows, parseMoneyMinor, buildEcountRows, buildMarketplaceAuditRows, buildPrepickRows, normalizeMarketplaceSettings, verifiedShopifyRefundRemainder } from './marketplaceIntake.mjs';
 
 export const MARKETPLACE_ROLES = ['dispatcher', 'admin', 'superadmin'];
 export const TEST_ORDER_NUMBERS = ['TST6091550133', 'TST6091550109'];
@@ -192,6 +192,7 @@ function canShip(order,settings){
   if(order.cancelled)return {eligible:false,reason:'已取消訂單'};
   if(/失敗|failed/i.test(t(order.rawPaymentStatus)))return {eligible:false,reason:'付款失敗'};
   if(/逾期|過期|逾時|expired/i.test(t(order.rawPaymentStatus)))return {eligible:false,reason:'付款期限已過'};
+  if(verifiedShopifyRefundRemainder(order))return {eligible:true,reason:'部分退款／剩餘商品未出貨；實收折讓待明確確認'};
   if(order.cancelled||order.fulfillmentStatus!=='unfulfilled'||(order.financial.refundedMinor??0)>0||!['paid','pending'].includes(order.paymentStatus))return {eligible:false,reason:'已出貨、取消、退款或狀態不明'};
   if(order.paymentStatus==='paid')return {eligible:true,reason:'已付款／未出貨'};
   const cod=/貨到付款|貨到收款|取貨付款|cash\s*on\s*delivery|\bcod\b/i.test(order.paymentMethod)||(order.sourcePlatform==='Shopify'&&t(order.paymentMethod).toLowerCase()==='custom');

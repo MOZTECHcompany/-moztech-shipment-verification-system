@@ -37,7 +37,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, reimports = [], saveResponse = null, params = '' } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [] } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -94,7 +94,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             latestPrepared = prepared;
             prepared.audit = unified.prepareUnifiedMarketplace(raw,effectiveSettings).audit;
             prepared.choices.push(...activeReimports.map(order => ({number:order.orderNumber,eligible:false,reason:order.message || '已保存'})));
-            return {data:{...prepared,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            return {data:{...prepared,reviewRequired,orderReviews,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         if (saveResponse) return {data:typeof saveResponse === 'function' ? saveResponse(body) : saveResponse};
@@ -995,4 +995,38 @@ test('staff explicitly choose and review an internal label without filling EAN b
  const confirmation=view.requests.find(r=>r.url==='/api/marketplace-intakes/barcode-confirmations');
  assert.equal(confirmation.body.settings.skuMappings['00123'].barcode,'');assert.equal(confirmation.body.confirmation.fingerprint,'internal-ITM-AUDIT-00123');
  assert.equal(downloadSales(view).props.disabled,false);assert.equal(view.downloads.length,0);assert.equal(view.writes.length,0);
+});
+
+
+test('all-new cancellation or partial-refund reviews have a clear entry instead of the ordinary save route', async () => {
+    const review = { orderNumber:'#REVIEW-2',type:'partial_refund',summary:'合成取消與退款核對' };
+    const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[review]});
+    await view.select(file(shopifyBarcodeRows));
+    assert.equal(view.button('下載銷貨檔'),undefined);
+    const entry=view.button('核對取消與退款'); assert.ok(entry); assert.equal(entry.props.disabled,false);
+    assert.match(view.text(view.render()),/取消與退款待核對/);
+    assert.doesNotMatch(view.text(view.render()),/API 已核對・下載後上傳 ECOUNT/);
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
+    await entry.props.onClick(); view.render();
+    assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
+    assert.equal(view.downloads.length,0,'Opening review does not confirm or download');
+});
+
+test('mixed saved files use the same explicit cancellation/refund review entry and close restores it', async () => {
+    const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-1',type:'removed_items'}],reimports:[savedShopifyOrder]});
+    await view.select(file(shopifyBarcodeRows));
+    assert.equal(view.button('比對並產生整份銷貨檔'),undefined);
+    await view.button('核對取消與退款').props.onClick();view.render();
+    const assistant=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');assert.ok(assistant);
+    assistant.props.onClose();view.render();assert.ok(view.button('核對取消與退款'));
+    assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
+});
+
+test('a changed session cannot use a retained cancellation/refund review entry', async () => {
+    const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-2',type:'partial_refund'}]});
+    await view.select(file(shopifyBarcodeRows)); const handler=view.button('核對取消與退款').props.onClick;
+    view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'})); view.listeners.get('storage')(); await handler();view.render();
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);
+    assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
 });

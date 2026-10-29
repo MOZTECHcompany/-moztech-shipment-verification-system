@@ -49,12 +49,48 @@ export function liveDifferences(order) {
 
 export function comparisonOrders(preview) {
   const uploaded = list(preview?.affectedBatches).flatMap(batch => list(batch.uploadedOrders));
+  const reviews = new Set(list(preview?.orderReviews).map(review => review.orderNumber));
   const needsReview = [], unchanged = [];
   for (const order of uploaded) {
     const live = liveDifferences(order);
-    (order.changed || order.restoring || live.money || live.quantity ? needsReview : unchanged).push(order);
+    (order.changed || order.restoring || live.money || live.quantity || reviews.has(order.orderNumber) ? needsReview : unchanged).push(order);
   }
   return { uploaded, needsReview, unchanged };
+}
+
+// Server proposals are displayed verbatim. This validates their shape and
+// consistency; it never selects a refunded SKU or calculates a sales proposal.
+export function orderReviewState(preview) {
+  if (preview?.reviewRequired == null && preview?.orderReviews == null) return { valid: true, reviews: [], reasons: [] };
+  const invalid = number => `${number ? `${number}：` : ''}取消與退款核對資料未完整回傳，請重新核對商城訂單。`;
+  if (typeof preview?.reviewRequired !== 'boolean' || !Array.isArray(preview?.orderReviews) || preview.reviewRequired !== (preview.orderReviews.length > 0)) return { valid: false, reviews: [], reasons: [invalid()] };
+  const known = value => Number.isSafeInteger(value) && value >= 0;
+  const item = row => row && typeof row.id === 'string' && row.id && typeof row.name === 'string' && row.name && typeof row.sku === 'string' && row.sku && Number.isSafeInteger(row.quantity) && row.quantity > 0;
+  const numbers = new Set(), selectedOrders = [...list(preview.newOrders), ...list(preview.affectedBatches).flatMap(batch => list(batch.uploadedOrders))], selected = new Map(selectedOrders.map(order => [order.orderNumber, order]));
+  for (const review of preview.orderReviews) {
+    const number = typeof review?.orderNumber === 'string' && review.orderNumber.length <= 100 ? review.orderNumber : '';
+    const proposal = review?.proposal;
+    if (!number || numbers.has(number) || selected.size > 0 && !selected.has(number)
+      || !['partial_refund', 'removed_items'].includes(review.type) || typeof review.summary !== 'string'
+      || !Array.isArray(review.cancelledItems) || !review.cancelledItems.every(row => item(row) && typeof row.reason === 'string')
+      || !Array.isArray(review.remainingItems) || !review.remainingItems.length || !review.remainingItems.every(item)
+      || ![review.live?.totalMinor, review.live?.refundedMinor, review.live?.netPaymentMinor].every(known)
+      || typeof review.decisionRequired !== 'boolean' || typeof review.canConfirm !== 'boolean' || !Array.isArray(review.blockedReasons)
+      || !review.blockedReasons.every(reason => typeof reason === 'string' || reason && typeof reason.message === 'string')
+      || review.decisionRequired && (review.type !== 'partial_refund' || proposal?.decision !== 'net-payment-with-allowance-v1' || !/^[a-f0-9]{64}$/.test(proposal?.fingerprint || '')
+        || ![proposal.salesTotalMinor, proposal.allowanceMinor].every(known) || proposal.salesTotalMinor !== review.live.netPaymentMinor || proposal.salesTotalMinor + proposal.allowanceMinor !== review.live.totalMinor)
+      || !review.decisionRequired && proposal != null
+      || selected.has(number) && (selected.get(number).after?.quantity !== review.remainingItems.reduce((sum, item) => sum + item.quantity, 0) || selected.get(number).after?.totalMinor !== (review.decisionRequired ? proposal.salesTotalMinor : review.live.totalMinor))) return { valid: false, reviews: [], reasons: [invalid(number)] };
+    numbers.add(number);
+  }
+  const reasons = preview.orderReviews.flatMap(review => review.blockedReasons.length ? review.blockedReasons.map(reason => typeof reason === 'string' ? { orderNumber: review.orderNumber, message: reason } : { ...reason, orderNumber: reason.orderNumber || review.orderNumber }) : review.canConfirm ? [] : [{ orderNumber: review.orderNumber, message: '取消或退款資料尚未核對完成，請重新取得商城訂單。' }]);
+  return { valid: true, reviews: preview.orderReviews, reasons: uniqueBlockedReasons(reasons) };
+}
+
+export function reviewDecisions(preview) {
+  const state = orderReviewState(preview);
+  if (!state.valid || state.reasons.length || state.reviews.some(review => !review.canConfirm || review.blockedReasons.length > 0)) return null;
+  return state.reviews.filter(review => review.decisionRequired).map(review => ({ orderNumber: review.orderNumber, decision: review.proposal.decision, fingerprint: review.proposal.fingerprint }));
 }
 
 export function orderDifferences(order) {
