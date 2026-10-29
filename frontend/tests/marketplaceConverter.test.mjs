@@ -139,6 +139,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
 
 const previewCalls = view => view.requests.filter(request => request.url === '/api/marketplace-intakes/preview');
 const downloadSales = view => view.button('下載銷貨檔');
+const closeComparison = view => { const assistant=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'); assert.ok(assistant,'New source opens comparison automatically'); assistant.props.onClose();view.render();return assistant; };
 
 test('native converter keeps the original saved source rows and delegates the saved file without an authenticated href', async () => {
     const oldWindow = globalThis.window, oldDocument = globalThis.document;
@@ -847,7 +848,7 @@ const shopifyProfile = {...storeProfile,platform:'Shopify'};
 
 test('all saved Shopify orders provide immediate original-sale continuation links without a new sales file or empty warning', async () => {
     const reimports = [savedShopifyOrder,{...savedShopifyOrder,orderNumber:'#REVIEW-2'}];
-    const view = await converter({profiles:[shopifyProfile],reimports}); await view.select(file(shopifyBarcodeRows));
+    const view = await converter({profiles:[shopifyProfile],reimports}); await view.select(file(shopifyBarcodeRows));closeComparison(view);
     const text = view.text(view.render());
     assert.match(text,/本次檔案 2 筆 · 已保存 2 筆 · 新單 0 筆/);
     assert.doesNotMatch(text,/沒有可轉換|進階設定與核對表|下載金額核對表|含稅 TWD 0/);
@@ -863,11 +864,9 @@ test('all saved Shopify orders provide immediate original-sale continuation link
 test('mixed Shopify upload offers one complete-file comparison instead of a partial new-order export', async () => {
     const rows=shopifyBarcodeRows.map(row=>[...row]);rows[1][2]='OLD-ONLY-SKU';rows[1][3]='Old saved product';
     const view = await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]}); await view.select(file(rows));
-    assert.match(view.text(view.render()),/本次檔案 2 筆 · 已保存 1 筆 · 新單 1 筆/);
-    assert.doesNotMatch(view.text(view.render()),/新單 2 件商品|含稅\s+TWD\s+200|下載新單銷貨檔/);
-    assert.match(view.text(view.render()),/#REVIEW-1.*已保存 · 待出貨/s);
-    const button=view.button('比對並產生整份銷貨檔');assert.equal(button.props.disabled,false);
-    await button.props.onClick();view.render();
+    assert.equal(previewCalls(view).length,1);
+    assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/confirm')).length,0);
+    assert.equal(view.downloads.length,0);
     const assistant=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');
     assert.ok(assistant); assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-1/); assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-2/);
     assert.equal(view.all(node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1').length,0,'Opening compact assistant hides duplicate saved-order cards');
@@ -894,7 +893,7 @@ test('mixed Shopify upload offers one complete-file comparison instead of a part
 
 test('saved pending orders retain business-change warnings and a continuation entry when shipping updates are blocked',async()=>{
     const view=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,canUpdateShipping:false,message:'商品或金額已變更，請另行核對'}]});
-    await view.select(file(shopifyBarcodeRows));
+    await view.select(file(shopifyBarcodeRows));closeComparison(view);
     const card=view.find(view.render(),node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1');
     assert.match(view.text(card),/商品或金額已變更/);
     assert.equal(view.button('接續原銷貨單').props.to,'?batch=19&order=%23REVIEW-1&view=resume#batch-detail');
@@ -903,14 +902,14 @@ test('saved pending orders retain business-change warnings and a continuation en
 
 test('completed, partial, cancelled, busy, and uncertain saved orders offer view-only navigation', async () => {
     for(const [state,label] of [['completed','已出貨'],['warehouse_completed','裝箱完成'],['partial','部分出貨'],['cancelled','已取消'],['voided','已作廢'],['in_progress','作業中'],['needs_review','待核對']]){
-        const view=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,state,canUpdateShipping:false}]});await view.select(file(shopifyBarcodeRows));
+        const view=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,state,canUpdateShipping:false}]});await view.select(file(shopifyBarcodeRows));closeComparison(view);
         const card=view.find(view.render(),node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1');
         assert.match(view.text(card),new RegExp(label));assert.equal(view.button('接續原銷貨單'),undefined);
         assert.equal(view.button('查看原訂單').props.to,'?batch=19&order=%23REVIEW-1#batch-detail');
     }
-    const legacy=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:null,workOrderId:37}]});await legacy.select(file(shopifyBarcodeRows));
+    const legacy=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:null,workOrderId:37}]});await legacy.select(file(shopifyBarcodeRows));closeComparison(legacy);
     assert.equal(legacy.button('查看原訂單').props.to,'/order/37');assert.equal(legacy.button('接續原銷貨單'),undefined);
-    const invalid=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:'javascript:bad'}]});await invalid.select(file(shopifyBarcodeRows));
+    const invalid=await converter({profiles:[shopifyProfile],reimports:[{...savedShopifyOrder,intakeId:'javascript:bad'}]});await invalid.select(file(shopifyBarcodeRows));closeComparison(invalid);
     assert.equal(invalid.button('接續原銷貨單'),undefined);assert.equal(invalid.button('查看原訂單'),undefined);
 });
 
@@ -941,7 +940,7 @@ test('returning from original-order continuation restores upload and replaces th
 });
 
 test('mixed-file comparison stays available for full server review when new orders have barcode issues', async () => {
-    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));closeComparison(view);
     assert.equal(view.button('下載新單銷貨檔'),undefined);assert.ok(view.button('接續原銷貨單'));
     const button=view.button('比對並產生整份銷貨檔');assert.equal(button.props.disabled,false);
     await button.props.onClick();view.render();assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
@@ -949,7 +948,7 @@ test('mixed-file comparison stays available for full server review when new orde
 });
 
 test('session changes discard saved-order update links and reject their retained callbacks', async () => {
-    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});await view.select(file(shopifyBarcodeRows));
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});await view.select(file(shopifyBarcodeRows));closeComparison(view);
     const link=view.button('接續原銷貨單');let prevented=0;
     view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));link.props.onClick({preventDefault(){prevented++;}});
     assert.equal(prevented,1);view.listeners.get('storage')();view.render();
@@ -958,7 +957,7 @@ test('session changes discard saved-order update links and reject their retained
 
 test('original-sale continuation hides the complete-file action and rejects its retained callback',async()=>{
     const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder]});
-    await view.select(file(shopifyBarcodeRows));const oldAction=view.button('比對並產生整份銷貨檔');
+    await view.select(file(shopifyBarcodeRows));closeComparison(view);const oldAction=view.button('比對並產生整份銷貨檔');
     view.navigate('batch=19&order=%23REVIEW-1&view=resume');
     assert.equal(view.button('比對並產生整份銷貨檔'),undefined);
     const saves=view.requests.filter(r=>r.url==='/api/marketplace-intakes').length;
@@ -1002,6 +1001,8 @@ test('all-new cancellation or partial-refund reviews have a clear entry instead 
     const review = { orderNumber:'#REVIEW-2',type:'partial_refund',summary:'合成取消與退款核對' };
     const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[review]});
     await view.select(file(shopifyBarcodeRows));
+    assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
+    closeComparison(view);
     assert.equal(view.button('下載銷貨檔'),undefined);
     const entry=view.button('核對取消與退款'); assert.ok(entry); assert.equal(entry.props.disabled,false);
     assert.match(view.text(view.render()),/取消與退款待核對/);
@@ -1017,7 +1018,6 @@ test('mixed saved files use the same explicit cancellation/refund review entry a
     const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-1',type:'removed_items'}],reimports:[savedShopifyOrder]});
     await view.select(file(shopifyBarcodeRows));
     assert.equal(view.button('比對並產生整份銷貨檔'),undefined);
-    await view.button('核對取消與退款').props.onClick();view.render();
     const assistant=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');assert.ok(assistant);
     assistant.props.onClose();view.render();assert.ok(view.button('核對取消與退款'));
     assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
@@ -1025,8 +1025,37 @@ test('mixed saved files use the same explicit cancellation/refund review entry a
 
 test('a changed session cannot use a retained cancellation/refund review entry', async () => {
     const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-2',type:'partial_refund'}]});
-    await view.select(file(shopifyBarcodeRows)); const handler=view.button('核對取消與退款').props.onClick;
+    await view.select(file(shopifyBarcodeRows));closeComparison(view); const handler=view.button('核對取消與退款').props.onClick;
     view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'})); view.listeners.get('storage')(); await handler();view.render();
     assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);
     assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
+});
+
+
+test('automatic review is limited to a new file and does not reopen after cancel, settings refresh or receipt refresh', async () => {
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-1',type:'removed_items'}]});
+    await view.select(file(shopifyBarcodeRows));const assistant=closeComparison(view);assert.equal(previewCalls(view).length,1);
+    await view.change('銷貨日期','2026-10-30');
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(previewCalls(view).length,2);
+    await assistant.props.onComplete();view.render();
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(previewCalls(view).length,3);
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+});
+
+test('choosing each new source worksheet automatically compares that source once without saving or confirming', async () => {
+    const next=shopifyBarcodeRows.map(row=>[...row]);next[1][0]='#NEXT-FIRST';next[2][0]='#NEXT-SECOND';
+    const view=await converter({profiles:[shopifyProfile],reimports:raw=>[{...savedShopifyOrder,orderNumber:raw.orders[0].sourceOrderNumber}]});
+    await view.select(workbookFile({'第一批':shopifyBarcodeRows,'第二批':next}));
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(previewCalls(view).length,0);
+    await view.change('訂單工作表','第一批');const first=closeComparison(view);assert.match(JSON.stringify(first.props.rows),/#REVIEW-1/);
+    await view.change('訂單工作表','第二批');const second=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');assert.ok(second);assert.match(JSON.stringify(second.props.rows),/#NEXT-FIRST/);
+    assert.equal(previewCalls(view).length,2);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+});
+
+test('a new refund preview that finishes after a session change cannot automatically open comparison', async () => {
+    let release;const pending=new Promise(resolve=>{release=resolve;});
+    const view=await converter({profiles:[shopifyProfile],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-1',type:'removed_items'}],previewWait:()=>pending});
+    const upload=view.select(file(shopifyBarcodeRows));for(let i=0;i<10;i++)await Promise.resolve();
+    view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));view.listeners.get('storage')();release();await upload;view.render();
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/confirm')),false);
 });

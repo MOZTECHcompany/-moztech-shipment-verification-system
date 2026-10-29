@@ -126,7 +126,7 @@ async function requestOrder(options, id, after, deadline, document) {
         response = await options.fetchImpl(`https://${options.shop}/admin/api/${options.apiVersion}/graphql.json`, {
           method: 'POST', redirect: 'error', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': options.token },
-          body: JSON.stringify(document ? {query:REFUND_QUERY,variables:document.variables} : { query: QUERY, variables: { id: `gid://shopify/Order/${id}`, after } }),
+          body: JSON.stringify(document ? {query:document.query||REFUND_QUERY,variables:document.variables} : { query: QUERY, variables: { id: `gid://shopify/Order/${id}`, after } }),
         });
       } catch { fail('SHOPIFY_UNAVAILABLE', 'Shopify 連線失敗，請重試；未使用舊資料', undefined, 503); }
       if (!response.ok) fail(response.status === 401 || response.status === 403 ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_UNAVAILABLE', response.status === 401 || response.status === 403 ? 'Shopify 訂單讀取權限不足，請檢查連線授權' : 'Shopify 暫時無法核對，請稍後重試', undefined, 503);
@@ -145,7 +145,7 @@ async function requestOrder(options, id, after, deadline, document) {
         fail(denied ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_QUERY_FAILED', denied ? 'Shopify 訂單讀取權限不足，請檢查連線授權' : 'Shopify 未完整回傳訂單，請重試；未使用舊資料', undefined, 503);
       }
       if (text(payload.data.shop?.myshopifyDomain).toLowerCase() !== options.shop) fail('SHOPIFY_SHOP_MISMATCH', 'Shopify 回應店鋪與設定不一致', undefined, 503);
-      return document ? payload.data.refund : payload.data.order;
+      return document ? payload.data[document.result||'refund'] : payload.data.order;
     })()]);
   } finally { clearTimeout(timer); }
 }
@@ -355,7 +355,12 @@ async function verifyShopifyRows(rows, { shop, token, apiVersion = '2026-07', fe
   const source = sourceOrders(rows), deadline = Date.now() + 60000, normalized = [], evidence = [];
   for (const order of source.orders) {
     const current = await readOrder(order, { shop, token, apiVersion, fetchImpl, timeoutMs }, deadline);
-    const result = normalizeOrder(order, current); normalized.push(...result.records); evidence.push(result.evidence);
+    const result = normalizeOrder(order, current);
+    if(current.edited===true&&!current.cancelledAt&&result.evidence.fulfillmentStatus==='unfulfilled'&&result.evidence.currentQuantity>0&&result.evidence.removedLineIds.length){
+      result.evidence.editEvidence=await require('./shopifyOrderEdits').readShopifyOrderEdits(current,(query,variables)=>requestOrder({shop,token,apiVersion,fetchImpl,timeoutMs},null,null,deadline,{query,variables,result:'order'}));
+      const {fingerprint,...unsigned}=result.evidence;result.evidence.fingerprint=hash({evidence:unsigned,records:result.records});
+    }
+    normalized.push(...result.records); evidence.push(result.evidence);
     if (normalized.length > 5000) fail('SHOPIFY_LIMIT_EXCEEDED', 'Shopify 修改後商品超過 5,000 列，請分批轉檔');
   }
   const headers = [...new Set([...source.headers, ...normalized.flatMap(Object.keys)])];

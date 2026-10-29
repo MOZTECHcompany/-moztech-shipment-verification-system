@@ -14,10 +14,11 @@ function applyShopifyOrderReviews(raw,verification,draftSourceReview=null){
   if(!evidence)continue;
   if(evidence.cancelled||evidence.currentQuantity===0)continue;
   const proof=evidence.refundEvidence;
+  const editChanges=require('./shopifyOrderEdits').reviewEditChanges(evidence);
   const cancelledItems=(evidence.allItems||[]).filter(item=>item.originalQuantity>item.currentQuantity&&(item.currentQuantity===0&&evidence.removedLineIds?.includes(item.id)||proof?.refunds?.some(refund=>refund.lines.some(line=>line.lineId===item.id)))).map(item=>({id:item.id,name:item.name,sku:item.sku,quantity:item.originalQuantity-item.currentQuantity,reason:'商城已取消／移除，非本次出貨品項'}));
   const remainingItems=evidence.items.map(item=>({id:item.id,name:item.name,sku:item.sku,quantity:item.quantity}));
   if(order.paymentStatus!=='partially_refunded'){
-   if(cancelledItems.length&&(!draftSourceReview||draftSourceReview.currentOrderNumbers?.includes(order.sourceOrderNumber)))reviews.push({orderNumber:order.sourceOrderNumber,type:'removed_items',summary:'已依商城目前有效商品轉檔，取消品項不出貨',cancelledItems,remainingItems,live:{totalMinor:evidence.totalMinor,refundedMinor:evidence.refundedMinor||0,netPaymentMinor:evidence.netPaymentMinor??evidence.receivedMinor},decisionRequired:false,canConfirm:true,blockedReasons:[]});
+   if(cancelledItems.length&&(!draftSourceReview||draftSourceReview.currentOrderNumbers?.includes(order.sourceOrderNumber)))reviews.push({orderNumber:order.sourceOrderNumber,type:'removed_items',summary:'已依商城目前有效商品轉檔，取消品項不出貨',cancelledItems,remainingItems,...(editChanges.length?{editChanges}:{}),live:{totalMinor:evidence.totalMinor,refundedMinor:evidence.refundedMinor||0,netPaymentMinor:evidence.netPaymentMinor??evidence.receivedMinor},decisionRequired:false,canConfirm:true,blockedReasons:[]});
    continue;
   }
   const {fingerprint,...unsigned}=proof||{};
@@ -32,7 +33,7 @@ function applyShopifyOrderReviews(raw,verification,draftSourceReview=null){
   const proposal={decision:DECISION,fingerprint:hash({version:DECISION,orderNumber:order.sourceOrderNumber,evidenceFingerprint:evidence.fingerprint,proofFingerprint:fingerprint,salesTotalMinor:proof.netPaymentMinor,allowanceMinor:allowance}),salesTotalMinor:proof.netPaymentMinor,allowanceMinor:allowance};
   order.shopifyRefundRemainder={version:'shopify-refund-remainder-v1',evidenceFingerprint:fingerprint,proposalFingerprint:proposal.fingerprint,apiTotalMinor:proof.apiTotalMinor,refundedMinor:proof.refundedMinor,receivedMinor:proof.receivedMinor,netPaymentMinor:proof.netPaymentMinor,allowanceMinor:allowance};
   raw.issues=raw.issues.filter(issue=>issue.orderNumber!==order.sourceOrderNumber||issue.code!=='UNPAID_ORDER');
-  reviews.push({orderNumber:order.sourceOrderNumber,type:'partial_refund',summary:'取消品項不出貨；請確認以退款後實收及額外折讓轉檔',cancelledItems,remainingItems,live:{totalMinor:proof.apiTotalMinor,refundedMinor:proof.refundedMinor,netPaymentMinor:proof.netPaymentMinor},decisionRequired:true,proposal,canConfirm:true,blockedReasons:[]});
+  reviews.push({orderNumber:order.sourceOrderNumber,type:'partial_refund',summary:'取消品項不出貨；請確認以退款後實收及額外折讓轉檔',cancelledItems,remainingItems,...(editChanges.length?{editChanges}:{}),live:{totalMinor:proof.apiTotalMinor,refundedMinor:proof.refundedMinor,netPaymentMinor:proof.netPaymentMinor},decisionRequired:true,proposal,canConfirm:true,blockedReasons:[]});
  }
  return {reviewRequired:reviews.length>0,orderReviews:reviews};
 }

@@ -58,6 +58,38 @@ export function comparisonOrders(preview) {
   return { uploaded, needsReview, unchanged };
 }
 
+export function reviewEditGroups(review) {
+  return list(review?.editChanges).map(group => {
+    const removed = list(group.removedItems), added = list(group.addedItems);
+    const before = removed[0], after = added[0];
+    let beforeLabel = '', afterLabel = '';
+    if (removed.length === 1 && added.length === 1) {
+      const oldOptions = list(before.selectedOptions), newOptions = list(after.selectedOptions);
+      const oldByName = new Map(oldOptions.map(option => [option.name, option.value])), newByName = new Map(newOptions.map(option => [option.name, option.value]));
+      if (oldOptions.length && oldByName.size === oldOptions.length && newByName.size === newOptions.length && oldByName.size === newByName.size && [...oldByName.keys()].every(name => newByName.has(name))) {
+        const changed = [...oldByName.keys()].filter(name => oldByName.get(name) !== newByName.get(name));
+        beforeLabel = changed.map(name => oldByName.get(name)).join('／'); afterLabel = changed.map(name => newByName.get(name)).join('／');
+      }
+      if (!beforeLabel && before.variantTitle && after.variantTitle && before.variantTitle !== after.variantTitle) { beforeLabel = before.variantTitle; afterLabel = after.variantTitle; }
+    }
+    const paired = group.canPair === true && removed.length === 1 && added.length === 1 && before.quantity === after.quantity && before.productId && before.productId === after.productId && before.variantId && after.variantId && before.variantId !== after.variantId && beforeLabel && afterLabel && (after.productTitle || before.productTitle);
+    return { ...group, removed, added, paired: Boolean(paired), productLabel: paired ? after.productTitle || before.productTitle : '', beforeLabel, afterLabel };
+  });
+}
+
+export function uncoveredReviewCancellations(review) {
+  const removed = reviewEditGroups(review).flatMap(group => group.removed);
+  return list(review?.cancelledItems).filter(item => removed.filter(line => line.id === item.id && line.sku === item.sku).reduce((sum, line) => sum + line.quantity, 0) !== item.quantity);
+}
+
+function validEditChanges(review) {
+  if (review.editChanges == null) return true;
+  const item = value => value && typeof value.id === 'string' && value.id && typeof value.saleId === 'string' && value.saleId && typeof value.sku === 'string' && value.sku && typeof value.name === 'string' && value.name && Number.isSafeInteger(value.quantity) && value.quantity > 0
+    && ['productId', 'productTitle', 'variantId', 'variantTitle'].every(key => value[key] == null || typeof value[key] === 'string')
+    && (value.selectedOptions == null || Array.isArray(value.selectedOptions) && value.selectedOptions.every(option => option && typeof option.name === 'string' && option.name && typeof option.value === 'string' && option.value));
+  return Array.isArray(review.editChanges) && new Set(review.editChanges.map(group => group?.agreementId)).size === review.editChanges.length && review.editChanges.every(group => group && typeof group.agreementId === 'string' && group.agreementId && typeof group.happenedAt === 'string' && Number.isFinite(Date.parse(group.happenedAt)) && /^[a-f0-9]{64}$/.test(group.evidenceFingerprint || '') && typeof group.canPair === 'boolean' && Array.isArray(group.removedItems) && Array.isArray(group.addedItems) && group.removedItems.length + group.addedItems.length > 0 && group.removedItems.every(item) && group.addedItems.every(item));
+}
+
 // Server proposals are displayed verbatim. This validates their shape and
 // consistency; it never selects a refunded SKU or calculates a sales proposal.
 export function orderReviewState(preview) {
@@ -74,6 +106,7 @@ export function orderReviewState(preview) {
       || !['partial_refund', 'removed_items'].includes(review.type) || typeof review.summary !== 'string'
       || !Array.isArray(review.cancelledItems) || !review.cancelledItems.every(row => item(row) && typeof row.reason === 'string')
       || !Array.isArray(review.remainingItems) || !review.remainingItems.length || !review.remainingItems.every(item)
+      || !validEditChanges(review)
       || ![review.live?.totalMinor, review.live?.refundedMinor, review.live?.netPaymentMinor].every(known)
       || typeof review.decisionRequired !== 'boolean' || typeof review.canConfirm !== 'boolean' || !Array.isArray(review.blockedReasons)
       || !review.blockedReasons.every(reason => typeof reason === 'string' || reason && typeof reason.message === 'string')

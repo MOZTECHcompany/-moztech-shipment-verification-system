@@ -47,7 +47,7 @@ test('both refund connections paginate fully, with order/version and repeated cu
  const f=fixture(),refund=f.current.refunds[0],lines=refund.refundLineItems.nodes,transactions=refund.transactions.nodes;
  refund.refundLineItems={nodes:[],pageInfo:{hasNextPage:true,endCursor:'LINES'}};refund.transactions={nodes:[],pageInfo:{hasNextPage:true,endCursor:'TXNS'}};
  const fetchImpl=jest.fn(async(url,request)=>{const {variables}=JSON.parse(request.body);return variables.id===f.current.id?response(f.current):response({...refund,order:{id:f.current.id,updatedAt:f.current.updatedAt},refundLineItems:connection(lines),transactions:connection(transactions)},'refund');});
- expect((await run(f,fetchImpl)).verification.orders[0].refundedMinor).toBe(79900);expect(fetchImpl).toHaveBeenCalledTimes(3);
+ expect((await run(f,fetchImpl)).verification.orders[0].refundedMinor).toBe(79900);expect(fetchImpl).toHaveBeenCalledTimes(4);
  for(const mode of ['changed','cursor']){
   const fetchBad=async(url,request)=>JSON.parse(request.body).variables.id===f.current.id?response(f.current):response({...refund,order:{id:f.current.id,updatedAt:mode==='changed'?'2026-10-29T03:01:15Z':f.current.updatedAt},refundLineItems:mode==='cursor'?refund.refundLineItems:connection(lines),transactions:connection(transactions)},'refund');
   await expect(run(f,fetchBad)).rejects.toMatchObject({code:mode==='changed'?'SHOPIFY_ORDER_CHANGED':'SHOPIFY_REFUND_REVIEW_REQUIRED'});

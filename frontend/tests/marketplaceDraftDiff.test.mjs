@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { orderReviewState, reviewDecisions, comparisonOrders, itemDifferences, liveDifferences, orderDifferences, completeComparison, uniqueBlockedReasons } from '../src/utils/marketplaceDraftDiff.mjs';
+import { reviewEditGroups, uncoveredReviewCancellations, orderReviewState, reviewDecisions, comparisonOrders, itemDifferences, liveDifferences, orderDifferences, completeComparison, uniqueBlockedReasons } from '../src/utils/marketplaceDraftDiff.mjs';
 const item = (sku = 'A', quantity = 1, unitMinor = 10000, lineSubtotalMinor = quantity * unitMinor, name = `商品${sku}`) => ({ sku, name, quantity, unitMinor, lineSubtotalMinor });
 const order = (before, after, extra = {}) => ({ changed: true, before: { quantity: 1, totalMinor: 10000, items: before, shipping: {} }, after: { quantity: 1, totalMinor: 10000, items: after, shipping: {} }, ...extra });
 
@@ -109,4 +109,29 @@ test('removed-only reviews produce no refund decision and order-level blockers s
   assert.deepEqual(orderReviewState(preview).reasons,['#REFUND：栗子掛繩取消資料尚未完整']);assert.equal(reviewDecisions(preview),null);
   assert.equal(orderReviewState({}).valid,true,'Legacy responses without refund reviews retain their existing flow');
   assert.equal(orderReviewState({reviewRequired:true,orderReviews:[]}).valid,false);
+});
+
+
+const delta = (id,color) => ({id,saleId:`sale-${id}`,sku:id,name:`掛繩 - ${color}`,quantity:1,productId:'same-product',productTitle:'掛繩',variantId:`variant-${id}`,variantTitle:`${color}/同接頭`,selectedOptions:[{name:'顏色',value:color},{name:'接頭',value:'Type-C'}]});
+const editGroup = () => ({agreementId:'agreement',happenedAt:'2026-10-29T02:54:00Z',evidenceFingerprint:'c'.repeat(64),removedItems:[delta('old','燕麥色')],addedItems:[delta('new','粉色')],canPair:true});
+
+test('edit display pairs only a server-authorized unique equal-quantity same-product change using official differing options', () => {
+  const review={editChanges:[editGroup()]},original=structuredClone(review);const group=reviewEditGroups(review)[0];
+  assert.equal(group.paired,true);assert.equal(group.beforeLabel,'燕麥色');assert.equal(group.afterLabel,'粉色');assert.equal(group.productLabel,'掛繩');assert.deepEqual(review,original);
+  for(const mutate of [g=>g.canPair=false,g=>g.addedItems[0].productId='other',g=>delete g.addedItems[0].productTitle,g=>g.addedItems.push(delta('new-two','白色')),g=>g.addedItems[0].quantity=2]){
+    const value=editGroup();mutate(value);if(value.addedItems[0].productTitle==null)delete value.removedItems[0].productTitle;
+    assert.equal(reviewEditGroups({editChanges:[value]})[0].paired,false);
+  }
+});
+
+test('covered cancellation identity and exact delta quantities are required before hiding the old cancellation fact', () => {
+  const review={editChanges:[editGroup()],cancelledItems:[{id:'old',sku:'old',quantity:1},{id:'unrelated',sku:'old',quantity:1}]};
+  assert.deepEqual(uncoveredReviewCancellations(review),[review.cancelledItems[1]]);
+  review.cancelledItems[0].quantity=2;assert.equal(uncoveredReviewCancellations(review).length,2);
+});
+
+test('optional edit metadata is validated without changing refund decisions; missing variant metadata stays an unpaired valid group', () => {
+  const preview=reviewed(),group=editGroup();preview.orderReviews[0].editChanges=[group];const decisions=reviewDecisions(preview);
+  assert.equal(orderReviewState(preview).valid,true);delete group.addedItems[0].variantId;assert.equal(orderReviewState(preview).valid,true);assert.equal(reviewEditGroups(preview.orderReviews[0])[0].paired,false);assert.deepEqual(reviewDecisions(preview),decisions);
+  group.evidenceFingerprint='invalid';assert.equal(orderReviewState(preview).valid,false);assert.equal(reviewDecisions(preview),null);
 });

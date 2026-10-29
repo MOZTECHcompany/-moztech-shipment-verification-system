@@ -16,6 +16,15 @@ const refundFixture = () => {
     newOrders:[{ orderNumber:'#SYN-REFUND',after:{ quantity:1,totalMinor:108000,items:[{ sku:active.sku,name:active.name,quantity:1,unitMinor:108000,lineSubtotalMinor:108000 }] },live:{ totalMinor:112037,receivedMinor:187900,outstandingMinor:0,quantity:1 } }],affectedBatches:[],canConfirm:true,blockedReasons:[],reviewRequired:true,
     orderReviews:[{ orderNumber:'#SYN-REFUND',type:'partial_refund',summary:'官方取消掛繩，退款成功，依實收另列折讓',cancelledItems:[{ id:'cancelled-1',name:'栗子掛繩',sku:'STRAP-CHESTNUT',quantity:1,reason:'商城取消；退款成功' }],remainingItems:[active],live:{ totalMinor:112037,refundedMinor:79900,netPaymentMinor:108000 },decisionRequired:true,proposal:{ decision:'net-payment-with-allowance-v1',fingerprint:'a'.repeat(64),salesTotalMinor:108000,allowanceMinor:4037 },canConfirm:true,blockedReasons:[] }] };
 };
+const editDelta = (id, sku, color) => ({id,saleId:`sale-${id}`,sku,name:`掛繩充電線 - ${color} / Type-C`,quantity:1,productId:'product-strap',productTitle:'掛繩充電線',variantId:`variant-${id}`,variantTitle:`${color} / Type-C`,selectedOptions:[{name:'顏色',value:color},{name:'接頭',value:'Type-C'}]});
+const editedFixture = (currentPink = 1) => {
+  const data=fixture();data.newOrders=[];data.reviewRequired=true;
+  const removed=editDelta('old-line','STRAP-OAT','燕麥色'),added=editDelta('pink-line','STRAP-PINK','粉色');
+  const power={sku:'POWER',name:'不變行動電源',quantity:1,unitMinor:10000,lineSubtotalMinor:10000},pink={sku:added.sku,name:added.name,quantity:currentPink,unitMinor:10000,lineSubtotalMinor:10000*currentPink};
+  const order=data.affectedBatches[0].uploadedOrders[0];order.orderNumber='#EDITED';order.changed=true;order.before={items:[power,{sku:removed.sku,name:removed.name,quantity:1,unitMinor:10000,lineSubtotalMinor:10000},pink],quantity:currentPink+2,totalMinor:10000*(currentPink+2)};order.after={items:[power,pink],quantity:currentPink+1,totalMinor:10000*(currentPink+1)};order.live={quantity:order.after.quantity,totalMinor:order.after.totalMinor};
+  data.summary={totalOrderCount:1,newOrderCount:0,changedOrderCount:1,unchangedOrderCount:0,quantity:order.after.quantity,totalMinor:order.after.totalMinor};
+  data.orderReviews=[{orderNumber:'#EDITED',type:'removed_items',summary:'官方同次商品修改',cancelledItems:[{id:removed.id,sku:removed.sku,name:removed.name,quantity:1,reason:'官方移除'}],remainingItems:[{id:'power-line',...power},{id:added.id,...pink}],live:{totalMinor:order.after.totalMinor,refundedMinor:0,netPaymentMinor:0},decisionRequired:false,canConfirm:true,blockedReasons:[],editChanges:[{agreementId:'agreement-one',happenedAt:'2026-10-29T02:54:00Z',evidenceFingerprint:'c'.repeat(64),removedItems:[removed],addedItems:[added],canPair:true}]}];return data;
+};
 const allowanceLabel = '確認實收與折讓並轉檔';
 const applied = () => { const exportBatch = { id: 90, batchNumber: 'WMS-FULL-90', activeOrderCount: 2, orderCount: 2, quantity: 3, totalMinor: 30000 }; return { applied: true, scopeMode: 'uploaded-file-v2', commandId: 'server-command', exportBatch, batches: [exportBatch], replayed: false }; };
 const fail = status => Object.assign(Error('synthetic failure'), { response: { status, data: { message: '合成失敗' } } });
@@ -77,7 +86,7 @@ const confirmLabel = '確認未匯入並轉檔';
 test('mixed file is confirmed once and automatically downloads one complete export batch', async () => {
   const state = await view();
   const text = state.text(state.render());
-  assert.match(text, /重複\s+1\s+筆・需核對\s+0\s+筆・新增\s+1\s+筆/);
+  assert.match(text, /重複\s+1\s+筆・需核對\s+0\s+筆・新訂單\s+1\s+筆/);
   assert.match(text, /整份\s+2\s+筆・\s*3\s+件・NT\$\s+300/);
   assert.match(text, /1\s+筆舊單未上傳，保留原狀，不列入本次銷貨檔/);
   assert.doesNotMatch(text, /整筆訂單未在新版中|是否依新版暫停|修訂|schema|revision/i);
@@ -316,7 +325,7 @@ test('new API quantities or money that differ stay distinguishable without expos
   assert.match(content, /商城目前成交 NT\$\s+250/); assert.match(content, /本次出貨\s+2\s+件／商城現況\s+3\s+件/);
   assert.equal(state.all(node => node.type === 'details' && node.props.open === true).length, 0);
   const main = state.visibleText(state.render());
-  assert.match(main, /重複\s+1\s+筆・需核對\s+1\s+筆・新增\s+1\s+筆/);
+  assert.match(main, /重複\s+1\s+筆・需核對\s+1\s+筆・新訂單\s+1\s+筆/);
   assert.match(main, /#NEW/); assert.match(main, /出貨金額 NT\$\s+200\s*／商城 NT\$\s+250/);
   assert.match(main, /本次出貨\s+2\s+件／商城現況\s+3\s+件/); assert.doesNotMatch(main, /已收款|未收款|4711299273674/);
   const unchanged = await view(); assert.doesNotMatch(unchanged.text(unchanged.render()), /商城目前成交|已收款|未收款/);
@@ -332,7 +341,7 @@ test('same saved draft with a different current API amount or quantity remains a
     if (live.totalMinor !== 10000) { assert.match(state.visibleText(state.render()), /出貨金額 NT\$\s+100\s*／商城 NT\$\s+150/); }
     else assert.match(content, /本次出貨\s+1\s+件／商城現況\s+3\s+件/);
     assert.doesNotMatch(content, /掛繩充電線|原訂單|新版訂單/); assert.ok(state.all(node=>node.type==='details').every(node=>!node.props.open));
-    assert.match(state.visibleText(state.render()), /重複\s+1\s+筆・需核對\s+1\s+筆・新增\s+0/);
+    assert.match(state.visibleText(state.render()), /重複\s+1\s+筆・需核對\s+1\s+筆・新訂單\s+0/);
   }
 });
 
@@ -472,4 +481,44 @@ test('a cancelled SKU consumes only its matching removal and does not hide anoth
   data.orderReviews[0].remainingItems=[{id:'active-strap',...activeStrap}];
   const ambiguousIdentity=await view({previews:[data]});
   assert.match(ambiguousIdentity.visibleText(ambiguousIdentity.render()),/移除\s+栗子掛繩/,'Without a line ID, an active same-SKU row keeps the residual removal visible');
+});
+
+
+test('official same-edit replacement is visible even when the saved snapshot already contains the added variant', async () => {
+  const data=editedFixture();const state=await view({previews:[data]});const main=state.visibleText(state.render());
+  const change=state.all(node=>node.props?.['aria-label']==='商城修改')[0];assert.ok(change);
+  assert.match(state.text(change),/商城修改：\s*掛繩充電線\s*：\s*燕麥色\s+1\s+件 →\s*粉色\s+1\s+件/);
+  assert.doesNotMatch(main,/Type-C|已取消|已移除|已加入|不變行動電源|agreement-one|sale-old-line/);
+  assert.equal(state.all(node=>node.props?.['aria-label']==='商城修改').length,1);
+  assert.ok(state.all(node=>node.type==='details').every(node=>!node.props.open));assert.equal(confirms(state).length,0);
+  await state.click(confirmLabel);assert.equal(confirms(state)[0].body.reviewDecisions.length,0);assert.equal(state.downloads.length,1);
+});
+
+test('official added quantities are edit deltas and never replaced with the full current quantity', async () => {
+  const state=await view({previews:[editedFixture(2)]});const change=state.all(node=>node.props?.['aria-label']==='商城修改')[0];
+  assert.match(state.text(change),/粉色\s+1\s+件/);assert.doesNotMatch(state.text(change),/粉色\s+2\s+件/);
+  assert.match(state.visibleText(state.render()),/本次出貨\s+3\s+件/);
+});
+
+test('unpaired or incomplete official metadata still shows removed and added sides without guessing a replacement', async () => {
+  for(const mutate of [group=>group.canPair=false,group=>delete group.addedItems[0].productId,group=>group.addedItems[0].productId='different-product',group=>group.addedItems[0].quantity=2]){
+    const data=editedFixture();mutate(data.orderReviews[0].editChanges[0]);const state=await view({previews:[data]});const change=state.all(node=>node.props?.['aria-label']==='商城修改')[0];assert.ok(change);
+    assert.match(state.text(change),/已移除.*燕麥色/);assert.match(state.text(change),/已加入.*粉色/);assert.doesNotMatch(state.text(change),/→|換色|同型號/);
+    assert.ok(state.button(confirmLabel));assert.doesNotMatch(state.visibleText(state.render()),/已取消/);
+  }
+});
+
+test('different official edit groups are not cross-paired and cancellation facts covered by them do not repeat', async () => {
+  const data=editedFixture(),review=data.orderReviews[0],group=review.editChanges[0];
+  review.editChanges=[{...group,agreementId:'remove-only',addedItems:[],canPair:false},{...group,agreementId:'add-only',removedItems:[],canPair:false}];
+  const state=await view({previews:[data]}),changes=state.all(node=>node.props?.['aria-label']==='商城修改');
+  assert.equal(changes.length,2);assert.match(state.text(changes),/已移除/);assert.match(state.text(changes),/已加入/);assert.doesNotMatch(state.text(changes),/→/);assert.doesNotMatch(state.visibleText(state.render()),/已取消/);
+});
+
+test('saved partial-refund review shows the 1080 allowance proposal once without a duplicate live amount line', async () => {
+  const data=refundFixture(),order=data.newOrders[0];data.newOrders=[];order.changed=true;order.before=structuredClone(order.after);order.before.totalMinor=112037;
+  data.affectedBatches=[{id:52,batchNumber:'TEST-REFUND-OLD',uploadedOrders:[order],omittedOrders:[],retainedOrderCount:0}];data.summary.newOrderCount=0;data.summary.changedOrderCount=1;
+  const state=await view({previews:[data]}),main=state.visibleText(state.render());
+  assert.equal((main.match(/1,120.37/g)||[]).length,1);assert.equal((main.match(/額外折讓 NT\$/g)||[]).length,1);assert.doesNotMatch(main,/出貨金額|商城仍/);
+  assert.match(main,/剩餘\s+合成行動電源\s+1\s+件/);await state.click(allowanceLabel);assert.equal(confirms(state)[0].body.reviewDecisions[0].fingerprint,'a'.repeat(64));
 });

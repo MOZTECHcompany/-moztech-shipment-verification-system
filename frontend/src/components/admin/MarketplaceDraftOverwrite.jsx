@@ -4,7 +4,7 @@ import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime } from '../../workspace/nativeRuntime.js';
 import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
-import { comparisonOrders, completeComparison, liveDifferences, orderDifferences, orderReviewState, reviewDecisions, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
+import { comparisonOrders, completeComparison, liveDifferences, orderDifferences, orderReviewState, reviewDecisions, reviewEditGroups, uncoveredReviewCancellations, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
 
 const endpoint = '/api/marketplace-intakes/draft-overwrite';
 const scopeMode = 'uploaded-file-v2';
@@ -46,8 +46,10 @@ function ItemDifference({ change }) {
 }
 
 function OrderReviewFacts({ review, hideAmount = false }) {
+  const groups = reviewEditGroups(review);
   return <ul className="mt-1 space-y-1 text-sm leading-6" aria-label="取消與退款核對">
-    {review.cancelledItems.map(item => <li key={item.id}>{item.name} 已取消 ×{item.quantity}，本次不出貨。</li>)}
+    {groups.map(group => <li key={group.agreementId} aria-label="商城修改"><span className="font-medium">商城修改：</span>{group.paired ? <>{group.productLabel}：{group.beforeLabel} {group.removed[0].quantity} 件 → {group.afterLabel} {group.added[0].quantity} 件</> : <ul className="pl-3">{group.removed.map(item => <li key={item.saleId}>已移除 {item.name} ×{item.quantity}</li>)}{group.added.map(item => <li key={item.saleId}>已加入 {item.name} ×{item.quantity}</li>)}</ul>}</li>)}
+    {uncoveredReviewCancellations(review).map(item => <li key={item.id}>{item.name} 已取消 ×{item.quantity}，本次不出貨。</li>)}
     {review.remainingItems.length > 1 ? <li>本次出貨 {review.remainingItems.reduce((sum, item) => sum + item.quantity, 0)} 件</li> : review.remainingItems.map(item => <li key={item.id}>剩餘 {item.name} {item.quantity} 件</li>)}
     {review.decisionRequired ? <li className="font-medium">商城 NT$ {amount(review.live.totalMinor)} → 本次銷貨 NT$ {amount(review.proposal.salesTotalMinor)}／額外折讓 NT$ {amount(review.proposal.allowanceMinor)}</li>
       : !hideAmount && <li>本次銷貨 NT$ {amount(review.live.totalMinor)}</li>}
@@ -57,13 +59,21 @@ function OrderReviewFacts({ review, hideAmount = false }) {
 function OrderReviewDetails({ review }) {
   return <><p className="mt-1">{review.summary}</p><p>原退款 NT$ {amount(review.live.refundedMinor)}／退款後實收 NT$ {amount(review.live.netPaymentMinor)}</p>
     <ul>{[...review.cancelledItems, ...review.remainingItems].map(item => <li key={item.id} className="break-words">{item.name} ×{item.quantity}・{item.sku}{item.reason ? `・${item.reason}` : ''}</li>)}</ul>
+    {reviewEditGroups(review).map(group => <div key={group.agreementId} className="mt-1"><p>商城修改時間：{group.happenedAt}</p><ul>{[...group.removed, ...group.added].map(item => <li key={item.saleId}>{item.name} ×{item.quantity}・{item.sku}</li>)}</ul></div>)}
   </>;
 }
 
 function OrderComparison({ order, review }) {
   const diff = orderDifferences(order);
+  const officialAdditions = reviewEditGroups(review).flatMap(group => group.added);
+  const usedAdditions = new Set();
   const usedCancellations = new Set();
   const itemChanges = diff.items.filter(change => {
+    if (review && change.kind === 'added') {
+      const item = change.after;
+      const matches = officialAdditions.filter(added => !usedAdditions.has(added.saleId) && item.quantity === added.quantity && (item.id ? item.id === added.id : item.sku === added.sku && itemName(item) === added.name && diff.items.filter(value => value.kind === 'added' && value.after.sku === item.sku).length === 1 && officialAdditions.filter(value => value.sku === item.sku).length === 1));
+      if (matches.length === 1) { usedAdditions.add(matches[0].saleId); return false; }
+    }
     if (!review || change.kind !== 'removed') return true;
     const item = change.before;
     if (!item.id && review.remainingItems.some(remaining => remaining.sku === item.sku)) return true;
@@ -85,8 +95,8 @@ function OrderComparison({ order, review }) {
       {diff.restoring && <li>恢復出貨，使用本次檔案的內容。</li>}
       {itemChanges.map(change => <ItemDifference key={change.key} change={change} />)}
       {diff.quantityChanged && !diff.items.length && <li>商品件數 {valueText(order.before?.quantity)} → {valueText(order.after?.quantity)}</li>}
-      {diff.totalChanged && <li>出貨金額 NT$ {amount(order.before?.totalMinor)} → NT$ {amount(order.after?.totalMinor)}{diff.liveMoneyChanged && `；商城仍 NT$ ${amount(order.live.totalMinor)}`}</li>}
-      {!diff.totalChanged && diff.liveMoneyChanged && <li>出貨金額 NT$ {amount(order.after.totalMinor)}／商城 NT$ {amount(order.live.totalMinor)}</li>}
+      {!review?.decisionRequired && diff.totalChanged && <li>出貨金額 NT$ {amount(order.before?.totalMinor)} → NT$ {amount(order.after?.totalMinor)}{diff.liveMoneyChanged && `；商城仍 NT$ ${amount(order.live.totalMinor)}`}</li>}
+      {!review?.decisionRequired && !diff.totalChanged && diff.liveMoneyChanged && <li>出貨金額 NT$ {amount(order.after.totalMinor)}／商城 NT$ {amount(order.live.totalMinor)}</li>}
       {diff.liveQuantityChanged && <li>本次出貨 {order.after.quantity} 件／商城現況 {order.live.quantity} 件</li>}
       {diff.shipping.map(change => <li key={change.field} className="break-words">{change.label}：{valueText(change.before) || '未提供'} → {change.after == null || change.after === '' ? '清空' : valueText(change.after)}</li>)}
       {diff.otherChanged && <li>其他內容有異動，將使用本次檔案。</li>}
@@ -233,7 +243,7 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
     {!preview && !busy && !unknown && !result && <Button onClick={() => compare()}>重新核對</Button>}
     {preview && !result && <>
       {comparisonComplete && !blocked ? <>
-        <div className="text-sm leading-6"><p className="font-medium">重複 {uploaded.length} 筆・需核對 {changedOrders.length + newReviews.length} 筆・新增 {newOrders.length} 筆</p><p className="text-xs text-slate-500">整份 {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p></div>
+        <div className="text-sm leading-6"><p className="font-medium">重複 {uploaded.length} 筆・需核對 {changedOrders.length + newReviews.length} 筆・新訂單 {newOrders.length} 筆</p><p className="text-xs text-slate-500">整份 {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p></div>
         {(changedOrders.length > 0 || newReviews.length > 0) && <ul className="divide-y divide-slate-200" aria-label="需核對訂單">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}{newReviews.map(order => <NewOrderReview key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul>}
         {unchanged.length > 0 && <details className="text-sm text-slate-600" aria-label="相同訂單單號"><summary className="cursor-pointer">相同 {unchanged.length} 筆，一併轉檔・查看單號</summary><p className="mt-2 break-words text-xs leading-6">{unchanged.map(numberOf).join('、')}</p></details>}
         {newOrders.length > 0 && <details className="text-sm text-slate-600"><summary className="cursor-pointer">新增 {newOrders.length} 筆，一併轉檔・查看明細</summary><ul className="mt-3 divide-y divide-slate-100">{newOrders.map(order => <NewOrder key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul></details>}

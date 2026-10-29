@@ -31,7 +31,7 @@ const order = (overrides = {}) => ({
   currentTotalTaxSet: bag('0.00'), currentTotalPriceSet: bag('1369.00'),
   totalOutstandingSet: bag('1369.00'), totalReceivedSet: bag('0.00'), totalRefundedSet: bag('0.00'),
   currentTotalAdditionalFeesSet: null, currentTotalDutiesSet: null, totalTipReceivedSet: bag('0.00'),
-  shippingAddress: null,
+  agreements:{edges:[],pageInfo:{hasNextPage:false,endCursor:null}},shippingAddress: null,
   shippingLines: { nodes: [shippingLine()], pageInfo: { hasNextPage: false } },
   lineItems: { nodes: [item()], pageInfo: { hasNextPage: false } }, ...overrides,
 });

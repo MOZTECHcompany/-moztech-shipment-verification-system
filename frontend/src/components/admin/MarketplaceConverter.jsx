@@ -164,10 +164,12 @@ function ConverterPage({ user }) {
     setCatalog(data.catalog || null); setPreviewDirty(false);
     setBarcodeChecks({});
   };
-  const fetchPreview = async (rows, nextSettings, nextProfile, sequence) => {
+  const fetchPreview = async (rows, nextSettings, nextProfile, sequence, openComparison = false) => {
     const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
     if (!mounted.current || sequence !== request.current || !currentSession()) return false;
-    applyPreview(response.data); return true;
+    applyPreview(response.data);
+    if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) setDraftOverwriteOpen(true);
+    return true;
   };
   const refreshPreview = async (nextSettings = settings, nextProfile = profileId) => {
     if (locked || inFlight.current || !input || !currentSession()) return;
@@ -263,7 +265,7 @@ function ConverterPage({ user }) {
     const result = parseMarketplaceWorksheet(XLSX, book, sheetName);
     if (!mounted.current || sequence !== request.current || !currentSession()) return;
     setInput(result); setName(fileName); setSelectedSheet(sheetName); setPreviewDirty(true);
-    await fetchPreview(result.source.rows, initialSettings(), '', sequence);
+    await fetchPreview(result.source.rows, initialSettings(), '', sequence, true);
   };
   const selectFiles = async files => {
     if (locked || !files?.length) return;
