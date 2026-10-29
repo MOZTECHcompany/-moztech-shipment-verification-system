@@ -1,5 +1,13 @@
 /* Native warehouse cards use a light surface in either OS appearance. */
 :host {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    /* Body styles are shared with the owned portal; neither is a page shell. */
+    min-height: 0;
+    background: transparent;
     color-scheme: light;
     --background: 0 0% 98%;
     --foreground: 218 51% 14%;
@@ -9,6 +17,20 @@
     --secondary-foreground: 0 0% 45%;
     --accent: 0 0% 96%;
     --accent-foreground: 218 51% 14%;
+}
+
+.wms-native-workspace {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: 8px;
+}
+
+@media (min-width: 768px) {
+    .wms-native-workspace {
+        padding: 12px;
+    }
 }
 
 /* Keep small error text readable on Sonner's light red surface. */

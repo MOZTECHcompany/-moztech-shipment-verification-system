@@ -35,11 +35,33 @@ const fieldLabels = { name: '名稱', quantity: '數量', unitMinor: '單價', l
 const fieldText = (field, value) => ['unitMinor', 'lineSubtotalMinor'].includes(field) ? `NT$ ${amount(value)}` : valueText(value);
 const itemText = item => `${itemName(item)}・${valueText(item?.quantity)} 件${item?.unitMinor != null ? `・單價 NT$ ${amount(item.unitMinor)}` : ''}${item?.lineSubtotalMinor != null ? `・金額 NT$ ${amount(item.lineSubtotalMinor)}` : ''}`;
 
-const originalValue = 'rounded-md bg-slate-100 px-2 py-0.5 text-slate-600';
-const updatedValue = 'rounded-md bg-blue-50 px-2 py-0.5 font-semibold text-blue-900';
+const originalValue = 'max-w-full break-words rounded-md bg-slate-100 px-2 py-0.5 text-slate-600';
+const updatedValue = 'max-w-full break-words rounded-md bg-blue-50 px-2 py-0.5 font-semibold text-blue-900';
 
 function ChangedValue({ before, after }) {
-  return <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"><span className={originalValue}><span className="mr-1 text-sm">原</span>{before}</span><span className="text-slate-400" aria-hidden="true">→</span><span className={updatedValue}><span className="mr-1 text-sm font-normal">改為</span>{after}</span></span>;
+  return <span className="inline-flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><span className={originalValue}><span className="mr-1 text-sm">原</span>{before}</span><span className="text-slate-400" aria-hidden="true">→</span><span className={updatedValue}><span className="mr-1 text-sm font-normal">改為</span>{after}</span></span>;
+}
+
+function ReplacementItems({ group }) {
+  return <div className="min-w-0 space-y-2">
+    <p className="break-words text-base font-medium text-slate-800">{group.productLabel}</p>
+    <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+      <div className="min-w-0 rounded-lg bg-slate-50 p-3 sm:p-4" aria-label="取消品項">
+        <p className="text-sm font-medium text-slate-500">取消品項</p>
+        <div className="mt-2 flex min-w-0 items-baseline justify-between gap-3">
+          <strong className="min-w-0 break-words text-xl font-medium leading-7 text-slate-600" data-review-value="before">{group.beforeLabel}</strong>
+          <span className="shrink-0 whitespace-nowrap text-xl font-semibold tabular-nums text-slate-600">{group.removed[0].quantity} 件</span>
+        </div>
+      </div>
+      <div className="min-w-0 rounded-lg border border-blue-200 bg-blue-50 p-3 sm:p-4" aria-label="改為出貨">
+        <p className="text-sm font-medium text-blue-700">改為出貨</p>
+        <div className="mt-2 flex min-w-0 items-baseline justify-between gap-3">
+          <strong className="min-w-0 break-words text-xl font-semibold leading-7 text-blue-900" data-review-value="after">{group.afterLabel}</strong>
+          <span className="shrink-0 whitespace-nowrap text-xl font-semibold tabular-nums text-blue-900">{group.added[0].quantity} 件</span>
+        </div>
+      </div>
+    </div>
+  </div>;
 }
 
 function LiveAmounts({ order, showExport = false }) {
@@ -55,7 +77,7 @@ function ItemDifference({ change }) {
 function OrderReviewFacts({ review }) {
   const groups = reviewEditGroups(review);
   return <ul className="mt-3 space-y-3 text-lg leading-7" aria-label="取消與退款核對">
-    {groups.map(group => <li key={group.agreementId} aria-label="商城修改">{group.paired ? <><p className="mb-1 text-base font-medium">{group.productLabel}</p><ChangedValue before={`${group.beforeLabel} ${group.removed[0].quantity} 件`} after={`${group.afterLabel} ${group.added[0].quantity} 件`} /></> : <ul className="space-y-2">{group.removed.map(item => <li key={item.saleId} className="break-words"><span className={originalValue}>已移除 {item.name} ×{item.quantity}</span></li>)}{group.added.map(item => <li key={item.saleId} className="break-words"><span className={updatedValue}>已加入 {item.name} ×{item.quantity}</span></li>)}</ul>}</li>)}
+    {groups.map(group => <li key={group.agreementId} className="min-w-0" aria-label="商城修改">{group.paired ? <ReplacementItems group={group} /> : <ul className="space-y-2">{group.removed.map(item => <li key={item.saleId} className="break-words"><span className={originalValue}>已移除 {item.name} ×{item.quantity}</span></li>)}{group.added.map(item => <li key={item.saleId} className="break-words"><span className={updatedValue}>已加入 {item.name} ×{item.quantity}</span></li>)}</ul>}</li>)}
     {uncoveredReviewCancellations(review).map(item => <li key={item.id} className="break-words"><span className={originalValue}>取消 {item.name} ×{item.quantity}</span><span className="ml-2 text-base text-slate-600">本次不出貨</span></li>)}
     {review.decisionRequired && <li className="space-y-1"><p className="text-base text-slate-600">商城 NT$ {amount(review.live.totalMinor)}</p><p className="flex flex-wrap items-baseline gap-x-3 gap-y-1"><span className={updatedValue}>本次銷貨 NT$ {amount(review.proposal.salesTotalMinor)}</span><span className="font-semibold text-blue-900">額外折讓 NT$ {amount(review.proposal.allowanceMinor)}</span></p></li>}
   </ul>;
@@ -95,7 +117,8 @@ function OrderComparison({ order, review }) {
   const changedItems = diff.items.flatMap(change => change.kind === 'group' ? [...change.before, ...change.after] : [change.before || change.after]);
   const skus = [...new Set(changedItems.map(item => item.sku).filter(Boolean))];
   const liveDifference = diff.liveMoneyChanged || diff.liveQuantityChanged;
-  return <li className="py-5 first:pt-0 last:pb-0" aria-label={`訂單異動 ${order.orderNumber}`}><p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base"><strong className="break-all font-semibold">{order.orderNumber}</strong>{!order.changed && !order.restoring && <span className="text-sm text-slate-500">需核對商城現況</span>}</p>
+  const hasReplacement = reviewEditGroups(review).some(group => group.paired);
+  return <li className="min-w-0 py-4 first:pt-0 last:pb-0" aria-label={`訂單異動 ${order.orderNumber}`}><p className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1"><strong className="break-all text-lg font-semibold">{order.orderNumber}</strong>{hasReplacement ? <span className="text-sm font-medium text-blue-700">商品更換</span> : !order.changed && !order.restoring && <span className="text-sm text-slate-500">需核對商城現況</span>}</p>
     {review && <OrderReviewFacts review={review} />}
     <ul className="mt-3 space-y-3 text-lg leading-7" aria-label="實質異動">
       {diff.restoring && <li>恢復出貨，使用本次檔案的內容。</li>}
@@ -124,7 +147,7 @@ function NewOrder({ order, review }) {
 
 function NewOrderReview({ order, review }) {
   const live = liveDifferences(order);
-  return <li className="py-5 first:pt-0 last:pb-0" aria-label={`新增訂單需核對 ${order.orderNumber}`}><p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base"><strong className="font-semibold">{order.orderNumber}</strong><span className="text-sm text-slate-500">新訂單</span></p>
+  return <li className="min-w-0 py-4 first:pt-0 last:pb-0" aria-label={`新增訂單需核對 ${order.orderNumber}`}><p className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1"><strong className="break-all text-lg font-semibold">{order.orderNumber}</strong><span className="text-sm text-slate-500">新訂單</span></p>
     {review && <OrderReviewFacts review={review} />}
     <ul className="mt-3 space-y-3 text-lg leading-7" aria-label="實質異動">
       {!review && live.money && <li><span className={updatedValue}>出貨金額 NT$ {amount(order.after.totalMinor)}</span><span className="ml-2 text-base text-slate-600">／商城 NT$ {amount(order.live.totalMinor)}</span></li>}
@@ -242,15 +265,15 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
     finally { inFlight.current = false; if (current()) markBusy(false); }
   };
 
-  return <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 text-slate-900 sm:p-5" aria-label="整份訂單比對助理" aria-busy={busy}>
-    <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">訂單比對</h3><Button variant="secondary" disabled={busy || unknown || Boolean(command.current && !receipt.current)} onClick={() => { if (mounted.current && !busy && !unknown && !inFlight.current && (!command.current || receipt.current)) onClose(); }}>{result ? '完成' : '取消'}</Button></div>
+  return <section className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-4 text-slate-900 sm:p-5" aria-label="整份訂單比對助理" aria-busy={busy}>
+    <div className="flex min-w-0 items-start justify-between gap-3"><h3 className="min-w-0 text-xl font-semibold leading-7">{preview && !result && comparisonComplete && !blocked ? changedOrders.length + newReviews.length > 0 ? `需核對 ${changedOrders.length + newReviews.length} 筆訂單` : '檔案已核對，可直接轉檔' : '訂單比對'}</h3><Button variant="ghost" className="shrink-0" disabled={busy || unknown || Boolean(command.current && !receipt.current)} onClick={() => { if (mounted.current && !busy && !unknown && !inFlight.current && (!command.current || receipt.current)) onClose(); }}>{result ? '完成' : '取消'}</Button></div>
     {busy && <p role="status" className="text-sm text-slate-700">{command.current ? '正在核對並準備整份銷貨檔…' : '正在比對整份檔案與已保存的訂單…'}</p>}
     {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{error}</p>}
     {!preview && !busy && !unknown && !result && <Button onClick={() => compare()}>重新核對</Button>}
     {preview && !result && <>
       {comparisonComplete && !blocked ? <>
-        <div className="space-y-1"><p className="text-lg font-semibold">{changedOrders.length + newReviews.length > 0 ? `需核對 ${changedOrders.length + newReviews.length} 筆` : '檔案已核對，可直接轉檔'}</p><p className="text-sm text-slate-500">整份 {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p></div>
-        {(changedOrders.length > 0 || newReviews.length > 0) && <ul className="divide-y divide-slate-200" aria-label="需核對訂單">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}{newReviews.map(order => <NewOrderReview key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul>}
+        <p className="text-sm text-slate-500">整份 {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p>
+        {(changedOrders.length > 0 || newReviews.length > 0) && <ul className="min-w-0 divide-y divide-slate-200" aria-label="需核對訂單">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}{newReviews.map(order => <NewOrderReview key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul>}
         {(unchanged.length > 0 || newOrders.length > 0 || retainedCount > 0) && <details className="text-sm leading-6 text-slate-500" aria-label="完整檔案摘要"><summary className="cursor-pointer">整份轉檔內容</summary><div className="mt-3 space-y-3">
           {unchanged.length > 0 && <details aria-label="相同訂單單號"><summary className="cursor-pointer">相同 {unchanged.length} 筆，一併轉檔・查看單號</summary><p className="mt-2 break-words">{unchanged.map(numberOf).join('、')}</p></details>}
           {newOrders.length > 0 && <details><summary className="cursor-pointer">新訂單 {newOrders.length} 筆，一併轉檔・查看明細</summary><ul className="mt-3 divide-y divide-slate-100">{newOrders.map(order => <NewOrder key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul></details>}
@@ -260,8 +283,8 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
       </> : <p className="text-sm font-medium">尚無法完成比對</p>}
       {reasons.length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-2 pl-7 pr-3 text-sm text-amber-950">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
       {blocked && reasons.length === 0 && <p role="alert" className="text-sm text-amber-950">訂單資料尚未完成核對，請重新核對。</p>}
-      {!unknown && <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 pt-4">
-        {blocked ? <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="text-sm leading-6 text-slate-600">{hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}</p><Button disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>{hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}</Button></>}
+      {!unknown && <div className="flex min-w-0 flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        {blocked ? <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="min-w-0 max-w-2xl text-sm leading-6 text-slate-600">{hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}</p><Button className="w-full shrink-0 sm:w-auto" disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>{hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}</Button></>}
       </div>}
     </>}
     {unknown && <Button disabled={busy} onClick={confirm}>核對同一筆操作結果</Button>}

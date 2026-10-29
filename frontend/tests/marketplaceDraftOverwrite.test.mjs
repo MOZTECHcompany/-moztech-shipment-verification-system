@@ -490,7 +490,7 @@ test('a cancelled SKU consumes only its matching removal and does not hide anoth
 test('official same-edit replacement is visible even when the saved snapshot already contains the added variant', async () => {
   const data=editedFixture();const state=await view({previews:[data]});const main=state.visibleText(state.render());
   const change=state.all(node=>node.props?.['aria-label']==='商城修改')[0];assert.ok(change);
-  assert.match(state.text(change),/掛繩充電線\s+原\s+燕麥色\s+1\s+件\s+→\s+改為\s+粉色\s+1\s+件/);
+  assert.match(state.text(change),/掛繩充電線\s+取消品項\s+燕麥色\s+1\s+件\s+改為出貨\s+粉色\s+1\s+件/);
   assert.doesNotMatch(main,/Type-C|已取消|已移除|已加入|不變行動電源|agreement-one|sale-old-line/);
   assert.equal(state.all(node=>node.props?.['aria-label']==='商城修改').length,1);
   assert.ok(state.all(node=>node.type==='details').every(node=>!node.props.open));assert.equal(confirms(state).length,0);

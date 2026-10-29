@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
-import { Button, PageHeader } from '../../ui';
+import { Button } from '../../ui';
 import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime, handleWorkspaceAnchor } from '../../workspace/nativeRuntime.js';
@@ -383,9 +383,11 @@ function ConverterPage({ user }) {
   };
   const settingsField = (label, key, extra = {}) => <Field label={label} value={settings[key] || ''} onChange={event => update(key, event.target.value)} onBlur={() => { if (previewDirty) return refreshPreview(); }} {...extra} />;
   const needsStore = !settings.store || !settings.customerCode;
-  return <main className="mx-auto max-w-7xl space-y-5 pb-8 text-slate-900" data-testid="marketplace-converter">
-    <Link to="/admin" className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16} />返回出貨管理</Link>
-    <div className="flex flex-wrap items-center justify-between gap-3"><PageHeader title={originalOrderFlow ? '原訂單出貨' : '商城訂單轉檔'} />{originalOrderFlow ? <Button variant="secondary" disabled={locked} onClick={clearReimportFocus}>返回訂單轉檔</Button> : !draftOverwriteOpen && <a href="#saved-batches" onClick={event => handleWorkspaceAnchor(event, 'saved-batches')} className="inline-flex min-h-11 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a>}</div>
+  return <main className="mx-auto w-full min-w-0 max-w-6xl space-y-4 pb-6 text-slate-900" data-testid="marketplace-converter">
+    <header className="min-w-0 space-y-1">
+      <Link to="/admin" className="inline-flex min-h-8 items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={16} />返回出貨管理</Link>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2"><h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">{originalOrderFlow ? '原訂單出貨' : '商城訂單轉檔'}</h1>{originalOrderFlow ? <Button variant="secondary" disabled={locked} onClick={clearReimportFocus}>返回訂單轉檔</Button> : !draftOverwriteOpen && <a href="#saved-batches" onClick={event => handleWorkspaceAnchor(event, 'saved-batches')} className="inline-flex min-h-11 shrink-0 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700">已保存批次</a>}</div>
+    </header>
     {message && (!originalOrderFlow || access === 'denied') && <div role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}><p>{message}</p>{existingOrderLink && <Button as={Link} to={existingOrderLink} variant="secondary" className="mt-3" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>查看原訂單</Button>}</div>}
     {!originalOrderFlow && <>{draftOverwriteOpen ? <p className="break-words text-sm text-slate-500" aria-label="本次檔案">{name}{settings.store && ` · ${settings.store}`}</p> : <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300'}`} onDragOver={event => { event.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); selectFiles(Array.from(event.dataTransfer.files || [])); }} aria-label="商城訂單檔案區">
       <div className="flex flex-col items-center py-3 text-center"><UploadCloud size={32} className="mb-3 text-blue-600" /><h2 className="text-lg font-semibold">{dragging ? '放開檔案，開始核對' : '拖曳商城訂單到這裡'}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p>
@@ -428,7 +430,7 @@ function ConverterPage({ user }) {
         const { link, resume } = reimportLink(order);
         return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
       })}</div></section>}
-      <details open={!draftOverwriteOpen} className={draftOverwriteOpen ? "rounded-lg border border-slate-200 bg-white p-4" : "contents"}><summary className={draftOverwriteOpen ? "cursor-pointer text-sm text-slate-600" : "hidden"}>其他資料</summary>
+      <details open={!draftOverwriteOpen} className={draftOverwriteOpen ? "min-w-0 border-t border-slate-200 py-2" : "contents"}><summary className={draftOverwriteOpen ? "min-h-10 cursor-pointer py-2 text-sm font-medium text-slate-600" : "hidden"}>其他資料</summary>
       {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
         const key = barcodeConflictKey(conflict);
         const canConfirm = conflict.canConfirm === true;
@@ -503,6 +505,6 @@ function ConverterPage({ user }) {
       </details>}
       </details>
     </>}</>}
-    <details open={!draftOverwriteOpen} className={draftOverwriteOpen ? 'rounded-lg border border-slate-200 bg-white p-4' : 'contents'} aria-label="批次歷史區"><summary className={draftOverwriteOpen ? 'cursor-pointer text-sm text-slate-600' : 'hidden'}>已保存批次</summary><MarketplaceBatchManager user={user} enabled={access === 'ready'} currentSession={currentSession} refreshKey={records} /></details>
+    <details open={!draftOverwriteOpen} className={draftOverwriteOpen ? 'min-w-0 border-t border-slate-200 py-2' : 'contents'} aria-label="批次歷史區"><summary className={draftOverwriteOpen ? 'min-h-10 cursor-pointer py-2 text-sm font-medium text-slate-600' : 'hidden'}>已保存批次</summary><MarketplaceBatchManager user={user} enabled={access === 'ready'} currentSession={currentSession} refreshKey={records} /></details>
   </main>;
 }

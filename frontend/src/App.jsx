@@ -32,7 +32,6 @@ import { useWarehouseSession } from './hooks/useWarehouseSession';
 import { AppLayout } from '@/ui';
 import OrderReviewAlerts from './components/OrderReviewAlerts';
 import ErrorBoundary from './components/ErrorBoundary';
-import { EnvironmentBanner } from './components/EnvironmentBanner';
 
 // AppLayout 已抽成共用元件，提供一致背景/內距/置頂導覽
 
@@ -63,7 +62,6 @@ function NativeLayout({ user }) {
         return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline); };
     }, []);
     return <div className="wms-workspace wms-native-workspace">
-        <EnvironmentBanner />
         <OrderReviewAlerts key={user?.id} user={user} />
         {offline && <p role="status" className="mb-4 rounded-lg bg-amber-50 p-3 text-amber-900">網路已離線。請恢復連線並核對操作結果後，再繼續掃碼。</p>}
         <ErrorBoundary key={location.pathname}><Suspense fallback={<p role="status">正在開啟作業畫面…</p>}><Outlet /></Suspense></ErrorBoundary>
