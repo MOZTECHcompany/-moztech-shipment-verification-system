@@ -47,6 +47,16 @@ export function liveDifferences(order) {
     quantity: known(order?.live?.quantity) && known(order?.after?.quantity) && order.live.quantity !== order.after.quantity };
 }
 
+export function comparisonOrders(preview) {
+  const uploaded = list(preview?.affectedBatches).flatMap(batch => list(batch.uploadedOrders));
+  const needsReview = [], unchanged = [];
+  for (const order of uploaded) {
+    const live = liveDifferences(order);
+    (order.changed || order.restoring || live.money || live.quantity ? needsReview : unchanged).push(order);
+  }
+  return { uploaded, needsReview, unchanged };
+}
+
 export function orderDifferences(order) {
   const before = order?.before || {}, after = order?.after || {};
   const items = itemDifferences(before.items, after.items);

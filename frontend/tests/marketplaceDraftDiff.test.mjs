@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { itemDifferences, liveDifferences, orderDifferences, completeComparison, uniqueBlockedReasons } from '../src/utils/marketplaceDraftDiff.mjs';
+import { comparisonOrders, itemDifferences, liveDifferences, orderDifferences, completeComparison, uniqueBlockedReasons } from '../src/utils/marketplaceDraftDiff.mjs';
 const item = (sku = 'A', quantity = 1, unitMinor = 10000, lineSubtotalMinor = quantity * unitMinor, name = `商品${sku}`) => ({ sku, name, quantity, unitMinor, lineSubtotalMinor });
 const order = (before, after, extra = {}) => ({ changed: true, before: { quantity: 1, totalMinor: 10000, items: before, shipping: {} }, after: { quantity: 1, totalMinor: 10000, items: after, shipping: {} }, ...extra });
 
@@ -68,4 +68,18 @@ test('API-only differences need actual numeric evidence; a flag, missing value o
   const value={after:{totalMinor:0,quantity:1},live:{totalMinor:0,quantity:2},diffAPI:true};
   assert.deepEqual(liveDifferences(value),{money:false,quantity:true});
   for(const live of [{},{totalMinor:null},{totalMinor:'1'},{totalMinor:undefined}])assert.deepEqual(liveDifferences({...value,live}),{money:false,quantity:false});
+});
+
+
+test('review partition includes actual API-only differences and preserves identical IDs without changing server counters', () => {
+  const same = { orderNumber: '#SAME', changed: false, after: { totalMinor: 100, quantity: 1 } };
+  const api = { ...same, orderNumber: '#API', live: { totalMinor: 150, quantity: 1 } };
+  const missing = { ...same, orderNumber: '#MISSING', diffAPI: true, live: {} };
+  const restored = { ...same, orderNumber: '#RESTORE', restoring: true };
+  const changed = { ...same, orderNumber: '#CHANGE', changed: true };
+  const preview = { summary: { changedOrderCount: 1, unchangedOrderCount: 4 }, affectedBatches: [{ uploadedOrders: [same, api, missing] }, { uploadedOrders: [restored, changed] }] };
+  const original = structuredClone(preview), result = comparisonOrders(preview);
+  assert.deepEqual(result.needsReview.map(order => order.orderNumber), ['#API', '#RESTORE', '#CHANGE']);
+  assert.deepEqual(result.unchanged.map(order => order.orderNumber), ['#SAME', '#MISSING']);
+  assert.equal(result.uploaded.length, 5); assert.deepEqual(preview, original);
 });
