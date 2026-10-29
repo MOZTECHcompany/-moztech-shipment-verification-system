@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { transform } from 'esbuild';
+import * as draftDiff from '../src/utils/marketplaceDraftDiff.mjs';
 
 const source = await readFile(new URL('../src/components/admin/MarketplaceDraftOverwrite.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
@@ -31,7 +32,7 @@ async function view({ previews = [fixture()], confirms = [applied()], previewWai
     throw Error(`Unexpected endpoint ${url}`);
   } };
   const imports = {
-    react, '../../ui': { Button: 'Button' }, '@/api/api.js': api, '../../api/origin': { API_ORIGIN: 'https://wms.invalid' },
+    react, '../../utils/marketplaceDraftDiff.mjs': draftDiff, '../../ui': { Button: 'Button' }, '@/api/api.js': api, '../../api/origin': { API_ORIGIN: 'https://wms.invalid' },
     '../../workspace/nativeRuntime.js': { getNativeRuntime: () => native ? {} : null },
     '../../workspace/downloads.js': { downloadNativeMarketplaceFile: async (args, options) => { if (!options.isCurrent()) return false; downloads.push(args); const value = downloadResults[Math.min(downloadIndex++, downloadResults.length - 1)]; if (value instanceof Error) throw value; return value; } },
   };
@@ -68,9 +69,9 @@ const confirmLabel = '確認覆蓋並下載整份銷貨檔';
 test('mixed file is confirmed once and automatically downloads one complete export batch', async () => {
   const state = await view();
   const text = state.text(state.render());
-  assert.match(text, /本次整份檔案\s+2\s+筆：新單\s+1\s+筆、異動\s+0\s+筆、相同\s+1\s+筆/);
-  assert.match(text, /3\s+件商品・本次銷貨 NT\$\s+300/);
-  assert.match(text, /1\s+筆已保存訂單未在本次檔案中，會保留原狀，也不會列入本次銷貨檔/);
+  assert.match(text, /本次\s+2\s+筆・新增\s+1\s+・異動\s+0\s+・相同\s+1/);
+  assert.match(text, /3\s+件・整份銷貨 NT\$\s+300/);
+  assert.match(text, /1\s+筆舊單未上傳，保留原狀，不列入本次銷貨檔/);
   assert.doesNotMatch(text, /整筆訂單未在新版中|是否依新版暫停|修訂|schema|revision/i);
   assert.equal(state.button('依新版暫不出貨'), undefined); assert.equal(state.button('保留原訂單'), undefined);
   assert.equal(state.all(node => node.type === 'input' && node.props.type === 'checkbox').length, 1);
@@ -87,24 +88,30 @@ test('mixed file is confirmed once and automatically downloads one complete expo
   assert.equal(state.downloads.length, 2); assert.equal(confirms(state).length, 1, 'Downloading never repeats the overwrite');
 });
 
-test('changed item quantity, price and shipping retain before/after and distinct live money', async () => {
+test('changed orders show only changed fields and distinct live money without full snapshots', async () => {
   const data = fixture(); const order = data.affectedBatches[0].uploadedOrders[0];
-  order.changed = true; order.after = snapshot(2, 20000); data.summary.changedOrderCount = 1; data.summary.unchangedOrderCount = 0;
-  order.before.shipping = { recipient: '示意甲', address: '原示意地址' }; order.after.shipping = { recipient: '示意乙', address: '新示意地址' };
+  order.changed = true; order.before = snapshot(2, 20000); order.after = snapshot(1, 9000);
+  order.before.items[0].unitMinor = 10000; order.after.items[0].unitMinor = 9000;
+  data.summary.changedOrderCount = 1; data.summary.unchangedOrderCount = 0; data.summary.totalMinor = 29000;
+  order.before.shipping = { recipient: '不變的收件人', phone: '0912345000', address: '原示意地址' }; order.after.shipping = { ...order.before.shipping, address: '新示意地址' };
   order.live = { totalMinor: 30000, receivedMinor: 20000, outstandingMinor: 10000, quantity: 3 };
   const state = await view({ previews: [data] }); const content = state.text(state.render());
-  assert.match(content, /內容有異動，將使用新版修正/); assert.match(content, /原訂單/); assert.match(content, /新版訂單/); assert.match(content, /掛繩充電線/);
-  assert.match(content, /單價 NT\$/); assert.match(content, /小計 NT\$/);
+  assert.match(content, /請核對異動內容/); assert.match(content, /掛繩充電線/); assert.match(content, /數量\s+2\s+→\s+1/);
+  assert.match(content, /單價\s+NT\$ 100\s+→\s+NT\$ 90/); assert.match(content, /金額\s+NT\$ 200\s+→\s+NT\$ 90/);
   assert.match(content, /商城目前成交 NT\$\s+300\s*／已收款 NT\$ 200\s*／未收款 NT\$ 100/);
-  assert.match(content, /本次出貨銷貨 NT\$\s+200/); assert.match(content, /不會修改商城收款/);
-  assert.match(content, /原示意地址/); assert.match(content, /新示意地址/);
+  assert.match(content, /出貨銷貨金額 NT\$\s+200\s+→ NT\$\s+90/); assert.match(content, /不會修改商城收款/);
+  assert.match(content, /原示意地址\s+→\s+新示意地址/);
+  assert.doesNotMatch(content, /原訂單|新版訂單|不變的收件人|0912345000|原批次/);
+  assert.equal(state.all(node => node.type === 'details').length, 1, 'Only new-order summaries may be collapsed');
+  assert.match(state.text(state.all(node => node.type === 'summary')[0]), /新增/);
   await accept(state); await state.click(confirmLabel); assert.equal(confirms(state)[0].body.decisions, undefined);
 });
 
 test('identical-only files can be reproduced without requiring a change or omitted-order answer', async () => {
   const data = fixture(); data.newOrders = []; data.summary = { totalOrderCount: 1, newOrderCount: 0, changedOrderCount: 0, unchangedOrderCount: 1, quantity: 1, totalMinor: 10000 };
   const state = await view({ previews: [data] });
-  assert.match(state.text(state.render()), /內容相同，仍列入整份銷貨檔/);
+  assert.match(state.text(state.render()), /相同單仍會一併產檔/);
+  assert.doesNotMatch(state.text(state.render()), /#155116|WMS-TEST-52/);
   await accept(state); await state.click(confirmLabel);
   assert.equal(confirms(state).length, 1); assert.equal(state.downloads[0].id, 90);
   assert.equal(state.requests.some(request => request.url === '/api/marketplace-intakes'), false);
@@ -118,7 +125,7 @@ test('assistant supports all-new complete files too', async () => {
 
 test('multiple original batches still produce and download just exportBatch', async () => {
   const data = fixture(); data.affectedBatches.push({ id: 53, batchNumber: 'WMS-TEST-53', revision: 1, retainedOrderCount: 0, uploadedOrders: [{ orderNumber: '#SECOND', changed: true, before: snapshot(), after: snapshot(2, 10000) }], omittedOrders: [] });
-  data.summary.totalOrderCount = 3; data.summary.changedOrderCount = 1;
+  data.summary.totalOrderCount = 3; data.summary.changedOrderCount = 1; data.summary.quantity = 5; data.summary.totalMinor = 40000;
   const result = applied(); result.batches.push({ id: 53, batchNumber: 'SHOULD-NOT-DOWNLOAD', activeOrderCount: 1 });
   const state = await view({ previews: [data], confirms: [result] });
   await accept(state); await state.click(confirmLabel);
@@ -212,4 +219,96 @@ test('an incomplete completion response does not download original batches or in
   const incomplete = applied(); delete incomplete.exportBatch; const state = await view({ confirms: [incomplete, applied()] });
   await accept(state); await state.click(confirmLabel); assert.equal(state.downloads.length, 0); assert.equal(state.complete.length, 0);
   await state.click('核對同一筆操作結果'); assert.equal(confirms(state)[0].body, confirms(state)[1].body); assert.equal(state.downloads[0].id, 90);
+});
+
+
+test('projection-empty blocked45 response shows one short reason without fake changed orders or zero money', async () => {
+  const data = fixture(); data.newOrders = []; data.canConfirm = false;
+  data.affectedBatches[0].uploadedOrders = Array.from({ length: 45 }, (_, index) => ({ orderNumber: `#BLOCKED-${index}`, changed: true, before: snapshot(), after: { items: [], quantity: 0, totalMinor: null, shipping: {} } }));
+  data.summary = { totalOrderCount: 45, newOrderCount: 0, changedOrderCount: 45, unchangedOrderCount: 0, quantity: 0, totalMinor: 0 };
+  data.blockedReasons = ['已出貨訂單不能覆蓋', '已出貨訂單不能覆蓋', ' 已出貨訂單不能覆蓋 '];
+  const state = await view({ previews: [data] }); const content = state.text(state.render());
+  assert.match(content, /尚無法完成比對/); assert.equal(content.match(/已出貨訂單不能覆蓋/g).length, 1);
+  assert.doesNotMatch(content, /異動\s*45|#BLOCKED|NT\$|0\s*件|移除|原有|改為/);
+  assert.equal(state.checkbox(), undefined); assert.equal(state.button(confirmLabel).props.disabled, true);
+  await state.button(confirmLabel).props.onClick(); await state.settle();
+  assert.equal(confirms(state).length, 0); assert.equal(state.downloads.length, 0);
+});
+
+test('removing one strap shows that removal and amount change but never unchanged product or recipient', async () => {
+  const data = fixture(), order = data.affectedBatches[0].uploadedOrders[0];
+  const fixed = { sku: 'POWER', name: '不變的行動電源', quantity: 1, unitMinor: 10000, lineSubtotalMinor: 10000 };
+  const strap = { sku: 'STRAP', name: '掛繩充電線', quantity: 1, unitMinor: 3000, lineSubtotalMinor: 3000 };
+  order.changed = true; order.before = { items: [fixed, strap], quantity: 2, totalMinor: 13000, shipping: { recipient: '不變的收件人' } };
+  order.after = { items: [fixed], quantity: 1, totalMinor: 10000, shipping: { recipient: '不變的收件人' } };
+  data.newOrders = []; data.summary = { totalOrderCount: 1, newOrderCount: 0, changedOrderCount: 1, unchangedOrderCount: 0, quantity: 1, totalMinor: 10000 };
+  const state = await view({ previews: [data] }); const content = state.text(state.render());
+  assert.match(content, /移除\s+掛繩充電線/); assert.match(content, /130\s+→\s+NT\$\s+100/);
+  assert.doesNotMatch(content, /不變的行動電源|不變的收件人|原訂單|新版訂單/);
+});
+
+test('restoring and unknown changed orders remain visible when no known fields differ', async () => {
+  const data = fixture(); data.newOrders = [];
+  const snapshotValue = snapshot(1, 10000);
+  data.affectedBatches[0].uploadedOrders = [{ orderNumber: '#RESTORE', changed: true, restoring: true, changes: [], before: snapshotValue, after: snapshotValue }, { orderNumber: '#UNKNOWN', changed: true, changes: [], before: snapshotValue, after: snapshotValue }];
+  data.summary = { totalOrderCount: 2, newOrderCount: 0, changedOrderCount: 2, unchangedOrderCount: 0, quantity: 2, totalMinor: 20000 };
+  const state = await view({ previews: [data] }); const content = state.text(state.render());
+  assert.match(content, /#RESTORE/); assert.match(content, /恢復出貨/); assert.match(content, /#UNKNOWN/); assert.match(content, /其他內容有異動/);
+});
+
+test('many genuine changes remain visible before acknowledgment; only new summaries may collapse', async () => {
+  const data = fixture(); data.newOrders = [];
+  data.affectedBatches[0].uploadedOrders = Array.from({ length: 25 }, (_, index) => ({ orderNumber: `#CHANGE-${index}`, changed: true, before: snapshot(2, 20000), after: snapshot(1, 10000) }));
+  data.summary = { totalOrderCount: 25, newOrderCount: 0, changedOrderCount: 25, unchangedOrderCount: 0, quantity: 25, totalMinor: 250000 };
+  const state = await view({ previews: [data] });
+  assert.equal(state.all(node => /^訂單異動 /.test(node.props?.['aria-label'] || '')).length, 25);
+  assert.equal(state.all(node => node.type === 'details').length, 0); assert.equal(state.button(confirmLabel).props.disabled, true);
+});
+
+test('safe cancel works after current-session predicate becomes false when no command is pending', async () => {
+  const state = await view(); state.invalidate();
+  await state.click('取消'); assert.equal(state.closeCount(), 1); assert.equal(confirms(state).length, 0);
+});
+
+test('completed preview clears busy after session expiry so safe cancel is available, without accepting data', async () => {
+  const wait = deferred(); const state = await view({ previewWait: () => wait.promise });
+  assert.equal(state.button('取消').props.disabled, true); state.invalidate(); wait.resolve(); await state.settle();
+  assert.equal(state.button('取消').props.disabled, false); await state.click('取消'); assert.equal(state.closeCount(), 1);
+  assert.equal(state.checkbox(), undefined); assert.equal(confirms(state).length, 0); assert.equal(state.downloads.length, 0);
+});
+
+test('session expiry during a submitted command cannot unlock cancel or issue another command', async () => {
+  const wait = deferred(); const state = await view({ confirmWait: () => wait.promise }); await accept(state);
+  const handler = state.button(confirmLabel).props.onClick; const pending = handler(); await state.settle();
+  state.invalidate(); wait.resolve(); await pending; await state.settle();
+  assert.equal(state.button('取消').props.disabled, true); await state.button('取消').props.onClick(); await handler(); await state.settle();
+  assert.equal(state.closeCount(), 0); assert.equal(confirms(state).length, 1); assert.equal(state.complete.length, 0); assert.equal(state.downloads.length, 0);
+});
+
+
+test('new API quantities or money that differ stay distinguishable without exposing ordinary payment snapshots', async () => {
+  const data = fixture(); data.newOrders[0].live = { totalMinor: 25000, receivedMinor: 25000, outstandingMinor: 0, quantity: 3 };
+  const state = await view({ previews: [data] }); const content = state.text(state.render());
+  assert.match(content, /商城目前成交 NT\$\s+250/); assert.match(content, /商城現況\s+3\s+件／本次出貨\s+2\s+件/);
+  assert.equal(state.all(node => node.type === 'details' && node.props.open === true).length, 0);
+  const unchanged = await view(); assert.doesNotMatch(unchanged.text(unchanged.render()), /商城目前成交|已收款|未收款/);
+});
+
+
+test('same saved draft with a different current API amount or quantity remains a compact required comparison', async () => {
+  for (const live of [{ totalMinor: 15000, quantity: 1 }, { totalMinor: 10000, quantity: 3 }]) {
+    const data = fixture(); data.newOrders = []; data.summary = { totalOrderCount: 1, newOrderCount: 0, changedOrderCount: 0, unchangedOrderCount: 1, quantity: 1, totalMinor: 10000 };
+    const value = snapshot(1, 10000); data.affectedBatches[0].uploadedOrders = [{ orderNumber: '#API-DIFF', changed: false, diffAPI: true, before: value, after: value, live }];
+    const state = await view({ previews: [data] }); const content = state.text(state.render());
+    assert.match(content, /#API-DIFF/); assert.match(content, /與商城現況不同/); assert.match(content, /不會修改商城收款/);
+    if (live.totalMinor !== 10000) { assert.match(content, /商城目前成交 NT\$\s+150/); assert.match(content, /本次出貨銷貨 NT\$ 100/); }
+    else assert.match(content, /商城現況\s+3\s+件／本次出貨\s+1\s+件/);
+    assert.doesNotMatch(content, /掛繩充電線|原訂單|新版訂單/); assert.equal(state.all(node=>node.type==='details').length,0);
+  }
+});
+
+test('a diffAPI flag without actual API values does not invent current amounts or list normal identical orders', async () => {
+  const data = fixture(); data.newOrders = []; data.summary = { totalOrderCount: 1, newOrderCount: 0, changedOrderCount: 0, unchangedOrderCount: 1, quantity: 1, totalMinor: 10000 };
+  data.affectedBatches[0].uploadedOrders[0].diffAPI = true; data.affectedBatches[0].uploadedOrders[0].live = {};
+  const state = await view({ previews: [data] }); assert.doesNotMatch(state.text(state.render()), /#155116|與商城現況不同|商城目前成交|商城現況/);
 });

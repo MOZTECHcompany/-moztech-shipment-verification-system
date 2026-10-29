@@ -870,6 +870,9 @@ test('mixed Shopify upload offers one complete-file comparison instead of a part
     await button.props.onClick();view.render();
     const assistant=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');
     assert.ok(assistant); assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-1/); assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-2/);
+    assert.equal(view.all(node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1').length,0,'Opening compact assistant hides duplicate saved-order cards');
+    assistant.props.onClose();view.render();
+    assert.equal(view.all(node=>node.props?.['aria-label']==='已保存訂單 #REVIEW-1').length,1,'Closing assistant restores original-sale entry');
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/download-link')).length,0);
     assert.equal(view.downloads.length,0);
 });

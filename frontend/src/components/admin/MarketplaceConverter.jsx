@@ -422,10 +422,10 @@ function ConverterPage({ user }) {
         onBusyChange={value => { if (mounted.current) setBusy(value); }}
         onClose={() => setDraftOverwriteOpen(false)}
         onComplete={async () => { if (!await loadRecords() || !mounted.current || !currentSession() || routeContext.current !== routeContextKey) return; const sequence = ++request.current; await fetchPreview(input.source.rows, settings, profileId, sequence); }} />}
-      <div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
+      {!draftOverwriteOpen && <div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
         const { link, resume } = reimportLink(order);
         return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
-      })}</div></section>}
+      })}</div>}</section>}
       {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
         const key = barcodeConflictKey(conflict);
         const canConfirm = conflict.canConfirm === true;

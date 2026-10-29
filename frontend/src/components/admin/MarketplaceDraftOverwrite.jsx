@@ -4,6 +4,7 @@ import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime } from '../../workspace/nativeRuntime.js';
 import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
+import { completeComparison, liveDifferences, orderDifferences, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
 
 const endpoint = '/api/marketplace-intakes/draft-overwrite';
 const scopeMode = 'uploaded-file-v2';
@@ -27,25 +28,42 @@ const validPreview = data => {
     && data.newOrders.length === newOrderCount && uploaded.length === changedOrderCount + unchangedOrderCount;
 };
 
-function OrderSnapshot({ title, value }) {
-  return <div className="min-w-0 rounded-lg bg-slate-50 p-3"><h5 className="font-medium">{title}</h5>
-    <p className="mt-1 text-sm text-slate-600">{value?.quantity ?? '—'} 件・NT$ {amount(value?.totalMinor)}</p>
-    <ul className="mt-2 space-y-2 text-sm">{list(value?.items).map((item, index) => <li key={`${item.sku}:${index}`} className="break-words">
-      <p>{item.name || item.productName || item.sku}</p><p className="text-slate-600">{item.sku}・{item.quantity} 件・單價 NT$ {amount(item.unitMinor)}・小計 NT$ {amount(item.lineSubtotalMinor)}</p>
-    </li>)}</ul>
-    {value?.shipping && <dl className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-sm">{Object.entries({ recipient: '收件人', phone: '電話', address: '地址', postalCode: '郵遞區號', method: '配送方式', storeName: '門市名稱', storeCode: '門市代號', trackingNumber: '物流單號', note: '備註' }).filter(([key]) => value.shipping[key]).map(([key, label]) => <div key={key} className="break-words"><dt className="inline text-slate-600">{label}：</dt><dd className="inline">{value.shipping[key]}</dd></div>)}</dl>}
-  </div>;
+const itemName = item => item?.name || item?.productName || item?.sku || '未命名商品';
+const itemLabel = item => `${itemName(item)}${item?.sku ? `（${item.sku}）` : ''}`;
+const valueText = value => value == null ? '未提供' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+const fieldLabels = { name: '名稱', quantity: '數量', unitMinor: '單價', lineSubtotalMinor: '金額' };
+const fieldText = (field, value) => ['unitMinor', 'lineSubtotalMinor'].includes(field) ? `NT$ ${amount(value)}` : valueText(value);
+const itemText = item => `${itemLabel(item)}・${valueText(item?.quantity)} 件${item?.unitMinor != null ? `・單價 NT$ ${amount(item.unitMinor)}` : ''}${item?.lineSubtotalMinor != null ? `・金額 NT$ ${amount(item.lineSubtotalMinor)}` : ''}`;
+
+function LiveAmounts({ order, showExport = false }) {
+  return <p className="mt-2 text-xs leading-5 text-slate-600">商城目前成交 NT$ {amount(order.live.totalMinor)}{order.live.receivedMinor != null ? `／已收款 NT$ ${amount(order.live.receivedMinor)}` : ''}{order.live.outstandingMinor != null ? `／未收款 NT$ ${amount(order.live.outstandingMinor)}` : ''}{showExport ? `；本次出貨銷貨 NT$ ${amount(order.after?.totalMinor)}` : ''}；不會修改商城收款。</p>;
 }
 
-function LiveAmounts({ order }) {
-  return order.live && <div className="mt-3 rounded-lg bg-blue-50 p-3 text-sm leading-6"><p>商城目前成交 NT$ {amount(order.live.totalMinor)}{order.live.receivedMinor != null ? `／已收款 NT$ ${amount(order.live.receivedMinor)}` : ''}{order.live.outstandingMinor != null ? `／未收款 NT$ ${amount(order.live.outstandingMinor)}` : ''}</p><p>本次出貨銷貨 NT$ {amount(order.after?.totalMinor)}</p><p className="mt-1 text-slate-600">本次只修正出貨銷貨內容，不會修改商城收款。</p></div>;
+function ItemDifference({ change }) {
+  if (change.kind === 'group') return <li className="space-y-1"><p className="font-medium">{change.sku || '未提供品號'}・多筆明細異動</p><div className="grid gap-2 sm:grid-cols-2"><div className="min-w-0 rounded bg-slate-50 p-2"><span className="text-slate-600">原有</span><ul>{change.before.map((item, index) => <li key={index} className="break-words">{itemText(item)}</li>)}</ul></div><div className="min-w-0 rounded bg-blue-50 p-2"><span className="text-slate-600">改為</span><ul>{change.after.map((item, index) => <li key={index} className="break-words">{itemText(item)}</li>)}</ul></div></div></li>;
+  if (change.kind !== 'changed') { const item = change.before || change.after; return <li className="break-words">{change.kind === 'removed' ? '移除' : '新增'} {itemName(item)} ×{valueText(item.quantity)}{item.lineSubtotalMinor != null ? `・NT$ ${amount(item.lineSubtotalMinor)}` : ''}{item.sku && <span className="ml-2 text-xs text-slate-500">{item.sku}</span>}</li>; }
+  return <li className="break-words"><span className="font-medium">{itemLabel(change.before)}</span>：{change.fields.map((change, index) => <React.Fragment key={change.field}>{index > 0 && '；'}{fieldLabels[change.field]} {fieldText(change.field, change.before)} → {fieldText(change.field, change.after)}</React.Fragment>)}</li>;
 }
 
 function OrderComparison({ order }) {
-  return <details className="rounded-lg border border-slate-200 p-3"><summary className="cursor-pointer text-sm"><strong className="break-all">{order.orderNumber}</strong>・{order.restoring ? '將依本次檔案恢復出貨' : order.changed ? '內容有異動，將使用新版修正' : '內容相同，仍列入整份銷貨檔'}・查看前後明細</summary>
-    <LiveAmounts order={order} />
-    <div className="mt-3 grid gap-3 sm:grid-cols-2"><OrderSnapshot title="原訂單" value={order.before} /><OrderSnapshot title="新版訂單" value={order.after} /></div>
-  </details>;
+  const diff = orderDifferences(order);
+  return <li className="py-3 first:pt-0 last:pb-0" aria-label={`訂單異動 ${order.orderNumber}`}><strong className="break-all text-sm">{order.orderNumber}</strong>{(diff.liveMoneyChanged || diff.liveQuantityChanged) && <span className="text-xs text-slate-600">・與商城現況不同</span>}
+    <ul className="mt-1 space-y-1 text-sm leading-6">
+      {diff.restoring && <li>恢復出貨，使用本次檔案的內容。</li>}
+      {diff.items.map(change => <ItemDifference key={change.key} change={change} />)}
+      {diff.quantityChanged && !diff.items.length && <li>商品件數 {valueText(order.before?.quantity)} → {valueText(order.after?.quantity)}</li>}
+      {diff.totalChanged && <li>出貨銷貨金額 NT$ {amount(order.before?.totalMinor)} → NT$ {amount(order.after?.totalMinor)}</li>}
+      {diff.shipping.map(change => <li key={change.field} className="break-words">{change.label}：{valueText(change.before) || '未提供'} → {change.after == null || change.after === '' ? '清空' : valueText(change.after)}</li>)}
+      {diff.otherChanged && <li>其他內容有異動，將使用本次檔案。</li>}
+    </ul>
+    {diff.showLiveAmounts && <LiveAmounts order={order} showExport={!diff.totalChanged} />}
+    {diff.liveQuantityChanged && <p className="mt-1 text-xs text-slate-600">商城現況 {order.live.quantity} 件／本次出貨 {order.after.quantity} 件。{!diff.showLiveAmounts && '不會修改商城收款。'}</p>}
+  </li>;
+}
+
+function NewOrder({ order }) {
+  const { money: moneyDiffers, quantity: quantityDiffers } = liveDifferences(order);
+  return <li className="py-2 first:pt-0 last:pb-0" aria-label={`新增訂單 ${order.orderNumber}`}><p className="text-sm"><strong className="break-all">{order.orderNumber}</strong>・{order.after.quantity} 件・NT$ {amount(order.after.totalMinor)}</p><ul className="mt-1 text-xs leading-5 text-slate-600">{list(order.after.items).map((item, index) => <li key={index} className="break-words">{itemLabel(item)} × {valueText(item.quantity)}</li>)}</ul>{moneyDiffers && <LiveAmounts order={order} />}{quantityDiffers && <p className="mt-1 text-xs text-slate-600">商城現況 {order.live.quantity} 件／本次出貨 {order.after.quantity} 件。</p>}</li>;
 }
 
 export default function MarketplaceDraftOverwrite({ rows, settings, profileId, isCurrent, onClose, onComplete, onBusyChange }) {
@@ -71,7 +89,7 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
       if (current() && request === sequence.current) setError(errorText(failure, '無法比對，請重試。'));
     } finally {
       inFlight.current = false;
-      if (current() && request === sequence.current) markBusy(false);
+      if (mounted.current && request === sequence.current) markBusy(false);
     }
   };
 
@@ -83,7 +101,10 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
 
   const batches = list(preview?.affectedBatches), newOrders = list(preview?.newOrders);
   const retainedCount = validCount(preview?.retainedOrderCount) ? preview.retainedOrderCount : batches.reduce((sum, batch) => sum + (validCount(batch.retainedOrderCount) ? batch.retainedOrderCount : list(batch.omittedOrders).length), 0);
-  const blocked = preview?.canConfirm !== true || list(preview?.blockedReasons).length > 0;
+  const comparisonComplete = completeComparison(preview);
+  const changedOrders = batches.flatMap(batch => list(batch.uploadedOrders)).filter(order => order.changed || order.restoring || liveDifferences(order).money || liveDifferences(order).quantity);
+  const reasons = uniqueBlockedReasons(preview?.blockedReasons);
+  const blocked = !comparisonComplete || preview?.canConfirm !== true || list(preview?.blockedReasons).length > 0;
   const canConfirm = !!preview && !blocked && notImported && !busy && !unknown && !result;
 
   const deliverFile = async batch => {
@@ -134,7 +155,7 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
       }
     } finally {
       inFlight.current = false;
-      if (current() && request === sequence.current) markBusy(false);
+      if (mounted.current && request === sequence.current) markBusy(false);
     }
     if (stale && current()) await compare('訂單或比對內容已更新，已重新比對，請重新核對並確認。');
   };
@@ -148,22 +169,22 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
   };
 
   return <section className="mt-5 space-y-4 rounded-xl border border-blue-200 bg-blue-50/40 p-4 text-slate-900 sm:p-5" aria-label="整份訂單比對助理" aria-busy={busy}>
-    <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">整份訂單比對助理</h3><Button variant="secondary" disabled={busy || unknown} onClick={() => { if (current() && !inFlight.current && (!command.current || receipt.current)) onClose(); }}>{result ? '完成' : '取消'}</Button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">整份訂單比對助理</h3><Button variant="secondary" disabled={busy || unknown || Boolean(command.current && !receipt.current)} onClick={() => { if (mounted.current && !busy && !unknown && !inFlight.current && (!command.current || receipt.current)) onClose(); }}>{result ? '完成' : '取消'}</Button></div>
     {busy && <p role="status" className="text-sm text-slate-700">{command.current ? '正在核對並準備整份銷貨檔…' : '正在比對整份檔案與已保存的訂單…'}</p>}
     {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{error}</p>}
     {!preview && !busy && !unknown && !result && <Button variant="secondary" onClick={() => compare()}>重新比對</Button>}
     {preview && !result && <>
-      <div className="rounded-lg bg-white p-4 text-sm leading-6"><p>本次整份檔案 {preview.summary.totalOrderCount} 筆：新單 {preview.summary.newOrderCount} 筆、異動 {preview.summary.changedOrderCount} 筆、相同 {preview.summary.unchangedOrderCount} 筆。</p><p>{preview.summary.quantity} 件商品・本次銷貨 NT$ {amount(preview.summary.totalMinor)}</p><p className="mt-1">請核對以下內容，確認後將所有本次訂單一起產生一份銷貨檔。相同的訂單也會列入。</p></div>
-      {list(preview.blockedReasons).length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-3 pl-8 pr-3 text-sm text-amber-950">{preview.blockedReasons.map((reason, index) => <li key={index}>{reasonText(reason)}</li>)}</ul>}
-      {newOrders.length > 0 && <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4"><h4 className="font-medium">本次新增 {newOrders.length} 筆</h4>{newOrders.map(order => <details key={numberOf(order)} className="rounded-lg border border-slate-200 p-3"><summary className="cursor-pointer text-sm"><strong className="break-all">{order.orderNumber}</strong>・新單・查看明細</summary><LiveAmounts order={order} /><div className="mt-3"><OrderSnapshot title="本次訂單" value={order.after} /></div></details>)}</div>}
-      {batches.map(batch => <div key={batch.id} className="space-y-3 rounded-lg border border-slate-200 bg-white p-4"><h4 className="break-words font-medium">已保存訂單・原批次 {batch.batchNumber}</h4>
-        {list(batch.uploadedOrders).filter(order => order.changed).map(order => <OrderComparison key={numberOf(order)} order={order} />)}
-        {list(batch.uploadedOrders).some(order => !order.changed) && <details className="rounded-lg border border-slate-200 p-3"><summary className="cursor-pointer text-sm">{list(batch.uploadedOrders).filter(order => !order.changed).length} 筆內容相同・查看明細</summary><div className="mt-3 space-y-3">{list(batch.uploadedOrders).filter(order => !order.changed).map(order => <OrderComparison key={numberOf(order)} order={order} />)}</div></details>}
-      </div>)}
-      {retainedCount > 0 && <p className="rounded-lg bg-white p-4 text-sm leading-6">另有 {retainedCount} 筆已保存訂單未在本次檔案中，會保留原狀，也不會列入本次銷貨檔。</p>}
-      {!unknown && <div className="space-y-3 rounded-lg bg-white p-4"><p className="text-sm font-medium">是否依本次檔案修正訂單，並重新提供整份銷貨檔？</p>
-        <label className="flex min-h-11 items-start gap-3 py-2 text-sm leading-6"><input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={notImported} disabled={busy || blocked} onChange={event => setNotImported(event.target.checked)} /><span>我已核對整份內容，尚未匯入 ECOUNT；若有舊版銷貨檔將停止使用</span></label>
-        <Button disabled={!canConfirm} onClick={confirm}>確認覆蓋並下載整份銷貨檔</Button>
+      {comparisonComplete ? <>
+        <div className="text-sm leading-6"><p className="font-medium">本次 {preview.summary.totalOrderCount} 筆・新增 {preview.summary.newOrderCount}・異動 {preview.summary.changedOrderCount}・相同 {preview.summary.unchangedOrderCount}</p><p className="text-slate-600">{preview.summary.quantity} 件・整份銷貨 NT$ {amount(preview.summary.totalMinor)}{preview.summary.unchangedOrderCount > 0 ? '；相同單仍會一併產檔。' : ''}</p></div>
+        {changedOrders.length > 0 && <div className="rounded-lg bg-white p-3"><h4 className="mb-2 text-sm font-medium">請核對異動內容</h4><ul className="divide-y divide-slate-200">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} />)}</ul></div>}
+        {newOrders.length > 0 && <details className="rounded-lg bg-white p-3"><summary className="cursor-pointer text-sm">新增 {newOrders.length} 筆會一併產檔・查看摘要</summary><ul className="mt-3 divide-y divide-slate-100">{newOrders.map(order => <NewOrder key={numberOf(order)} order={order} />)}</ul></details>}
+        {retainedCount > 0 && <p className="text-xs leading-5 text-slate-600">另有 {retainedCount} 筆舊單未上傳，保留原狀，不列入本次銷貨檔。</p>}
+      </> : <p className="text-sm font-medium">尚無法完成比對</p>}
+      {reasons.length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-2 pl-7 pr-3 text-sm text-amber-950">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+      {!comparisonComplete && reasons.length === 0 && <p role="alert" className="text-sm text-amber-950">訂單資料尚未完成核對，請重新比對。</p>}
+      {!unknown && <div className="space-y-2 border-t border-blue-100 pt-3">
+        {comparisonComplete && <label className="flex min-h-11 items-start gap-3 py-2 text-sm leading-6"><input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={notImported} disabled={busy || blocked} onChange={event => setNotImported(event.target.checked)} /><span>我已核對，尚未匯入 ECOUNT；舊版銷貨檔將停止使用</span></label>}
+        <div className="flex flex-wrap gap-2"><Button disabled={!canConfirm} onClick={confirm}>確認覆蓋並下載整份銷貨檔</Button>{!comparisonComplete && <Button variant="secondary" disabled={busy} onClick={() => compare()}>重新比對</Button>}</div>
       </div>}
     </>}
     {unknown && <Button disabled={busy} onClick={confirm}>核對同一筆操作結果</Button>}
