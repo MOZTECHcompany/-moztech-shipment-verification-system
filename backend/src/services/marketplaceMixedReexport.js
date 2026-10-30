@@ -70,9 +70,9 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
    const authority=review.evidence,sku=authority.sourceSku,lines=next.items.filter(item=>item.sku===sku),retained=lines.filter(item=>!selectedNumbers.has(item.sourceOrderNumber));
    let previous=null;
    if(retained.length){
-    if(!originalValidated){try{await validateSnapshot(owner.batch.snapshot,db);}catch(error){if([400,409].includes(error.status))throw unavailable(sku);throw error;}originalValidated=true;}
     const matches=(owner.batch.snapshot.barcodeReviews||[]).filter(value=>value.evidence?.sourceSku===sku&&sameAuthority(value.evidence,authority));
     if(matches.length!==1||hash(owner.batch.snapshot.settings.skuMappings?.[sku])!==hash(upload.settings.skuMappings?.[sku]))throw unavailable(sku);
+    if(!originalValidated){await validateSnapshot(owner.batch.snapshot,db);originalValidated=true;}
     previous=matches[0].evidence;
    }
    const identities=new Set(),variants=[];

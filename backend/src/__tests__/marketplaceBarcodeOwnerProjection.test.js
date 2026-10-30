@@ -120,6 +120,17 @@ describe('barcode proof projection through real mixed-owner SQL and unchanged ex
   const owners=await originals([R()]),body=await h.body([A(),B(),C()]);await h.service.apply(body,actor);const updated=(await h.db.query('SELECT snapshot FROM marketplace_intakes WHERE id=$1',[owners[0].id])).rows[0].snapshot;
   await h.validate(updated);expect(updated.barcodeReviews).toHaveLength(1);expect(updated.barcodeReviews[0].evidence.variantIds).toEqual([variant(A()['Lineitem id']),variant(R()['Lineitem id'])]);expect(updated.items.find(item=>item.sourceOrderNumber==='#ANON-R').quantity).toBe(1);
  });
+ test('an unrelated retained catalog failure keeps the actual item, cause and status instead of becoming the selected SKU owner message',async()=>{
+  const unrelated={...row('#ANON-S',55),'Lineitem sku':OTHER,'Lineitem name':'Anonymous unrelated retained item'};
+  await originals([R(),unrelated]);const body=await h.body([A(),B(),C()]);
+  h.products.find(product=>product.erp_sku===OTHER).active=false;
+  const before=await h.state();
+  const expected=await h.validate((await h.db.query('SELECT snapshot FROM marketplace_intakes WHERE batch_number=$1',['TEST-ANON-OWNER-A'])).rows[0].snapshot).catch(error=>error);
+  expect(expected).toMatchObject({status:400});expect(expected.message).toContain(OTHER);expect(expected.message).toContain('已中止使用');
+  const actual=await h.service.apply(body,actor).catch(error=>error);
+  expect(actual).toMatchObject({status:expected.status,message:expected.message});expect(actual.code).toBe(expected.code);expect(actual.code).not.toBe('MARKETPLACE_BARCODE_OWNER_REVIEW_REQUIRED');
+  expect(await h.state()).toEqual(before);
+ });
  test.each(['physical','internal'])('%s proof retains its existing exact evidence shape and scan identity across owner union',async kind=>{
   h.barcodeFor=record=>record['Lineitem sku']===SKU?'':record['Lineitem sku'];
   h.inputSettings={skuMappings:{[SKU]:kind==='physical'?{physicalBarcode:'ANON-PHYSICAL-SCAN'}:{scanCodeType:'internal',internalScanCode:'ITM-ANON-OWNER'}}};
