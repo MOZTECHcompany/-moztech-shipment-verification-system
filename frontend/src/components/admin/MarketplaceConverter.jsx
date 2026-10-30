@@ -84,6 +84,10 @@ function ConverterPage({ user }) {
   const [workbook, setWorkbook] = useState(null), [selectedSheet, setSelectedSheet] = useState('');
   const [barcodeChecks, setBarcodeChecks] = useState({});
   const [draftOverwriteOpen, setDraftOverwriteOpen] = useState(false);
+  const draftInstance = useRef(0);
+  const openDraftOverwrite = () => { draftInstance.current++; setDraftOverwriteOpen(true); };
+  const closeDraftOverwrite = () => { draftInstance.current++; setDraftOverwriteOpen(false); };
+  const currentDraftInstance = draftInstance.current;
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); setExistingOrderLink(null); };
@@ -112,13 +116,13 @@ function ConverterPage({ user }) {
       setInput(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
       setBarcodeChecks({});
-      setDraftOverwriteOpen(false);
+      closeDraftOverwrite();
       setAccess('denied'); showMessage('登入人員已變更，請重新登入。', 'error');
     };
     window.addEventListener('storage', check);
     return () => { mounted.current = false; request.current++; window.removeEventListener('storage', check); };
   }, []);
-  useEffect(() => { setDraftOverwriteOpen(false); }, [routeContextKey]);
+  useEffect(() => { closeDraftOverwrite(); }, [routeContextKey]);
   const locked = busy || access !== 'ready' || draftOverwriteOpen;
   const barcodeConflicts = prepared?.barcodeConflicts || [];
   const barcodeBlocked = barcodeConflicts.length > 0;
@@ -168,8 +172,8 @@ function ConverterPage({ user }) {
     const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
     if (!mounted.current || sequence !== request.current || !currentSession()) return false;
     applyPreview(response.data);
-    if (response.data.barcodeConflicts?.length > 0) setDraftOverwriteOpen(false);
-    else if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) setDraftOverwriteOpen(true);
+    if (response.data.barcodeConflicts?.length > 0) closeDraftOverwrite();
+    else if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) openDraftOverwrite();
     return true;
   };
   const refreshPreview = async (nextSettings = settings, nextProfile = profileId) => {
@@ -181,6 +185,20 @@ function ConverterPage({ user }) {
     catch (error) {
       if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || '訂單核對失敗，請重試。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
+  };
+  const returnToBarcodeReview = async instance => {
+    if (instance !== draftInstance.current || !draftOverwriteOpen || !mounted.current || !currentSession() || access !== 'ready' || inFlight.current || !input || originalOrderFlow || routeContext.current !== routeContextKey) return false;
+    // Destroy the frozen comparison before changing mappings. The next review
+    // is obtained from the server, never from a child's candidates or settings.
+    closeDraftOverwrite(); setBarcodeChecks({});
+    const sequence = ++request.current;
+    setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
+    try {
+      if (await fetchPreview(input.source.rows, settings, profileId, sequence)) showMessage('請先完成商品條碼核對，保存後會重新比對訂單。');
+    } catch (error) {
+      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || '商品資料更新失敗，請重新核對。'), 'error');
+    } finally { if (mounted.current && sequence === request.current) setBusy(false); }
+    return true;
   };
   const selectBarcodeTarget = async (conflict, erpSku) => {
     if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || !currentSession()) return;
@@ -260,7 +278,7 @@ function ConverterPage({ user }) {
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
     setBarcodeChecks({});
-    setDraftOverwriteOpen(false);
+    closeDraftOverwrite();
   };
   const loadWorksheet = async (XLSX, book, sheetName, fileName, sequence) => {
     const result = parseMarketplaceWorksheet(XLSX, book, sheetName);
@@ -326,7 +344,7 @@ function ConverterPage({ user }) {
     if (kind === 'ecount' && barcodeBlocked) { showMessage('請先完成商品條碼核對，再比對訂單。'); return; }
     // A file containing saved orders is confirmed and exported as one file.
     // The new-order-only save route remains for files with no saved orders.
-    if (kind === 'ecount' && (reimports.length > 0 || reviewRequired)) { setDraftOverwriteOpen(true); return; }
+    if (kind === 'ecount' && (reimports.length > 0 || reviewRequired)) { openDraftOverwrite(); return; }
     if (kind === 'ecount' && (!prepared.parsed.orders.length || !prepared.output.ok || catalogBlocked || barcodeBlocked)) return;
     if (kind === 'audit' && (!prepared.audit.ok || !prepared.prepick.ok)) return;
     inFlight.current = true; setBusy(true); showMessage('');
@@ -426,9 +444,16 @@ function ConverterPage({ user }) {
       </section>}
       {draftOverwriteOpen && !originalOrderFlow && <MarketplaceDraftOverwrite rows={input.source.rows} settings={settings} profileId={profileId}
         isCurrent={() => mounted.current && currentSession() && routeContext.current === routeContextKey}
-        onBusyChange={value => { if (mounted.current) setBusy(value); }}
-        onClose={() => setDraftOverwriteOpen(false)}
-        onComplete={async () => { if (!await loadRecords() || !mounted.current || !currentSession() || routeContext.current !== routeContextKey) return; const sequence = ++request.current; await fetchPreview(input.source.rows, settings, profileId, sequence); }} />}
+        onBusyChange={value => { if (mounted.current && currentDraftInstance === draftInstance.current) setBusy(value); }}
+        onClose={() => { if (currentDraftInstance === draftInstance.current) closeDraftOverwrite(); }}
+        onBarcodeReview={() => returnToBarcodeReview(currentDraftInstance)}
+        onComplete={async () => {
+          const current = () => mounted.current && currentSession() && routeContext.current === routeContextKey && currentDraftInstance === draftInstance.current;
+          if (!current() || !await loadRecords() || !current()) return;
+          const sequence = ++request.current;
+          try { await fetchPreview(input.source.rows, settings, profileId, sequence); }
+          finally { if (mounted.current && sequence === request.current) setBusy(false); }
+        }} />}
       {!draftOverwriteOpen && reimports.length > 0 && !previewDirty && <section className={sectionClass} aria-label="已保存訂單"><h2 className="font-semibold">已保存訂單（{reimports.length} 筆）</h2><p className="mt-2 text-sm text-slate-600">{reviewRequired ? '使用上方「核對取消與退款」，一次確認本批剩餘出貨內容。' : '使用上方「比對並產生整份銷貨檔」，一併核對本次檔案的新單與已保存訂單。'}</p><div className="mt-3 divide-y divide-slate-100">{reimports.map(order => {
         const { link, resume } = reimportLink(order);
         return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
@@ -462,6 +487,7 @@ function ConverterPage({ user }) {
           {conflict.canEnterInternalScanCode && <div className="mt-3 max-w-md"><Field label="商品識別方式"><select className={inputClass} disabled={locked||!profileId} value={internal?'internal':'international'} onChange={event=>chooseScanCodeType(conflict,event.target.value)}><option value="international">掃描實物條碼</option><option value="internal">無國條：自建內部掃描碼</option></select></Field></div>}
           {internal && <div className="mt-3 max-w-md"><Field label="內部掃描碼" value={settings.skuMappings?.[conflict.sourceSku]?.internalScanCode || conflict.internalScanCode || ''} maxLength={100} disabled={locked||!profileId} placeholder="ITM- 開頭的自建商品識別碼" onChange={event=>{setBarcodeChecks({});mapping(conflict.sourceSku,'internalScanCode',event.target.value);}} onBlur={event=>{if(previewDirty)return checkInternalScanCode(conflict,event.target.value);}} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();return checkInternalScanCode(conflict,event.currentTarget.value);}}}/><p className="mt-2 text-sm text-slate-600">確認此商品沒有國際條碼，將此內碼印在商品標籤；同一內碼只對應一個 ECOUNT 品項。</p></div>}
           {canScanPhysicalBarcode && <div className="mt-3 max-w-md"><Field label="實物條碼" value={settings.skuMappings?.[conflict.sourceSku]?.physicalBarcode || conflict.physicalBarcode || ''} maxLength={100} disabled={locked || !profileId} placeholder="掃描商品包裝條碼" onChange={event => { setBarcodeChecks({}); mapping(conflict.sourceSku, 'physicalBarcode', event.target.value); }} onBlur={event => { if (previewDirty) return checkPhysicalBarcode(conflict, event.target.value); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); return checkPhysicalBarcode(conflict, event.currentTarget.value); } }} /></div>}
+          {canConfirm && conflict.reviewReason === 'ERP_BARCODE_MISSING' && !canScanPhysicalBarcode && !internal && <p className="mt-3 text-sm leading-6 text-slate-700">商城已提供條碼。請核對上方兩邊是否為同一商品，確認後勾選並保存對照。</p>}
           <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
             <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>

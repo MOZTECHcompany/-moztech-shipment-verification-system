@@ -30,8 +30,8 @@ const applied = () => { const exportBatch = { id: 90, batchNumber: 'WMS-FULL-90'
 const fail = status => Object.assign(Error('synthetic failure'), { response: { status, data: { message: '合成失敗' } } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function view({ previews = [fixture()], confirms = [applied()], previewWait, confirmWait, downloadResults = [true], native = true } = {}) {
-  const hooks = [], effects = [], requests = [], downloads = [], complete = [], busyChanges = [], clicked = [];
+async function view({ previews = [fixture()], confirms = [applied()], previewWait, confirmWait, downloadResults = [true], native = true, barcodeReview } = {}) {
+  const hooks = [], effects = [], requests = [], downloads = [], complete = [], busyChanges = [], clicked = [], barcodeReviews = [];
   let cursor = 0, dirty = false, tree, mounted = true, allowed = true, lateUpdates = 0, previewIndex = 0, confirmIndex = 0, downloadIndex = 0, closed = 0;
   const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   const react = {
@@ -55,7 +55,7 @@ async function view({ previews = [fixture()], confirms = [applied()], previewWai
   };
   const module = { exports: {} };
   vm.runInNewContext(code, { module, exports: module.exports, require: name => { if (!(name in imports)) throw Error(`Unexpected import ${name}`); return imports[name]; }, crypto: webcrypto, document: { body: { appendChild() {} }, createElement: () => ({ click() { clicked.push(this.href); }, remove() {} }) } });
-  const props = { rows: [['order', 'sku'], ['#155116', 'SKU']], settings: { store: 'Synthetic' }, profileId: '9', isCurrent: () => allowed, onClose: () => closed++, onComplete: result => { complete.push(result); }, onBusyChange: value => busyChanges.push(value) };
+  const props = { rows: [['order', 'sku'], ['#155116', 'SKU']], settings: { store: 'Synthetic' }, profileId: '9', isCurrent: () => allowed, onClose: () => closed++, onComplete: result => { complete.push(result); }, onBusyChange: value => busyChanges.push(value), onBarcodeReview: () => { barcodeReviews.push(true); return barcodeReview?.(); } };
   const expand = node => {
     if (Array.isArray(node)) return node.map(expand);
     if (!node || typeof node !== 'object') return node;
@@ -75,13 +75,78 @@ async function view({ previews = [fixture()], confirms = [applied()], previewWai
   const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); render(); };
   const click = async label => { const control = button(label); assert.ok(control, `Button ${label}`); assert.notEqual(control.props.disabled, true, `${label} should be enabled`); await control.props.onClick(); await settle(); };
   render(); await settle();
-  return { render, text, visibleText, all, button, checkbox, click, settle, requests, downloads, clicked, complete, busyChanges, props, closeCount: () => closed, invalidate: () => { allowed = false; }, unmount: () => { mounted = false; hooks.forEach(hook => hook?.cleanup?.()); }, lateUpdates: () => lateUpdates };
+  return { render, text, visibleText, all, button, checkbox, click, settle, requests, downloads, clicked, complete, busyChanges, barcodeReviews, props, closeCount: () => closed, invalidate: () => { allowed = false; }, unmount: () => { mounted = false; hooks.forEach(hook => hook?.cleanup?.()); }, lateUpdates: () => lateUpdates };
 }
 
 const confirms = state => state.requests.filter(request => request.url.endsWith('/confirm'));
 const previews = state => state.requests.filter(request => request.url.endsWith('/preview'));
 
 const confirmLabel = '確認未匯入並轉檔';
+
+const barcodePrerequisiteFixture = () => ({ ...fixture(), canConfirm:false, blockedReasons:['商品 SYN-BARCODE 的商城與 ECOUNT 對照待核對'], barcodePrerequisites:{ required:true, code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED', count:1, sourceSkus:['SYN-BARCODE'] } });
+
+test('late barcode prerequisites offer a safe return to fresh parent review without a sales command', async () => {
+  const state = await view({ previews:[barcodePrerequisiteFixture()] });
+  const action=state.button('返回商品條碼核對');
+  assert.ok(action,'blocked comparison must offer the actionable prerequisite instead of a retry loop');
+  assert.equal(state.button(confirmLabel),undefined);
+  assert.match(state.visibleText(state.render()),/1\s+項商品需核對條碼/);
+  await state.click('返回商品條碼核對');
+  await action.props.onClick();
+  assert.equal(state.barcodeReviews.length,1,'a retained action cannot launch a second handoff');
+  assert.equal(confirms(state).length,0);assert.equal(state.downloads.length,0);
+});
+
+test('ordinary blocked reasons and malformed prerequisite metadata never enable barcode handoff', async () => {
+  for (const value of [undefined,{required:true,count:1,sourceSkus:['SYN']},{required:true,code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED',count:2,sourceSkus:['SYN']},{required:true,code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED',count:1,sourceSkus:[''] }]) {
+    const data=barcodePrerequisiteFixture();data.barcodePrerequisites=value;
+    const state=await view({previews:[data]});assert.equal(state.button('返回商品條碼核對'),undefined);
+    assert.equal(state.button('重新核對').props.disabled,false);assert.equal(confirms(state).length,0);
+  }
+});
+
+test('late barcode handoff rejects changed sessions and destroyed assistant instances', async () => {
+  for (const invalidate of ['invalidate','unmount']) {
+    const state=await view({previews:[barcodePrerequisiteFixture()]});
+    const action=state.button('返回商品條碼核對');assert.ok(action);
+    state[invalidate]();await action.props.onClick();
+    assert.equal(state.barcodeReviews.length,0);assert.equal(confirms(state).length,0);
+  }
+});
+
+test('a retained barcode return cannot discard in-flight, unknown or receipted sales commands', async () => {
+  for (const mode of ['in-flight','unknown','receipt']) {
+    const initial=fixture();initial.canConfirm=false;initial.blockedReasons=['合成其他核對'];
+    const pending=deferred();
+    const state=await view({previews:[initial,barcodePrerequisiteFixture(),fixture()],confirms:[mode==='unknown'?fail(503):applied()],confirmWait:mode==='in-flight'?()=>pending.promise:undefined});
+    const retry=state.button('重新核對').props.onClick;
+    await state.click('重新核對');const barcodeReturn=state.button('返回商品條碼核對').props.onClick;
+    await retry();await state.settle();
+    const confirmation=state.button(confirmLabel).props.onClick();await state.settle();
+    await barcodeReturn();assert.equal(state.barcodeReviews.length,0,mode);
+    if(mode==='in-flight')pending.resolve();await confirmation;await state.settle();
+    await barcodeReturn();assert.equal(state.barcodeReviews.length,0,mode);
+    assert.equal(confirms(state).length,1);assert.equal(state.downloads.length,mode==='unknown'?0:1);
+    if(mode==='unknown'){assert.ok(state.button('核對同一筆操作結果'));assert.equal(state.button('取消').props.disabled,true);}
+  }
+});
+
+test('a prerequisite response arriving after sign-in invalidation cannot offer a barcode escape', async () => {
+  const initial=fixture();initial.canConfirm=false;initial.blockedReasons=['合成其他核對'];
+  const pending=deferred();let count=0;
+  const state=await view({previews:[initial,barcodePrerequisiteFixture()],previewWait:()=>++count===2?pending.promise:undefined});
+  const retry=state.button('重新核對').props.onClick();await state.settle();state.invalidate();pending.resolve();await retry;await state.settle();
+  assert.equal(state.button('返回商品條碼核對'),undefined);assert.equal(state.barcodeReviews.length,0);assert.equal(confirms(state).length,0);
+});
+
+test('a refused or failed pre-command handoff can retry without issuing a sales command', async () => {
+  for (const failure of [false,Error('synthetic parent refresh failure')]) {
+    let attempts=0;
+    const state=await view({previews:[barcodePrerequisiteFixture()],barcodeReview:()=>{if(++attempts===1){if(failure instanceof Error)throw failure;return failure;}}});
+    await state.click('返回商品條碼核對');assert.equal(state.button('返回商品條碼核對').props.disabled,false);
+    await state.click('返回商品條碼核對');assert.equal(state.barcodeReviews.length,2);assert.equal(confirms(state).length,0);assert.equal(state.downloads.length,0);
+  }
+});
 
 test('mixed file is confirmed once and automatically downloads one complete export batch', async () => {
   const state = await view();

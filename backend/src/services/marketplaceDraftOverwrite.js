@@ -91,9 +91,9 @@ async function buildSnapshot(batch,sources,conversion,decisions,user,omittedChec
  result.draftFingerprint=hash(result);return result;
 }
 
-function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled=()=>process.env.WMS_DRAFT_OVERWRITE_ENABLED==='true',mixedEnabled=()=>process.env.WMS_MIXED_REEXPORT_ENABLED==='true',validateSnapshot=async snapshot=>{
- const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
- await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(item=>item.sku))],undefined,reviewed,snapshot);
+function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled=()=>process.env.WMS_DRAFT_OVERWRITE_ENABLED==='true',mixedEnabled=()=>process.env.WMS_MIXED_REEXPORT_ENABLED==='true',validateSnapshot=async (snapshot,db=pool)=>{
+ const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(db,snapshot,undefined,{returnContext:true});
+ await require('./marketplaceProductCatalog').verifyCatalogMappings(db,snapshot.settings,[...new Set(snapshot.items.map(item=>item.sku))],undefined,reviewed,snapshot);
 }}){
  async function command(db,userId,commandId,requestHash){
   const row=(await db.query('SELECT request_hash,response FROM marketplace_draft_commands WHERE actor_id=$1 AND command_id=$2',[userId,commandId])).rows[0];

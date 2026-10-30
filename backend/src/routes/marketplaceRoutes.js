@@ -10,7 +10,7 @@ const {createMarketplacePreparation}=require('../services/marketplacePreparation
 const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
-const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
+const {confirmBarcodeReview,verifySavedBarcodeReviews,reviewMatchesCandidate}=require('../services/marketplaceBarcodeReviews');
 const {assertUploadScope}=require('../services/marketplaceUploadScopes');
 const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
@@ -37,7 +37,29 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   if(!conversion.verification?.currentFingerprint||req.body.verificationFingerprint!==conversion.verification.currentFingerprint)throw Object.assign(new Error('商城訂單已更新，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
   const candidate=conversion.barcodeReviewCandidates?.find(c=>c.fingerprint===requested.fingerprint);
   if(!candidate)throw Object.assign(new Error('商品資料已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
-  const review=await confirmBarcodeReview(pool,candidate,req.user);
+  // Only preparation may provide contained, exact sales-snapshot proofs. The
+  // caller selects one complete-upload fingerprint, never a scope/variant list.
+  const candidates=candidate.confirmationCandidates||[candidate];
+  const confirm=async(db,current)=>{
+   const record=await confirmBarcodeReview(db,current,req.user);
+   if(!reviewMatchesCandidate(current,record))throw Object.assign(new Error('商品核對紀錄已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
+   return record;
+  };
+  let review;
+  if(candidates.length===1)review=await confirm(pool,candidate);
+  else{
+   let db,open=false,tainted=false,commitAttempted=false;
+   try{
+    db=await pool.connect();await db.query('BEGIN');open=true;
+    await db.query("SET LOCAL lock_timeout='2000ms'");await db.query("SET LOCAL statement_timeout='10000ms'");
+    await db.query('SELECT id FROM marketplace_product_mapping_reviews WHERE store_profile_id=$1 AND fingerprint=ANY($2::text[]) AND revoked_at IS NULL ORDER BY id FOR SHARE',[candidate.storeProfileId,candidates.map(value=>value.fingerprint)]);
+    review=await confirm(db,candidate);
+    for(const projection of candidates.slice(1))await confirm(db,projection);
+    commitAttempted=true;await db.query('COMMIT');open=false;
+   }catch(error){if(open)try{await db.query('ROLLBACK');}catch{tainted=true;error.status=503;}
+    if(commitAttempted){tainted=true;throw Object.assign(new Error('商品核對結果尚未確認，請重新讀取目前核對資料後再確認'),{status:503,code:'BARCODE_REVIEW_RESULT_UNKNOWN'});}throw error;
+   }finally{db?.release(tainted);}
+  }
   res.status(201).set('Cache-Control','private, no-store').json({confirmed:true,id:review.id,confirmedAt:review.confirmed_at});
  }catch(e){if(e.status)return res.status(e.status).json({code:e.code,message:e.message});next(e);}});
  for(const [path,method] of [['shipping-preview','preview'],['shipping-update','apply']]){

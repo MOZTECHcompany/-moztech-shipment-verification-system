@@ -1,5 +1,5 @@
 const express=require('express'),request=require('supertest');
-jest.mock('../services/marketplaceBarcodeReviews',()=>({readBarcodeReviews:jest.fn(async()=>[]),verifySavedBarcodeReviews:jest.fn(async()=>({}))}));
+jest.mock('../services/marketplaceBarcodeReviews',()=>({...jest.requireActual('../services/marketplaceBarcodeReviews'),readBarcodeReviews:jest.fn(async()=>[]),readPhysicalBarcodeReviews:jest.fn(async()=>[]),readInternalScanReviews:jest.fn(async()=>[]),verifySavedBarcodeReviews:jest.fn(async()=>({}))}));
 jest.mock('../services/warehouseRelease',()=>({enableFlow:jest.fn(async()=>{})}));
 jest.mock('../services/marketplaceBatchNotifications',()=>({notifyMarketplaceBatch:jest.fn(async()=>{})}));
 jest.mock('../services/marketplaceProductCatalog',()=>({...jest.requireActual('../services/marketplaceProductCatalog'),verifyCatalogMappings:jest.fn(async()=>{})}));
@@ -26,6 +26,7 @@ async function owner(number='#OLD'){
   batch:{id:number==='#OLD'?19:20,source_platform:'Shopify',source_store:store,fingerprint:'old-fingerprint',archived_at:null,snapshot},flow:{intake_id:19,erp_confirmed_at:null,import_batch_id:null},link:null};
 }
 async function harness(){
+ for(const name of ['readBarcodeReviews','readPhysicalBarcodeReviews','readInternalScanReviews'])require('../services/marketplaceBarcodeReviews')[name].mockResolvedValue([]);
  const profile={id:2,platform:'Shopify',store,settings},state={sources:[await owner()],tasks:[],pending:[],saved:[],lockHook:null,fingerprintRecord:null};
  async function query(sql,params=[]){
   if(sql==='BEGIN'){state.pending=[];return {rows:[]};}
@@ -56,12 +57,12 @@ async function harness(){
 const noWrites=db=>expect(db.query.mock.calls.some(([sql])=>/^(INSERT|UPDATE|DELETE)\b/.test(sql))).toBe(false);
 const task=(status='pending')=>({id:41,source_platform:'Shopify',source_store:store,source_order_number:'#OLD',status,picker_id:null,packer_id:null,completed_at:null,progress:false,history:false,labels:false,changes:false});
 
-test('all saved unshipped orders return their original owner without resolving products or offering a new sales file',async()=>{
+test('all saved unshipped orders resolve their barcode prerequisite but return the original owner without a new sales file',async()=>{
  const h=await harness(),body={rows:table([record()])},before=structuredClone(h.state.sources),preview=await h.prepare(body);
  expect(preview.reimports).toEqual([{orderNumber:'#OLD',intakeId:19,workOrderId:null,state:'pending',message:'可更新原訂單收件資料',canUpdateShipping:true}]);
  expect(preview.parsed.orders).toEqual([]);expect(preview.parsed.items).toEqual([]);expect(preview.output.ok).toBe(false);expect(preview.output.rows).toEqual([]);expect(preview.prepick.rows).toEqual([]);
  expect(preview.raw.orders).toHaveLength(1);expect(preview.sourceEvidence.rows).toEqual(body.rows);expect(preview.audit.rows).toHaveLength(1);expect(preview.choices).toEqual([expect.objectContaining({number:'#OLD',eligible:false,existing:true})]);
- expect(h.resolve).not.toHaveBeenCalled();
+ expect(h.resolve).toHaveBeenCalledWith([sku]);expect(preview.barcodeScope).toMatchObject({orderCount:1,itemCount:1});
  const response=await request(h.app).post('/api/marketplace-intakes').send({...body,previewFingerprint:preview.verification.currentFingerprint,intakeId:999,reimports:[]});
  expect(response.status).toBe(200);expect(response.body).toMatchObject({newOrderCount:0,salesDownloadAllowed:false,reimports:preview.reimports});expect(response.body.id).toBeUndefined();
  expect(h.state.sources).toEqual(before);expect(h.state.saved).toEqual([]);noWrites(h.db);expect(h.db.query.mock.calls.map(([sql])=>sql)).toContain('ROLLBACK');
@@ -72,7 +73,7 @@ test('a draft-excluded source remains owned and can only return through explicit
  const h=await harness();h.state.sources[0].draft_active=false;
  const preview=await h.prepare({rows:table([record()])});
  expect(preview.reimports[0]).toMatchObject({orderNumber:'#OLD',intakeId:19,state:'excluded',canUpdateShipping:false});
- expect(preview.parsed.orders).toEqual([]);expect(preview.output.rows).toEqual([]);expect(h.resolve).not.toHaveBeenCalled();
+ expect(preview.parsed.orders).toEqual([]);expect(preview.output.rows).toEqual([]);expect(h.resolve).toHaveBeenCalledWith([sku]);
  const result=await request(h.app).post('/api/marketplace-intakes').send({rows:table([record()]),previewFingerprint:preview.verification.currentFingerprint});
  expect(result.status).toBe(200);expect(result.body.salesDownloadAllowed).toBe(false);expect(h.state.saved).toEqual([]);noWrites(h.db);
 });
@@ -111,11 +112,10 @@ test('mixed uploads export and save only new orders while preserving the complet
  expect(mixed.db.query.mock.calls.filter(([sql])=>sql.startsWith('INSERT INTO marketplace_intake_orders')).map(([,params])=>params[3])).toEqual(['#NEW']);
 });
 
-test('a saved order with conflicting current barcode cannot create a catalog conflict for a genuinely new order',async()=>{
+test('different live barcodes across saved/new identities block the complete-upload prerequisite without writing or reclassifying sources',async()=>{
  const h=await harness();h.verify.mockImplementation(async rows=>({rows,verification:{version:'shopify-current-v2',platform:'Shopify',shop,orders:[{...evidence(),items:[{...evidence().items[0],barcode:'NEW'+sku}]},evidence('#NEW')]}}));
- const result=await h.prepare({rows:table([record(),record('#NEW')])});
- expect(result.output.ok).toBe(true);expect(result.barcodeConflicts).toEqual([]);expect(result.reimports[0].canUpdateShipping).toBe(false);
- expect(result.settings.skuMappings[sku].barcode).toBe(sku);expect(result.output.summary.physicalQuantity).toBe(1);
+ const before=structuredClone(h.state.sources);await expect(h.prepare({rows:table([record(),record('#NEW')])})).rejects.toMatchObject({code:'BARCODE_AMBIGUOUS'});
+ expect(h.state.sources).toEqual(before);expect(h.state.saved).toEqual([]);expect(h.pool.connect).not.toHaveBeenCalled();noWrites(h.db);
 });
 
 test.each(['quantity','amount','SKU','variant','payment'])('changed saved %s remains an original-order review even when no ERP return exists',async(change)=>{

@@ -37,7 +37,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [] } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [] } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -53,7 +53,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         useMemo(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { deps, value: callback() }; return hooks[i].value; },
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
-    const api = { get: async () => { if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles } }; }, post: async (url, body) => {
+    const api = { get: async url => { if (url === '/api/marketplace-intakes' && recordsWait) await recordsWait(); if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles } }; }, post: async (url, body) => {
         requests.push({url,body});
         if(url==='/api/marketplace-intakes/store-profiles')return {data:{id:9,platform:body.platform,store:body.settings.store,settings:body.settings}};
         if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}};
@@ -1039,13 +1039,13 @@ test('a changed session cannot use a retained cancellation/refund review entry',
 });
 
 
-test('automatic review is limited to a new file and does not reopen after cancel, settings refresh or receipt refresh', async () => {
+test('automatic review is limited to a new file and ignores a closed assistant completion callback', async () => {
     const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],reviewRequired:true,orderReviews:[{orderNumber:'#REVIEW-1',type:'removed_items'}]});
     await view.select(file(shopifyBarcodeRows));const assistant=closeComparison(view);assert.equal(previewCalls(view).length,1);
     await view.change('銷貨日期','2026-10-30');
     assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(previewCalls(view).length,2);
     await assistant.props.onComplete();view.render();
-    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(previewCalls(view).length,3);
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(previewCalls(view).length,2);
     assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
 });
 
@@ -1169,5 +1169,73 @@ test('a failed authoritative refresh after barcode save cannot mount comparison 
     assert.equal(view.requests.filter(r=>r.url.endsWith('/barcode-confirmations')).length,1);
     assert.equal(previewCalls(view).length,3);assert.equal(comparison(view),undefined);
     assert.equal(view.button('核對取消與退款').props.disabled,true);assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+});
+
+test('a late comparison prerequisite unmounts the old assistant and fetches fresh editable barcode review', async () => {
+    let seen=0;
+    const late={...barcodeConflict,sourceSku:'00123',sourceBarcode:'4711299274206',erpBarcode:'',reviewReason:'ERP_BARCODE_MISSING',canConfirm:true,fingerprint:'late-full-upload-review'};
+    const view=await converter({reimports:[{...savedShopifyOrder,orderNumber:'TST6091550133'}],barcodeConflicts:()=>++seen===1?[]:[late],
+        resolved:{products:{'00123':{status:'matched',matches:[{erp_sku:'00123',product_name:'ERP product',barcode:''}]},'00124':{status:'matched',matches:[{erp_sku:'00124',product_name:'Unchanged product',barcode:'00124'}]}}}});
+    await view.select(file());const assistant=comparison(view);assert.ok(assistant);
+    assert.equal(typeof assistant.props.onBarcodeReview,'function','comparison needs a parent refresh handoff');
+    await assistant.props.onBarcodeReview();view.render();
+    assert.equal(comparison(view),undefined,'old frozen comparison is destroyed before editing mappings');
+    assert.equal(previewCalls(view).length,2);
+    const review=view.find(view.render(),node=>node.props?.['aria-label']==='商品條碼核對');assert.ok(review);
+    const fieldset=view.find(review,node=>node.type==='fieldset');assert.equal(fieldset.props.disabled,false);
+    const check=view.find(fieldset,node=>node.type==='input'&&node.props.type==='checkbox');assert.equal(check.props.checked,false);
+    assert.equal(view.button('保存商品對照').props.disabled,true);
+    await view.change('已核對實物與 ERP',true);await view.button('保存商品對照').props.onClick();view.render();
+    assert.equal(previewCalls(view).length,3);const restarted=comparison(view);assert.ok(restarted);
+    assert.notEqual(restarted,assistant);assert.equal(view.requests.filter(r=>r.url.endsWith('/barcode-confirmations')).length,1);
+    const confirmation=view.requests.find(r=>r.url.endsWith('/barcode-confirmations'));
+    assert.equal(confirmation.body.verificationFingerprint,'verified-current-order-v1');
+    assert.equal(confirmation.body.confirmation.fingerprint,'late-full-upload-review');
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+});
+
+test('a retained barcode handoff cannot refresh another file, closed assistant, or changed session', async () => {
+    for(const mode of ['closed','file','session']) {
+        const view=await converter({reimports:[{...savedShopifyOrder,orderNumber:'TST6091550133'}]});await view.select(file());
+        const assistant=comparison(view);assert.equal(typeof assistant.props.onBarcodeReview,'function');
+        if(mode==='closed')closeComparison(view);
+        if(mode==='file'){closeComparison(view);await view.select(file(secondRows));}
+        if(mode==='session'){view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));view.listeners.get('storage')();view.render();}
+        const count=previewCalls(view).length;await assistant.props.onBarcodeReview();view.render();
+        assert.equal(previewCalls(view).length,count,mode);
+        assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+    }
+});
+
+test('old assistant cleanup cannot unlock a pending authoritative barcode refresh', async () => {
+    let previews=0, release;
+    const pending=new Promise(resolve=>{release=resolve;});
+    const view=await converter({reimports:[{...savedShopifyOrder,orderNumber:'TST6091550133'}],previewWait:()=>++previews===2?pending:undefined});
+    await view.select(file());const assistant=comparison(view);
+    const refresh=assistant.props.onBarcodeReview();view.render();assistant.props.onBusyChange(false);view.render();
+    assert.equal(comparison(view),undefined);assert.equal(view.find(view.render(),node=>node.props?.['aria-label']==='商城原始訂單檔').props.disabled,true,'unmounted child cleanup must not override parent refresh busy state');
+    release();await refresh;view.render();assert.equal(view.button('更換訂單檔').props.disabled,false);
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);
+});
+
+test('a failed prerequisite refresh stays dirty and does not reuse the old comparison', async () => {
+    let previews=0;
+    const view=await converter({reimports:[{...savedShopifyOrder,orderNumber:'TST6091550133'}],previewWait:()=>{if(++previews===2)throw Error('synthetic prerequisite refresh failure');}});
+    await view.select(file());await comparison(view).props.onBarcodeReview();view.render();
+    assert.equal(comparison(view),undefined);assert.equal(view.button('比對並產生整份銷貨檔').props.disabled,true);
+    assert.ok(view.button('重新核對'));assert.equal(view.requests.filter(r=>r.url.endsWith('/barcode-confirmations')).length,0);
+    await view.button('重新核對').props.onClick();view.render();assert.equal(previewCalls(view).length,3);assert.equal(comparison(view),undefined);
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+});
+
+test('a completion receipt refresh cannot use old rows after its assistant closes during history reload', async () => {
+    let loads=0, release;
+    const pending=new Promise(resolve=>{release=resolve;});
+    const view=await converter({reimports:[{...savedShopifyOrder,orderNumber:'TST6091550133'}],recordsWait:()=>++loads===2?pending:undefined});
+    await view.select(file());const assistant=comparison(view);
+    const completed=assistant.props.onComplete();closeComparison(view);await view.select(file(secondRows));const count=previewCalls(view).length;
+    release();await completed;view.render();assert.equal(previewCalls(view).length,count);
+    assert.match(view.text(view.render()),/Second order product/);assert.doesNotMatch(view.text(view.render()),/TEST product A/);
     assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
 });

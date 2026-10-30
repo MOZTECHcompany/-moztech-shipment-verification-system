@@ -50,10 +50,53 @@ async function patchOwner(batch,sources,conversion,user){
  (await import('./marketplaceIntake.mjs')).prepareEcountFinancials(next);
  next.draftFingerprint=hash(next);return next;
 }
-function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=()=>process.env.WMS_MIXED_REEXPORT_ENABLED==='true',validateSnapshot=async snapshot=>{
- const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,snapshot,undefined,{returnContext:true});
- await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,snapshot.settings,[...new Set(snapshot.items.map(item=>item.sku))],undefined,reviewed,snapshot);
+function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=()=>process.env.WMS_MIXED_REEXPORT_ENABLED==='true',validateSnapshot=async (snapshot,db=pool)=>{
+ const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(db,snapshot,undefined,{returnContext:true});
+ await require('./marketplaceProductCatalog').verifyCatalogMappings(db,snapshot.settings,[...new Set(snapshot.items.map(item=>item.sku))],undefined,reviewed,snapshot);
 }}){
+ async function ownerReviews(db,owner,next,conversion,upload,user){
+  const {barcodeReviewCandidate,confirmBarcodeReview,reviewMatchesCandidate}=require('./marketplaceBarcodeReviews');
+  const selectedNumbers=new Set(owner.sources.filter(source=>conversion.uploadedNumbers.has(source.source_order_number)).map(source=>source.source_order_number));
+  const selectedSkus=new Set(next.items.filter(item=>selectedNumbers.has(item.sourceOrderNumber)).map(item=>item.sku));
+  const relevant=(upload.barcodeReviews||[]).filter(review=>selectedSkus.has(review.evidence?.sourceSku));
+  let originalValidated=false;
+  const sameAuthority=(a,b)=>['storeProfileId','platform','shop','sourceSku','sourceBarcode','erpSku','erpBarcode','erpName','spec','barcodeProof','physicalBarcode','internalScanCode','codeType'].every(key=>clean(a?.[key])===clean(b?.[key]));
+  const unavailable=sku=>{
+   const numbers=[...new Set(next.items.filter(item=>item.sku===sku&&!selectedNumbers.has(item.sourceOrderNumber)).map(item=>item.sourceOrderNumber))].sort();
+   const scope=numbers.length?`；請將 ${numbers.slice(0,5).join('、')}${numbers.length>5?` 等 ${numbers.length} 筆`:''} 一併上傳核對`:'';
+   return fail(`商品 ${sku}：原批次 ${owner.batch.batch_number||'#'+owner.batch.id} 保留商品缺少相同且有效的已核對對照${scope}`,'MARKETPLACE_BARCODE_OWNER_REVIEW_REQUIRED',400);
+  };
+  for(const review of relevant){
+   const authority=review.evidence,sku=authority.sourceSku,lines=next.items.filter(item=>item.sku===sku),retained=lines.filter(item=>!selectedNumbers.has(item.sourceOrderNumber));
+   let previous=null;
+   if(retained.length){
+    if(!originalValidated){try{await validateSnapshot(owner.batch.snapshot,db);}catch(error){if([400,409].includes(error.status))throw unavailable(sku);throw error;}originalValidated=true;}
+    const matches=(owner.batch.snapshot.barcodeReviews||[]).filter(value=>value.evidence?.sourceSku===sku&&sameAuthority(value.evidence,authority));
+    if(matches.length!==1||hash(owner.batch.snapshot.settings.skuMappings?.[sku])!==hash(upload.settings.skuMappings?.[sku]))throw unavailable(sku);
+    previous=matches[0].evidence;
+   }
+   const identities=new Set(),variants=[];
+   for(const item of lines){
+    const selected=selectedNumbers.has(item.sourceOrderNumber),source=selected?upload:owner.batch.snapshot,proof=selected?authority:previous;
+    const key=JSON.stringify([item.sourceOrderNumber,item.sourceLineId,item.sku]);
+    const originals=source.items.filter(line=>line.sourceOrderNumber===item.sourceOrderNumber&&line.sourceLineId===item.sourceLineId&&line.sku===item.sku);
+    const orders=source.sourceEvidence?.verification?.orders?.filter(order=>order.number===item.sourceOrderNumber)||[];
+    const verified=orders.length===1?orders[0].items.filter(line=>line.id===item.sourceLineId&&line.sku===item.sku):[];
+    if(identities.has(key)||originals.length!==1||verified.length!==1||!Number.isSafeInteger(item.quantity)||item.quantity<=0||item.quantity!==originals[0].quantity||
+     !proof||!proof.variantIds.includes(verified[0].variantId)||clean(verified[0].barcode)!==proof.sourceBarcode||!Number.isSafeInteger(verified[0].quantity)||verified[0].quantity<=0||item.quantity>verified[0].quantity)throw unavailable(sku);
+    identities.add(key);variants.push(verified[0].variantId);
+   }
+   const candidate=barcodeReviewCandidate({profileId:authority.storeProfileId,platform:authority.platform,shop:authority.shop,sourceSku:sku,sourceBarcode:authority.sourceBarcode,
+    sourceName:[...new Set(lines.map(item=>item.productName))].sort().join(' / '),variantIds:variants,
+    sourceLines:lines.map(item=>[item.sourceOrderNumber,item.sourceLineId,item.quantity]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    product:{erp_sku:authority.erpSku,barcode:authority.erpBarcode,product_name:authority.erpName,spec:authority.spec,active:true},barcodeProof:authority.barcodeProof,physicalBarcode:authority.physicalBarcode,internalScanCode:authority.internalScanCode,codeType:authority.codeType});
+   if(!candidate.canConfirm)throw unavailable(sku);
+   const record=await confirmBarcodeReview(db,candidate,user);if(!reviewMatchesCandidate(candidate,record))throw unavailable(sku);
+   next.barcodeReviews=[...(next.barcodeReviews||[]).filter(value=>value.evidence?.sourceSku!==sku),{id:record.id,fingerprint:record.fingerprint,evidence:record.evidence}];
+  }
+  await validateSnapshot(next,db);
+  delete next.draftFingerprint;next.draftFingerprint=hash(next);
+ }
  const scopes=()=>require('./marketplaceUploadScopes');
  async function command(db,userId,commandId,requestHash){const row=(await db.query('SELECT request_hash,response FROM marketplace_draft_commands WHERE actor_id=$1 AND command_id=$2',[userId,commandId])).rows[0];if(row&&row.request_hash!==requestHash)throw fail('同一操作識別不能使用不同內容','MARKETPLACE_DRAFT_COMMAND_CHANGED');return row?{...row.response,replayed:true}:null;}
  async function readContext(db,conversion,{lock=false,expectedIds}={}){
@@ -105,7 +148,9 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
    uploadedOrders:sources.filter(source=>conversion.uploadedNumbers.has(source.source_order_number)).map(source=>{const number=source.source_order_number,before=summary(batch.snapshot,number,source),after=afterSummary(conversion,number),diff=changes(before,after),current=conversion.verification.orders.find(order=>order.number===number),live={totalMinor:current.totalMinor,receivedMinor:current.receivedMinor,outstandingMinor:current.outstandingMinor,quantity:current.currentQuantity};return {orderNumber:number,changed:diff.length>0||source.draft_active===false,restoring:source.draft_active===false,before,after,changes:diff,live,diffAPI:live.totalMinor!==after.totalMinor||live.quantity!==after.quantity};}),
    omittedOrders:batch.snapshot.orders.filter(order=>!conversion.uploadedNumbers.has(order.sourceOrderNumber)).map(order=>({orderNumber:order.sourceOrderNumber,before:summary(batch.snapshot,order.sourceOrderNumber),preserved:true}))}));
   const existing=affectedBatches.flatMap(batch=>batch.uploadedOrders),selected=context.numbers.map(number=>afterSummary(conversion,number));
-  return {scopeMode:'uploaded-file-v2',reviewRequired:conversion.reviewRequired===true,orderReviews:conversion.orderReviews||[],previewFingerprint:data.previewFingerprint,summary:{totalOrderCount:context.numbers.length,newOrderCount:newOrders.length,changedOrderCount:existing.filter(order=>order.changed).length,unchangedOrderCount:existing.filter(order=>!order.changed).length,quantity:selected.reduce((sum,order)=>sum+order.quantity,0),totalMinor:selected.reduce((sum,order)=>sum+(order.totalMinor||0),0)},newOrders,affectedBatches,canConfirm:blocked.length===0,blockedReasons:blocked,confirmationRequired:true};
+  const sourceSkus=[...new Set((conversion.barcodeConflicts||[]).map(conflict=>conflict.sourceSku))].sort();
+  const barcodePrerequisites=sourceSkus.length?{required:true,code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED',count:sourceSkus.length,sourceSkus}:undefined;
+  return {scopeMode:'uploaded-file-v2',reviewRequired:conversion.reviewRequired===true,orderReviews:conversion.orderReviews||[],...(barcodePrerequisites?{barcodePrerequisites}:{}),previewFingerprint:data.previewFingerprint,summary:{totalOrderCount:context.numbers.length,newOrderCount:newOrders.length,changedOrderCount:existing.filter(order=>order.changed).length,unchangedOrderCount:existing.filter(order=>!order.changed).length,quantity:selected.reduce((sum,order)=>sum+order.quantity,0),totalMinor:selected.reduce((sum,order)=>sum+(order.totalMinor||0),0)},newOrders,affectedBatches,canConfirm:blocked.length===0,blockedReasons:blocked,confirmationRequired:true};
  }
  async function apply(body,user){
   const userId=actor(user);
@@ -133,6 +178,18 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
    const current=await readContext(db,data.conversion,{lock:true,expectedIds:data.context.ids});
    if(fingerprint(current,data.conversion,body)!==data.previewFingerprint)throw fail('來源歸屬、店鋪設定或作業狀態已變更，請重新核對');
    if(reasons({...data,context:current}).length)throw fail('訂單已開始作業，不能重新轉銷貨','MARKETPLACE_DRAFT_ALREADY_STARTED');
+   // Reviews can be revoked after preview. Validate the complete persisted
+   // upload proof again under the sales transaction, then derive owner-exact
+   // proofs only from that authority and valid retained original proofs.
+   const {reviewMatchesCandidate}=require('./marketplaceBarcodeReviews');
+   const required=new Map((data.conversion.barcodeReviewCandidates||[]).flatMap(candidate=>candidate.confirmationCandidates||[candidate]).map(candidate=>[candidate.fingerprint,candidate]));
+   const authorityIds=[...new Set([...(snapshot.barcodeReviews||[]),...current.owners.flatMap(owner=>owner.batch.snapshot.barcodeReviews||[])].map(review=>Number(review.id)).filter(positive))].sort((a,b)=>a-b);
+   if(required.size||authorityIds.length){
+    const locked=(await db.query('SELECT id,store_profile_id,fingerprint,evidence,confirmed_by,confirmed_at FROM marketplace_product_mapping_reviews WHERE (id=ANY($1::int[]) OR store_profile_id=$2 AND fingerprint=ANY($3::text[])) AND revoked_at IS NULL ORDER BY id FOR SHARE',[authorityIds,Number(data.conversion.profileId),[...required.keys()]])).rows;
+    if([...required.values()].some(candidate=>!locked.some(record=>reviewMatchesCandidate(candidate,record))))throw fail('商品條碼核對已更新，請返回商品條碼重新核對','BARCODE_REVIEW_CHANGED');
+   }
+   await validateSnapshot(snapshot,db);
+   for(const owner of current.owners)await ownerReviews(db,owner,snapshots.get(Number(owner.batch.id)),data.conversion,snapshot,user);
    const {warehouseProductDetails,mappingScanIdentity}=await import('./marketplaceIntake.mjs');
    function values(order,record){const expected=record.items.filter(item=>item.sourceOrderNumber===order.sourceOrderNumber).map(item=>({sourceLineId:item.sourceLineId,sourceSku:item.sku,productCode:record.settings.skuMappings[item.sku].erpSku,...warehouseProductDetails(item,record.settings.skuMappings[item.sku]),quantity:item.quantity,...mappingScanIdentity(record.settings.skuMappings[item.sku]),groupName:item.groupName,...(item.sourceSkuFormat?{sourceSkuFormat:item.sourceSkuFormat,sourceBarcode:item.sourceBarcode,campaignGroupName:item.campaignGroupName,campaignRound:item.campaignRound}:{})}));const ids=new Set(expected.map(item=>item.sourceLineId)),nonstock=record.rows.filter(row=>row[12]===order.sourceOrderNumber&&!ids.has(row[15])).map(row=>({sourceLineId:row[15],productCode:row[11],quantity:row[19]})),rounding=record.rounding?.orders.find(entry=>entry.identity[0]===order.sourcePlatform&&entry.identity[1]===order.sourceOrderNumber);return [JSON.stringify(expected),JSON.stringify(nonstock),JSON.stringify({source:order.sourceFinancial,ecount:order.financial,...(rounding?{erpRounding:{policy:record.rounding.policy,...rounding}}:{})})];}
    for(const {batch,sources} of current.owners){

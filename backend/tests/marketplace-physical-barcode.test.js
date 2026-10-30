@@ -31,6 +31,137 @@ describe('physical barcode settings and legacy evidence',()=>{
  });
 });
 
+describe('uploaded eligible barcode prerequisites stay separate from new-sales scope',()=>{
+ let db,pool,h;
+ beforeAll(async()=>{
+  db=new PGlite();
+  await db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY); INSERT INTO users VALUES(1); CREATE TABLE marketplace_store_profiles(id INTEGER PRIMARY KEY,platform TEXT,store TEXT,settings JSONB,updated_at TIMESTAMPTZ); CREATE TABLE order_items(barcode TEXT);');
+  await db.query('INSERT INTO marketplace_store_profiles VALUES($1,$2,$3,$4,NOW())',[profile.id,profile.platform,profile.store,profile.settings]);
+  for(const name of ['038_marketplace_product_mapping_reviews.sql','039_order_item_scan_identity.sql'])await db.exec(readFileSync(require.resolve('../migrations/'+name),'utf8'));
+ });
+ beforeEach(async()=>{
+  await db.exec('TRUNCATE marketplace_product_mapping_reviews,marketplace_internal_scan_codes RESTART IDENTITY');
+  h={records:records(),products:[product()],variants:[...variants],barcodes:[sku,sku],saved:new Set(['#AUDIT-SCAN-2']),writes:[],transactions:[],rejectProjection:false};
+  const query=async(...args)=>{if(!args[0].startsWith('SELECT'))h.writes.push(args);if(h.rejectProjection&&args[0].startsWith('INSERT INTO marketplace_product_mapping_reviews')&&JSON.parse(args[2]||args[1]?.[2]||'null')?.variantIds?.length===1)throw Error('AUDIT reject projected insert');return db.query(...args);};
+  pool={query,connect:jest.fn(async()=>({query:async(...args)=>{h.transactions.push(args[0]);if(args[0].startsWith('SET LOCAL'))return {rows:[]};const result=await query(...args);if(args[0]==='COMMIT'&&h.loseCommitAck){h.loseCommitAck=false;throw Error('AUDIT commit acknowledgement lost');}return result;},release:h.release=jest.fn()}))};
+  h.prepare=createMarketplacePreparation({pool,verifyShopify:async()=>({rows:table(h.records),verification:{version:'shopify-current-v2',platform:'Shopify',shop:'audit.myshopify.com',fingerprint:createHash('sha256').update(JSON.stringify([h.records,h.variants,h.barcodes])).digest('hex'),orders:h.records.map((r,i)=>({number:r.Name,id:r.Id,cancelled:Boolean(r['Cancelled at']),fulfillmentStatus:r['Fulfillment Status'],paymentStatus:r['Financial Status'],currentQuantity:Number(r['Lineitem quantity']),remainingQuantity:Number(r['Lineitem quantity']),totalMinor:Number(r.Total)*100,receivedMinor:Number(r.Total)*100,outstandingMinor:0,items:[{id:r['Lineitem id'],sku:r['Lineitem sku'],name:r['Lineitem name'],quantity:Number(r['Lineitem quantity']),unfulfilledQuantity:Number(r['Lineitem quantity']),variantId:h.variants[i],barcode:h.barcodes[i]}]}))}}),resolveProducts:async keys=>({products:resolveProducts(keys,h.products)}),classifyReimports:async()=>({reimports:[...h.saved].map(orderNumber=>({orderNumber,intakeId:100,state:'pending',message:'AUDIT saved'})),fingerprint:JSON.stringify([...h.saved].sort())})});
+ });
+ afterAll(async()=>db?.close());
+ const input=settings=>({rows:table(h.uploadRecords||h.records),profileId:'1',settings:settings||{}});
+ const reader=async()=>({products:h.products});
+ function app(){const app=express();app.use(express.json());app.use((req,res,next)=>{req.user=actor;next();});app.use('/api/marketplace-intakes',createMarketplaceRouter({pool,prepareMarketplace:h.prepare}));app.use((error,req,res,next)=>res.status(error.status||500).json({code:error.code,message:error.message}));return app;}
+ async function confirm(preview,settings){return request(app()).post('/api/marketplace-intakes/barcode-confirmations').send({...input(settings),verificationFingerprint:preview.verification.currentFingerprint,confirmation:{fingerprint:preview.barcodeConflicts[0].fingerprint,confirmed:true}});}
+ function snapshot(preview){return {platform:'Shopify',summary:preview.output.summary,items:preview.parsed.items,orders:preview.parsed.orders.map(order=>({...order,sourceFinancial:preview.raw.orders.find(raw=>raw.sourceOrderNumber===order.sourceOrderNumber).financial})),settings:preview.settings,sourceEvidence:preview.sourceEvidence,barcodeReviews:preview.barcodeReviews,headers:preview.output.headers,rows:preview.output.rows,prepick:preview.prepick,...(preview.output.salesLayout?{salesLayout:preview.output.salesLayout}:{}),...(preview.output.rounding?{rounding:preview.output.rounding}:{})};}
+ test('pure reimports expose the same complete eligible candidate as overwrite without reviving new sales',async()=>{
+  h.saved=new Set(h.records.map(r=>r.Name));const normal=await h.prepare(input()),draft=await h.prepare(input(),{overwriteOrderNumbers:[...h.saved]});
+  expect(normal.parsed.orders).toHaveLength(0);expect(normal.newOrderCount).toBe(0);
+  expect(normal.barcodeConflicts).toHaveLength(1);expect(normal.barcodeConflicts[0].canConfirm).toBe(true);
+  expect(normal.barcodeConflicts[0].fingerprint).toBe(draft.barcodeConflicts[0].fingerprint);
+  expect(normal.verification.currentFingerprint).toBe(draft.verification.currentFingerprint);
+  expect(normal.barcodeScope).toMatchObject({version:'uploaded-eligible-v1',orderCount:2,itemCount:2});expect(normal.barcodeScope.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  expect(h.writes).toEqual([]);expect(pool.connect).not.toHaveBeenCalled();
+  expect((await confirm(normal)).status).toBe(201);expect(pool.connect).not.toHaveBeenCalled();const reviewed=await h.prepare(input(),{refresh:true});expect(reviewed.barcodeConflicts).toEqual([]);expect(reviewed.newOrderCount).toBe(0);const reviewedDraft=await h.prepare(input(),{overwriteOrderNumbers:[...h.saved]});expect(reviewedDraft.output.ok).toBe(true);await expect(verifySavedBarcodeReviews(pool,snapshot(reviewedDraft),reader)).resolves.toBeUndefined();expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toHaveLength(1);
+ });
+ test('a problem SKU existing only in a saved order is still actionable before entering comparison',async()=>{
+  h.records.push({...h.records[1],Name:'#AUDIT-SCAN-3',Id:'9003','Lineitem id':'gid://shopify/LineItem/3'});h.variants.push('gid://shopify/ProductVariant/103');h.barcodes.push(sku);h.saved.add('#AUDIT-SCAN-3');
+  h.records[0]['Lineitem sku']='AUDIT-CLEAN';h.products.push({...product(),erp_sku:'AUDIT-CLEAN',barcode:'AUDIT-CLEAN'});h.barcodes[0]='AUDIT-CLEAN';
+  const preview=await h.prepare(input());expect(preview.newOrderCount).toBe(1);expect(preview.parsed.items.map(i=>i.sku)).toEqual(['AUDIT-CLEAN']);
+  expect(preview.barcodeConflicts).toHaveLength(1);expect(preview.barcodeConflicts[0]).toMatchObject({sourceSku:sku,canConfirm:true,relatedOrders:[{orderNumber:'#AUDIT-SCAN-2'},{orderNumber:'#AUDIT-SCAN-3'}]});
+ });
+ test.each(['api','physical','internal'])('%s confirmation atomically records the complete identity and exact new-sales projection, and both snapshots still validate',async kind=>{
+  const settings=kind==='physical'?proposal(scan):kind==='internal'?{skuMappings:{[sku]:{scanCodeType:'internal',internalScanCode:'ITM-AUDIT-SCOPE'}}}:{};
+  if(kind!=='api')h.barcodes=['',''];
+  const preview=await h.prepare(input(settings));expect(preview.barcodeConflicts[0].variantIds).toEqual(variants);
+  expect((await confirm(preview,settings)).status).toBe(201);
+  const stored=(await db.query('SELECT * FROM marketplace_product_mapping_reviews ORDER BY id')).rows;
+  expect(stored).toHaveLength(2);expect(stored.map(r=>r.evidence.variantIds)).toEqual([variants,[variants[0]]]);
+  expect(h.transactions).toContain('BEGIN');expect(h.transactions).toContain('COMMIT');
+  const approved=await h.prepare(input(settings),{refresh:true});expect(approved.barcodeConflicts).toEqual([]);expect(approved.output.ok).toBe(true);
+  expect(approved.newOrderCount).toBe(1);expect(approved.parsed.orders.map(o=>o.sourceOrderNumber)).toEqual(['#AUDIT-SCAN-1']);expect(approved.parsed.items).toHaveLength(1);
+  expect(approved.barcodeReviews).toHaveLength(1);expect(approved.barcodeReviews[0].evidence.variantIds).toEqual([variants[0]]);
+  const context=await verifySavedBarcodeReviews(pool,snapshot(approved),reader,{returnContext:true});await expect(verifyCatalogMappings(pool,approved.settings,[sku],reader,context,snapshot(approved))).resolves.toBeUndefined();
+  const draft=await h.prepare(input(settings),{refresh:true,overwriteOrderNumbers:h.records.map(r=>r.Name)});expect(draft.output.ok).toBe(true);expect(draft.barcodeReviews).toHaveLength(1);expect(draft.barcodeReviews[0].evidence.variantIds).toEqual(variants);
+  await expect(verifySavedBarcodeReviews(pool,snapshot(draft),reader)).resolves.toBeUndefined();
+  const {savedBatchTables}=await import('../src/services/marketplaceBatchFiles.mjs');const tables=savedBatchTables(snapshot(approved),'ecount');expect(tables[0].rows.length).toBeGreaterThan(1);
+  expect(h.writes.every(([sql])=>/^(BEGIN|COMMIT)$/.test(sql)||sql.startsWith('INSERT INTO marketplace_product_mapping_reviews')||sql.startsWith('INSERT INTO marketplace_internal_scan_codes'))).toBe(true);
+ });
+ test.each(['api','physical','internal'])('%s one confirmation also authorizes only the safe complete CSV name/quantity projection',async kind=>{
+  h.records.forEach(record=>{record['Lineitem quantity']='2';record.Subtotal='200';record.Total='200';});h.uploadRecords=h.records.map((record,index)=>({...record,'Lineitem name':'AUDIT operator label '+index,'Lineitem quantity':'1',Subtotal:'100',Total:'100'}));
+  if(kind!=='api')h.barcodes=['',''];const settings=kind==='physical'?proposal(scan):kind==='internal'?{skuMappings:{[sku]:{scanCodeType:'internal',internalScanCode:'ITM-AUDIT-SCOPE'}}}:{};
+  // The synthetic API fixture reports the live quantity independently of CSV.
+  const preview=await h.prepare(input(settings));expect((await confirm(preview,settings)).status).toBe(201);
+  const normal=await h.prepare(input(settings),{refresh:true}),draft=await h.prepare(input(settings),{refresh:true,overwriteOrderNumbers:h.records.map(record=>record.Name)});
+  expect(normal.barcodeConflicts).toEqual([]);expect(draft.barcodeConflicts).toEqual([]);expect(normal.parsed.items[0].quantity).toBe(2);expect(draft.parsed.items.map(item=>item.quantity)).toEqual([1,1]);expect(draft.parsed.items.map(item=>item.productName)).toEqual(['AUDIT operator label 0','AUDIT operator label 1']);
+  await expect(verifySavedBarcodeReviews(pool,snapshot(normal),reader)).resolves.toBeUndefined();await expect(verifySavedBarcodeReviews(pool,snapshot(draft),reader)).resolves.toBeUndefined();expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toHaveLength(3);
+ });
+ test('a changed CSV cannot borrow the old complete-upload confirmation fingerprint',async()=>{
+  const preview=await h.prepare(input());h.uploadRecords=h.records.map(record=>({...record,'Lineitem name':'AUDIT changed after preview'}));const response=await confirm(preview);expect(response.status).toBe(409);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toEqual([]);
+ });
+ test('a failed exact projection insert rolls back the complete approval too',async()=>{
+  const preview=await h.prepare(input());h.rejectProjection=true;const response=await confirm(preview);
+  expect(response.status).toBe(500);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toEqual([]);expect(h.transactions).toContain('ROLLBACK');
+ });
+ test('lost review commit acknowledgement returns unknown, discards the connection and same proof retry reads exactly two records',async()=>{
+  const preview=await h.prepare(input());h.loseCommitAck=true;const first=await confirm(preview);expect(first.status).toBe(503);expect(first.body.code).toBe('BARCODE_REVIEW_RESULT_UNKNOWN');expect(h.release).toHaveBeenCalledWith(true);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toHaveLength(2);
+  const repeated=await confirm(preview);expect(repeated.status).toBe(201);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toHaveLength(2);expect(h.transactions).toContain("SET LOCAL lock_timeout='2000ms'");expect(h.transactions).toContain("SET LOCAL statement_timeout='10000ms'");
+ });
+ test('the real download handler revalidates the persisted sales-subset proof and generates only one new-order quantity',async()=>{
+  const preview=await h.prepare(input());expect((await confirm(preview)).status).toBe(201);const approved=await h.prepare(input(),{refresh:true}),saved=snapshot(approved),record={id:101,batch_number:'AUDIT-NEW-ONLY',source_platform:'Shopify',source_store:profile.store,snapshot:saved};
+  const reviewService=require('../src/services/marketplaceBarcodeReviews'),catalogService=require('../src/services/marketplaceProductCatalog');
+  const actualReview=verifySavedBarcodeReviews,actualCatalog=verifyCatalogMappings;
+  const reviewSpy=jest.spyOn(reviewService,'verifySavedBarcodeReviews').mockImplementation((db,current,unused,options)=>actualReview(db,current,reader,options));
+  const catalogSpy=jest.spyOn(catalogService,'verifyCatalogMappings').mockImplementation((db,current,skus,unused,context,currentSnapshot)=>actualCatalog(db,current,skus,reader,context,currentSnapshot));
+  const readPool={query:jest.fn(async(sql,args)=>{
+   if(sql.startsWith('SELECT role FROM users'))return {rows:[{role:'dispatcher'}]};
+   if(sql.startsWith('SELECT * FROM marketplace_intakes'))return {rows:[record]};
+   if(sql.startsWith('SELECT EXISTS('))return {rows:[{borrowed:false}]};
+   if(sql.includes('marketplace_product_mapping_reviews')||sql.includes('marketplace_internal_scan_codes'))return db.query(sql,args);
+   return {rows:[]};
+  })};
+  const oldSecret=process.env.JWT_SECRET;process.env.JWT_SECRET='AUDIT-SUBSET-DOWNLOAD-ONLY';
+  try{
+   const token=jwt.sign({downloadActor:1,intakeId:101,kind:'ecount'},process.env.JWT_SECRET,{algorithm:'HS256',audience:'wms-marketplace-file',expiresIn:120});
+   const response={statusCode:200,body:null,set:jest.fn(),status(code){this.statusCode=code;return this;},send(body){this.body=body;return this;}};response.set.mockReturnValue(response);
+   await downloadFile({pool:readPool})({params:{id:'101',kind:'ecount'},headers:{cookie:'wms_marketplace_download='+token}},response,error=>{throw error;});
+   expect(response.statusCode).toBe(200);expect(Buffer.isBuffer(response.body)).toBe(true);const XLSX=require('xlsx'),book=XLSX.read(response.body),rows=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1});expect(rows.slice(1).reduce((sum,row)=>sum+row[rows[0].indexOf('數量')],0)).toBe(1);
+   expect(reviewSpy).toHaveBeenCalled();expect(catalogSpy).toHaveBeenCalled();expect(readPool.query.mock.calls.every(([sql])=>sql.startsWith('SELECT'))).toBe(true);
+  }finally{reviewSpy.mockRestore();catalogSpy.mockRestore();if(oldSecret===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=oldSecret;}
+ });
+ test('a previously complete-only review is explicitly confirmed again to fill the missing exact projection idempotently',async()=>{
+  const preview=await h.prepare(input());await confirmBarcodeReview(pool,preview.barcodeConflicts[0],actor);
+  const missing=await h.prepare(input());expect(missing.barcodeConflicts).toHaveLength(1);
+  const first=await confirm(missing),second=await confirm(missing);expect(first.status).toBe(201);expect(second.status).toBe(201);expect(first.body.id).toBe(second.body.id);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toHaveLength(2);
+ });
+ test('inconsistent existing subset evidence rejects and rolls back the newly inserted full approval',async()=>{
+  const preview=await h.prepare(input()),projection=preview.barcodeReviewCandidates[0].confirmationCandidates[1];
+  const record=await confirmBarcodeReview(pool,projection,actor);await db.query('UPDATE marketplace_product_mapping_reviews SET evidence=$1 WHERE id=$2',[{...record.evidence,sourceName:'AUDIT inconsistent persisted label'},record.id]);
+  const response=await confirm(preview);expect(response.status).toBe(409);expect(response.body.code).toBe('BARCODE_REVIEW_CHANGED');const stored=(await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows;expect(stored).toHaveLength(1);expect(stored[0].fingerprint).toBe(projection.fingerprint);expect(h.transactions).toContain('ROLLBACK');
+ });
+ test('client scope/order/confirmation projection injection never expands the server-derived proofs',async()=>{
+  const preview=await h.prepare(input()),response=await request(app()).post('/api/marketplace-intakes/barcode-confirmations').send({...input(),overwriteOrderNumbers:['#FOREIGN'],barcodeScope:{orderNumbers:['#FOREIGN']},verificationFingerprint:preview.verification.currentFingerprint,confirmation:{fingerprint:preview.barcodeConflicts[0].fingerprint,confirmed:true,confirmationCandidates:[{sourceSku:'FOREIGN',variantIds:['gid://shopify/ProductVariant/999']}]}});
+  expect(response.status).toBe(201);const stored=(await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows;expect(stored).toHaveLength(2);expect(stored.every(record=>record.evidence.sourceSku===sku)).toBe(true);expect(JSON.stringify(stored)).not.toContain('999');const normal=await h.prepare({...input(),overwriteOrderNumbers:['#AUDIT-SCAN-2']});expect(normal.newOrderCount).toBe(1);expect(normal.parsed.orders[0].sourceOrderNumber).toBe('#AUDIT-SCAN-1');
+ });
+ test.each(['api','physical','internal'])('%s duplicate Shopify line identity across orders cannot authorize either scope',async kind=>{
+  h.records[1]['Lineitem id']=h.records[0]['Lineitem id'];if(kind!=='api')h.barcodes=['',''];const settings=kind==='physical'?proposal(scan):kind==='internal'?{skuMappings:{[sku]:{scanCodeType:'internal',internalScanCode:'ITM-AUDIT-SCOPE'}}}:{};
+  const preview=await h.prepare(input(settings));expect(preview.output.ok).toBe(false);expect(preview.barcodeConflicts.every(candidate=>!candidate.canConfirm)).toBe(true);expect((await confirm(preview,settings)).status).toBe(400);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toEqual([]);
+ });
+ test.each(['barcode','variant','target','profile'])('fresh %s drift rejects old scope without approval writes',async changed=>{
+  const preview=await h.prepare(input());
+  if(changed==='barcode')h.barcodes=[scan,scan];if(changed==='variant')h.variants[1]='gid://shopify/ProductVariant/999';if(changed==='target')h.products[0].spec='AUDIT changed spec';if(changed==='profile')await db.query('UPDATE marketplace_store_profiles SET store=$1 WHERE id=1',['AUDIT changed store']);
+  try{const response=await confirm(preview);expect(response.status).toBe(409);expect((await db.query('SELECT * FROM marketplace_product_mapping_reviews')).rows).toEqual([]);}finally{if(changed==='profile')await db.query('UPDATE marketplace_store_profiles SET store=$1 WHERE id=1',[profile.store]);}
+ });
+ test('different API barcodes across saved/new lines remain ambiguous rather than being approved by SKU',async()=>{
+  h.barcodes[1]=scan;await expect(h.prepare(input())).rejects.toMatchObject({code:'BARCODE_AMBIGUOUS'});expect(h.writes).toEqual([]);
+ });
+ test.each(['cancelled','fulfilled'])('%s saved products cannot add candidates or variant identity',async state=>{
+  if(state==='cancelled'){h.records.forEach(record=>record['Cancelled at']='');h.records[1]['Cancelled at']='2026-10-30';}else h.records[1]['Fulfillment Status']='fulfilled';
+  const preview=await h.prepare(input());expect(preview.barcodeConflicts).toEqual([]);expect(preview.barcodeScope.itemCount).toBe(1);
+ });
+ test('a normal exact barcode path keeps old caller data and requires no review transaction',async()=>{
+  h.products[0].barcode=sku;h.variants[1]=variants[0];const preview=await h.prepare(input());expect(preview.output.ok).toBe(true);expect(preview.barcodeConflicts).toEqual([]);expect(preview.newOrderCount).toBe(1);expect(pool.connect).not.toHaveBeenCalled();
+ });
+});
+
 describe('Shopify blank barcode physical confirmation',()=>{
  let db,pool,h;
  beforeAll(async()=>{

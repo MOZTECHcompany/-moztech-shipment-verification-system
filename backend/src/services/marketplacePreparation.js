@@ -99,6 +99,10 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   }
   safeSettings(settingsInput);
   if(verification&&source.platform==='Shopify')settingsInput.shopifyShop=verification.shop;
+  // Barcode review belongs to the complete live, eligible upload. Draft
+  // projection and new-sales deduplication must not hide an original order's
+  // unresolved identity from the operator or the confirmation endpoint.
+  const barcodeRows=verifiedRows;
   let draftSourceReview=null;
   if(options.overwriteOrderNumbers){
    if(source.platform!=='Shopify')throw fail('目前僅支援 Shopify 原訂單草稿覆蓋','MARKETPLACE_DRAFT_PLATFORM');
@@ -122,10 +126,26 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const reimports=sourceClassification.reimports;
   const replacing=new Set(options.overwriteOrderNumbers||[]);
   const salesRaw=replacing.size?{...raw,orders:raw.orders.filter(o=>replacing.has(o.sourceOrderNumber)),items:raw.items.filter(i=>replacing.has(i.sourceOrderNumber)),issues:raw.issues.filter(i=>!i.orderNumber||replacing.has(i.orderNumber))}:newSalesSource(raw,reimports);
-  if(verification&&source.platform==='Shopify')verification={...verification,currentFingerprint:digest([verification.currentFingerprint,sourceClassification.fingerprint,salesRaw.orders.map(order=>order.sourceOrderNumber).sort()])};
   // Determine eligibility before resolving products; removed and fulfilled
   // items cannot create new catalog exceptions for this shipment.
-  const eligible=prepareUnifiedMarketplace(salesRaw,settingsInput).parsed;
+  const salesEligible=prepareUnifiedMarketplace(salesRaw,settingsInput).parsed;
+  const barcodeCurrent=barcodeRows===verifiedRows?null:parseUnifiedMarketplace(barcodeRows);
+  const barcodeRaw=barcodeCurrent?deliveryForOrders(barcodeCurrent.source,barcodeCurrent.parsed):raw;
+  if(barcodeCurrent)require('./shopifyOrderReview').applyShopifyOrderReviews(barcodeRaw,verification);
+  const eligible=prepareUnifiedMarketplace(barcodeRaw,settingsInput).parsed;
+  if(eligible.items.length>1000||eligible.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
+  const eligibleIdentity=eligible.items.map(item=>[item.sourceOrderNumber,item.sourceLineId,item.sku,item.quantity]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if(verification&&source.platform==='Shopify')verification={...verification,currentFingerprint:digest([verification.currentFingerprint,sourceClassification.fingerprint,profile,source.rows,eligibleIdentity])};
+  const barcodeScope={version:'uploaded-eligible-v1',fingerprint:digest([verification?.currentFingerprint,profile?.id||null,eligibleIdentity]),orderCount:eligible.orders.length,itemCount:eligible.items.length};
+  let draftEligible=null;
+  if(source.platform==='Shopify'&&eligible.orders.length){
+   try{
+    const projection=require('./marketplaceDraftSource').projectDraftSource(source.rows,barcodeRows,verification,eligible.orders.map(order=>order.sourceOrderNumber));
+    const projected=parseUnifiedMarketplace(projection.rows).parsed;
+    require('./shopifyOrderReview').applyShopifyOrderReviews(projected,verification,projection.review);
+    draftEligible=prepareUnifiedMarketplace(projected,settingsInput).parsed;
+   }catch(error){if(error.code!=='MARKETPLACE_DRAFT_SOURCE_INVALID')throw error;}
+  }
   const skus=[...new Set(eligible.items.map(i=>i.sku))];
   const {parseOneShopSku}=await import('./oneShopSku.mjs');
   const oneShopFormats=new Map(source.platform==='1Shop'?skus.map(sku=>[sku,parseOneShopSku(sku)]):[]);
@@ -166,7 +186,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    if(p&&!targets.some(t=>t.erp_sku===p.erp_sku))targets.push(p);
    const relatedOrders=eligible.items.filter(item=>item.sku===sku).map(item=>{
     const order=verification?.orders?.find(order=>order.number===item.sourceOrderNumber);
-    const verified=order?.items?.find(line=>line.id===item.sourceLineId||source.platform==='SHOPLINE'&&'SL-'+line.id===item.sourceLineId);
+    const verified=order?.items?.find(line=>line.sku===sku&&(line.id===item.sourceLineId||source.platform==='SHOPLINE'&&'SL-'+line.id===item.sourceLineId));
     const skuEvidence=source.platform==='Shopify'?[]:(order?.items||[]).filter(line=>line.sku===sku);
     const sameSkuQuantity=eligible.items.filter(line=>line.sku===sku&&line.sourceOrderNumber===item.sourceOrderNumber).reduce((sum,line)=>sum+line.quantity,0);
     const aggregateVerified=source.platform!=='Shopify'&&skuEvidence.length&&skuEvidence.every(line=>!line.barcode)&&skuEvidence.reduce((sum,line)=>sum+Number(line.quantity||0),0)===sameSkuQuantity;
@@ -178,7 +198,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    const completeVariants=source.platform!=='Shopify'||Boolean(relatedOrders.length&&
     relatedOrders.every(value=>value.sourceVerified&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId)&&
      value.barcode&&value.barcode===apiBarcode)&&
-    new Set(relatedOrders.map(value=>JSON.stringify([value.orderNumber,value.sourceLineId]))).size===relatedOrders.length);
+    new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length);
    if(source.platform==='Shopify'&&!completeVariants)incompleteSources.add(sku);
    // A scan may supplement only wholly blank, fully identified Shopify
    // versions and one exact active ERP target. It never changes API evidence.
@@ -187,6 +207,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
     new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length);
    const internalEligible=Boolean(verification?.mode==='api'&&!catalogBlocked&&p&&!p.barcode&&targets.length===1&&relatedOrders.length&&
     relatedOrders.every(value=>value.sourceVerified&&value.barcodeMissing&&(source.platform!=='Shopify'||/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId)))&&
+    (source.platform!=='Shopify'||new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length)&&
     new Set(relatedOrders.map(value=>JSON.stringify([value.orderNumber,value.sourceLineId]))).size===relatedOrders.length);
    // Model options can share one physical item. Multiple versions need the
    // same actual API barcode and one exact, active ERP barcode target.
@@ -234,7 +255,36 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    value.physicalCatalogSafe=!scan||Boolean(match&&!['inactive','ambiguous'].includes(match.status)&&
     (match.matches||[]).every(product=>product.active===true&&product.erp_sku===value.targets[0].erp_sku));
   }
-  const fingerprints=[...new Set(sourceCandidates.flatMap(value=>value.candidates.map(candidate=>candidate.fingerprint)))];
+  // Persist exact reviews for the new-sales subset and safely projected CSV
+  // labels/quantities. Existing snapshot validators keep
+  // their exact line/variant/name checks; a full approval is never borrowed
+  // directly by a smaller snapshot. Every projection is derived here from
+  // server-verified order + line + SKU + quantity + variant evidence.
+  const salesProjections=new Map(),confirmationProjections=new Map();
+  for(const value of sourceCandidates)for(const candidate of value.candidates){
+   if(!candidate.canConfirm||source.platform==='Shopify'&&value.relatedOrders.some(line=>!line.sourceVerified||!candidate.variantIds.includes(line.variantId)||line.barcode!==candidate.sourceBarcode))continue;
+   const projections=new Map();
+   for(const scope of [salesEligible,...(draftEligible?[draftEligible]:[])]){
+   const lines=scope.items.filter(item=>item.sku===value.sku);
+   if(!lines.length)continue;
+   const related=lines.map(item=>{
+    const full=eligible.items.filter(line=>line.sourceOrderNumber===item.sourceOrderNumber&&line.sourceLineId===item.sourceLineId&&line.sku===item.sku);
+    const evidence=value.relatedOrders.filter(line=>line.orderNumber===item.sourceOrderNumber&&line.sourceLineId===item.sourceLineId);
+    if(full.length!==1||evidence.length!==1||!Number.isSafeInteger(item.quantity)||item.quantity<=0||item.quantity>full[0].quantity||!evidence[0].sourceVerified||
+     source.platform==='Shopify'&&(!candidate.variantIds.includes(evidence[0].variantId)||evidence[0].barcode!==candidate.sourceBarcode))throw fail('本次商品明細不在已核對的完整條碼範圍','BARCODE_SCOPE_CHANGED',409);
+    return evidence[0];
+   });
+   if(new Set(lines.map(item=>JSON.stringify([item.sourceOrderNumber,item.sourceLineId]))).size!==lines.length)throw fail('本次商品明細無法唯一核對','BARCODE_SCOPE_CHANGED',409);
+   const projected=barcodeReviewCandidate({...value.common,sourceName:[...new Set(lines.map(item=>item.productName))].sort().join(' / '),variantIds:[...new Set(related.map(line=>line.variantId).filter(Boolean))].sort(),
+    sourceLines:lines.map(item=>[item.sourceOrderNumber,item.sourceLineId,item.quantity]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    product:value.targets.find(product=>product.erp_sku===candidate.erpSku),physicalBarcode:candidate.physicalBarcode,internalScanCode:candidate.internalScanCode,codeType:candidate.codeType,barcodeProof:candidate.barcodeProof});
+   projections.set(projected.fingerprint,projected);
+   if(scope===salesEligible)salesProjections.set(candidate.fingerprint,projected);
+   }
+   confirmationProjections.set(candidate.fingerprint,[...projections.values()]);
+  }
+  const projections=[...confirmationProjections.values()].flat();
+  const fingerprints=[...new Set([...sourceCandidates.flatMap(value=>value.candidates.map(candidate=>candidate.fingerprint)),...projections.map(candidate=>candidate.fingerprint)])];
   const internalCodes=[...new Set(sourceCandidates.filter(value=>value.internalMode).map(value=>value.candidates[0].internalScanCode).filter(Boolean))];
   const internalCatalog=internalCodes.length?await resolveProducts(internalCodes):{products:{}};
   for(const value of sourceCandidates.filter(value=>value.internalMode)){
@@ -247,7 +297,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   // has at most 1,000 product rows. Keep each persisted lookup bounded.
   if(profile)for(let offset=0;offset<fingerprints.length;offset+=1000)
    reviews.push(...await readBarcodeReviews(pool,profile.id,fingerprints.slice(offset,offset+1000)));
-  const approved=new Map(reviews.filter(record=>sourceCandidates.some(value=>value.candidates.some(candidate=>reviewMatchesCandidate(candidate,record)))).map(record=>[record.fingerprint,record]));
+  const approved=new Map(reviews.filter(record=>sourceCandidates.some(value=>value.candidates.some(candidate=>reviewMatchesCandidate(candidate,record)))||projections.some(candidate=>reviewMatchesCandidate(candidate,record))).map(record=>[record.fingerprint,record]));
   const reviewCandidates=[],barcodeConflicts=[],barcodeReviews=[],selectedTargets=new Map();
   for(const value of sourceCandidates){
    const approvedCandidates=value.candidates.filter(candidate=>approved.has(candidate.fingerprint));
@@ -264,9 +314,11 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
     relatedOrders:value.relatedOrders,reviewReason:value.reviewReason};
    selectedTargets.set(value.sku,{product:value.targets.find(product=>product.erp_sku===selectedErpSku)||null,candidate});
    // Only the currently selected target is confirmable through the route.
-   reviewCandidates.push(candidate);
-   if(candidate.canConfirm&&approved.has(candidate.fingerprint)){
-    const review=approved.get(candidate.fingerprint);barcodeReviews.push({id:review.id,fingerprint:review.fingerprint,evidence:review.evidence});
+   const projection=salesProjections.get(candidate.fingerprint);
+   const required=confirmationProjections.get(candidate.fingerprint)||[];
+   reviewCandidates.push({...candidate,confirmationCandidates:[candidate,...required.filter(value=>value.fingerprint!==candidate.fingerprint)]});
+   if(candidate.canConfirm&&approved.has(candidate.fingerprint)&&required.every(value=>approved.has(value.fingerprint))){
+    if(projection){const review=approved.get(projection.fingerprint);barcodeReviews.push({id:review.id,fingerprint:review.fingerprint,evidence:review.evidence});}
    }else barcodeConflicts.push(candidate);
   }
   settingsInput.skuMappings={...settingsInput.skuMappings};
@@ -285,9 +337,9 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
     const physical=selectedTargets.get(item.sku)?.candidate?.barcodeProof==='physical-scan-v1'?selectedTargets.get(item.sku).candidate:null;
     settingsInput.skuMappings[item.sku]={...provided,erpSku:p.erp_sku,erpName:p.product_name,spec:p.spec||'',confirmed:true,erpConfirmed:true,
      barcode:internal?'':physical?physical.physicalBarcode:p.barcode||apiBarcode||provided.barcode||'',
-     ...(internal?{scanCodeType:'internal',internalScanCode:internal.internalScanCode,internalScanConfirmed:!blocked&&barcodeReviews.some(review=>review.fingerprint===internal.fingerprint)}:{scanCodeType:'international',internalScanCode:'',internalScanConfirmed:false}),
+     ...(internal?{scanCodeType:'internal',internalScanCode:internal.internalScanCode,internalScanConfirmed:!blocked&&barcodeReviews.some(review=>review.fingerprint===(salesProjections.get(internal.fingerprint)?.fingerprint||internal.fingerprint))}:{scanCodeType:'international',internalScanCode:'',internalScanConfirmed:false}),
      ...(physical?{physicalBarcode:physical.physicalBarcode}:{}),
-     barcodeConfirmed:internal?false:blocked?false:physical?barcodeReviews.some(review=>review.fingerprint===physical.fingerprint):p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
+     barcodeConfirmed:internal?false:blocked?false:physical?barcodeReviews.some(review=>review.fingerprint===(salesProjections.get(physical.fingerprint)?.fingerprint||physical.fingerprint)):p.barcode||apiBarcode?true:provided.barcodeConfirmed===true,category:provided.category||''};
    }else if(!settingsInput.skuMappings[item.sku])settingsInput.skuMappings[item.sku]={erpSku:item.sku,erpName:item.productName,barcode:'',confirmed:false,barcodeConfirmed:false,category:''};
   }
   const settings=safeSettings(settingsInput);
@@ -308,7 +360,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(prepared.parsed.items.length>1000||prepared.parsed.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
   if(prepared.parsed.orders.some(o=>!clean(o.sourceOrderNumber)||clean(o.sourceOrderNumber).length>100))throw fail('商城訂單號最多 100 字');
   if(clean(settings.store).length>100||clean(settings.customerCode).length>30||clean(settings.warehouseCode).length>30)throw fail('店鋪、客戶或倉庫欄位過長');
-  return {source,raw,...prepared,...orderReview,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,orderReviews:orderReview.orderReviews,...(draftSourceReview?{draftSourceReview}:{})}};
+  return {source,raw,...prepared,...orderReview,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,barcodeScope,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,orderReviews:orderReview.orderReviews,...(draftSourceReview?{draftSourceReview}:{})}};
  };
 }
 module.exports={createMarketplacePreparation,deliveryForOrders,selectProfile};

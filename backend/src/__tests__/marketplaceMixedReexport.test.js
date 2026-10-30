@@ -65,6 +65,18 @@ describe('one reviewed mixed upload using real PGlite SQL, advisory locks stubbe
   const before=await h.state(),preview=await h.service.preview({scopeMode:'uploaded-file-v2',rows:table([changed('#A'),row('#C')]),settings,profileId:'1'},user);
   expect(preview).toMatchObject({canConfirm:true,summary:{totalOrderCount:2,newOrderCount:1,changedOrderCount:1,unchangedOrderCount:0,quantity:3,totalMinor:30000},newOrders:[{orderNumber:'#C',after:{quantity:2}}],affectedBatches:[{retainedOrderCount:1,uploadedOrders:[{orderNumber:'#A',changed:true}],omittedOrders:[{orderNumber:'#B',preserved:true}]}]});expect(await h.state()).toEqual(before);
  });
+ test('late barcode conflicts expose only a public prerequisite and cannot confirm or write a partial mixed file',async()=>{
+  const original=h.prepare.getMockImplementation();
+  h.prepare.mockImplementation(async(...args)=>{
+   const conversion=await original(...args);
+   if(args[1]?.overwriteOrderNumbers){conversion.barcodeConflicts=[{sourceSku:'AUDIT-NEEDS-BARCODE',fingerprint:'a'.repeat(64),privateProof:'AUDIT-DO-NOT-EXPOSE'},{sourceSku:'AUDIT-NEEDS-BARCODE'}];conversion.output={...conversion.output,ok:false,issues:[{severity:'error',message:'AUDIT barcode pending'}]};conversion.barcodeReviewCandidates=[{secret:'AUDIT-DO-NOT-EXPOSE'}];}
+   return conversion;
+  });
+  const body={scopeMode:'uploaded-file-v2',rows:table([changed('#A'),row('#C')]),settings,profileId:'1'},before=await h.state(),preview=await h.service.preview(body,user);
+  expect(preview).toMatchObject({canConfirm:false,barcodePrerequisites:{required:true,code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED',count:1,sourceSkus:['AUDIT-NEEDS-BARCODE']}});
+  expect(preview.barcodeReviewCandidates).toBeUndefined();expect(preview.sourceEvidence).toBeUndefined();expect(preview.barcodeConflicts).toBeUndefined();expect(JSON.stringify(preview)).not.toContain('AUDIT-DO-NOT-EXPOSE');expect(await h.state()).toEqual(before);
+  await expect(h.service.apply({...body,commandId:randomUUID(),confirmed:true,notImportedConfirmed:true,previewFingerprint:preview.previewFingerprint},user)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_NOT_READY'});expect(await h.state()).toEqual(before);
+ });
  test('one confirm creates a complete new scope, preserves owners/work barcodes, and leaves the omitted source byte-for-byte unchanged',async()=>{
   const before=await h.state(),response=await h.service.apply(await h.body(),user),after=await h.state(),batch=after.marketplace_intakes.find(batch=>batch.id===response.exportBatch.id);
   expect(response).toMatchObject({applied:true,newOrderCount:1,updatedOrderCount:1,exportBatch:{activeOrderCount:2,quantity:3,totalMinor:30000}});expect(response.batches).toEqual([response.exportBatch]);

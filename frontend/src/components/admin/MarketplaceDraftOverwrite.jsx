@@ -27,6 +27,12 @@ const validPreview = data => {
     && totalOrderCount > 0 && totalOrderCount === newOrderCount + changedOrderCount + unchangedOrderCount
     && data.newOrders.length === newOrderCount && uploaded.length === changedOrderCount + unchangedOrderCount;
 };
+const validBarcodePrerequisites = value => value?.required === true
+  && value.code === 'MARKETPLACE_BARCODE_REVIEW_REQUIRED'
+  && Number.isSafeInteger(value.count) && value.count > 0 && value.count <= 5000
+  && Array.isArray(value.sourceSkus) && value.sourceSkus.length === value.count
+  && value.sourceSkus.every(sku => typeof sku === 'string' && sku.trim() === sku && sku.length > 0 && sku.length <= 100 && !/[\u0000-\u001f\u007f]/.test(sku))
+  && new Set(value.sourceSkus).size === value.count;
 
 const itemName = item => item?.name || item?.productName || item?.sku || '未命名商品';
 const itemLabel = item => `${itemName(item)}${item?.sku ? `（${item.sku}）` : ''}`;
@@ -157,10 +163,11 @@ function NewOrderReview({ order, review }) {
   </li>;
 }
 
-export default function MarketplaceDraftOverwrite({ rows, settings, profileId, isCurrent, onClose, onComplete, onBusyChange }) {
+export default function MarketplaceDraftOverwrite({ rows, settings, profileId, isCurrent, onClose, onComplete, onBusyChange, onBarcodeReview }) {
   // Parent refreshes cannot replace the source or identity during confirmation.
-  const scope = useRef({ rows, settings, profileId, isCurrent, onComplete, onBusyChange });
+  const scope = useRef({ rows, settings, profileId, isCurrent, onComplete, onBusyChange, onBarcodeReview });
   const mounted = useRef(false), inFlight = useRef(false), sequence = useRef(0), command = useRef(null), receipt = useRef(null), activePreview = useRef(null);
+  const handedOff = useRef(false);
   const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false);
   const confirmationId = useId();
   const [error, setError] = useState(''), [unknown, setUnknown] = useState(false), [result, setResult] = useState(null), [fileDelivered, setFileDelivered] = useState(false);
@@ -201,7 +208,21 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
   const reasons = uniqueBlockedReasons([...list(preview?.blockedReasons), ...reviews.reasons]);
   const blocked = !comparisonComplete || !reviews.valid || preview?.canConfirm !== true || list(preview?.blockedReasons).length > 0 || reviews.reviews.some(review => !review.canConfirm || review.blockedReasons.length > 0) || reasons.length > 0;
   const canConfirm = !!preview && !blocked && !busy && !unknown && !result;
+  const barcodePrerequisites = blocked && validBarcodePrerequisites(preview?.barcodePrerequisites) && typeof scope.current.onBarcodeReview === 'function' ? preview.barcodePrerequisites : null;
   activePreview.current = preview;
+
+  const returnToBarcodeReview = async () => {
+    // Only an unsubmitted comparison can be discarded. Unknown commands keep
+    // their original UUID and receipt recovery path, even through old handlers.
+    if (!current() || inFlight.current || handedOff.current || command.current || receipt.current || unknown || result || activePreview.current !== preview || !barcodePrerequisites) return;
+    handedOff.current = true; inFlight.current = true; markBusy(true);
+    try {
+      if (await scope.current.onBarcodeReview() === false && current()) {
+        handedOff.current = false; setError('尚未取得最新商品資料，請重新核對。');
+      }
+    } catch { if (current()) { handedOff.current = false; setError('尚未取得最新商品資料，請重新核對。'); } }
+    finally { inFlight.current = false; if (mounted.current) markBusy(false); }
+  };
 
   const deliverFile = async batch => {
     if (!current()) return false;
@@ -281,10 +302,11 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
         </div></details>}
 
       </> : <p className="text-sm font-medium">尚無法完成比對</p>}
+      {barcodePrerequisites && <p role="status" className="text-base leading-6 text-slate-700">{barcodePrerequisites.count} 項商品需核對條碼。完成後會重新比對這份訂單。</p>}
       {reasons.length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-2 pl-7 pr-3 text-sm text-amber-950">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
       {blocked && reasons.length === 0 && <p role="alert" className="text-sm text-amber-950">訂單資料尚未完成核對，請重新核對。</p>}
       {!unknown && <div className="flex min-w-0 flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        {blocked ? <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="min-w-0 max-w-2xl text-sm leading-6 text-slate-600">{hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}</p><Button className="w-full shrink-0 sm:w-auto" disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>{hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}</Button></>}
+        {blocked ? barcodePrerequisites ? <Button disabled={busy || handedOff.current || Boolean(command.current) || Boolean(receipt.current)} onClick={returnToBarcodeReview}>返回商品條碼核對</Button> : <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="min-w-0 max-w-2xl text-sm leading-6 text-slate-600">{hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}</p><Button className="w-full shrink-0 sm:w-auto" disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>{hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}</Button></>}
       </div>}
     </>}
     {unknown && <Button disabled={busy} onClick={confirm}>核對同一筆操作結果</Button>}
