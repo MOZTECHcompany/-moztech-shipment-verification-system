@@ -440,16 +440,20 @@ test('missing Shopify variant barcode identifies the affected order and offers a
     assert.equal(view.all(node => node.type === 'input' && node.props.type === 'checkbox' && node.props.checked).length,0);
 });
 
-test('missing API barcode accepts a physical scan only after a fresh preview and explicit confirmation', async () => {
-    const conflicts = body => {
+const physicalBarcodeConflicts = body => {
         const physicalBarcode = body.settings.skuMappings?.['4711299274732']?.physicalBarcode || '';
         return [{...shopifyBarcodeConflict,sourceBarcode:'',erpBarcode:'',physicalBarcode,
             requiresPhysicalBarcode:true,canEnterPhysicalBarcode:true,canConfirm:!!physicalBarcode,
             barcodeProof:'physical-scan-v1',fingerprint:`physical-scan-${physicalBarcode}`,reviewReason:'SOURCE_BARCODE_MISSING',
             selectedErpSku:'4711299274732',targetOptions:[{erpSku:'4711299274732',erpName:'ERP 抗藍光保護貼',erpBarcode:'',spec:'iPhone 6.3 18 Pro'}],
             relatedOrders:shopifyBarcodeConflict.relatedOrders.map(order=>({...order,barcode:'',barcodeMissing:true}))}];
-    };
-    const view=await converter({profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:conflicts,
+};
+const physicalBarcodeCatalog = {products:{'4711299274732':{status:'matched',matches:[{erp_sku:'4711299274732',product_name:'ERP 抗藍光保護貼',barcode:'',spec:'iPhone 6.3 18 Pro'}]}}};
+const physicalScanner = view => view.all(node=>node.type==='input'&&node.props.placeholder==='掃描商品包裝條碼')[0];
+const comparison = view => view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');
+
+test('missing API barcode accepts a physical scan only after a fresh preview and explicit confirmation', async () => {
+    const view=await converter({profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:physicalBarcodeConflicts,
         resolved:{products:{'4711299274732':{status:'matched',matches:[{erp_sku:'4711299274732',product_name:'ERP 抗藍光保護貼',barcode:'',spec:'iPhone 6.3 18 Pro'}]}}}});
     await view.select(file(shopifyBarcodeRows));
     assert.match(view.text(view.render()),/實物條碼|請掃描實物條碼/);
@@ -939,11 +943,14 @@ test('returning from original-order continuation restores upload and replaces th
     }
 });
 
-test('mixed-file comparison stays available for full server review when new orders have barcode issues', async () => {
-    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));closeComparison(view);
+test('mixed-file comparison waits for barcode review and its manual action cannot bypass it', async () => {
+    const view=await converter({profiles:[shopifyProfile],reimports:[savedShopifyOrder],barcodeConflicts:[shopifyBarcodeConflict]});await view.select(file(shopifyBarcodeRows));
+    assert.equal(comparison(view),undefined,'barcode review must precede automatic comparison');
     assert.equal(view.button('下載新單銷貨檔'),undefined);assert.ok(view.button('接續原銷貨單'));
-    const button=view.button('比對並產生整份銷貨檔');assert.equal(button.props.disabled,false);
-    await button.props.onClick();view.render();assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
+    const button=view.button('比對並產生整份銷貨檔');assert.equal(button.props.disabled,true);
+    await button.props.onClick();view.render();assert.equal(comparison(view),undefined,'manual callback must enforce the same barcode gate');
+    await view.change('已核對實物與 ERP',true);await view.button('保存商品對照').props.onClick();view.render();
+    assert.ok(comparison(view),'confirmed mapping resumes complete-file comparison after a fresh preview');
     assert.equal(view.requests.filter(request=>request.url==='/api/marketplace-intakes').length,0);assert.equal(view.downloads.length,0);
 });
 
@@ -1058,4 +1065,109 @@ test('a new refund preview that finishes after a session change cannot automatic
     const upload=view.select(file(shopifyBarcodeRows));for(let i=0;i<10;i++)await Promise.resolve();
     view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'}));view.listeners.get('storage')();release();await upload;view.render();
     assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'||request.url.endsWith('/confirm')),false);
+});
+
+test('mixed and cancellation uploads keep the physical scanner editable until explicitly saved fresh barcode review', async () => {
+    for (const mode of ['mixed','cancellation']) {
+        const view=await converter({profiles:[shopifyProfile],barcodeConflicts:physicalBarcodeConflicts,resolved:physicalBarcodeCatalog,
+            reimports:mode==='mixed'?[savedShopifyOrder]:[],reviewRequired:mode==='cancellation'});
+        await view.select(file(shopifyBarcodeRows));
+        assert.equal(comparison(view),undefined,`${mode}: automatic comparison must wait`);
+        assert.equal(physicalScanner(view).props.disabled,false,`${mode}: staff can scan the packaging`);
+        assert.equal(physicalScanner(view).props.value,'','numeric SKU is not evidence of a packaging barcode');
+        assert.match(view.text(view.render()),/請先完成.*商品條碼核對/);
+        const entry=()=>view.button(mode==='mixed'?'比對並產生整份銷貨檔':'核對取消與退款');
+        assert.equal(entry().props.disabled,true);
+        await entry().props.onClick();view.render();assert.equal(comparison(view),undefined);
+        const scanner=physicalScanner(view);
+        await scanner.props.onChange({target:{value:'4711299274732'}});view.render();
+        assert.equal(entry().props.disabled,true);
+        await entry().props.onClick();await view.button('保存商品對照').props.onClick();
+        assert.equal(previewCalls(view).length,1,'dirty input cannot use a prior authoritative preview');
+        assert.equal(view.requests.filter(r=>r.url.endsWith('/barcode-confirmations')).length,0);
+        await physicalScanner(view).props.onKeyDown({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){}});view.render();
+        assert.equal(previewCalls(view).length,2);assert.equal(comparison(view),undefined);
+        assert.equal(view.button('保存商品對照').props.disabled,true,'scan alone is not an explicit confirmation');
+        await view.change('已核對實物與 ERP',true);
+        assert.equal(view.button('保存商品對照').props.disabled,false);
+        await view.button('保存商品對照').props.onClick();view.render();
+        const saved=view.requests.find(r=>r.url.endsWith('/barcode-confirmations'));
+        assert.deepEqual(JSON.parse(JSON.stringify(saved.body.confirmation)),{fingerprint:'physical-scan-4711299274732',confirmed:true});
+        assert.equal(saved.body.verificationFingerprint,'verified-current-order-v1');
+        assert.equal(saved.body.settings.skuMappings['4711299274732'].physicalBarcode,'4711299274732');
+        assert.equal(previewCalls(view).length,3,'saved confirmation is read back before comparison');
+        const assistant=comparison(view);assert.ok(assistant);
+        assert.equal(assistant.props.profileId,'1');
+        assert.equal(assistant.props.settings.skuMappings['4711299274732'].physicalBarcode,'4711299274732');
+        assert.equal(assistant.props.settings.skuMappings['4711299274732'].confirmed,true);
+        assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-1/);assert.match(JSON.stringify(assistant.props.rows),/#REVIEW-2/);
+        const mountedScanner=physicalScanner(view);
+        assert.equal(mountedScanner,undefined,'resolved conflict no longer offers an editable scanner');
+        assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);
+        assert.equal(view.downloads.length,0);assert.equal(view.writes.length,0);
+    }
+});
+
+test('target and internal-code reviews in a mixed file must both finish before the comparison mounts', async () => {
+    const conflicts=body=>{
+        const mapping=body.settings.skuMappings?.['00124']||{},internal=mapping.scanCodeType==='internal',code=mapping.internalScanCode||'';
+        return [...targetConflict(body),{...barcodeConflict,sourceSku:'00124',sourceBarcode:'',erpSku:'00124',erpBarcode:'',canEnterInternalScanCode:true,requiresInternalScanCode:internal,canEnterPhysicalBarcode:!internal,internalScanCode:code,fingerprint:`mixed-internal-${code}`,canConfirm:internal&&/^ITM-[A-Z0-9-]+$/.test(code)}];
+    };
+    const view=await converter({barcodeConflicts:conflicts,reimports:[{...savedShopifyOrder,orderNumber:'TST6091550133'}],
+        resolved:{products:{'00123':{status:'matched',matches:[{erp_sku:'00123',product_name:'ERP A',barcode:'00123'}]},'00124':{status:'matched',matches:[{erp_sku:'00124',product_name:'ERP B',barcode:''}]}}}});
+    await view.select(file());assert.equal(comparison(view),undefined);assert.equal(targetSelector(view).props.disabled,false);
+    await view.change('ECOUNT 品項','NEW00123');
+    await view.change('已核對實物與 ERP',true);
+    await view.all(node=>node.type==='Button'&&view.text(node)==='保存商品對照')[0].props.onClick();view.render();
+    assert.equal(comparison(view),undefined,'one saved fingerprint cannot bypass a different unresolved product');
+    await view.change('商品識別方式','internal');await view.change('內部掃描碼','ITM-SYNTHETIC-00124');
+    const code=previewCalls(view).at(-1).body.settings.skuMappings['00124'];
+    assert.equal(code.scanCodeType,'internal');assert.equal(code.barcode,'');assert.equal(code.barcodeConfirmed,false);
+    await view.change('已核對實物與 ERP',true);await view.button('保存商品對照').props.onClick();view.render();
+    const assistant=comparison(view);assert.ok(assistant);
+    assert.equal(assistant.props.settings.skuMappings['00123'].erpSku,'NEW00123');
+    assert.equal(assistant.props.settings.skuMappings['00124'].internalScanCode,'ITM-SYNTHETIC-00124');
+    assert.equal(assistant.props.settings.skuMappings['00124'].internalScanConfirmed,true);
+    assert.deepEqual(view.requests.filter(r=>r.url.endsWith('/barcode-confirmations')).map(r=>r.body.confirmation.fingerprint),['target-NEW00123','mixed-internal-ITM-SYNTHETIC-00124']);
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
+});
+
+test('barcode-first cancellation review preserves busy, profile and changed-session request gates', async () => {
+    const options={profiles:[shopifyProfile],barcodeConflicts:physicalBarcodeConflicts,resolved:physicalBarcodeCatalog,reviewRequired:true};
+    let release;
+    const busy=await converter({...options,previewWait:body=>body.settings.skuMappings?.['4711299274732']?.physicalBarcode ? new Promise(resolve=>{release=resolve;}) : undefined});
+    await busy.select(file(shopifyBarcodeRows));assert.equal(comparison(busy),undefined);
+    await physicalScanner(busy).props.onChange({target:{value:'4711299274732'}});busy.render();
+    const pending=physicalScanner(busy).props.onKeyDown({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){}});busy.render();
+    assert.equal(physicalScanner(busy).props.disabled,true);assert.equal(busy.button('核對取消與退款').props.disabled,true);
+    await physicalScanner(busy).props.onKeyDown({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){}});
+    await busy.button('核對取消與退款').props.onClick();await busy.button('保存商品對照').props.onClick();
+    assert.equal(previewCalls(busy).length,2);assert.equal(comparison(busy),undefined);
+    release();await pending;busy.render();assert.equal(physicalScanner(busy).props.disabled,false);
+
+    const noProfile=await converter({...options,profiles:[]});await noProfile.select(file(shopifyBarcodeRows));
+    assert.equal(comparison(noProfile),undefined);assert.equal(physicalScanner(noProfile).props.disabled,true);
+    await physicalScanner(noProfile).props.onKeyDown({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){}});
+    await noProfile.button('核對取消與退款').props.onClick();assert.equal(previewCalls(noProfile).length,1);
+
+    const changed=await converter(options);await changed.select(file(shopifyBarcodeRows));
+    const retained=physicalScanner(changed).props.onKeyDown;
+    changed.storage.set('wms_token',JSON.stringify('changed-session'));changed.listeners.get('storage')();
+    await retained({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){}});changed.render();
+    assert.equal(previewCalls(changed).length,1);assert.equal(comparison(changed),undefined);
+    for (const view of [busy,noProfile,changed]) {assert.equal(view.requests.some(r=>r.url.endsWith('/barcode-confirmations')||r.url==='/api/marketplace-intakes'),false);assert.equal(view.downloads.length,0);}
+});
+
+test('a failed authoritative refresh after barcode save cannot mount comparison from the old preview', async () => {
+    let previews=0;
+    const view=await converter({profiles:[shopifyProfile],barcodeConflicts:physicalBarcodeConflicts,resolved:physicalBarcodeCatalog,reviewRequired:true,
+        previewWait:()=>{if(++previews===3)throw Error('Synthetic fresh preview failure');}});
+    await view.select(file(shopifyBarcodeRows));assert.equal(comparison(view),undefined);
+    await physicalScanner(view).props.onChange({target:{value:'4711299274732'}});view.render();
+    await physicalScanner(view).props.onKeyDown({key:'Enter',currentTarget:{value:'4711299274732'},preventDefault(){}});view.render();
+    await view.change('已核對實物與 ERP',true);await view.button('保存商品對照').props.onClick();view.render();
+    assert.equal(view.requests.filter(r=>r.url.endsWith('/barcode-confirmations')).length,1);
+    assert.equal(previewCalls(view).length,3);assert.equal(comparison(view),undefined);
+    assert.equal(view.button('核對取消與退款').props.disabled,true);assert.equal(view.button('保存商品對照').props.disabled,true);
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.endsWith('/confirm')),false);assert.equal(view.downloads.length,0);
 });

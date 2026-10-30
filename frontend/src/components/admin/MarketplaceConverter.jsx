@@ -168,7 +168,8 @@ function ConverterPage({ user }) {
     const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
     if (!mounted.current || sequence !== request.current || !currentSession()) return false;
     applyPreview(response.data);
-    if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) setDraftOverwriteOpen(true);
+    if (response.data.barcodeConflicts?.length > 0) setDraftOverwriteOpen(false);
+    else if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) setDraftOverwriteOpen(true);
     return true;
   };
   const refreshPreview = async (nextSettings = settings, nextProfile = profileId) => {
@@ -205,7 +206,7 @@ function ConverterPage({ user }) {
       }, { timeout: 75000 });
       if (!mounted.current || sequence !== request.current || !currentSession()) return;
       if (response.data?.confirmed !== true) throw Error('商品對照未保存');
-      if (await fetchPreview(input.source.rows, settings, profileId, sequence)) showMessage('商品對照已保存');
+      if (await fetchPreview(input.source.rows, settings, profileId, sequence, true)) showMessage('商品對照已保存');
     } catch (error) {
       if (mounted.current && sequence === request.current && currentSession()) showMessage(error.response?.data?.message || '商品對照未保存，請重新核對。', 'error');
     } finally {
@@ -322,6 +323,7 @@ function ConverterPage({ user }) {
   };
   const download = async kind => {
     if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession() || originalOrderFlow || routeContext.current !== routeContextKey) return;
+    if (kind === 'ecount' && barcodeBlocked) { showMessage('請先完成商品條碼核對，再比對訂單。'); return; }
     // A file containing saved orders is confirmed and exported as one file.
     // The new-order-only save route remains for files with no saved orders.
     if (kind === 'ecount' && (reimports.length > 0 || reviewRequired)) { setDraftOverwriteOpen(true); return; }
@@ -408,8 +410,9 @@ function ConverterPage({ user }) {
             {!reimports.length && prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
             {!reimports.length && prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
           </div>
-          {reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>}
+          {reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>}
         </div>
+        {barcodeBlocked && (reimports.length > 0 || reviewRequired) && <p className="mt-3 text-sm text-amber-950">請先完成下方商品條碼核對，保存後會接續訂單比對。</p>}
         {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
           : !reviewRequired && prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
