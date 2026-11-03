@@ -1,5 +1,6 @@
 const { createHash } = require('node:crypto');
 const {createConnectionRegistry}=require('./shopifyStoreRouting');
+const {createShopifyTokenProvider}=require('./shopifyTokenProvider');
 
 const VERSION = 'shopify-current-v2';
 const STORE_QUERY='query WmsStoreIdentity($ids: [ID!]!) { shop { myshopifyDomain } nodes(ids: $ids) { ... on Order { id name } } }';
@@ -123,15 +124,16 @@ async function requestOrder(options, id, after, deadline, document) {
   });
   try {
     return await Promise.race([timeout, (async () => {
+      const accessToken=options.getToken?await options.getToken():options.token;
       let response;
       try {
         response = await options.fetchImpl(`https://${options.shop}/admin/api/${options.apiVersion}/graphql.json`, {
           method: 'POST', redirect: 'error', signal: controller.signal,
-          headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': options.token },
+          headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
           body: JSON.stringify(document ? {query:document.query||REFUND_QUERY,variables:document.variables} : { query: QUERY, variables: { id: `gid://shopify/Order/${id}`, after } }),
         });
       } catch { fail('SHOPIFY_UNAVAILABLE', 'Shopify 連線失敗，請重試；未使用舊資料', undefined, 503); }
-      if (!response.ok) fail(response.status === 401 || response.status === 403 ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_UNAVAILABLE', response.status === 401 || response.status === 403 ? 'Shopify 訂單讀取權限不足，請檢查連線授權' : 'Shopify 暫時無法核對，請稍後重試', undefined, 503);
+      if (!response.ok) {if(response.status===401)options.onAccessDenied?.(accessToken);fail(response.status === 401 || response.status === 403 ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_UNAVAILABLE', response.status === 401 || response.status === 403 ? 'Shopify 訂單讀取權限不足，請檢查連線授權' : 'Shopify 暫時無法核對，請稍後重試', undefined, 503);}
       if (Number(response.headers?.get?.('content-length')) > MAX_RESPONSE_BYTES) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 核對回應超出大小限制', undefined, 503);
       let payload;
       try {
@@ -351,15 +353,15 @@ function normalizeOrder(source, order) {
   return { records, evidence };
 }
 
-async function verifyShopifyRows(rows, { shop, token, apiVersion = '2026-07', fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
+async function verifyShopifyRows(rows, { shop, token,getToken,onAccessDenied, apiVersion = '2026-07', fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
   shop = domain(shop);
-  if (!text(token) || typeof token !== 'string' || typeof fetchImpl !== 'function' || !/^20\d{2}-(?:01|04|07|10)$/.test(apiVersion) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) fail('SHOPIFY_CONFIG_INVALID', 'Shopify 訂單即時核對尚未設定完成', undefined, 503);
+  if ((typeof getToken!=='function'&&(!text(token)||typeof token!=='string')) || typeof fetchImpl !== 'function' || !/^20\d{2}-(?:01|04|07|10)$/.test(apiVersion) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) fail('SHOPIFY_CONFIG_INVALID', 'Shopify 訂單即時核對尚未設定完成', undefined, 503);
   const source = sourceOrders(rows), deadline = Date.now() + 60000, normalized = [], evidence = [];
   for (const order of source.orders) {
-    const current = await readOrder(order, { shop, token, apiVersion, fetchImpl, timeoutMs }, deadline);
+    const current = await readOrder(order, { shop, token,getToken,onAccessDenied, apiVersion, fetchImpl, timeoutMs }, deadline);
     const result = normalizeOrder(order, current);
     if(current.edited===true&&!current.cancelledAt&&result.evidence.fulfillmentStatus==='unfulfilled'&&result.evidence.currentQuantity>0&&result.evidence.removedLineIds.length){
-      result.evidence.editEvidence=await require('./shopifyOrderEdits').readShopifyOrderEdits(current,(query,variables)=>requestOrder({shop,token,apiVersion,fetchImpl,timeoutMs},null,null,deadline,{query,variables,result:'order'}));
+      result.evidence.editEvidence=await require('./shopifyOrderEdits').readShopifyOrderEdits(current,(query,variables)=>requestOrder({shop,token,getToken,onAccessDenied,apiVersion,fetchImpl,timeoutMs},null,null,deadline,{query,variables,result:'order'}));
       const {fingerprint,...unsigned}=result.evidence;result.evidence.fingerprint=hash({evidence:unsigned,records:result.records});
     }
     normalized.push(...result.records); evidence.push(result.evidence);
@@ -371,11 +373,12 @@ async function verifyShopifyRows(rows, { shop, token, apiVersion = '2026-07', fe
   return { rows: [headers, ...normalized.map(row => headers.map(header => row[header] ?? ''))], verification };
 }
 
-function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.fetch,connections } = {}) {
-  const registry=createConnectionRegistry({env,connections}),cache=new Map();
+function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.fetch,connections,now=Date.now } = {}) {
+  const registry=createConnectionRegistry({env,connections}),cache=new Map(),tokens=createShopifyTokenProvider({getConnection:registry.connection,fetchImpl,now});
+  const credentials=context=>({getToken:()=>tokens.getToken(context),onAccessDenied:token=>tokens.invalidate(context,token)});
   const verifier=async(rows,context={})=>{
     const connection=registry.connection(context);
-    const result=await verifyShopifyRows(rows,{...connection,fetchImpl});
+    const result=await verifyShopifyRows(rows,{...connection,...credentials(context),fetchImpl});
     const verification={...result.verification,apiConnectionId:connection.id};
     verification.fingerprint=hash([result.verification.fingerprint,connection.id,connection.shop]);
     return {...result,verification};
@@ -389,7 +392,7 @@ function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.
     const previous=cache.get(key);
     if(!options.refresh&&previous&&previous.expires>Date.now())return previous.promise;
     const promise=(async()=>{
-      const nodes=await requestOrder({...connection,fetchImpl,timeoutMs:5000},null,null,Date.now()+10000,{query:STORE_QUERY,variables:{ids:source.orders.map(order=>`gid://shopify/Order/${order.id}`)},result:'nodes'});
+      const nodes=await requestOrder({...connection,...credentials(context),fetchImpl,timeoutMs:5000},null,null,Date.now()+10000,{query:STORE_QUERY,variables:{ids:source.orders.map(order=>`gid://shopify/Order/${order.id}`)},result:'nodes'});
       if(!Array.isArray(nodes)||nodes.length!==source.orders.length)fail('SHOPIFY_RESPONSE_INVALID','Shopify 店鋪核對回應無效',undefined,503);
       const matchedOrderIds=[];
       for(let i=0;i<nodes.length;i++){

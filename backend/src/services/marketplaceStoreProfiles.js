@@ -1,5 +1,10 @@
 const FIELDS=['apiConnectionId','shopifyShop','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
 const fail=message=>{throw Object.assign(new Error(message),{status:400});};
+const reject=(message,code,status=400)=>{throw Object.assign(new Error(message),{status,code});};
+// Preserve PostgreSQL's full timestamp precision for optimistic updates. A JS
+// Date would discard microseconds before the client can return the CAS value.
+const projection=`id,platform,store,settings,to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at`;
+const nextTimestamp="GREATEST(clock_timestamp(),marketplace_store_profiles.updated_at+INTERVAL '1 microsecond')";
 function profileSettings(input){
  if(!input||typeof input!=='object'||Array.isArray(input))fail('店鋪設定格式無效');
  const result={};
@@ -23,18 +28,34 @@ function profileSettings(input){
  }
  return result;
 }
-function mountStoreProfiles(router,pool){
+function mountStoreProfiles(router,pool,connectionRegistry){
  router.get('/store-profiles',async(req,res,next)=>{try{
-  const rows=(await pool.query('SELECT id,platform,store,settings,updated_at FROM marketplace_store_profiles ORDER BY platform,store')).rows;
+  const rows=(await pool.query(`SELECT ${projection} FROM marketplace_store_profiles ORDER BY platform,store`)).rows;
   res.set('Cache-Control','private, no-store').json({profiles:rows});
  }catch(e){next(e);}});
  router.post('/store-profiles',async(req,res,next)=>{try{
   const platform=req.body?.platform;if(!['Shopify','SHOPLINE','1Shop'].includes(platform))fail('商城平台無效');
   const settings=profileSettings(req.body?.settings);
-  const row=(await pool.query(`INSERT INTO marketplace_store_profiles(platform,store,settings,updated_by) VALUES($1,$2,$3,$4)
-   ON CONFLICT(platform,store) DO UPDATE SET settings=EXCLUDED.settings,updated_by=EXCLUDED.updated_by,updated_at=NOW()
-   RETURNING id,platform,store,settings,updated_at`,[platform,settings.store,JSON.stringify(settings),req.user.id])).rows[0];
-  res.json(row);
- }catch(e){if(e.status)return res.status(e.status).json({message:e.message});next(e);}});
+  const body=req.body||{},hasId=Object.hasOwn(body,'profileId'),hasExpected=Object.hasOwn(body,'expectedUpdatedAt');
+  if(Object.hasOwn(body,'createOnly')&&typeof body.createOnly!=='boolean'||body.createOnly===true&&(hasId||hasExpected)||hasId!==hasExpected)reject('店鋪保存條件無效，請重新讀取設定','STORE_PROFILE_GUARD_INVALID');
+  if(hasId&&(!/^[1-9]\d{0,9}$/.test(String(body.profileId))||Number(body.profileId)>2147483647||typeof body.expectedUpdatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(body.expectedUpdatedAt)||!Number.isFinite(Date.parse(body.expectedUpdatedAt))||new Date(body.expectedUpdatedAt).toISOString().slice(0,19)!==body.expectedUpdatedAt.slice(0,19)))reject('店鋪保存條件無效，請重新讀取設定','STORE_PROFILE_GUARD_INVALID');
+  if((body.createOnly===true||hasId)&&platform==='Shopify'){
+   const connection=connectionRegistry?.publicList().find(value=>value.id===settings.apiConnectionId&&value.shop===settings.shopifyShop&&value.connectionReady===true);
+   if(!connection)reject('請選擇已配置且店鋪一致的讀單連線','STORE_CONNECTION_INVALID');
+  }
+  let row;
+  if(body.createOnly===true){
+   row=(await pool.query(`INSERT INTO marketplace_store_profiles(platform,store,settings,updated_by) VALUES($1,$2,$3,$4) ON CONFLICT(platform,store) DO NOTHING RETURNING ${projection}`,[platform,settings.store,JSON.stringify(settings),req.user.id])).rows[0];
+   if(!row)reject('此店鋪設定已存在，請重新讀取後編輯','STORE_PROFILE_EXISTS',409);
+  }else if(hasId){
+   row=(await pool.query(`UPDATE marketplace_store_profiles SET settings=$4::jsonb,updated_by=$5,updated_at=${nextTimestamp} WHERE id=$1 AND platform=$2 AND store=$3 AND updated_at=$6::timestamptz RETURNING ${projection}`,[Number(body.profileId),platform,settings.store,JSON.stringify(settings),req.user.id,body.expectedUpdatedAt])).rows[0];
+   if(!row)reject('店鋪設定已變更，請重新讀取後再保存','STORE_PROFILE_CHANGED',409);
+  }else{
+   row=(await pool.query(`INSERT INTO marketplace_store_profiles(platform,store,settings,updated_by) VALUES($1,$2,$3,$4)
+    ON CONFLICT(platform,store) DO UPDATE SET settings=EXCLUDED.settings,updated_by=EXCLUDED.updated_by,updated_at=${nextTimestamp}
+    RETURNING ${projection}`,[platform,settings.store,JSON.stringify(settings),req.user.id])).rows[0];
+  }
+  res.set('Cache-Control','private, no-store').json(row);
+ }catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message});next(e);}});
 }
 module.exports={profileSettings,mountStoreProfiles};

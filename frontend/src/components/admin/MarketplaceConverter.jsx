@@ -72,6 +72,10 @@ const initialSettings = () => ({
   includeTestOrders: false, bundleZeroConfirmed: false, discountAllocationConfirmed: false,
   skuMappings: {}, shippingSku: { erpSku: '00001', name: '運費', confirmed: false, nonStock: false },
 });
+const storeProfileFields = ['apiConnectionId', 'shopifyShop', 'projectOwner', 'salesOwner', 'erpStaffCode', 'erpProjectCode', 'erpResponsibilityConfirmed', 'store', 'customerCode', 'customerName', 'warehouseCode', 'currency', 'taxMode', 'taxType', 'taxConfirmed', 'erpCurrencyCode', 'erpCurrencyConfirmed', 'shippingSku'];
+const persistentStoreSettings = settings => Object.fromEntries(storeProfileFields.filter(key => settings?.[key] !== undefined).map(key => [key, settings[key]]));
+const blankStoreDraft = () => ({ profileId: '', expectedUpdatedAt: '', originalSettings: {}, store: '', connectionId: '', customerCode: '', customerName: '', warehouseCode: '', currency: '', tax: '', confirmed: false });
+const stableValue = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 function Field({ label, children, ...props }) {
   return <label className="block min-w-0 text-sm font-medium text-slate-800">{label}{children || <input className={inputClass} {...props} />}</label>;
 }
@@ -98,6 +102,10 @@ function ConverterPage({ user }) {
   const [records, setRecords] = useState([]), [saved, setSaved] = useState(null);
   const [profiles, setProfiles] = useState([]), [profileId, setProfileId] = useState(''), [choosingStore, setChoosingStore] = useState(false), [storeSetupOpen, setStoreSetupOpen] = useState(false);
   const [storeSelection, setStoreSelection] = useState(null);
+  const [storeDraft, setStoreDraft] = useState(null), [storeConnections, setStoreConnections] = useState([]), [storeSetupProfiles, setStoreSetupProfiles] = useState([]), [storeSetupLoading, setStoreSetupLoading] = useState(false), [storeSetupMessage, setStoreSetupMessage] = useState('');
+  const storeDraftRef = useRef(null), storeSetupRequest = useRef(0), storeSetupInFlight = useRef(false);
+  const replaceStoreDraft = value => { storeDraftRef.current = value; setStoreDraft(value); };
+  const clearStoreDraft = () => { storeSetupRequest.current++; replaceStoreDraft(null); setStoreConnections([]); setStoreSetupProfiles([]); setStoreSetupLoading(false); setStoreSetupMessage(''); };
   const [dragging, setDragging] = useState(false), [catalog, setCatalog] = useState(null);
   const [workbook, setWorkbook] = useState(null), [selectedSheet, setSelectedSheet] = useState('');
   const [barcodeChecks, setBarcodeChecks] = useState({});
@@ -116,7 +124,7 @@ function ConverterPage({ user }) {
   const currentPreviewContext = () => mounted.current && currentSession() && sourceRevision.current === currentSourceRevision && routeRevision.current === currentRouteRevision;
   // Retained controls must never save, export or reopen a comparison for a
   // previous source or store, even before the disabled UI has rendered.
-  const currentPreview = (allowStoreSelection = false) => currentPreviewContext() && currentPreviewSequence === request.current && (allowStoreSelection || !storeSelectionInFlight.current);
+  const currentPreview = (allowStoreSelection = false) => currentPreviewContext() && currentPreviewSequence === request.current && !storeDraftRef.current && (allowStoreSelection || !storeSelectionInFlight.current);
   const clearReimportFocus = () => {
     if (params.get('shipping') !== 'refresh' && params.get('view') !== 'resume') return;
     setParams(current => { for (const key of ['batch', 'order', 'view', 'shipping']) current.delete(key); return current; }, { replace: true });
@@ -143,14 +151,15 @@ function ConverterPage({ user }) {
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
       setBarcodeChecks({});
       setStoreSelection(null); setChoosingStore(false); setStoreSetupOpen(false);
+      clearStoreDraft();
       closeDraftOverwrite();
       setAccess('denied'); showMessage('登入人員已變更，請重新登入。', 'error');
     };
     window.addEventListener('storage', check);
     return () => { mounted.current = false; request.current++; window.removeEventListener('storage', check); };
   }, []);
-  useEffect(() => { closeDraftOverwrite(); setStoreSelection(null); }, [routeContextKey]);
-  const locked = busy || access !== 'ready' || draftOverwriteOpen;
+  useEffect(() => { closeDraftOverwrite(); setStoreSelection(null); clearStoreDraft(); }, [routeContextKey]);
+  const locked = busy || access !== 'ready' || draftOverwriteOpen || !!storeDraft;
   const barcodeConflicts = prepared?.barcodeConflicts || [];
   const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
@@ -320,6 +329,7 @@ function ConverterPage({ user }) {
   };
   const resetSource = () => {
     sourceRevision.current++;
+    clearStoreDraft();
     clearReimportFocus();
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
@@ -367,6 +377,63 @@ function ConverterPage({ user }) {
     catch (error) {
       if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || error.message || '無法讀取訂單工作表。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
+  };
+  const openStoreSetup = async () => {
+    if (locked || inFlight.current || storeSetupInFlight.current || !currentPreview() || originalOrderFlow) return;
+    const sequence = ++storeSetupRequest.current;
+    request.current++;
+    closeDraftOverwrite(); setPrepared(null); setSaved(null); setCatalog(null); setProfileId(''); setSettings(initialSettings()); setBarcodeChecks({}); setPreviewDirty(!!input);
+    replaceStoreDraft(blankStoreDraft()); setStoreSetupLoading(true); setStoreSetupMessage('');
+    const current = () => currentPreviewContext() && sequence === storeSetupRequest.current;
+    try {
+      const [profileResponse, connectionResponse] = await Promise.all([apiClient.get('/api/marketplace-intakes/store-profiles'), apiClient.get('/api/marketplace-intakes/store-connections')]);
+      if (!current()) return;
+      const connections = connectionResponse.data?.connections;
+      if (!Array.isArray(profileResponse.data?.profiles) || !Array.isArray(connections) || new Set(connections.map(connection => connection.id)).size !== connections.length || connections.some(connection => connection.platform !== 'Shopify' || typeof connection.id !== 'string' || !connection.id || connection.id.length > 100 || /[\u0000-\u001f\u007f]/.test(connection.id) || typeof connection.connectionReady !== 'boolean' || !['static_token', 'client_credentials'].includes(connection.authKind) || !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(connection.shop))) throw Error('店鋪連線資料不完整，請重新載入。');
+      setProfiles(profileResponse.data.profiles); setStoreSetupProfiles(profileResponse.data.profiles); setStoreConnections(connections);
+    } catch (error) { if (current()) setStoreSetupMessage(error.response?.data?.message || error.message || '無法讀取店鋪設定，請確認權限後重新載入。'); }
+    finally { if (current()) setStoreSetupLoading(false); }
+  };
+  const currentStoreDraft = () => currentPreviewContext() && access === 'ready' && !originalOrderFlow && !!storeDraft && storeDraftRef.current === storeDraft && !storeSetupInFlight.current && !busy && !inFlight.current;
+  const editStoreDraft = (key, value) => {
+    if (!currentStoreDraft() || storeSetupLoading) return;
+    replaceStoreDraft({ ...storeDraft, [key]: value, ...(key === 'confirmed' ? {} : { confirmed: false }) }); setStoreSetupMessage('');
+  };
+  const chooseStoreDraft = id => {
+    if (!currentStoreDraft() || storeSetupLoading) return;
+    if (!id) { replaceStoreDraft(blankStoreDraft()); setStoreSetupMessage(''); return; }
+    const profile = storeSetupProfiles.find(value => value.platform === 'Shopify' && String(value.id) === id);
+    if (!profile?.settings || profile.settings.store !== profile.store || typeof profile.updated_at !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(profile.updated_at)) { setStoreSetupMessage('店鋪版本資料不完整，請關閉後重新載入。'); return; }
+    const value = profile.settings;
+    replaceStoreDraft({ profileId: id, expectedUpdatedAt: profile.updated_at, originalSettings: persistentStoreSettings(value), store: profile.store,
+      connectionId: value.apiConnectionId || '', customerCode: value.customerCode || '', customerName: value.customerName || '', warehouseCode: value.warehouseCode || '', currency: value.currency || '', tax: value.taxMode === 'erp_inclusive' && value.taxType === '11' ? 'erp_inclusive:11' : '', confirmed: false });
+    setStoreSetupMessage('');
+  };
+  const setupConnection = storeConnections.find(connection => connection.id === storeDraft?.connectionId);
+  const storeDraftValid = !!storeDraft && ['store', 'customerCode', 'customerName', 'warehouseCode'].every(key => typeof storeDraft[key] === 'string' && !!storeDraft[key].trim() && storeDraft[key].length <= (['customerCode', 'warehouseCode'].includes(key) ? 30 : 100) && !/[\u0000-\u001f\u007f]/.test(storeDraft[key])) && setupConnection?.connectionReady === true && storeDraft.currency === 'TWD' && storeDraft.tax === 'erp_inclusive:11' && storeDraft.confirmed === true;
+  const saveStoreDraft = async () => {
+    if (!currentStoreDraft() || storeSetupLoading || !storeDraftValid) return;
+    const draft = storeDraft, sequence = ++storeSetupRequest.current;
+    const next = { ...draft.originalSettings, apiConnectionId: setupConnection.id, shopifyShop: setupConnection.shop, store: draft.store.trim(), customerCode: draft.customerCode.trim(), customerName: draft.customerName.trim(), warehouseCode: draft.warehouseCode.trim(), currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true };
+    storeSetupInFlight.current = true; setStoreSetupLoading(true); setStoreSetupMessage('');
+    const current = () => currentPreviewContext() && storeDraftRef.current === draft && sequence === storeSetupRequest.current;
+    try {
+      const response = await apiClient.post('/api/marketplace-intakes/store-profiles', { platform: 'Shopify', settings: next, ...(draft.profileId ? { profileId: draft.profileId, expectedUpdatedAt: draft.expectedUpdatedAt } : { createOnly: true }) });
+      if (!current()) return;
+      const readback = await apiClient.get('/api/marketplace-intakes/store-profiles');
+      if (!current()) return;
+      const savedProfile = readback.data?.profiles?.find(profile => String(profile.id) === String(response.data?.id));
+      if (!savedProfile || savedProfile.platform !== 'Shopify' || savedProfile.store !== next.store || !savedProfile.updated_at || savedProfile.updated_at !== response.data.updated_at || stableValue(persistentStoreSettings(savedProfile.settings)) !== stableValue(next)) throw Error('設定已保存，但重新讀取的內容不一致；請重新載入後核對。');
+      setProfiles(readback.data.profiles); clearStoreDraft(); storeSetupInFlight.current = false;
+      showMessage('店鋪設定已保存並核實。讀單權限會在訂單預覽時確認。');
+      if (input?.parsed.platform === 'Shopify') {
+        const previewSequence = ++request.current; setBusy(true);
+        try { await fetchPreview(input.source.rows, { skuMappings: {} }, String(savedProfile.id), previewSequence, true); }
+        catch (error) { if (mounted.current && currentSession() && previewSequence === request.current) showMessage(error.response?.data?.message || '設定已保存，訂單仍需重新核對。', 'error'); }
+        finally { if (mounted.current && previewSequence === request.current) setBusy(false); }
+      }
+    } catch (error) { if (current()) { replaceStoreDraft({ ...draft, confirmed: false }); setStoreSetupMessage(error.response?.data?.message || error.message || '店鋪設定未保存，請重新載入後重試。'); } }
+    finally { storeSetupInFlight.current = false; if (mounted.current && sequence === storeSetupRequest.current) setStoreSetupLoading(false); }
   };
   const writeAudit = async () => {
     const XLSX = await import('xlsx');
@@ -464,11 +531,31 @@ function ConverterPage({ user }) {
       {name && <p className="mt-3 break-words text-sm text-slate-600"><strong className="text-slate-900">{input?.parsed.platform}</strong> · {name} · {selectedSheet}</p>}
       {!name && <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">匯出格式</summary><ul className="mt-2 list-disc space-y-1 pl-5"><li>Shopify：訂單 CSV</li><li>1Shop：訂單 Excel</li><li>SHOPLINE：包含貨號、商品明細與金額的訂單報表</li></ul></details>}
     </section>}
+    {!storeSelection && !storeDraft && !draftOverwriteOpen && <Button variant="secondary" disabled={locked} onClick={openStoreSetup}>店鋪設定</Button>}
+    {storeDraft && <details open className={sectionClass} aria-label="獨立店鋪設定"><summary className="text-lg font-semibold">店鋪設定</summary>
+      <p className="mt-2 text-sm text-slate-600">只保存店鋪與 ECOUNT 對照；連線設定完成後，仍須以訂單預覽確認讀單權限。</p>
+      {storeSetupMessage && <p role="status" className="mt-3 text-sm text-amber-950">{storeSetupMessage}</p>}
+      <fieldset disabled={storeSetupLoading || busy || access !== 'ready'} className="mt-4 space-y-4">
+        <Field label="設定方式"><select className={inputClass} value={storeDraft.profileId} onChange={event => chooseStoreDraft(event.target.value)}><option value="">新增店鋪</option>{storeSetupProfiles.filter(profile => profile.platform === 'Shopify').map(profile => <option key={profile.id} value={String(profile.id)}>{profile.store}</option>)}</select></Field>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="店鋪名稱" value={storeDraft.store} maxLength={100} disabled={!!storeDraft.profileId} onChange={event => editStoreDraft('store', event.target.value)} />
+          <Field label="Shopify 連線"><select className={inputClass} value={storeDraft.connectionId} onChange={event => editStoreDraft('connectionId', event.target.value)}><option value="">選擇店鋪連線</option>{storeConnections.map(connection => <option key={connection.id} value={connection.id}>{connection.shop}{connection.connectionReady ? '（已設定）' : '（待串接）'}</option>)}</select></Field>
+          <Field label="ECOUNT 客戶編碼" value={storeDraft.customerCode} maxLength={30} onChange={event => editStoreDraft('customerCode', event.target.value)} /><Field label="ECOUNT 客戶名稱" value={storeDraft.customerName} maxLength={100} onChange={event => editStoreDraft('customerName', event.target.value)} />
+          <Field label="ECOUNT 倉庫編碼" value={storeDraft.warehouseCode} maxLength={30} onChange={event => editStoreDraft('warehouseCode', event.target.value)} />
+          <Field label="幣別"><select className={inputClass} value={storeDraft.currency} onChange={event => editStoreDraft('currency', event.target.value)}><option value="">請核對幣別</option><option value="TWD">TWD 新台幣</option></select></Field>
+          <Field label="稅別"><select className={inputClass} value={storeDraft.tax} onChange={event => editStoreDraft('tax', event.target.value)}><option value="">請核對稅別</option><option value="erp_inclusive:11">含稅 5%（ECOUNT 11）</option></select></Field>
+        </div>
+        {setupConnection && !setupConnection.connectionReady && <p className="text-sm text-amber-950">此店鋪連線尚未完成，請聯絡管理員。</p>}
+        {!storeConnections.length && !storeSetupLoading && <p className="text-sm text-amber-950">尚無可用的 Shopify 店鋪連線，請聯絡管理員。</p>}
+        <Check checked={storeDraft.confirmed} onChange={value => editStoreDraft('confirmed', value)}>我已核對店鋪連線與 ECOUNT 客戶、倉庫及幣稅設定</Check>
+        <div className="flex flex-wrap gap-3"><Button disabled={storeSetupLoading || busy || !storeDraftValid} onClick={saveStoreDraft}>{storeSetupLoading ? '處理中…' : '保存店鋪設定'}</Button><Button variant="secondary" disabled={storeSetupLoading || busy} onClick={() => { if (currentStoreDraft()) clearStoreDraft(); }}>取消設定</Button></div>
+      </fieldset>
+    </details>}
     {input && storeSelection && <section className={`${sectionClass} space-y-3`} aria-label="店鋪確認">
       <div><h2 className="text-lg font-semibold">{storeSelection.choices.length ? '確認店鋪' : '店鋪尚未設定'}</h2><p className="mt-1 text-sm text-slate-600">{!storeSelection.choices.length ? '請聯絡管理員完成店鋪設定，再重新核對。' : storeSelection.reason === 'mixed_stores' ? '這份檔案含不同店鋪的訂單，請分別提供各店鋪的訂單檔。' : '尚無法確認訂單所屬店鋪，請選擇匯出訂單的店鋪。'}</p></div>
       {storeSelection.choices.length > 0 && <div className="max-w-md"><Field label="店鋪"><select className={inputClass} disabled={locked} value={storeSelection.selectedId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{storeSelection.choices.map(choice => <option key={choice.id} value={choice.id}>{choice.store}{!choice.connectionReady ? '（待串接）' : ''}</option>)}</select></Field></div>}
       {storeSelection.choices.length > 0 && (storeSelection.choices.every(choice => !choice.connectionReady) || storeSelection.choices.some(choice => choice.id === storeSelection.selectedId && !choice.connectionReady)) && <p className="text-sm text-amber-950">此店鋪連線尚未完成，請聯絡管理員</p>}
       <Button variant="secondary" disabled={locked} onClick={() => refreshPreview({ skuMappings: {} }, '', true)}>{busy ? '核對中…' : '重新核對'}</Button>
+      {!storeDraft && <Button variant="secondary" disabled={locked} onClick={openStoreSetup}>店鋪設定</Button>}
     </section>}
     {input && !prepared && !storeSelection && !busy && <div className={sectionClass}><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對訂單</Button></div>}
     {input && prepared && <>

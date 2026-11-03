@@ -16,6 +16,28 @@ const order = (overrides = {}) => ({ id: 'gid://shopify/Order/7624215101596', na
 const response = (current, responseShop = shop) => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ data: { shop: { myshopifyDomain: responseShop }, order: current } }) });
 const run = (rows = editedRows(), current = order(), options = {}) => verifyShopifyRows(rows, { shop, token, fetchImpl: jest.fn(async () => response(current)), ...options });
 
+function clientCredentialsVerifier(fetchImpl,clock=()=>1000){return createShopifyOrderVerifier({env:{WMS_SHOPIFY_OMFUTURE_CLIENT_ID:'ANONYMOUS-CLIENT-ID',WMS_SHOPIFY_OMFUTURE_CLIENT_SECRET:'ANONYMOUS-CLIENT-SECRET'},connections:[{id:'omfuture-orders',shop,authKind:'client_credentials',clientIdEnv:'WMS_SHOPIFY_OMFUTURE_CLIENT_ID',clientSecretEnv:'WMS_SHOPIFY_OMFUTURE_CLIENT_SECRET'}],fetchImpl,now:clock});}
+const oauthReply=token=>({ok:true,status:200,text:async()=>JSON.stringify({access_token:token,expires_in:100,scope:'read_orders,read_products'})});
+const ownContext={apiConnectionId:'omfuture-orders',shopifyShop:shop};
+test('production probe and full reads share renewable OAuth credentials without exposing them in evidence',async()=>{
+ let clock=1000,grants=0;const headers=[];
+ const fetchImpl=jest.fn(async(url,options)=>{
+  if(url.endsWith('/admin/oauth/access_token'))return oauthReply('ANONYMOUS-ACCESS-'+(++grants));
+  headers.push(options.headers['X-Shopify-Access-Token']);const body=JSON.parse(options.body);
+  return body.variables.ids?{ok:true,text:async()=>JSON.stringify({data:{shop:{myshopifyDomain:shop},nodes:[{id:'gid://shopify/Order/7624215101596',name:'#154230'}]}})}:response(order());
+ });
+ const verifier=clientCredentialsVerifier(fetchImpl,()=>clock);expect((await verifier.probe(editedRows(),ownContext)).complete).toBe(true);const first=await verifier(editedRows(),ownContext);expect(grants).toBe(1);expect(headers).toEqual(['ANONYMOUS-ACCESS-1','ANONYMOUS-ACCESS-1','ANONYMOUS-ACCESS-1']);expect(first.verification.apiConnectionId).toBe('omfuture-orders');expect(JSON.stringify(first)).not.toMatch(/ANONYMOUS-ACCESS|ANONYMOUS-CLIENT/);
+ clock=101001;await verifier(editedRows(),ownContext);expect(grants).toBe(2);expect(headers.at(-1)).toBe('ANONYMOUS-ACCESS-2');
+});
+test('an API 401 fails the current read without retry and reacquires only on the next explicit read',async()=>{
+ let grants=0,adminReads=0;const fetchImpl=jest.fn(async url=>url.endsWith('/admin/oauth/access_token')?oauthReply('ANONYMOUS-ACCESS-'+(++grants)):++adminReads===1?{ok:false,status:401}:response(order()));
+ const verifier=clientCredentialsVerifier(fetchImpl);await expect(verifier(editedRows(),ownContext)).rejects.toMatchObject({code:'SHOPIFY_ACCESS_DENIED'});expect(grants).toBe(1);expect(adminReads).toBe(1);await verifier(editedRows(),ownContext);expect(grants).toBe(2);expect(adminReads).toBe(3);
+});
+test('a denied client-credentials grant never falls back to legacy or sends a client secret as an API token',async()=>{
+ const fetchImpl=jest.fn(async()=>({ok:false,status:401,text:async()=>'{"error":"invalid_grant","secret":"ANONYMOUS-CLIENT-SECRET"}'}));
+ await expect(clientCredentialsVerifier(fetchImpl)(editedRows(),ownContext)).rejects.toMatchObject({code:'SHOPIFY_AUTH_DENIED',status:503});expect(fetchImpl).toHaveBeenCalledTimes(1);expect(fetchImpl.mock.calls[0][0]).toContain('/admin/oauth/access_token');
+});
+
 test.each(['4.711299270086E+12','X'.repeat(101),'SCAN\nCODE','\nSCAN',123])('a present invalid API barcode cannot become blank physical-scan evidence: %j',barcode=>{
   const current=order({lineItems:{nodes:[item({variant:{id:'gid://shopify/ProductVariant/123',barcode}})],pageInfo:{hasNextPage:false}}});
   return expect(run(editedRows(),current)).rejects.toMatchObject({code:'SHOPIFY_BARCODE_INVALID',orderNumber:'#154230'});

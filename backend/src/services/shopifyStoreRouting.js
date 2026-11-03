@@ -22,17 +22,25 @@ function createConnectionRegistry({env=process.env,connections}={}){
     if(!value||typeof value!=='object'||Array.isArray(value))throw configError();
     const id=clean(value.id),shop=clean(value.shop).toLowerCase(),apiVersion=value.apiVersion||'2026-07';
     if(!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(id)||!SHOP.test(shop)||ids.has(id)||shops.has(shop)||!/^20\d{2}-(?:01|04|07|10)$/.test(apiVersion))throw configError();
-    if(value.tokenEnv!==undefined&&(!/^WMS_SHOPIFY_(?:[A-Z0-9_]+_)?ACCESS_TOKEN$/.test(value.tokenEnv)||value.token!==undefined))throw configError();
-    const token=value.tokenEnv?env[value.tokenEnv]:value.token;
-    if(token!==undefined&&typeof token!=='string')throw configError();
-    ids.add(id);shops.add(shop);return {id,shop,apiVersion,token:token||'',ready:!!clean(token)};
+    const authKind=value.authKind===undefined?'static_token':value.authKind;let auth;
+    if(authKind==='client_credentials'){
+     if(value.token!==undefined||value.tokenEnv!==undefined||value.clientId!==undefined||value.clientSecret!==undefined||!/^WMS_SHOPIFY_(?:[A-Z0-9_]+_)?CLIENT_ID$/.test(value.clientIdEnv)||!/^WMS_SHOPIFY_(?:[A-Z0-9_]+_)?CLIENT_SECRET$/.test(value.clientSecretEnv)||value.clientIdEnv.replace(/CLIENT_ID$/,'')!==value.clientSecretEnv.replace(/CLIENT_SECRET$/,''))throw configError();
+     const clientId=env[value.clientIdEnv],clientSecret=env[value.clientSecretEnv];
+     if([clientId,clientSecret].some(v=>v!==undefined&&(typeof v!=='string'||v.length>4096||/[\u0000-\u001f\u007f]/.test(v))))throw configError();
+     auth={clientId:clientId||'',clientSecret:clientSecret||'',ready:!!clean(clientId)&&!!clean(clientSecret)};
+    }else if(authKind==='static_token'){
+     if(value.clientIdEnv!==undefined||value.clientSecretEnv!==undefined||value.clientId!==undefined||value.clientSecret!==undefined||value.tokenEnv!==undefined&&(!/^WMS_SHOPIFY_(?:[A-Z0-9_]+_)?ACCESS_TOKEN$/.test(value.tokenEnv)||value.token!==undefined))throw configError();
+     const token=value.tokenEnv?env[value.tokenEnv]:value.token;if(token!==undefined&&typeof token!=='string')throw configError();
+     auth={token:token||'',ready:!!clean(token)};
+    }else throw configError();
+    ids.add(id);shops.add(shop);return {id,shop,apiVersion,authKind,...auth};
    });
    const legacyShop=clean(env.WMS_SHOPIFY_SHOP).toLowerCase();
    if(legacyShop&&!shops.has(legacyShop)){
     if(!SHOP.test(legacyShop)||ids.has('legacy')||result.length>=8)throw configError();
     const token=env.WMS_SHOPIFY_ACCESS_TOKEN||'',apiVersion=env.WMS_SHOPIFY_API_VERSION||'2026-07';
     if(typeof token!=='string'||!/^20\d{2}-(?:01|04|07|10)$/.test(apiVersion))throw configError();
-    result.push({id:'legacy',shop:legacyShop,token,apiVersion,ready:!!clean(token),legacy:true});
+    result.push({id:'legacy',shop:legacyShop,token,apiVersion,authKind:'static_token',ready:!!clean(token),legacy:true});
    }
    return result;
   }catch{throw configError();}
@@ -43,7 +51,7 @@ function createConnectionRegistry({env=process.env,connections}={}){
   if(!selected||!selected.ready||shop&&selected.shop!==shop)throw configError();
   return selected;
  }
- return {entries,connection,list:()=>entries().map(({id,shop,ready})=>({id,shop,ready})),fingerprint:()=>hash(entries())};
+ return {entries,connection,list:()=>entries().map(({id,shop,ready})=>({id,shop,ready})),publicList:()=>entries().map(({id,shop,ready,authKind})=>({id,platform:'Shopify',shop,connectionReady:ready,authKind})),fingerprint:()=>hash(entries())};
 }
 
 function publicStoreSelection(value){

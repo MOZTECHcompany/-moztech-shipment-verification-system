@@ -37,7 +37,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [] } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -45,6 +45,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
     let cursor = 0, dirty = false, tree, mounted = true, lateUpdates = 0, latestPrepared;
     let query = new URLSearchParams(params);
     const confirmedBarcodes = new Set();
+    let persistedProfiles = profiles;
     const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
     const react = {
         createElement: (type, props, ...children) => ({ type, props: { ...props, ...(children.length ? { children } : {}) } }),
@@ -53,9 +54,15 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         useMemo(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { deps, value: callback() }; return hooks[i].value; },
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
-    const api = { get: async url => { if (url === '/api/marketplace-intakes' && recordsWait) await recordsWait(); if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles } }; }, post: async (url, body) => {
+    const api = { get: async url => { if (url === '/api/marketplace-intakes' && recordsWait) await recordsWait(); if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles:profileReadback?profileReadback(persistedProfiles):persistedProfiles, connections } }; }, post: async (url, body) => {
         requests.push({url,body});
-        if(url==='/api/marketplace-intakes/store-profiles')return {data:{id:9,platform:body.platform,store:body.settings.store,settings:body.settings}};
+        if(url==='/api/marketplace-intakes/store-profiles'){
+            if(profileSaveWait)await profileSaveWait(body);
+            if(profileSaveError)throw Object.assign(Error(profileSaveError.message),{response:{status:409,data:profileSaveError}});
+            const persistedKeys=['apiConnectionId','shopifyShop','projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','store','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'];
+            const row={id:body.profileId?Number(body.profileId):9,platform:body.platform,store:body.settings.store,settings:Object.fromEntries(persistedKeys.filter(key=>body.settings[key]!==undefined).map(key=>[key,body.settings[key]])),updated_at:'2026-11-03T10:01:00.000Z'};
+            persistedProfiles=[...persistedProfiles.filter(value=>String(value.id)!==String(row.id)&&!(value.platform===row.platform&&value.store===row.store)),row];onProfileSaved?.(row);return {data:row};
+        }
         if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}};
         if (denied) throw Error('Forbidden');
         if (url === '/api/marketplace-intakes/barcode-confirmations') {
@@ -69,7 +76,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             if (failure) throw typeof failure === 'string' ? Error(failure) : Object.assign(Error(failure.message), {response:{status:failure.status || 409,data:failure}});
             const activeConflicts = typeof barcodeConflicts === 'function' ? barcodeConflicts(body) : barcodeConflicts;
             const source = unified.parseUnifiedMarketplace(body.rows);
-            const currentProfiles = typeof previewProfiles === 'function' ? previewProfiles(body) : previewProfiles || profiles;
+            const currentProfiles = typeof previewProfiles === 'function' ? previewProfiles(body) : previewProfiles || persistedProfiles;
             const available = currentProfiles.filter(profile => profile.platform === source.parsed.platform);
             const profile = body.profileId ? available.find(profile => String(profile.id) === String(body.profileId)) : available.length === 1 ? available[0] : null;
             const effectiveSettings = { salesExportMode:intake.ECOUNT_GROUPED_MODE,date:'2026-01-01',batchSequence:'1',batchNumber:'TEST-STORE-ROUTE', ...body.settings, ...(profile?.settings || {}), taxConfirmed: true, discountAllocationConfirmed: true };
@@ -1050,6 +1057,95 @@ const storeSelectionError = (selection = {}) => ({
     storeSelection:{platform:'Shopify',reason:'ambiguous',choices:routedStoreChoices,...selection},
 });
 const storeSelectionPanel = view => view.find(view.render(),node=>node.props?.['aria-label']==='店鋪確認');
+const setupConnection={id:'omfuture-orders',platform:'Shopify',shop:'omfuture.myshopify.com',connectionReady:true,authKind:'static_token'};
+const setupPanel=view=>view.find(view.render(),node=>node.props?.['aria-label']==='獨立店鋪設定');
+const openSetup=async view=>{assert.ok(view.button('店鋪設定'));await view.button('店鋪設定').props.onClick();view.render();assert.ok(setupPanel(view));};
+const fillSetup=async view=>{
+    for(const [key,value]of [['店鋪名稱','萬摩未來工學院'],['Shopify 連線','omfuture-orders'],['ECOUNT 客戶編碼','USER-VERIFIED'],['ECOUNT 客戶名稱','已核實的客戶'],['ECOUNT 倉庫編碼','WH-VERIFIED'],['幣別','TWD'],['稅別','erp_inclusive:11']])await view.change(key,value);
+    await view.change('我已核對店鋪連線與 ECOUNT',true);
+};
+
+test('standalone store setup starts empty and saves only a confirmed profile without requiring an order file',async()=>{
+    const view=await converter({profiles:[],connections:[setupConnection]});await openSetup(view);
+    for(const label of ['店鋪名稱','ECOUNT 客戶編碼','ECOUNT 倉庫編碼','幣別','稅別']){
+        const field=view.find(setupPanel(view),node=>node.type==='label'&&view.text(node).trim().startsWith(label));
+        assert.equal(view.find(field,node=>['input','select'].includes(node.type)).props.value,'',label);
+    }
+    assert.equal(view.button('保存店鋪設定').props.disabled,true);assert.doesNotMatch(view.text(setupPanel(view)),/tokenEnv|client_secret|已通過.*API/);
+    await fillSetup(view);await view.button('保存店鋪設定').props.onClick();view.render();
+    assert.equal(view.requests.length,1);const command=view.requests[0];assert.equal(command.url,'/api/marketplace-intakes/store-profiles');
+    assert.equal(command.body.createOnly,true);assert.equal(command.body.settings.apiConnectionId,'omfuture-orders');assert.equal(command.body.settings.shopifyShop,setupConnection.shop);
+    assert.equal(command.body.settings.warehouseCode,'WH-VERIFIED');assert.equal(command.body.settings.taxConfirmed,true);assert.equal(command.body.settings.skuMappings,undefined);
+    assert.match(view.text(view.render()),/店鋪設定已保存並核實/);assert.equal(view.downloads.length,0);
+});
+
+test('store setup is available from first 409 and refreshes only the retained source preview after readback',async()=>{
+    let configured=false;
+    const view=await converter({profiles:[],connections:[setupConnection],previewError:()=>configured?null:storeSelectionError({reason:'not_configured',choices:[]}),onProfileSaved:()=>{configured=true;}});
+    await view.select(file(shopifyBarcodeRows));assert.ok(storeSelectionPanel(view));await openSetup(view);await fillSetup(view);
+    await view.button('保存店鋪設定').props.onClick();view.render();
+    assert.equal(storeSelectionPanel(view),undefined);assert.equal(previewCalls(view).length,2);
+    const retry=previewCalls(view).at(-1).body;assert.equal(retry.profileId,'9');assert.deepEqual(JSON.parse(JSON.stringify(retry.settings)),{skuMappings:{}});assert.match(JSON.stringify(retry.rows),/#REVIEW-1/);
+    assert.equal(view.requests.filter(r=>r.url==='/api/marketplace-intakes/store-profiles').length,1);
+    assert.equal(view.requests.some(r=>r.url==='/api/marketplace-intakes'||r.url.includes('download')||r.url.includes('barcode-confirmations')),false);assert.equal(view.downloads.length,0);
+});
+
+test('editing a fresh profile preserves persistent fields and uses its compare-and-swap version',async()=>{
+    const settings={...routedStoreProfile.settings,apiConnectionId:setupConnection.id,shopifyShop:setupConnection.shop,projectOwner:'owner',salesOwner:'sales',erpStaffCode:'STAFF',erpProjectCode:'PROJECT',erpResponsibilityConfirmed:true,erpCurrencyCode:'TWD-CODE',erpCurrencyConfirmed:true,shippingSku:{erpSku:'00099',name:'配送',confirmed:true,nonStock:true},skuMappings:{OLD:{confirmed:true}}};
+    const profile={...routedStoreProfile,settings,updated_at:'2026-11-03T09:00:00.123456Z'};
+    const view=await converter({profiles:[profile],connections:[setupConnection]});await openSetup(view);await view.change('設定方式','2');
+    const confirm=view.find(setupPanel(view),node=>node.type==='input'&&node.props.type==='checkbox');assert.equal(confirm.props.checked,false);
+    await view.change('ECOUNT 客戶名稱','核實後的新客戶名稱');await view.change('我已核對店鋪連線與 ECOUNT',true);
+    await view.button('保存店鋪設定').props.onClick();view.render();const body=view.requests[0].body;
+    assert.equal(body.profileId,'2');assert.equal(body.expectedUpdatedAt,profile.updated_at);assert.equal(body.createOnly,undefined);
+    for(const key of ['projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku'])assert.deepEqual(JSON.parse(JSON.stringify(body.settings[key])),settings[key],key);
+    assert.equal(body.settings.skuMappings,undefined);assert.equal(body.settings.customerName,'核實後的新客戶名稱');assert.equal(view.requests.length,1);assert.equal(view.downloads.length,0);
+});
+
+test('unready connections and changed profile versions cannot save or continue to order conversion',async()=>{
+    const unavailable=await converter({profiles:[],connections:[{...setupConnection,connectionReady:false}]});await openSetup(unavailable);await fillSetup(unavailable);
+    assert.equal(unavailable.button('保存店鋪設定').props.disabled,true);await unavailable.button('保存店鋪設定').props.onClick();unavailable.render();assert.equal(unavailable.requests.length,0);assert.match(unavailable.text(setupPanel(unavailable)),/連線尚未完成/);
+    const conflict=await converter({profiles:[],connections:[setupConnection],profileSaveError:{code:'STORE_PROFILE_EXISTS',message:'店鋪設定已存在，請重新載入。'}});await openSetup(conflict);await fillSetup(conflict);await conflict.button('保存店鋪設定').props.onClick();conflict.render();
+    assert.match(conflict.text(setupPanel(conflict)),/重新載入/);assert.equal(conflict.requests.length,1);assert.equal(conflict.downloads.length,0);
+});
+
+test('a retained setup save is invalid after edited fields, another session, or route navigation',async()=>{
+    for(const change of ['field','session','route']){
+        const view=await converter({profiles:[],connections:[setupConnection]});await openSetup(view);await fillSetup(view);const save=view.button('保存店鋪設定').props.onClick;
+        if(change==='field')await view.change('ECOUNT 倉庫編碼','DIFFERENT');
+        if(change==='session'){view.storage.set('wms_user',JSON.stringify({id:99,role:'admin'}));view.listeners.get('storage')();view.render();}
+        if(change==='route')view.navigate('batch=19&order=%23REVIEW-1&view=resume');
+        await save();view.render();assert.equal(view.requests.length,0,change);assert.equal(view.downloads.length,0,change);
+    }
+});
+
+test('a profile readback mismatch prevents fresh preview and never claims API order authorization',async()=>{
+    const view=await converter({profiles:[],connections:[setupConnection],profileReadback:rows=>rows.map(row=>({...row,settings:{...row.settings,warehouseCode:'OTHER'}}))});
+    await openSetup(view);await fillSetup(view);await view.button('保存店鋪設定').props.onClick();view.render();
+    assert.match(view.text(setupPanel(view)),/重新讀取.*不一致/);assert.equal(previewCalls(view).length,0);assert.equal(view.requests.length,1);assert.equal(view.downloads.length,0);
+});
+
+test('setup permission denial and retained in-flight saves cannot issue extra commands or update a departed page',async()=>{
+    const deniedView=await converter({denied:true,profiles:[],connections:[setupConnection]});assert.equal(deniedView.button('店鋪設定').props.disabled,true);await deniedView.button('店鋪設定').props.onClick();deniedView.render();assert.equal(setupPanel(deniedView),undefined);assert.equal(deniedView.requests.length,0);
+    for(const end of ['route','session','unmount']){
+        let release;
+        const view=await converter({profiles:[],connections:[setupConnection],profileSaveWait:()=>new Promise(done=>{release=done;})});await openSetup(view);await fillSetup(view);
+        const save=view.button('保存店鋪設定').props.onClick,pending=save();await save();assert.equal(view.requests.length,1,end);
+        if(end==='route')view.navigate('batch=19&order=%23REVIEW-1&view=resume');
+        if(end==='session'){view.storage.set('wms_user',JSON.stringify({id:99,role:'admin'}));view.listeners.get('storage')();view.render();}
+        if(end==='unmount')view.unmount();
+        release();await pending;if(end==='unmount')assert.equal(view.lateUpdates(),0);else{view.render();assert.equal(setupPanel(view),undefined);assert.doesNotMatch(view.text(view.render()),/店鋪設定已保存並核實/);}
+        assert.equal(view.requests.length,1,end);assert.equal(view.downloads.length,0,end);
+    }
+});
+
+test('a concurrent profile update is never overwritten by a retry or by falling back to legacy upsert',async()=>{
+    const profile={...routedStoreProfile,updated_at:'2026-11-03T09:00:00.123456Z',settings:{...routedStoreProfile.settings,apiConnectionId:setupConnection.id,shopifyShop:setupConnection.shop}};
+    const view=await converter({profiles:[profile],connections:[setupConnection],profileSaveError:{code:'STORE_PROFILE_CHANGED',message:'店鋪設定已變更，請重新載入後再保存。'}});
+    await openSetup(view);await view.change('設定方式','2');await view.change('我已核對店鋪連線與 ECOUNT',true);await view.button('保存店鋪設定').props.onClick();view.render();
+    assert.equal(view.requests.length,1);assert.equal(view.requests[0].body.profileId,'2');assert.equal(view.requests[0].body.expectedUpdatedAt,profile.updated_at);assert.match(view.text(setupPanel(view)),/已變更.*重新載入/);
+    assert.equal(view.button('保存店鋪設定').props.disabled,true);assert.equal(view.downloads.length,0);assert.equal(previewCalls(view).length,0);
+});
 
 test('server store selection appears before a preview and uses only the selected persisted profile', async () => {
     const view=await converter({profiles:[shopifyProfile],previewProfiles:[shopifyProfile,routedStoreProfile],previewError:body=>body.profileId==='2'?null:storeSelectionError()});

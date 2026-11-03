@@ -7,7 +7,7 @@ const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex
 const clean=value=>String(value??'').trim();
 const {safeSettings}=require('../services/marketplaceSettings');
 const {createMarketplacePreparation}=require('../services/marketplacePreparation');
-const {publicStoreSelection}=require('../services/shopifyStoreRouting');
+const {publicStoreSelection,createConnectionRegistry}=require('../services/shopifyStoreRouting');
 const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
@@ -15,10 +15,11 @@ const {confirmBarcodeReview,verifySavedBarcodeReviews,reviewMatchesCandidate}=re
 const {assertUploadScope}=require('../services/marketplaceUploadScopes');
 const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
-function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool}),draftOverwriteService=require('../services/marketplaceDraftOverwrite').createMarketplaceDraftOverwriteService({pool,prepareMarketplace})}){
+function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool}),draftOverwriteService=require('../services/marketplaceDraftOverwrite').createMarketplaceDraftOverwriteService({pool,prepareMarketplace}),connectionRegistry=createConnectionRegistry()}){
  const router=express.Router();
  router.use(authorizeRoles('admin','dispatcher'));
- require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool);
+ router.get('/store-connections',(_req,res,next)=>{try{res.set('Cache-Control','private, no-store').json({connections:connectionRegistry.publicList()});}catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message});next(e);}});
+ require('../services/marketplaceStoreProfiles').mountStoreProfiles(router,pool,connectionRegistry);
  for(const [path,method] of [['preview','preview'],['confirm','apply']]){
   router.post(`/draft-overwrite/${path}`,async(req,res,next)=>{try{
    const result=await draftOverwriteService[method](req.body||{},req.user);
