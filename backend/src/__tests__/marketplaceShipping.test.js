@@ -72,6 +72,15 @@ test('shipping preview reads the current API contact with no writes, preserving 
  expect(preview.previewFingerprint).toMatch(/^[a-f0-9]{64}$/);expect(preview.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/);
  expect(h.verify.mock.calls[0][0].slice(1).every(row=>row[0]===number)).toBe(true);expect(h.pool.connect).not.toHaveBeenCalled();expect(h.state).toEqual(before);
 });
+test('shipping verification selects only the persisted original profile connection',async()=>{
+ const h=await harness();h.state.profile.settings.apiConnectionId='second';
+ await h.service.preview(19,{orderNumber:number},actor);
+ expect(h.verify.mock.calls[0][1]).toMatchObject({profileId:'2',apiConnectionId:'second',shopifyShop:shop});expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test('changing persisted shipping shop binding cannot move a saved order to another store',async()=>{
+ const h=await harness();h.state.profile.settings.shopifyShop='second.myshopify.com';
+ await expect(h.service.preview(19,{orderNumber:number},actor)).rejects.toMatchObject({status:409});expect(h.verify).not.toHaveBeenCalled();expect(h.pool.connect).not.toHaveBeenCalled();
+});
 test.each(['scope-run','borrowed-canonical'])('%s refuses shipping preview and direct apply before API or writes',async(mode)=>{
  const h=await harness();
  if(mode==='scope-run')h.state.batch.snapshot.uploadScope={version:'uploaded-file-v2'};else h.state.scopeReferenced=true;

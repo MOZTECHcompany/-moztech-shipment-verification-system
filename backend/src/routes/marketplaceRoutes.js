@@ -7,6 +7,7 @@ const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex
 const clean=value=>String(value??'').trim();
 const {safeSettings}=require('../services/marketplaceSettings');
 const {createMarketplacePreparation}=require('../services/marketplacePreparation');
+const {publicStoreSelection}=require('../services/shopifyStoreRouting');
 const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
@@ -28,7 +29,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   const result=await prepareMarketplace(req.body||{});
   const {sourceEvidence,sourceClassification,barcodeReviewCandidates,...preview}=result;
   res.set('Cache-Control','private, no-store').json(preview);
- }catch(e){if(e.status)return res.status(e.status).json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber});next(e);}});
+ }catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber,...(e.code==='MARKETPLACE_STORE_SELECTION_REQUIRED'?{storeSelection:publicStoreSelection(e.storeSelection)}:{})});next(e);}});
  router.post('/barcode-confirmations',async(req,res,next)=>{try{
   const requested=req.body?.confirmation;
   if(requested?.confirmed!==true||typeof requested.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(requested.fingerprint))throw Object.assign(new Error('請先核對實物與 ECOUNT 品項'),{status:400,code:'BARCODE_CONFIRMATION_REQUIRED'});

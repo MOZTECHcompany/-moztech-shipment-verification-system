@@ -37,7 +37,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [] } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [] } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -65,12 +65,14 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         }
         if (url === '/api/marketplace-intakes/preview') {
             if (previewWait) await previewWait(body);
-            if (previewError) throw typeof previewError === 'string' ? Error(previewError) : Object.assign(Error(previewError.message), {response:{data:previewError}});
+            const failure = typeof previewError === 'function' ? previewError(body) : previewError;
+            if (failure) throw typeof failure === 'string' ? Error(failure) : Object.assign(Error(failure.message), {response:{status:failure.status || 409,data:failure}});
             const activeConflicts = typeof barcodeConflicts === 'function' ? barcodeConflicts(body) : barcodeConflicts;
             const source = unified.parseUnifiedMarketplace(body.rows);
-            const available = profiles.filter(profile => profile.platform === source.parsed.platform);
+            const currentProfiles = typeof previewProfiles === 'function' ? previewProfiles(body) : previewProfiles || profiles;
+            const available = currentProfiles.filter(profile => profile.platform === source.parsed.platform);
             const profile = body.profileId ? available.find(profile => String(profile.id) === String(body.profileId)) : available.length === 1 ? available[0] : null;
-            const effectiveSettings = { ...body.settings, ...(profile?.settings || {}), taxConfirmed: true, discountAllocationConfirmed: true };
+            const effectiveSettings = { salesExportMode:intake.ECOUNT_GROUPED_MODE,date:'2026-01-01',batchSequence:'1',batchNumber:'TEST-STORE-ROUTE', ...body.settings, ...(profile?.settings || {}), taxConfirmed: true, discountAllocationConfirmed: true };
             const raw = authoritative ? authoritative(source.parsed) : source.parsed;
             const activeReimports = typeof reimports === 'function' ? reimports(raw, body) : reimports;
             const savedNumbers = new Set(activeReimports.map(order => order.orderNumber));
@@ -94,7 +96,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             latestPrepared = prepared;
             prepared.audit = unified.prepareUnifiedMarketplace(raw,effectiveSettings).audit;
             prepared.choices.push(...activeReimports.map(order => ({number:order.orderNumber,eligible:false,reason:order.message || '已保存'})));
-            return {data:{...prepared,reviewRequired,orderReviews,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            return {data:{...prepared,reviewRequired,orderReviews,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles:currentProfiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         if (saveResponse) return {data:typeof saveResponse === 'function' ? saveResponse(body) : saveResponse};
@@ -1036,6 +1038,164 @@ test('a changed session cannot use a retained cancellation/refund review entry',
     view.storage.set('wms_user',JSON.stringify({id:8,role:'admin'})); view.listeners.get('storage')(); await handler();view.render();
     assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);
     assert.equal(view.downloads.length,0);assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);
+});
+
+const routedStoreProfile = { ...shopifyProfile, id:2, store:'店鋪 B', settings:{...shopifyProfile.settings,store:'店鋪 B',customerCode:'00082',customerName:'Server latest customer',warehouseCode:'008'} };
+const routedStoreChoices = [
+    {id:'1',platform:'Shopify',store:'店鋪 A',shop:'first.example.myshopify.com',connectionReady:true},
+    {id:'2',platform:'Shopify',store:'店鋪 B',shop:'second.example.myshopify.com',connectionReady:true},
+];
+const storeSelectionError = (selection = {}) => ({
+    code:'MARKETPLACE_STORE_SELECTION_REQUIRED',message:'請確認這份訂單所屬店鋪',
+    storeSelection:{platform:'Shopify',reason:'ambiguous',choices:routedStoreChoices,...selection},
+});
+const storeSelectionPanel = view => view.find(view.render(),node=>node.props?.['aria-label']==='店鋪確認');
+
+test('server store selection appears before a preview and uses only the selected persisted profile', async () => {
+    const view=await converter({profiles:[shopifyProfile],previewProfiles:[shopifyProfile,routedStoreProfile],previewError:body=>body.profileId==='2'?null:storeSelectionError()});
+    await view.select(file(shopifyBarcodeRows));
+    assert.ok(storeSelectionPanel(view));assert.match(view.text(storeSelectionPanel(view)),/確認店鋪/);
+    assert.match(view.text(storeSelectionPanel(view)),/店鋪 A/);assert.match(view.text(storeSelectionPanel(view)),/店鋪 B/);
+    assert.doesNotMatch(view.text(view.render()),/first\.example|second\.example|00082|Server latest customer/);
+    assert.equal(downloadSales(view),undefined);assert.equal(view.find(view.render(),node=>node.props?.role==='alert'),undefined);
+    await view.change('店鋪','2');
+    assert.equal(storeSelectionPanel(view),undefined);
+    const body=previewCalls(view).at(-1).body;
+    assert.equal(body.profileId,'2');assert.deepEqual(JSON.parse(JSON.stringify(body.settings)),{skuMappings:{}});
+    assert.match(JSON.stringify(body.rows),/#REVIEW-1/);
+    assert.match(view.text(view.render()),/店鋪 B\s+00082\s+Server latest customer/);
+    assert.equal(downloadSales(view).props.disabled,false,view.text(view.render()));
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes/store-profiles'||request.url==='/api/marketplace-intakes'),false);
+    assert.equal(view.downloads.length,0);
+});
+
+test('server store choice preserves a visible connection prerequisite without making another request', async () => {
+    const choices=routedStoreChoices.map(choice=>({...choice,connectionReady:false}));
+    const view=await converter({profiles:[shopifyProfile],previewError:storeSelectionError({reason:'connection_unavailable',choices})});
+    await view.select(file(shopifyBarcodeRows));
+    assert.ok(storeSelectionPanel(view));assert.match(view.text(storeSelectionPanel(view)),/此店鋪連線尚未完成，請聯絡管理員/);
+    await view.change('店鋪','2');
+    assert.equal(previewCalls(view).length,1);assert.match(view.text(storeSelectionPanel(view)),/待串接/);
+    assert.equal(view.button('選擇訂單檔'),undefined);assert.equal(view.button('更換訂單檔').props.disabled,false);
+    assert.equal(downloadSales(view),undefined);assert.equal(view.downloads.length,0);
+});
+
+test('unconfigured store selection has an actionable empty state and can retry a fresh server profile', async () => {
+    let configured=false;
+    const view=await converter({profiles:[],previewProfiles:()=>configured?[routedStoreProfile]:[],previewError:()=>configured?null:storeSelectionError({reason:'not_configured',choices:[]})});
+    await view.select(file(shopifyBarcodeRows));
+    assert.match(view.text(storeSelectionPanel(view)),/店鋪尚未設定/);assert.match(view.text(storeSelectionPanel(view)),/請聯絡管理員/);
+    assert.equal(downloadSales(view),undefined);assert.equal(view.all(node=>node.type==='select').length,0);
+    configured=true;await view.button('重新核對').props.onClick();view.render();
+    assert.equal(storeSelectionPanel(view),undefined);assert.match(view.text(view.render()),/Server latest customer/);
+    assert.equal(downloadSales(view).props.disabled,false,view.text(view.render()));assert.equal(view.downloads.length,0);
+});
+
+test('server store choices reject malformed or cross-platform data without replacing it with client profiles', async () => {
+    for(const storeSelection of [
+        {platform:'SHOPLINE',reason:'ambiguous',choices:routedStoreChoices},
+        {platform:'Shopify',reason:'unknown',choices:routedStoreChoices},
+        {platform:'Shopify',reason:'ambiguous',choices:[{...routedStoreChoices[0],connectionReady:'true'}]},
+        {platform:'Shopify',reason:'ambiguous',choices:[{...routedStoreChoices[0],platform:'1Shop'}]},
+    ]){
+        const view=await converter({profiles:[shopifyProfile],previewError:{code:'MARKETPLACE_STORE_SELECTION_REQUIRED',message:'來源店鋪資料需要重新核對',storeSelection}});
+        await view.select(file(shopifyBarcodeRows));assert.equal(storeSelectionPanel(view),undefined);
+        assert.match(view.text(view.render()),/來源店鋪資料需要重新核對/);assert.equal(downloadSales(view),undefined);
+    }
+});
+
+test('late store selection errors cannot discard a newer source preview', async () => {
+    let release,waiting;
+    const view=await converter({profiles:[shopifyProfile],previewWait:body=>body.rows.some(row=>row[0]==='#REVIEW-1')?new Promise(done=>{release=done;waiting=true;}):undefined,previewError:body=>body.rows.some(row=>row[0]==='#REVIEW-1')?storeSelectionError():null});
+    const retained=view.find(view.render(),node=>node.type==='input'&&node.props.type==='file').props.onChange;
+    const pending=retained({target:{files:[file(shopifyBarcodeRows)],value:'old'}});
+    for(let i=0;i<50&&!waiting;i++)await Promise.resolve();assert.ok(waiting);
+    await retained({target:{files:[file(secondRows)],value:'new'}});view.render();
+    release();await pending;view.render();
+    assert.equal(storeSelectionPanel(view),undefined);assert.match(view.text(view.render()),/SECOND-ORDER/);
+    assert.doesNotMatch(view.text(view.render()),/店鋪 A|店鋪 B/);assert.equal(view.downloads.length,0);
+});
+
+test('account and route changes clear server store choices and ignore their retained callbacks', async () => {
+    const view=await converter({profiles:[shopifyProfile],previewError:storeSelectionError()});await view.select(file(shopifyBarcodeRows));
+    const choice=view.find(storeSelectionPanel(view),node=>node.type==='select').props.onChange;
+    view.storage.set('wms_user',JSON.stringify({id:99,role:'admin'}));view.listeners.get('storage')();view.render();
+    const count=previewCalls(view).length;await choice({target:{value:'2'}});view.render();
+    assert.equal(storeSelectionPanel(view),undefined);assert.equal(previewCalls(view).length,count);assert.match(view.text(view.render()),/登入人員已變更/);
+    const routed=await converter({profiles:[shopifyProfile],previewError:storeSelectionError()});await routed.select(file(shopifyBarcodeRows));
+    routed.navigate('batch=19&order=%23REVIEW-1&view=resume');assert.equal(storeSelectionPanel(routed),undefined);assert.equal(routed.downloads.length,0);
+});
+
+test('a pending store selection response cannot restore choices after navigating away or unmounting', async () => {
+    for(const end of ['route','unmount']){
+        let release,waiting;
+        const view=await converter({profiles:[shopifyProfile],previewWait:()=>new Promise(done=>{release=done;waiting=true;}),previewError:storeSelectionError()});
+        const pending=view.select(file(shopifyBarcodeRows));
+        for(let i=0;i<50&&!waiting;i++)await Promise.resolve();assert.ok(waiting);
+        if(end==='route')view.navigate('batch=19&order=%23REVIEW-1&view=resume');else view.unmount();
+        release();await pending;
+        if(end==='route')assert.equal(storeSelectionPanel(view),undefined);else assert.equal(view.lateUpdates(),0);
+        assert.equal(view.downloads.length,0);
+    }
+});
+
+test('changing the source invalidates a retained store choice without discarding the new file', async () => {
+    const view=await converter({profiles:[shopifyProfile],previewError:body=>body.rows.some(row=>row[0]==='#REVIEW-1')?storeSelectionError():null});
+    await view.select(file(shopifyBarcodeRows));const choice=view.find(storeSelectionPanel(view),node=>node.type==='select').props.onChange;
+    await view.select(file(secondRows));const count=previewCalls(view).length;await choice({target:{value:'2'}});view.render();
+    assert.equal(previewCalls(view).length,count);assert.equal(storeSelectionPanel(view),undefined);assert.match(view.text(view.render()),/SECOND-ORDER/);
+});
+
+test('choosing another persisted store clears old product confirmations before re-verification', async () => {
+    const first={...shopifyProfile,store:'店鋪 A',settings:{...shopifyProfile.settings,store:'店鋪 A'}};
+    const view=await converter({profiles:[first,routedStoreProfile],barcodeConflicts:body=>body.profileId==='1'?[shopifyBarcodeConflict]:[]});
+    await view.select(file(shopifyBarcodeRows));await view.change('店鋪','1');
+    await view.change('已核對實物與 ERP',true);assert.equal(view.button('保存商品對照').props.disabled,false);
+    const oldConfirmation=view.button('保存商品對照').props.onClick;
+    const button=view.find(view.render(),node=>node.type==='button'&&view.text(node)==='更換店鋪');await button.props.onClick();view.render();
+    await view.change('店鋪','2');
+    const body=previewCalls(view).at(-1).body;assert.equal(body.profileId,'2');assert.deepEqual(JSON.parse(JSON.stringify(body.settings)),{skuMappings:{}});
+    assert.equal(view.button('保存商品對照'),undefined);assert.match(view.text(view.render()),/店鋪 B/);
+    await oldConfirmation();view.render();
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes/barcode-confirmations'||request.url==='/api/marketplace-intakes'),false);assert.equal(view.downloads.length,0);
+});
+
+test('retained sales and audit callbacks cannot submit or download the previous store while switching or afterwards', async () => {
+    let release,waiting;
+    const first={...shopifyProfile,store:'店鋪 A',settings:{...shopifyProfile.settings,store:'店鋪 A'}};
+    const view=await converter({profiles:[first,routedStoreProfile],previewWait:body=>body.profileId==='2'?new Promise(done=>{release=done;waiting=true;}):undefined});
+    await view.select(file(shopifyBarcodeRows));await view.change('店鋪','1');
+    const oldSales=downloadSales(view).props.onClick,oldAudit=view.button('下載金額核對表').props.onClick;
+    await view.find(view.render(),node=>node.type==='button'&&view.text(node)==='更換店鋪').props.onClick();view.render();
+    const choice=view.find(view.render(),node=>node.type==='select').props.onChange,pending=choice({target:{value:'2'}});
+    for(let i=0;i<50&&!waiting;i++)await Promise.resolve();assert.ok(waiting);
+    for(const phase of ['pending','complete']){
+        if(phase==='complete'){release();await pending;view.render();}
+        const count=view.requests.length;await oldSales();await oldAudit();view.render();
+        assert.equal(view.requests.length,count,phase);assert.equal(view.downloads.length,0,phase);
+    }
+    assert.match(view.text(view.render()),/店鋪 B/);
+});
+
+test('retained comparison entry and child cannot authorize the previous store after a switch', async () => {
+    const view=await converter({profiles:[shopifyProfile,routedStoreProfile],reimports:[savedShopifyOrder]});
+    await view.select(file(shopifyBarcodeRows));closeComparison(view);await view.change('店鋪','1');const child=closeComparison(view);
+    const oldEntry=view.button('比對並產生整份銷貨檔').props.onClick;
+    await view.find(view.render(),node=>node.type==='button'&&view.text(node)==='更換店鋪').props.onClick();view.render();await view.change('店鋪','2');
+    const current=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');assert.ok(current);assert.equal(current.props.profileId,'2');
+    assert.equal(child.props.isCurrent(),false);current.props.onClose();view.render();await oldEntry();view.render();
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);assert.equal(view.downloads.length,0);
+});
+
+test('server store selection after a frozen comparison removes the old assistant until fresh verification', async () => {
+    let ask=false;
+    const view=await converter({profiles:[shopifyProfile,routedStoreProfile],reimports:[savedShopifyOrder],previewError:body=>ask&&body.profileId!=='2'?storeSelectionError():null});
+    await view.select(file(shopifyBarcodeRows));const frozen=view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');assert.ok(frozen);
+    ask=true;await frozen.props.onBarcodeReview();view.render();
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);assert.ok(storeSelectionPanel(view));
+    await view.change('店鋪','2');assert.equal(storeSelectionPanel(view),undefined);assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes'),false);assert.equal(view.downloads.length,0);
 });
 
 

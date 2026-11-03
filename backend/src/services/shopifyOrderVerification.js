@@ -1,6 +1,8 @@
 const { createHash } = require('node:crypto');
+const {createConnectionRegistry}=require('./shopifyStoreRouting');
 
 const VERSION = 'shopify-current-v2';
+const STORE_QUERY='query WmsStoreIdentity($ids: [ID!]!) { shop { myshopifyDomain } nodes(ids: $ids) { ... on Order { id name } } }';
 const MAX_SOURCE_ROWS = 1000;
 const MAX_ORDERS = 250;
 const MAX_ORDER_LINES = 1000;
@@ -369,8 +371,40 @@ async function verifyShopifyRows(rows, { shop, token, apiVersion = '2026-07', fe
   return { rows: [headers, ...normalized.map(row => headers.map(header => row[header] ?? ''))], verification };
 }
 
-function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
-  return rows => verifyShopifyRows(rows, { shop: env.WMS_SHOPIFY_SHOP, token: env.WMS_SHOPIFY_ACCESS_TOKEN, apiVersion: env.WMS_SHOPIFY_API_VERSION || '2026-07', fetchImpl });
+function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.fetch,connections } = {}) {
+  const registry=createConnectionRegistry({env,connections}),cache=new Map();
+  const verifier=async(rows,context={})=>{
+    const connection=registry.connection(context);
+    const result=await verifyShopifyRows(rows,{...connection,fetchImpl});
+    const verification={...result.verification,apiConnectionId:connection.id};
+    verification.fingerprint=hash([result.verification.fingerprint,connection.id,connection.shop]);
+    return {...result,verification};
+  };
+  verifier.listConnections=registry.list;
+  verifier.registryFingerprint=registry.fingerprint;
+  verifier.legacyConnectionId=()=>registry.entries().find(connection=>connection.legacy)?.id||'';
+  verifier.probe=async(rows,context={},options={})=>{
+    const connection=registry.connection(context),source=sourceOrders(rows);
+    const key=hash([registry.fingerprint(),connection.id,connection.shop,source.orders.map(({id,name})=>[id,name])]);
+    const previous=cache.get(key);
+    if(!options.refresh&&previous&&previous.expires>Date.now())return previous.promise;
+    const promise=(async()=>{
+      const nodes=await requestOrder({...connection,fetchImpl,timeoutMs:5000},null,null,Date.now()+10000,{query:STORE_QUERY,variables:{ids:source.orders.map(order=>`gid://shopify/Order/${order.id}`)},result:'nodes'});
+      if(!Array.isArray(nodes)||nodes.length!==source.orders.length)fail('SHOPIFY_RESPONSE_INVALID','Shopify 店鋪核對回應無效',undefined,503);
+      const matchedOrderIds=[];
+      for(let i=0;i<nodes.length;i++){
+        const node=nodes[i],order=source.orders[i];
+        if(node===null)continue;
+        if(!node||node.id!==`gid://shopify/Order/${order.id}`||typeof node.name!=='string')fail('SHOPIFY_RESPONSE_INVALID','Shopify 店鋪核對回應無效',undefined,503);
+        if(node.name===order.name)matchedOrderIds.push(order.id);
+      }
+      return {shop:connection.shop,complete:matchedOrderIds.length===source.orders.length,matchedOrderIds,orderCount:source.orders.length};
+    })();
+    cache.set(key,{expires:Date.now()+15000,promise});
+    if(cache.size>16)cache.delete(cache.keys().next().value);
+    try{return await promise;}catch(error){cache.delete(key);throw error;}
+  };
+  return verifier;
 }
 
 module.exports = { verifyShopifyRows, createShopifyOrderVerifier };

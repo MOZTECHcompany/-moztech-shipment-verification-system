@@ -27,6 +27,20 @@ const orderMessage = (error, message) => {
   const orderNumber = String(error.response?.data?.orderNumber || '').trim();
   return orderNumber && !message.includes(orderNumber) ? `${orderNumber}：${message}` : message;
 };
+const storeSelectionFrom = error => {
+  const data = error.response?.data, selection = data?.storeSelection;
+  if (error.response?.status !== 409 || data?.code !== 'MARKETPLACE_STORE_SELECTION_REQUIRED' || selection?.platform !== 'Shopify' ||
+    !['ambiguous', 'not_found', 'connection_unavailable', 'mixed_stores', 'not_configured'].includes(selection.reason) ||
+    !Array.isArray(selection.choices) || selection.choices.length > 100) return null;
+  const seen = new Set(), choices = [];
+  for (const choice of selection.choices) {
+    if (choice?.platform !== 'Shopify' || typeof choice.id !== 'string' || !choice.id.trim() || choice.id.length > 128 ||
+      typeof choice.store !== 'string' || !choice.store.trim() || choice.store.length > 200 ||
+      /[\u0000-\u001f\u007f]/.test(choice.id + choice.store) || typeof choice.connectionReady !== 'boolean' || seen.has(choice.id)) return null;
+    seen.add(choice.id); choices.push({ id: choice.id, store: choice.store, connectionReady: choice.connectionReady });
+  }
+  return { reason: selection.reason, choices, selectedId: '' };
+};
 const originalOrderLink = data => {
   if (data?.code !== 'MARKETPLACE_SOURCE_EXISTS' || typeof data.orderNumber !== 'string') return null;
   const number = data.orderNumber.trim();
@@ -72,7 +86,10 @@ function ConverterPage({ user }) {
   const [params, setParams] = useSearchParams();
   const originalOrderFlow = !!params.get('batch') && !!params.get('order') && (params.get('view') === 'resume' || params.get('shipping') === 'refresh');
   const routeContextKey = JSON.stringify([params.get('batch'), params.get('order'), params.get('view'), params.get('shipping')]);
-  const routeContext = useRef(routeContextKey); routeContext.current = routeContextKey;
+  const routeContext = useRef(routeContextKey), routeRevision = useRef(0);
+  if (routeContext.current !== routeContextKey) routeRevision.current++;
+  routeContext.current = routeContextKey;
+  const currentRouteRevision = routeRevision.current;
   const [input, setInput] = useState(null), [settings, setSettings] = useState(initialSettings), [name, setName] = useState('');
   const [prepared, setPrepared] = useState(null), [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false), [access, setAccess] = useState('loading');
@@ -80,6 +97,7 @@ function ConverterPage({ user }) {
   const [existingOrderLink, setExistingOrderLink] = useState(null);
   const [records, setRecords] = useState([]), [saved, setSaved] = useState(null);
   const [profiles, setProfiles] = useState([]), [profileId, setProfileId] = useState(''), [choosingStore, setChoosingStore] = useState(false), [storeSetupOpen, setStoreSetupOpen] = useState(false);
+  const [storeSelection, setStoreSelection] = useState(null);
   const [dragging, setDragging] = useState(false), [catalog, setCatalog] = useState(null);
   const [workbook, setWorkbook] = useState(null), [selectedSheet, setSelectedSheet] = useState('');
   const [barcodeChecks, setBarcodeChecks] = useState({});
@@ -89,9 +107,16 @@ function ConverterPage({ user }) {
   const closeDraftOverwrite = () => { draftInstance.current++; setDraftOverwriteOpen(false); };
   const currentDraftInstance = draftInstance.current;
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
+  const currentPreviewSequence = request.current;
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
+  const storeSelectionInFlight = useRef(false), sourceRevision = useRef(0);
+  const currentSourceRevision = sourceRevision.current;
   const showMessage = (value, kind = 'status') => { setMessage(value); setMessageKind(kind); setExistingOrderLink(null); };
   const currentSession = () => batchSessionMatches(sessionStorage, actor.current, token.current);
+  const currentPreviewContext = () => mounted.current && currentSession() && sourceRevision.current === currentSourceRevision && routeRevision.current === currentRouteRevision;
+  // Retained controls must never save, export or reopen a comparison for a
+  // previous source or store, even before the disabled UI has rendered.
+  const currentPreview = (allowStoreSelection = false) => currentPreviewContext() && currentPreviewSequence === request.current && (allowStoreSelection || !storeSelectionInFlight.current);
   const clearReimportFocus = () => {
     if (params.get('shipping') !== 'refresh' && params.get('view') !== 'resume') return;
     setParams(current => { for (const key of ['batch', 'order', 'view', 'shipping']) current.delete(key); return current; }, { replace: true });
@@ -113,16 +138,18 @@ function ConverterPage({ user }) {
     const check = () => {
       if (currentSession()) return;
       request.current++;
+      sourceRevision.current++;
       setInput(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
       setBarcodeChecks({});
+      setStoreSelection(null); setChoosingStore(false); setStoreSetupOpen(false);
       closeDraftOverwrite();
       setAccess('denied'); showMessage('登入人員已變更，請重新登入。', 'error');
     };
     window.addEventListener('storage', check);
     return () => { mounted.current = false; request.current++; window.removeEventListener('storage', check); };
   }, []);
-  useEffect(() => { closeDraftOverwrite(); }, [routeContextKey]);
+  useEffect(() => { closeDraftOverwrite(); setStoreSelection(null); }, [routeContextKey]);
   const locked = busy || access !== 'ready' || draftOverwriteOpen;
   const barcodeConflicts = prepared?.barcodeConflicts || [];
   const barcodeBlocked = barcodeConflicts.length > 0;
@@ -166,28 +193,40 @@ function ConverterPage({ user }) {
     setProfileId(data.profileId == null ? '' : String(data.profileId));
     if (data.profiles) setProfiles(data.profiles);
     setCatalog(data.catalog || null); setPreviewDirty(false);
-    setBarcodeChecks({});
+    setBarcodeChecks({}); setStoreSelection(null);
   };
   const fetchPreview = async (rows, nextSettings, nextProfile, sequence, openComparison = false) => {
-    const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
-    if (!mounted.current || sequence !== request.current || !currentSession()) return false;
-    applyPreview(response.data);
-    if (response.data.barcodeConflicts?.length > 0) closeDraftOverwrite();
-    else if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) openDraftOverwrite();
-    return true;
+    const requestRoute = routeRevision.current;
+    const isCurrent = () => mounted.current && sequence === request.current && currentSession() && routeRevision.current === requestRoute;
+    try {
+      const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
+      if (!isCurrent()) return false;
+      applyPreview(response.data);
+      if (response.data.barcodeConflicts?.length > 0) closeDraftOverwrite();
+      else if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) openDraftOverwrite();
+      return true;
+    } catch (error) {
+      if (!isCurrent()) return false;
+      const selection = storeSelectionFrom(error);
+      if (!selection) throw error;
+      closeDraftOverwrite(); setPrepared(null); setSaved(null); setCatalog(null); setProfileId('');
+      setSettings(initialSettings()); setBarcodeChecks({}); setChoosingStore(false); setStoreSetupOpen(false);
+      setPreviewDirty(true); setStoreSelection(selection); showMessage('');
+      return false;
+    }
   };
-  const refreshPreview = async (nextSettings = settings, nextProfile = profileId) => {
-    if (locked || inFlight.current || !input || !currentSession()) return;
+  const refreshPreview = async (nextSettings = settings, nextProfile = profileId, openComparison = false) => {
+    if (locked || inFlight.current || !input || !currentPreview(true)) return;
     clearReimportFocus();
     const sequence = ++request.current;
     setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
-    try { await fetchPreview(input.source.rows, nextSettings, nextProfile, sequence); }
+    try { await fetchPreview(input.source.rows, nextSettings, nextProfile, sequence, openComparison); }
     catch (error) {
       if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || '訂單核對失敗，請重試。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
   };
   const returnToBarcodeReview = async instance => {
-    if (instance !== draftInstance.current || !draftOverwriteOpen || !mounted.current || !currentSession() || access !== 'ready' || inFlight.current || !input || originalOrderFlow || routeContext.current !== routeContextKey) return false;
+    if (instance !== draftInstance.current || !draftOverwriteOpen || !currentPreview() || access !== 'ready' || inFlight.current || !input || originalOrderFlow) return false;
     // Destroy the frozen comparison before changing mappings. The next review
     // is obtained from the server, never from a child's candidates or settings.
     closeDraftOverwrite(); setBarcodeChecks({});
@@ -201,7 +240,7 @@ function ConverterPage({ user }) {
     return true;
   };
   const selectBarcodeTarget = async (conflict, erpSku) => {
-    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || !currentSession()) return;
+    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || !currentPreview()) return;
     if (erpSku && !conflict.targetOptions?.some(option => option.erpSku === erpSku)) return;
     const nextSettings = { ...settings, skuMappings: { ...settings.skuMappings, [conflict.sourceSku]: {
       ...settings.skuMappings?.[conflict.sourceSku], erpSku, confirmed: false, barcodeConfirmed: false,
@@ -212,7 +251,7 @@ function ConverterPage({ user }) {
     finally { targetSelectionInFlight.current = false; }
   };
   const confirmBarcode = async conflict => {
-    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentSession()) return;
+    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentPreview()) return;
     clearReimportFocus();
     const sequence = ++request.current;
     inFlight.current = true; setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
@@ -222,7 +261,7 @@ function ConverterPage({ user }) {
         verificationFingerprint: prepared.verification?.currentFingerprint,
         confirmation: { fingerprint: conflict.fingerprint, confirmed: true },
       }, { timeout: 75000 });
-      if (!mounted.current || sequence !== request.current || !currentSession()) return;
+      if (!currentPreviewContext() || sequence !== request.current) return;
       if (response.data?.confirmed !== true) throw Error('商品對照未保存');
       if (await fetchPreview(input.source.rows, settings, profileId, sequence, true)) showMessage('商品對照已保存');
     } catch (error) {
@@ -233,7 +272,7 @@ function ConverterPage({ user }) {
     }
   };
   const checkPhysicalBarcode = async (conflict, value) => {
-    if (locked || inFlight.current || !input || !profileId || !currentSession()) return;
+    if (locked || inFlight.current || !input || !profileId || !currentPreview()) return;
     const physicalBarcode = String(value || '').trim();
     const nextSettings = { ...settings, skuMappings: { ...settings.skuMappings, [conflict.sourceSku]: {
       ...settings.skuMappings?.[conflict.sourceSku], physicalBarcode,
@@ -242,21 +281,23 @@ function ConverterPage({ user }) {
     await refreshPreview(nextSettings, profileId);
   };
   const chooseScanCodeType = async (conflict, scanCodeType) => {
-    if(locked||inFlight.current||!input||!profileId||!currentSession())return;
+    if(locked||inFlight.current||!input||!profileId||!currentPreview())return;
     const nextSettings={...settings,skuMappings:{...settings.skuMappings,[conflict.sourceSku]:{...settings.skuMappings?.[conflict.sourceSku],scanCodeType,barcode:'',barcodeConfirmed:false,internalScanConfirmed:false}}};
     setBarcodeChecks({});await refreshPreview(nextSettings,profileId);
   };
   const checkInternalScanCode = async (conflict, value) => {
-    if(locked||inFlight.current||!input||!profileId||!currentSession())return;
+    if(locked||inFlight.current||!input||!profileId||!currentPreview())return;
     const nextSettings={...settings,skuMappings:{...settings.skuMappings,[conflict.sourceSku]:{...settings.skuMappings?.[conflict.sourceSku],scanCodeType:'internal',internalScanCode:String(value||'').trim(),internalScanConfirmed:false,barcode:'',barcodeConfirmed:false}}};
     setBarcodeChecks({});await refreshPreview(nextSettings,profileId);
   };
   const update = (key, value) => {
+    if (locked || inFlight.current || !currentPreview()) return;
     clearReimportFocus();
     request.current++; setSaved(null); setPreviewDirty(true);
     setSettings(current => ({ ...current, [key]: value, ...(['erpStaffCode', 'erpProjectCode'].includes(key) ? { erpResponsibilityConfirmed: false } : {}) }));
   };
   const mapping = (sku, key, value) => {
+    if (locked || inFlight.current || !currentPreview()) return;
     clearReimportFocus();
     request.current++; setSaved(null); setPreviewDirty(true);
     setSettings(current => ({ ...current, skuMappings: { ...current.skuMappings, [sku]: {
@@ -267,17 +308,22 @@ function ConverterPage({ user }) {
     } } }));
   };
   const useProfile = async id => {
-    if (locked || !currentSession()) return;
-    const profile = matchingProfiles.find(value => String(value.id) === id);
+    if (locked || inFlight.current || !currentPreview()) return;
+    const profile = (storeSelection?.choices || matchingProfiles).find(value => String(value.id) === id);
     if (!profile) return;
-    const next = { ...settings, ...profile.settings, skuMappings: settings.skuMappings };
-    setChoosingStore(false); await refreshPreview(next, String(profile.id));
+    if (storeSelection && !profile.connectionReady) { setStoreSelection({ ...storeSelection, selectedId: id }); return; }
+    storeSelectionInFlight.current = true;
+    closeDraftOverwrite(); setPrepared(null); setSaved(null); setCatalog(null); setProfileId('');
+    setSettings(initialSettings()); setBarcodeChecks({}); setChoosingStore(false); setStoreSetupOpen(false);
+    try { await refreshPreview({ skuMappings: {} }, String(profile.id), true); }
+    finally { storeSelectionInFlight.current = false; }
   };
   const resetSource = () => {
+    sourceRevision.current++;
     clearReimportFocus();
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
-    setBarcodeChecks({});
+    setBarcodeChecks({}); setStoreSelection(null);
     closeDraftOverwrite();
   };
   const loadWorksheet = async (XLSX, book, sheetName, fileName, sequence) => {
@@ -324,7 +370,7 @@ function ConverterPage({ user }) {
   };
   const writeAudit = async () => {
     const XLSX = await import('xlsx');
-    if (!mounted.current || !currentSession() || routeContext.current !== routeContextKey) throw Error('目前作業已變更，未下載資料。');
+    if (!currentPreview()) throw Error('目前作業已變更，未下載資料。');
     const book = XLSX.utils.book_new();
     const add = (title, rows) => {
       const sheet = XLSX.utils.aoa_to_sheet(rows); sheet['!cols'] = (rows[0] || []).map(() => ({ wch: 24 }));
@@ -340,7 +386,7 @@ function ConverterPage({ user }) {
     XLSX.writeFile(book, `預揀與金額核對_${settings.batchNumber}.xlsx`);
   };
   const download = async kind => {
-    if (locked || inFlight.current || !input || !prepared || previewDirty || !currentSession() || originalOrderFlow || routeContext.current !== routeContextKey) return;
+    if (locked || inFlight.current || !input || !prepared || previewDirty || !currentPreview() || originalOrderFlow) return;
     if (kind === 'ecount' && barcodeBlocked) { showMessage('請先完成商品條碼核對，再比對訂單。'); return; }
     // A file containing saved orders is confirmed and exported as one file.
     // The new-order-only save route remains for files with no saved orders.
@@ -354,7 +400,7 @@ function ConverterPage({ user }) {
           rows: input.source.rows, settings, ...(profileId ? { profileId } : {}),
           ...(prepared.verification?.currentFingerprint ? { previewFingerprint: prepared.verification.currentFingerprint } : {}),
         }, { timeout: 75000 });
-        if (!mounted.current || !currentSession() || routeContext.current !== routeContextKey) return;
+        if (!currentPreview()) return;
         if (response.data?.salesDownloadAllowed === false || response.data?.newOrderCount === 0) {
           setSaved(null);
           const sequence = ++request.current;
@@ -364,28 +410,28 @@ function ConverterPage({ user }) {
         }
         setSaved(response.data);
         if (getNativeRuntime()) {
-          if (!await downloadNativeMarketplaceFile({ id: response.data.id, kind: 'ecount' }, { isCurrent: () => mounted.current && currentSession() && routeContext.current === routeContextKey })) return;
+          if (!await downloadNativeMarketplaceFile({ id: response.data.id, kind: 'ecount' }, { isCurrent: () => currentPreview() })) return;
         } else {
           const link = await apiClient.post(`/api/marketplace-intakes/${response.data.id}/download-link`, { kind: 'ecount' }, { withCredentials: true });
-          if (!mounted.current || !currentSession() || routeContext.current !== routeContextKey) return;
+          if (!currentPreview()) return;
           const anchor = document.createElement('a'); anchor.href = `${API_ORIGIN}${link.data.url}`; anchor.download = '';
           document.body.appendChild(anchor); anchor.click(); anchor.remove();
         }
-        if (!await loadRecords() || !mounted.current || !currentSession() || routeContext.current !== routeContextKey) return;
+        if (!await loadRecords() || !currentPreview()) return;
         showMessage('已保存・待 ECOUNT 匯入');
         // Reuse validated customer/warehouse settings on the next file. Profile
         // persistence is secondary to the already-saved immutable sales batch.
         try {
           const stored = await apiClient.post('/api/marketplace-intakes/store-profiles', { platform: prepared.parsed.platform, settings });
-          if (mounted.current && currentSession() && routeContext.current === routeContextKey) {
+          if (currentPreview()) {
             setProfiles(current => [...current.filter(value => value.id !== stored.data.id), stored.data]); setProfileId(String(stored.data.id));
           }
         } catch {
-          if (mounted.current && currentSession() && routeContext.current === routeContextKey) showMessage('已保存・待 ECOUNT 匯入；店鋪設定未保存，下次請重新選擇。');
+          if (currentPreview()) showMessage('已保存・待 ECOUNT 匯入；店鋪設定未保存，下次請重新選擇。');
         }
-      } else { await writeAudit(); if (mounted.current && currentSession() && routeContext.current === routeContextKey) showMessage('核對表已下載'); }
+      } else { await writeAudit(); if (currentPreview()) showMessage('核對表已下載'); }
     } catch (error) {
-      if (mounted.current && currentSession() && routeContext.current === routeContextKey) {
+      if (currentPreview()) {
         if (error.response?.data?.code === 'SHOPIFY_PREVIEW_CHANGED') {
           const sequence = ++request.current;
           setPreviewDirty(true); setSaved(null);
@@ -418,10 +464,16 @@ function ConverterPage({ user }) {
       {name && <p className="mt-3 break-words text-sm text-slate-600"><strong className="text-slate-900">{input?.parsed.platform}</strong> · {name} · {selectedSheet}</p>}
       {!name && <details className="mt-3 text-sm text-slate-600"><summary className="cursor-pointer">匯出格式</summary><ul className="mt-2 list-disc space-y-1 pl-5"><li>Shopify：訂單 CSV</li><li>1Shop：訂單 Excel</li><li>SHOPLINE：包含貨號、商品明細與金額的訂單報表</li></ul></details>}
     </section>}
-    {input && !prepared && !busy && <div className={sectionClass}><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對訂單</Button></div>}
+    {input && storeSelection && <section className={`${sectionClass} space-y-3`} aria-label="店鋪確認">
+      <div><h2 className="text-lg font-semibold">{storeSelection.choices.length ? '確認店鋪' : '店鋪尚未設定'}</h2><p className="mt-1 text-sm text-slate-600">{!storeSelection.choices.length ? '請聯絡管理員完成店鋪設定，再重新核對。' : storeSelection.reason === 'mixed_stores' ? '這份檔案含不同店鋪的訂單，請分別提供各店鋪的訂單檔。' : '尚無法確認訂單所屬店鋪，請選擇匯出訂單的店鋪。'}</p></div>
+      {storeSelection.choices.length > 0 && <div className="max-w-md"><Field label="店鋪"><select className={inputClass} disabled={locked} value={storeSelection.selectedId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{storeSelection.choices.map(choice => <option key={choice.id} value={choice.id}>{choice.store}{!choice.connectionReady ? '（待串接）' : ''}</option>)}</select></Field></div>}
+      {storeSelection.choices.length > 0 && (storeSelection.choices.every(choice => !choice.connectionReady) || storeSelection.choices.some(choice => choice.id === storeSelection.selectedId && !choice.connectionReady)) && <p className="text-sm text-amber-950">此店鋪連線尚未完成，請聯絡管理員</p>}
+      <Button variant="secondary" disabled={locked} onClick={() => refreshPreview({ skuMappings: {} }, '', true)}>{busy ? '核對中…' : '重新核對'}</Button>
+    </section>}
+    {input && !prepared && !storeSelection && !busy && <div className={sectionClass}><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對訂單</Button></div>}
     {input && prepared && <>
       {!draftOverwriteOpen && <section className={`${sectionClass} border-blue-200`} aria-label="轉檔與下載">
-        {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store} · {profile.settings.customerCode}</option>)}</select></Field></div>
+        {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store}</option>)}</select></Field></div>
           : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div><h2 className="text-lg font-semibold">{reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length} 筆` : reviewRequired ? `本次檔案 ${raw.orders.length} 筆・取消與退款待核對` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{reviewRequired ? <p className="mt-2 text-sm text-slate-700">核對取消品項與剩餘出貨內容後，產生整份銷貨檔。</p> : reimports.length ? <p className="mt-2 text-sm text-slate-700">比對整份檔案的新增與異動，確認後下載同一份銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
@@ -443,12 +495,12 @@ function ConverterPage({ user }) {
         {saved && <Link className="mt-4 inline-flex min-h-11 items-center text-sm font-medium text-blue-700 underline" to={`?batch=${saved.id}&view=return#batch-detail`}>匯回 ECOUNT 理貨單</Link>}
       </section>}
       {draftOverwriteOpen && !originalOrderFlow && <MarketplaceDraftOverwrite rows={input.source.rows} settings={settings} profileId={profileId}
-        isCurrent={() => mounted.current && currentSession() && routeContext.current === routeContextKey}
+        isCurrent={() => currentPreview() && currentDraftInstance === draftInstance.current}
         onBusyChange={value => { if (mounted.current && currentDraftInstance === draftInstance.current) setBusy(value); }}
         onClose={() => { if (currentDraftInstance === draftInstance.current) closeDraftOverwrite(); }}
         onBarcodeReview={() => returnToBarcodeReview(currentDraftInstance)}
         onComplete={async () => {
-          const current = () => mounted.current && currentSession() && routeContext.current === routeContextKey && currentDraftInstance === draftInstance.current;
+          const current = () => currentPreview() && currentDraftInstance === draftInstance.current;
           if (!current() || !await loadRecords() || !current()) return;
           const sequence = ++request.current;
           try { await fetchPreview(input.source.rows, settings, profileId, sequence); }
@@ -489,7 +541,7 @@ function ConverterPage({ user }) {
           {canScanPhysicalBarcode && <div className="mt-3 max-w-md"><Field label="實物條碼" value={settings.skuMappings?.[conflict.sourceSku]?.physicalBarcode || conflict.physicalBarcode || ''} maxLength={100} disabled={locked || !profileId} placeholder="掃描商品包裝條碼" onChange={event => { setBarcodeChecks({}); mapping(conflict.sourceSku, 'physicalBarcode', event.target.value); }} onBlur={event => { if (previewDirty) return checkPhysicalBarcode(conflict, event.target.value); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); return checkPhysicalBarcode(conflict, event.currentTarget.value); } }} /></div>}
           {canConfirm && conflict.reviewReason === 'ERP_BARCODE_MISSING' && !canScanPhysicalBarcode && !internal && <p className="mt-3 text-sm leading-6 text-slate-700">商城已提供條碼。請核對上方兩邊是否為同一商品，確認後勾選並保存對照。</p>}
           <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
-            <Check checked={barcodeChecks[key]} onChange={value => setBarcodeChecks(current => ({ ...current, [key]: value }))}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
+            <Check checked={barcodeChecks[key]} onChange={value => { if (!locked && !previewDirty && currentPreview()) setBarcodeChecks(current => ({ ...current, [key]: value })); }}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
           </fieldset>
           {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{internal ? '請填寫並核對內部掃描碼' : canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}

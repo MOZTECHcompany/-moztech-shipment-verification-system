@@ -1,6 +1,11 @@
 const express=require('express'),request=require('supertest');
 const {createMarketplaceRouter}=require('../routes/marketplaceRoutes');
 const appFor=(prepareMarketplace,user={id:1,role:'dispatcher'})=>{const pool={query:jest.fn(),connect:jest.fn()};const app=express();app.use(express.json());app.use((req,res,next)=>{req.user=user;next();});app.use('/api/marketplace-intakes',createMarketplaceRouter({pool,prepareMarketplace}));return {app,pool};};
+test('store selection response whitelists safe choices without copying private fields',async()=>{
+ const error=Object.assign(new Error('請選擇店鋪'),{status:409,code:'MARKETPLACE_STORE_SELECTION_REQUIRED',storeSelection:{reason:'ambiguous',token:'SECRET',choices:[{id:2,store:'匿名店',shop:'second.myshopify.com',connectionReady:true,token:'SECRET',tokenEnv:'PRIVATE'}]}});
+ const h=appFor(async()=>{throw error;});const result=await request(h.app).post('/api/marketplace-intakes/preview').send({rows:[]});
+ expect(result.status).toBe(409);expect(result.body.storeSelection).toEqual({platform:'Shopify',reason:'ambiguous',choices:[{id:'2',platform:'Shopify',store:'匿名店',shop:'second.myshopify.com',connectionReady:true}]});expect(JSON.stringify(result.body)).not.toMatch(/SECRET|PRIVATE|token/);expect(h.pool.connect).not.toHaveBeenCalled();
+});
 test('preview enforces the same role gates as saving and returns no internal source evidence',async()=>{
  const prepare=jest.fn(async()=>({parsed:{items:[]},output:{ok:false},sourceEvidence:{private:'original snapshot'}}));
  for(const role of ['picker','packer']){const {app}=appFor(prepare,{id:2,role});expect((await request(app).post('/api/marketplace-intakes/preview').send({rows:[]})).status).toBe(403);}

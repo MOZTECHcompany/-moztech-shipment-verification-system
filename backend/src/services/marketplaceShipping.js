@@ -158,7 +158,7 @@ function createMarketplaceShippingService({pool,verifyShopify=createShopifyOrder
  }
  async function current(saved,number){
   const rows=sourceRows(saved.batch.snapshot.sourceEvidence.rows,number);
-  const result=await verifyShopify(rows),verification=result.verification,evidence=verification?.orders?.filter(order=>order.number===number);
+  const result=await verifyShopify(rows,{profileId:String(saved.profile.id),profileUpdatedAt:saved.profile.updated_at||null,apiConnectionId:clean(saved.profile.settings?.apiConnectionId),shopifyShop:clean(saved.profile.settings?.shopifyShop)}),verification=result.verification,evidence=verification?.orders?.filter(order=>order.number===number);
   if(verification?.shop!==saved.verification.shop||evidence?.length!==1||verification.orders.length!==1)throw fail('Shopify 店鋪或原訂單身分已變更','MARKETPLACE_SHIPPING_BUSINESS_CHANGED');
   const fresh=assertCurrentBusiness(saved,verification,evidence[0]);
   if(evidence[0].shippingSource!=='shopify-current')throw fail('Shopify 尚無可核對的收件資料，請先在商城修正');

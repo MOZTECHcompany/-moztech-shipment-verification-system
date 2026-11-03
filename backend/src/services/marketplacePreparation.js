@@ -1,6 +1,7 @@
 const {createHash,randomBytes}=require('node:crypto');
 const {lookupProducts,oneShopProductMatch,previewCatalogMappingIssues}=require('./marketplaceProductCatalog');
 const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
+const {resolveShopifyStore}=require('./shopifyStoreRouting');
 const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
 const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
 const {safeSettings}=require('./marketplaceSettings');
@@ -60,7 +61,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
  // settings blur. Saving always performs a new read before committing.
  const cache=new Map();
  async function currentPlatform(platform,rows,context,refresh){
-  const key=digest([platform,context,rows]),previous=cache.get(key);
+  const key=digest([platform,context,platform==='Shopify'&&typeof verifyShopify.registryFingerprint==='function'?verifyShopify.registryFingerprint():null,rows]),previous=cache.get(key);
   if(!refresh&&previous&&previous.expires>Date.now())return previous.promise;
   const verifier=platform==='Shopify'?verifyShopify:platform==='SHOPLINE'?verifyShopline:verifyOneShop;
   const promise=verifier(rows,context);
@@ -75,12 +76,19 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const supplied=input.settings||{};
   if(typeof supplied!=='object'||Array.isArray(supplied))throw fail('轉檔設定格式無效');
   safeSettings({...supplied,skuMappings:supplied.skuMappings??{}});
-  let verifiedRows=source.rows,verification=null;
+  let verifiedRows=source.rows,verification=null,profile=null,resolvedShopify=false;
   if(source.platform==='Shopify'){
-   const result=await currentPlatform(source.platform,source.rows,{},options.refresh===true);
+   // The built-in verifier always resolves a persisted store binding first.
+   // Plain injected functions remain an internal test seam, never a request flag.
+   let context={};
+   if(typeof verifyShopify.listConnections==='function'&&typeof verifyShopify.probe==='function'){
+    const resolved=await resolveShopifyStore({rows:source.rows,profiles,input,verifier:verifyShopify,refresh:options.refresh===true});
+    profile=resolved.profile;context=resolved.context;resolvedShopify=true;
+   }
+   const result=await currentPlatform(source.platform,source.rows,context,options.refresh===true);
    verifiedRows=result.rows;verification=result.verification?{...result.verification,mode:'api',platform:source.platform,currentFingerprint:digest([result.verification.shop,result.rows,result.verification.fingerprint||null])}:null;
   }
-  const profile=selectProfile(profiles,source.platform,{...input,shopifyShop:verification?.shop});
+  if(!profile)profile=selectProfile(profiles,source.platform,{...input,shopifyShop:verification?.shop});
   if(source.platform!=='Shopify'){
    // Only a persisted store binding can select a server-side API credential.
    // Uploaded settings cannot turn a required live check on or off.
@@ -91,14 +99,28 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const initialProfile=profile&&!clean(input.profileId)&&!clean(supplied.store)&&!clean(supplied.customerCode);
   const settingsInput={salesExportMode:'product-200-v1',store:'',customerCode:'',customerName:'',warehouseCode:'003',date:date(),batchSequence:'1',batchNumber:`WMS-${date().replaceAll('-','')}-${randomBytes(2).toString('hex').toUpperCase()}`,currency:'',taxMode:'erp_inclusive',taxType:'11',summaryNote:'',shippingSku:{erpSku:'00001',name:'運費',confirmed:false,nonStock:false},skuMappings:{},...profile?.settings};
   for(const [key,value] of Object.entries(supplied)){
-   if(key==='apiConnectionId')continue;
+   if(key==='apiConnectionId'||key==='shopifyShop')continue;
    // Initial UI defaults do not erase an already confirmed store profile.
    if(initialProfile&&['store','customerCode','customerName','warehouseCode','currency'].includes(key)&&!clean(value))continue;
    if(initialProfile&&['taxConfirmed','erpResponsibilityConfirmed','shippingSku','taxMode','taxType','projectOwner','salesOwner','erpStaffCode','erpProjectCode'].includes(key)&&!clean(supplied.store)&&!clean(input.profileId))continue;
    settingsInput[key]=value;
   }
+  if(resolvedShopify){
+   // A stale upload must never relabel another shop's verified order or borrow
+   // its ERP/customer settings. After a preview of this exact binding, retain
+   // the existing batch-level ERP edits and their original confirmation guards.
+   const samePreviewContext=clean(input.profileId)===String(profile.id)&&clean(supplied.store)===clean(profile.store)&&clean(supplied.shopifyShop)===verification?.shop&&
+    (clean(supplied.apiConnectionId)===verification?.apiConnectionId||verification?.apiConnectionId==='legacy'&&!clean(supplied.apiConnectionId));
+   if(!samePreviewContext)for(const key of ['projectOwner','salesOwner','erpStaffCode','erpProjectCode','erpResponsibilityConfirmed','customerCode','customerName','warehouseCode','currency','taxMode','taxType','taxConfirmed','erpCurrencyCode','erpCurrencyConfirmed','shippingSku']){
+    if(Object.hasOwn(profile.settings||{},key))settingsInput[key]=profile.settings[key];else delete settingsInput[key];
+   }
+   settingsInput.store=profile.store;
+  }
+  if(verification&&source.platform==='Shopify'){
+   settingsInput.shopifyShop=verification.shop;
+   if(verification.apiConnectionId)settingsInput.apiConnectionId=verification.apiConnectionId;
+  }
   safeSettings(settingsInput);
-  if(verification&&source.platform==='Shopify')settingsInput.shopifyShop=verification.shop;
   // Barcode review belongs to the complete live, eligible upload. Draft
   // projection and new-sales deduplication must not hide an original order's
   // unresolved identity from the operator or the confirmation endpoint.
