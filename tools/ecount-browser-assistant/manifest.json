@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Corely AI ECOUNT 箱號助手",
+  "version": "0.1.0",
+  "version_name": "0.1.0 測試預覽",
+  "description": "測試預覽：在已登入的 WMS 與指定 ECOUNT 分頁間核對原銷貨單箱號。正式儲存尚未啟用，實際 ECOUNT 驗收未完成。",
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["https://loginib.ecount.com/*"],
+  "background": { "service_worker": "src/service-worker.mjs", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "Corely ECOUNT 箱號助手" },
+  "content_scripts": [{
+    "matches": ["https://wms.corely.cc/*", "https://corely-wms-249593319772.asia-east1.run.app/*"],
+    "js": ["src/wms-bridge.js"],
+    "run_at": "document_start",
+    "all_frames": false
+  }],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'" }
+}

@@ -11,6 +11,7 @@ import soundNotification from './utils/soundNotification';
 import { LoginPage } from './components/LoginPage';
 const LogisticsSettings = lazy(() => import('./components/LogisticsSettings').then(module => ({ default: module.LogisticsSettings })));
 const SettingsPage = lazy(() => import('./components/SettingsPage').then(module => ({ default: module.SettingsPage })));
+const EcountAssistantPage = lazy(() => import('./components/EcountAssistantPage').then(module => ({ default: module.EcountAssistantPage })));
 const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard').then(module => ({ default: module.AdminDashboard })));
 const UserManagement = lazy(() => import('./components/admin/UserManagement').then(module => ({ default: module.UserManagement })));
 const OperationLogs = lazy(() => import('./components/admin/OperationLogs').then(module => ({ default: module.OperationLogs })));
@@ -108,6 +109,7 @@ function App() {
                         <Route element={<AppLayout user={user} onLogout={handleLogout} />}>
                             <Route path="/settings/logistics" element={['admin','superadmin'].includes(user?.role) ? <LogisticsSettings /> : <Navigate to="/tasks" />} />
                             <Route path="/settings" element={<SettingsPage user={user} />} />
+                            <Route path="/settings/ecount-assistant" element={['dispatcher','admin','superadmin'].includes(user?.role) ? <EcountAssistantPage key={`${user.id}:${token}`} user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin" element={(user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'dispatcher') ? <AdminDashboard user={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/users" element={isWarehouseAdmin(user) ? <UserManagement currentUser={user} /> : <Navigate to="/tasks" />} />
                             <Route path="/admin/operation-logs" element={(user?.role === 'admin' || user?.role === 'superadmin') ? <OperationLogs /> : <Navigate to="/tasks" />} />
