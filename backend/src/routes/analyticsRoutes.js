@@ -9,6 +9,8 @@ const logger = require('../utils/logger');
 const { authorizeAdmin } = require('../middleware/auth');
 
 const router = express.Router();
+// These routes own their validation; statistics deliberately ignore limit/cursor.
+router.use(require('./operationLogRoutes').createOperationLogRouter({ pool, reportPool }));
 router.use((req, res, next) => {
     if (req.method !== 'GET') return next();
     try {
@@ -16,148 +18,6 @@ router.use((req, res, next) => {
         if (req.query.limit !== undefined) boundedLimit(req.query.limit);
         next();
     } catch (error) { res.status(400).json({ message: error.message }); }
-});
-
-// GET /api/operation-logs
-router.get('/operation-logs', authorizeAdmin, async (req, res) => {
-    const { orderId, userId, startDate, endDate, actionType, limit = '100' } = req.query;
-
-    logger.info(`[/api/operation-logs] 查詢操作日誌 - orderId: ${orderId}, userId: ${userId}, startDate: ${startDate}, endDate: ${endDate}, actionType: ${actionType}`);
-
-    try {
-        let query = `
-            SELECT 
-                ol.id,
-                ol.user_id,
-                ol.order_id,
-                ol.action_type,
-                ol.details,
-                ol.created_at,
-                COALESCE(ol.actor_snapshot->>'name',u.name) as user_name,
-                ol.actor_snapshot->>'role' as user_role,
-                u.role as current_user_role, ol.actor_snapshot, ol.work_type,
-                ol.actor_snapshot IS NOT NULL AS has_actor_snapshot,
-                o.voucher_number,
-                o.customer_name,
-                o.status as order_status
-            FROM operation_logs ol
-            LEFT JOIN users u ON ol.user_id = u.id
-            LEFT JOIN orders o ON ol.order_id = o.id
-            WHERE 1=1
-        `;
-
-        const params = [];
-        let paramCount = 1;
-
-        if (orderId) {
-            if (/^\d+$/.test(orderId)) {
-                query += ` AND ol.order_id = $${paramCount}`;
-                params.push(parseInt(orderId, 10));
-            } else {
-                query += ` AND o.voucher_number ILIKE $${paramCount}`;
-                params.push(`%${orderId}%`);
-            }
-            paramCount++;
-        }
-
-        if (userId) {
-            query += ` AND ol.user_id = $${paramCount}`;
-            params.push(parseInt(userId, 10));
-            paramCount++;
-        }
-
-        if (actionType) {
-            query += ` AND ol.action_type = $${paramCount}`;
-            params.push(actionType);
-            paramCount++;
-        }
-
-        if (startDate) {
-            query += ` AND ol.created_at >= $${paramCount}`;
-            params.push(startDate);
-            paramCount++;
-        }
-
-        if (endDate) {
-            const inclusiveEndDate = `${endDate} 23:59:59`;
-            query += ` AND ol.created_at <= $${paramCount}`;
-            params.push(inclusiveEndDate);
-            paramCount++;
-        }
-
-        query += ` ORDER BY ol.created_at DESC LIMIT $${paramCount}`;
-        params.push(boundedLimit(limit, 100, 1000));
-
-        logger.debug(`[/api/operation-logs] 執行查詢:`, { query: query.substring(0, 200), params });
-
-        const result = await pool.query(query, params);
-        logger.info(`[/api/operation-logs] 找到 ${result.rows.length} 筆操作記錄`);
-
-        res.json({
-            total: result.rows.length,
-            logs: result.rows
-        });
-    } catch (error) {
-        logger.error('[/api/operation-logs] 查詢失敗:', error.message);
-        logger.error('[/api/operation-logs] 錯誤堆疊:', error.stack);
-        res.status(500).json({ 
-            message: '查詢操作日誌失敗',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
-    }
-});
-
-// GET /api/operation-logs/stats
-router.get('/operation-logs/stats', authorizeAdmin, async (req, res) => {
-    const { startDate, endDate } = req.query;
-
-    try {
-        let query = `
-            SELECT 
-                action_type,
-                COUNT(*) as count,
-                COUNT(DISTINCT user_id) as unique_users,
-                COUNT(DISTINCT order_id) as unique_orders
-            FROM operation_logs
-            WHERE 1=1
-        `;
-
-        const params = [];
-        let paramCount = 1;
-
-        if (startDate) {
-            query += ` AND created_at >= $${paramCount}`;
-            params.push(startDate);
-            paramCount++;
-        }
-
-        if (endDate) {
-            const inclusiveEndDate = `${endDate} 23:59:59`;
-            query += ` AND created_at <= $${paramCount}`;
-            params.push(inclusiveEndDate);
-            paramCount++;
-        }
-
-        query += ` GROUP BY action_type ORDER BY count DESC`;
-
-        const result = await pool.query(query, params);
-
-        const totalQuery = `
-            SELECT COUNT(*) as total
-            FROM operation_logs
-            WHERE created_at >= COALESCE($1::timestamp, '-infinity')
-            AND created_at <= COALESCE($2::timestamp, 'infinity')
-        `;
-        const totalResult = await pool.query(totalQuery, [startDate, endDate ? `${endDate} 23:59:59` : null]);
-
-        res.json({
-            total: parseInt(totalResult.rows[0].total, 10),
-            byActionType: result.rows
-        });
-    } catch (error) {
-        logger.error('[/api/operation-logs/stats] 查詢失敗:', error);
-        res.status(500).json({ message: '查詢統計資料失敗' });
-    }
 });
 
 // GET /api/reports/export

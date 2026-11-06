@@ -1,422 +1,311 @@
-// frontend/src/components/admin/OperationLogs.jsx
-// 操作日誌查詢與顯示頁面 - Apple 風格現代化版本
-
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
-import { toast } from 'sonner';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, Search, X } from 'lucide-react';
 import apiClient from '@/api/api.js';
-import {formatMessageTimestamp} from '@/utils/messageTimestamp';
-import {workActorLabel,workTypeLabel} from '@/utils/warehouseWork';
 import { socket } from '@/api/socket.js';
+import { Badge, Button, Card, EmptyState, PageHeader, Skeleton } from '../../ui';
 import {
-    FileText, Search, Filter, Download, RefreshCw,
-    User, Package, Calendar, Activity, TrendingUp, ArrowLeft
-} from 'lucide-react';
-import {
-    PageHeader,
-    Card, CardHeader, CardTitle, CardDescription, CardContent,
-    Button,
-    Table, THead, TH, TBody, TR, TD,
-    EmptyState,
-    Skeleton,
-    Badge,
-} from '../../ui';
+    actions, actionLabel, actionVariant, logActor, logDetailFields, logFilterError, logFilterParams, logRole,
+    logStage, logSummary, logTime, operationLogsCSV, parseLogDetails, readLogFilters, taipeiDay,
+} from '../../utils/operationLogs';
 
-// 操作類型的中文對照和顏色
-const actionTypeMap = {
-    ecount_reference_saved: {label:'保存銷貨對照',icon:'📝'},
-    ecount_reference_manually_checked: {label:'人工核對銷貨對照',icon:'✓'},
-    work_pause: {label:'暫停作業',icon:'⏸'},
-    work_resume: {label:'繼續作業',icon:'▶'},
-    transfer: {label:'任務交接',icon:'↔'},
-    work_mode_selected: {label:'選擇今日作業',icon:'↔'},
-    work_assigned: {label:'指派今日作業',icon:'✋'},
-    import: { label: '匯入訂單', color: 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border-blue-200', icon: '📥' },
-    claim: { label: '認領任務', color: 'bg-gradient-to-br from-green-50 to-green-100 text-green-800 border-green-200', icon: '✋' },
-    pick: { label: '揀貨操作', color: 'bg-gradient-to-br from-yellow-50 to-yellow-100 text-yellow-800 border-yellow-200', icon: '📦' },
-    pack: { label: '裝箱操作', color: 'bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800 border-purple-200', icon: '📮' },
-    void: { label: '作廢訂單', color: 'bg-gradient-to-br from-red-50 to-red-100 text-red-800 border-red-200', icon: '❌' },
-    complete: { label: '完成訂單', color: 'bg-gradient-to-br from-emerald-50 to-emerald-100 text-emerald-800 border-emerald-200', icon: '✅' }
-};
+const field = 'w-full min-w-0 min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
+const label = 'grid min-w-0 gap-1.5 text-sm font-medium text-slate-700';
+const pageSizes = ['25', '50', '100', '200', '500'];
 
-export function OperationLogs() {
-    const [searchParams, setSearchParams] = useSearchParams();
-    const [logs, setLogs] = useState([]);
-    const [stats, setStats] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [filters, setFilters] = useState({
-        orderId: searchParams.get('orderId') || '',
-        userId: searchParams.get('userId') || '',
-        actionType: searchParams.get('actionType') || '',
-        startDate: searchParams.get('startDate') || '',
-        endDate: searchParams.get('endDate') || '',
-        limit: searchParams.get('limit') || '100'
-    });
-
-    // 載入操作日誌
-    const fetchLogs = async () => {
-        setLoading(true);
-        try {
-            const params = new URLSearchParams();
-            Object.entries(filters).forEach(([key, value]) => {
-                if (value) params.append(key, value);
-            });
-
-            const response = await apiClient.get(`/api/operation-logs?${params.toString()}`);
-            setLogs(response.data.logs);
-            toast.success(`載入了 ${response.data.total} 筆操作記錄`);
-        } catch (error) {
-            console.error('載入操作日誌失敗:', error);
-            toast.error('載入操作日誌失敗');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // 載入統計資料
-    const fetchStats = async () => {
-        try {
-            const params = new URLSearchParams();
-            if (filters.startDate) params.append('startDate', filters.startDate);
-            if (filters.endDate) params.append('endDate', filters.endDate);
-
-            const response = await apiClient.get(`/api/operation-logs/stats?${params.toString()}`);
-            setStats(response.data);
-        } catch (error) {
-            console.error('載入統計資料失敗:', error);
-        }
-    };
-
-    // 初始載入
+function useLogRequest(path, search, enabled = true, refresh = 0) {
+    const [result, setResult] = useState(null);
+    const session = apiClient.getSessionIdentity();
     useEffect(() => {
-        fetchLogs();
-        fetchStats();
+        if (!enabled) return;
+        const request = new AbortController();
+        const current = () => !request.signal.aborted && session === apiClient.getSessionIdentity();
+        apiClient.get(path, { params: new URLSearchParams(search), signal: request.signal, skipErrorReporting: true })
+            .then(({ data }) => {
+                if (current()) setResult({ search, refresh, session, data });
+            })
+            .catch(error => {
+                if (current()) setResult({ search, refresh, session, error: error.message || '無法載入，請再試一次。' });
+            });
+        return () => request.abort();
+    }, [path, search, enabled, refresh, session]);
+    return enabled && result?.search === search && result.refresh === refresh && result.session === session ? result : null;
+}
+
+function downloadCSV(logs) {
+    const url = URL.createObjectURL(new Blob(['\uFEFF', operationLogsCSV(logs)], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `操作日誌_${taipeiDay()}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function LogDetail({ log, onClose }) {
+    const dialog = useRef(null);
+    const titleId = useId();
+    useEffect(() => {
+        const el = dialog.current;
+        el.showModal();
+        return () => { if (el.open) el.close(); };
+    }, []);
+    const { day, time } = logTime(log.created_at);
+    const details = parseLogDetails(log.details);
+    const fields = logDetailFields(details);
+    return (
+        <dialog ref={dialog} aria-labelledby={titleId}
+            onCancel={event => { event.preventDefault(); onClose(); }}
+            className="m-auto w-[calc(100%-2rem)] max-w-xl rounded-2xl border border-slate-200 bg-white p-0 shadow-xl backdrop:bg-slate-900/40">
+            <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
+                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 p-4 sm:px-6">
+                    <div>
+                        <h2 id={titleId} className="font-semibold text-slate-950">操作詳情</h2>
+                        <p className="mt-1 text-xs text-slate-500">日誌 #{log.id} · {day} {time}（台灣）</p>
+                    </div>
+                    <Button type="button" variant="secondary" size="sm" aria-label="關閉詳情" onClick={onClose}><X size={18} /></Button>
+                </div>
+                <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-4 sm:px-6">
+                    <dl className="grid grid-cols-2 gap-3 text-sm">
+                        {[
+                            ['操作', actionLabel(log.action_type)], ['工序', logStage(log)],
+                            ['操作人員', logActor(log)], ['當時帳號身分', logRole(log)],
+                            ['訂單', log.order_id ? <Link to={`/order/${log.order_id}`} className="text-blue-700 underline underline-offset-2">{log.voucher_number || `#${log.order_id}`}</Link> : log.voucher_number || '—'],
+                            ['客戶', log.customer_name || '—'],
+                        ].map(([key, value]) => <div key={key} className="min-w-0 break-words"><dt className="text-xs text-slate-500">{key}</dt><dd className="mt-1 font-medium text-slate-900">{value}</dd></div>)}
+                    </dl>
+                    <div>
+                        <h3 className="mb-2 text-sm font-semibold text-slate-800">詳細記錄</h3>
+                        {fields.length > 0 && (
+                            <dl className="mb-2 divide-y divide-slate-100 rounded-xl bg-slate-50 px-3 text-sm">
+                                {fields.map(({ key, label, value }) => <div key={key} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 py-2">
+                                    <dt className="text-slate-600">{label}</dt><dd className="whitespace-pre-wrap break-words text-slate-900">{value}</dd>
+                                </div>)}
+                            </dl>
+                        )}
+                        {details == null || details === '' ? <p className="text-sm text-slate-600">這筆記錄沒有附加明細。</p>
+                            : typeof details === 'string' ? <p className="whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{details}</p>
+                            : <details className="rounded-xl border border-slate-200">
+                                <summary className="cursor-pointer px-3 py-2 text-sm text-slate-700">原始記錄</summary>
+                                <pre className="whitespace-pre-wrap break-words px-3 pb-3 text-xs leading-relaxed text-slate-700">{JSON.stringify(details, null, 2)}</pre>
+                            </details>}
+                    </div>
+                </div>
+            </div>
+        </dialog>
+    );
+}
+
+function LogResults({ applied }) {
+    const [cursors, setCursors] = useState([null]);
+    const [refresh, setRefresh] = useState(0);
+    const [hasUpdates, setHasUpdates] = useState(false);
+    const [showStats, setShowStats] = useState(false);
+    const [detail, setDetail] = useState(null);
+    const resultsTitle = useRef(null);
+    const filters = logFilterParams(applied);
+    const statsQuery = new URLSearchParams(filters);
+    statsQuery.delete('limit');
+    const page = cursors.length;
+    filters.set('limit', applied.limit);
+    if (cursors[page - 1]) filters.set('cursor', cursors[page - 1]);
+
+    const result = useLogRequest('/api/operation-logs', filters.toString(), true, refresh);
+    const stats = useLogRequest('/api/operation-logs/stats', statsQuery.toString(), showStats, refresh);
+    const logs = result?.data?.logs || [];
+    useEffect(() => {
+        const notify = () => setHasUpdates(true);
+        socket.on('new_operation_log', notify);
+        return () => socket.off('new_operation_log', notify);
     }, []);
 
-    // 監聽即時更新
-    useEffect(() => {
-        const handleNewLog = (newLog) => {
-            setLogs(prevLogs => [newLog, ...prevLogs].slice(0, parseInt(filters.limit)));
-            toast.info(`新操作：${actionTypeMap[newLog.action_type]?.label || newLog.action_type}`);
-            // 更新統計資料
-            fetchStats();
-        };
-
-        socket.on('new_operation_log', handleNewLog);
-
-        return () => {
-            socket.off('new_operation_log', handleNewLog);
-        };
-    }, [filters.limit]);
-
-    // 處理篩選變更
-    const handleFilterChange = (key, value) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
+    const refreshResults = () => {
+        setCursors([null]);
+        setHasUpdates(false);
+        setRefresh(n => n + 1);
     };
 
-    // 執行搜尋
-    const handleSearch = () => {
-        // 更新 URL 參數
-        const params = new URLSearchParams();
-        Object.entries(filters).forEach(([key, value]) => {
-            if (value) params.set(key, value);
-        });
-        setSearchParams(params);
-        
-        fetchLogs();
-        fetchStats();
-    };
-
-    // 重置篩選
-    const handleReset = () => {
-        setFilters({
-            orderId: '',
-            userId: '',
-            actionType: '',
-            startDate: '',
-            endDate: '',
-            limit: '100'
-        });
-        setSearchParams({});
-        setTimeout(() => {
-            fetchLogs();
-            fetchStats();
-        }, 100);
-    };
-
-    // 匯出 CSV
-    const handleExport = () => {
-        const csv = convertToCSV(logs);
-        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', `操作日誌_${new Date().toISOString().split('T')[0]}.csv`);
-        link.click();
-    };
-
-    // 轉換為 CSV 格式
-    const convertToCSV = (data) => {
-        const headers = ['時間', '訂單編號', '客戶名稱', '操作類型', '實際操作人員', '當時帳號身分', '當下工序', '詳細資訊'];
-        const rows = data.map(log => [
-            formatMessageTimestamp(log.created_at),
-            log.voucher_number || '-',
-            log.customer_name || '-',
-            actionTypeMap[log.action_type]?.label || log.action_type,
-            log.actor_snapshot?.name || log.user_name || '-',
-            log.actor_snapshot ? workActorLabel(log) : '歷史身分未記錄',
-            workTypeLabel(log.work_type || (['pick','pack'].includes(log.action_type)?log.action_type:null)) || '-',
-            JSON.stringify(log.details)
-        ]);
-        
-        return [headers, ...rows].map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g,'""')}"`).join(',')).join('\n');
-    };
-
-    // 格式化詳細資訊
-    const formatDetails = (details) => {
-        if (!details) return '-';
-        if (typeof details === 'string') {
-            try {
-                details = JSON.parse(details);
-            } catch (e) {
-                return details;
-            }
-        }
-        
-        return Object.entries(details).map(([key, value]) => (
-            <div key={key} className="text-xs">
-                <span className="font-medium">{key}:</span> {JSON.stringify(value)}
+    return (
+        <Card aria-labelledby="operation-log-results" aria-busy={!result}>
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
+                <div>
+                    <h2 ref={resultsTitle} tabIndex={-1} id="operation-log-results" className="font-semibold text-slate-900">查詢結果</h2>
+                    <p className="mt-1 text-xs text-slate-500" role="status">
+                        {!result ? '正在查詢…' : result.error ? '查詢失敗' : `第 ${page} 頁 · 本頁 ${logs.length} 筆 · 最新操作在前`}
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="secondary" size="sm" leadingIcon={RefreshCw} onClick={refreshResults}>重新整理</Button>
+                    <Button type="button" variant="secondary" size="sm" leadingIcon={Download} onClick={() => downloadCSV(logs)} disabled={!logs.length}>匯出本頁 CSV</Button>
+                </div>
             </div>
-        ));
+            {hasUpdates && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-blue-50 px-4 py-2.5 text-sm text-blue-900">
+                    <span>有新操作記錄</span>
+                    <button type="button" onClick={refreshResults} className="font-semibold underline underline-offset-2">更新查詢</button>
+                </div>
+            )}
+            {!result ? <div className="space-y-4 p-5">{[1, 2, 3].map(n => <Skeleton key={n} className="h-10 w-full" />)}</div>
+                : result.error ? <div role="alert" className="p-5 text-sm text-red-700">{result.error}</div>
+                : logs.length === 0 ? <div className="p-5"><EmptyState title="找不到符合的操作" description="試試較短的關鍵字，或放寬操作日期與其他篩選條件。" /></div>
+                : (
+                    <>
+                    <div aria-hidden="true" className="hidden grid-cols-[7rem_minmax(0,1.25fr)_minmax(0,1.25fr)_minmax(0,1fr)_auto] gap-x-3 bg-slate-50 px-5 py-2 text-xs font-semibold text-slate-600 lg:grid">
+                        <span>時間（台灣）</span><span>訂單／客戶</span><span>操作</span><span>操作人員</span><span className="w-12">明細</span>
+                    </div>
+                    <ul className="divide-y divide-slate-100" aria-label="操作記錄">
+                        {logs.map(log => {
+                            const { day, time } = logTime(log.created_at);
+                            const summary = logSummary(log);
+                            const order = log.voucher_number || (log.order_id ? `#${log.order_id}` : '—');
+                            return (
+                                <li key={log.id} className="grid min-w-0 grid-cols-[1fr_auto] items-start gap-x-3 gap-y-2 px-4 py-3 text-sm hover:bg-slate-50/70 sm:px-5 lg:grid-cols-[7rem_minmax(0,1.25fr)_minmax(0,1.25fr)_minmax(0,1fr)_auto] lg:items-center">
+                                    <div className="col-start-1 row-start-1 text-xs tabular-nums text-slate-600">
+                                        {day} <span className="lg:block lg:mt-0.5">{time}</span>
+                                    </div>
+                                    <div className="col-start-1 row-start-2 min-w-0 lg:col-start-2 lg:row-start-1">
+                                        {log.order_id ? <Link to={`/order/${log.order_id}`} className="break-words font-semibold text-blue-700 hover:underline">{order}</Link> : <span className="font-medium text-slate-800">{order}</span>}
+                                        {log.customer_name && <div className="mt-0.5 break-words text-xs text-slate-600">{log.customer_name}</div>}
+                                    </div>
+                                    <div className="col-start-1 row-start-3 min-w-0 lg:col-start-3 lg:row-start-1">
+                                        <Badge variant={actionVariant(log.action_type)} className="max-w-full break-all">{actionLabel(log.action_type)}</Badge>
+                                        {summary && <p className="mt-1 truncate text-xs text-slate-600">{summary}</p>}
+                                    </div>
+                                    <div className="col-start-1 row-start-4 min-w-0 lg:col-start-4 lg:row-start-1">
+                                        <span className="break-words font-medium text-slate-900">{logActor(log)}</span>
+                                        <p className="mt-0.5 break-words text-xs text-slate-500">
+                                            {logRole(log)}{logStage(log) !== '—' && ` · ${logStage(log)}`}
+                                            {parseLogDetails(log.details)?.operation_context === 'assistance' && ' · 協助'}
+                                        </p>
+                                    </div>
+                                    <Button type="button" variant="secondary" size="sm" className="col-start-2 row-start-2 lg:col-start-5 lg:row-start-1"
+                                        aria-label={`查看詳情，日誌 ${log.id}`} onClick={() => setDetail(log)}>詳情</Button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                    </>
+                )}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 sm:px-5">
+                <Button type="button" variant="secondary" size="sm" aria-expanded={showStats} onClick={() => setShowStats(v => !v)} trailingIcon={ChevronDown}>條件統計</Button>
+                <nav aria-label="操作日誌分頁" className="flex flex-wrap items-center gap-2">
+                    <Button type="button" variant="secondary" size="sm" leadingIcon={ChevronLeft} disabled={page <= 1 || !result} onClick={() => { setCursors(items => items.slice(0, -1)); resultsTitle.current?.focus(); }}>上一頁</Button>
+                    <Button type="button" variant="secondary" size="sm" trailingIcon={ChevronRight} disabled={!result?.data?.nextCursor} onClick={() => { setCursors(items => [...items, result.data.nextCursor]); resultsTitle.current?.focus(); }}>下一頁</Button>
+                </nav>
+            </div>
+            {showStats && (
+                <div className="border-t border-slate-100 px-4 py-4 text-sm sm:px-5" aria-live="polite">
+                    {!stats ? '正在統計符合條件的記錄…' : stats.error ? <p role="alert" className="text-red-700">{stats.error}</p> : (
+                        <>
+                            <p className="font-semibold text-slate-900">符合目前條件共 {stats.data.total} 筆</p>
+                            <ul className="mt-2 flex flex-wrap gap-2">
+                                {stats.data.byActionType.map(item => <li key={item.action_type}><Badge variant={actionVariant(item.action_type)}>{actionLabel(item.action_type)} · {item.count}</Badge></li>)}
+                            </ul>
+                        </>
+                    )}
+                </div>
+            )}
+            {detail && <LogDetail log={detail} onClose={() => setDetail(null)} />}
+        </Card>
+    );
+}
+
+export function OperationLogs() {
+    const [params, setParams] = useSearchParams();
+    const appliedKey = params.toString();
+    const applied = readLogFilters(params);
+    const [draft, setDraft] = useState(applied);
+    const [filterError, setFilterError] = useState('');
+    const [run, setRun] = useState(0);
+    useEffect(() => {
+        setDraft(readLogFilters(new URLSearchParams(appliedKey)));
+        setFilterError('');
+    }, [appliedKey]);
+
+    const change = event => {
+        const { name, value } = event.target;
+        setDraft(current => ({ ...current, [name]: value }));
+        setFilterError('');
     };
+    const apply = next => {
+        const error = logFilterError(next);
+        setFilterError(error);
+        if (error) return;
+        const query = logFilterParams(next);
+        setDraft(readLogFilters(query));
+        if (query.toString() === appliedKey) setRun(value => value + 1);
+        else setParams(query);
+    };
+    const preset = (from, to) => apply({ ...draft, startDate: taipeiDay(from), endDate: taipeiDay(to) });
+    const chips = [
+        ['q', applied.q, '關鍵字'], ['orderId', applied.orderId, '訂單'],
+        ['userId', applied.userId, '人員 ID'], ['actionType', applied.actionType && actionLabel(applied.actionType), '操作'],
+        ['workType', applied.workType && (applied.workType === 'pick' ? '揀貨' : applied.workType === 'pack' ? '裝箱' : applied.workType), '工序'],
+        ['dates', (applied.startDate || applied.endDate) && `${applied.startDate || '不限'} ～ ${applied.endDate || '不限'}`, '操作日期'],
+        ['limit', applied.limit !== '50' && applied.limit, '每頁筆數'],
+    ].filter(([, value]) => value);
+    const reset = () => apply(readLogFilters(new URLSearchParams()));
 
-        return (
-            <div className="p-6 md:p-8 max-w-7xl mx-auto min-h-screen">
-                <PageHeader
-                    title="操作日誌查詢"
-                    description="追蹤系統中所有操作記錄"
-                    actions={
-                        <div className="flex gap-3">
-                            <Link to="/settings">
-                                <Button variant="secondary" size="sm" className="gap-1">
-                                    <ArrowLeft className="h-4 w-4" /> 返回設定
-                                </Button>
-                            </Link>
-                            <Button onClick={fetchLogs} disabled={loading} variant="primary" size="sm" className="gap-1">
-                                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 重新整理
-                            </Button>
+    return (
+        <div className="mx-auto w-full max-w-[1480px] min-w-0 space-y-4 p-3 sm:p-6">
+            <PageHeader title="操作日誌" description="查詢誰在什麼時候做了哪些操作"
+                actions={<Button as={Link} to="/settings" variant="secondary" size="sm" leadingIcon={ArrowLeft}>返回設定</Button>} />
+            <Card className="p-4 sm:p-5">
+                <form onSubmit={event => { event.preventDefault(); apply(draft); }} className="space-y-3">
+                    <label className={label} htmlFor="operation-log-search">智慧搜尋</label>
+                    <div className="flex min-w-0 gap-2">
+                        <div className="relative min-w-0 flex-1">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+                            <input id="operation-log-search" name="q" value={draft.q} onChange={change} className={field + ' pl-9'}
+                                placeholder="搜尋單號、人員、客戶、操作、條碼或 SN" autoComplete="off" maxLength={200} aria-describedby="operation-log-search-help" />
                         </div>
-                    }
-                />
-
-                {stats && (
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <Card>
-                            <CardContent className="p-4">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-xs text-gray-600 font-medium mb-1">總操作數</p>
-                                        <p className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{stats.total}</p>
-                                    </div>
-                                    <div className="p-3 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl">
-                                        <Activity className="w-6 h-6 text-blue-600" />
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        {stats.byActionType.slice(0, 3).map((item, index) => (
-                            <Card key={index}>
-                                <CardContent className="p-4">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-xs text-gray-600 font-medium mb-1">{actionTypeMap[item.action_type]?.label || item.action_type}</p>
-                                            <p className="text-2xl font-bold text-gray-900">{item.count}</p>
-                                            <p className="text-[10px] text-gray-500 mt-1">{item.unique_users} 位使用者</p>
-                                        </div>
-                                        <div className="p-3 bg-gradient-to-br from-green-100 to-green-200 rounded-xl">
-                                            <TrendingUp className="w-5 h-5 text-green-600" />
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
+                        <Button type="submit" className="shrink-0">搜尋</Button>
+                    </div>
+                    <p id="operation-log-search-help" className="text-xs text-slate-500">例如：2026/10/19、姓名 裝箱。多個關鍵字用空格分開。</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium text-slate-600">操作日期（台灣）</span>
+                        {[[0, 0, '今天'], [-1, -1, '昨天'], [-6, 0, '近 7 天'], [-29, 0, '近 30 天']].map(([from, to, text]) => (
+                            <Button key={text} type="button" variant="secondary" size="sm" aria-pressed={applied.startDate === taipeiDay(from) && applied.endDate === taipeiDay(to)}
+                                onClick={() => preset(from, to)}>{text}</Button>
                         ))}
                     </div>
+                    <details className="rounded-xl border border-slate-200">
+                        <summary className="cursor-pointer rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700">進階篩選</summary>
+                        <div className="grid grid-cols-1 gap-3 px-3 pb-3 sm:grid-cols-2 xl:grid-cols-4">
+                            <label className={label}>訂單編號或 ID<input name="orderId" value={draft.orderId} onChange={change} className={field} /></label>
+                            <label className={label}>使用者 ID<input name="userId" value={draft.userId} onChange={change} inputMode="numeric" className={field} /></label>
+                            <label className={label}>操作類型<select name="actionType" value={draft.actionType} onChange={change} className={field}>
+                                <option value="">所有操作</option>
+                                {draft.actionType && !Object.hasOwn(actions, draft.actionType) && <option value={draft.actionType}>{draft.actionType}</option>}
+                                {Object.keys(actions).map(type => <option key={type} value={type}>{actionLabel(type)}</option>)}
+                            </select></label>
+                            <label className={label}>工序<select name="workType" value={draft.workType} onChange={change} className={field}>
+                                <option value="">所有工序</option><option value="pick">揀貨</option><option value="pack">裝箱</option>
+                            </select></label>
+                            <label className={label}>操作起日<input type="date" name="startDate" value={draft.startDate} onChange={change} className={field} /></label>
+                            <label className={label}>操作迄日<input type="date" name="endDate" value={draft.endDate} onChange={change} className={field} /></label>
+                            <label className={label}>每頁筆數<select name="limit" value={draft.limit} onChange={change} className={field}>
+                                {!pageSizes.includes(draft.limit) && <option value={draft.limit}>{draft.limit} 筆</option>}
+                                {pageSizes.map(size => <option key={size} value={size}>{size} 筆</option>)}
+                            </select></label>
+                            <div className="flex items-end"><Button type="submit" variant="secondary" size="sm">套用篩選</Button></div>
+                        </div>
+                    </details>
+                    {filterError && <p role="alert" className="text-sm text-red-700">{filterError}</p>}
+                </form>
+                {!!chips.length && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3" aria-label="已套用條件">
+                        {chips.map(([key, value, name]) => (
+                            <button key={key} type="button" aria-label={`移除${name}條件`}
+                                onClick={() => apply(key === 'dates' ? { ...applied, startDate: '', endDate: '' } : { ...applied, [key]: '' })}
+                                className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-blue-50 px-3 py-1.5 text-left text-xs font-medium text-blue-800 hover:bg-blue-100">
+                                <span className="break-all">{name}：{value}</span><X size={13} className="shrink-0" aria-hidden="true" />
+                            </button>
+                        ))}
+                        <button type="button" className="px-2 py-1.5 text-xs font-semibold text-slate-700 underline underline-offset-2" onClick={reset}>清除條件</button>
+                    </div>
                 )}
-
-                <Card className="mt-8">
-                    <CardHeader className="flex items-center gap-2">
-                        <Filter className="h-5 w-5 text-purple-600" />
-                        <CardTitle className="text-lg">篩選條件</CardTitle>
-                        <CardDescription>設定條件以縮小結果</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                            <input
-                                type="text"
-                                placeholder="訂單編號"
-                                value={filters.orderId}
-                                onChange={(e) => handleFilterChange('orderId', e.target.value)}
-                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
-                            />
-                            <input
-                                type="text"
-                                placeholder="使用者 ID"
-                                value={filters.userId}
-                                onChange={(e) => handleFilterChange('userId', e.target.value)}
-                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
-                            />
-                            <select
-                                value={filters.actionType}
-                                onChange={(e) => handleFilterChange('actionType', e.target.value)}
-                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
-                            >
-                                <option value="">所有類型</option>
-                                {Object.entries(actionTypeMap).map(([key, value]) => (
-                                    <option key={key} value={key}>{value.label}</option>
-                                ))}
-                            </select>
-                            <input
-                                type="date"
-                                value={filters.startDate}
-                                onChange={(e) => handleFilterChange('startDate', e.target.value)}
-                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
-                            />
-                            <input
-                                type="date"
-                                value={filters.endDate}
-                                onChange={(e) => handleFilterChange('endDate', e.target.value)}
-                                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-gray-200 focus:border-apple-blue focus:ring-4 focus:ring-apple-blue/10 outline-none transition-all text-gray-900 font-medium"
-                            />
-                            <select
-                                value={filters.limit}
-                                onChange={(e) => handleFilterChange('limit', e.target.value)}
-                                className="input-apple"
-                            >
-                                <option value="50">50 筆</option>
-                                <option value="100">100 筆</option>
-                                <option value="200">200 筆</option>
-                                <option value="500">500 筆</option>
-                            </select>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            <Button variant="primary" size="sm" className="gap-1" onClick={handleSearch}>
-                                <Search className="h-4 w-4" /> 搜尋
-                            </Button>
-                            <Button variant="secondary" size="sm" onClick={handleReset}>重置</Button>
-                            <Button
-                                variant="success"
-                                size="sm"
-                                className="gap-1 ml-auto"
-                                onClick={handleExport}
-                                disabled={logs.length === 0}
-                            >
-                                <Download className="h-4 w-4" /> 匯出 CSV
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card className="mt-8">
-                    <CardHeader>
-                        <CardTitle className="text-lg flex items-center gap-2">
-                            <FileText className="h-5 w-5 text-apple-blue" /> 操作記錄 ({logs.length})
-                        </CardTitle>
-                        <CardDescription>最新操作事件列表</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <Table>
-                            <THead>
-                                <TH>時間</TH>
-                                <TH>訂單資訊</TH>
-                                <TH>操作類型</TH>
-                                <TH>實際操作人員</TH>
-                                <TH>當下工序</TH>
-                                <TH>詳細資訊</TH>
-                            </THead>
-                            <TBody>
-                                {loading ? (
-                                    <>
-                                        {Array.from({ length: 5 }).map((_, i) => (
-                                            <TR key={i}>
-                                                <TD><Skeleton className="h-4 w-28" /></TD>
-                                                <TD>
-                                                    <div className="flex items-center gap-2">
-                                                        <Skeleton className="h-4 w-4 rounded" />
-                                                        <div className="space-y-1">
-                                                            <Skeleton className="h-4 w-32" />
-                                                            <Skeleton className="h-3 w-24" />
-                                                        </div>
-                                                    </div>
-                                                </TD>
-                                                <TD><Skeleton className="h-5 w-24 rounded-full" /></TD>
-                                                <TD>
-                                                    <div className="flex items-center gap-2">
-                                                        <Skeleton className="h-5 w-5 rounded-lg" />
-                                                        <div className="space-y-1">
-                                                            <Skeleton className="h-4 w-24" />
-                                                            <Skeleton className="h-3 w-16" />
-                                                        </div>
-                                                    </div>
-                                                </TD>
-                                                <TD><Skeleton className="h-4 w-40" /></TD>
-                                            </TR>
-                                        ))}
-                                    </>
-                                ) : logs.length === 0 ? (
-                                    <TR>
-                                        <TD colSpan={6} className="py-10">
-                                            <EmptyState title="沒有找到操作記錄" description="嘗試調整篩選條件" />
-                                        </TD>
-                                    </TR>
-                                ) : (
-                                    logs.map((log) => (
-                                        <TR key={log.id}>
-                                            <TD className="whitespace-nowrap text-xs">
-                                                <div className="flex items-center gap-1">
-                                                    <Calendar className="h-3.5 w-3.5 text-gray-400" />
-                                                    {formatMessageTimestamp(log.created_at)}
-                                                </div>
-                                            </TD>
-                                            <TD>
-                                                <div className="flex items-center gap-2">
-                                                    <Package className="h-4 w-4 text-blue-500" />
-                                                    <div>
-                                                        <div className="text-sm font-semibold text-gray-900">{log.voucher_number || '-'}</div>
-                                                        <div className="text-[10px] text-gray-500">{log.customer_name || '-'}</div>
-                                                    </div>
-                                                </div>
-                                            </TD>
-                                            <TD className="whitespace-nowrap">
-                                                <Badge variant="info" className="gap-1 text-xs">
-                                                    {actionTypeMap[log.action_type]?.icon}
-                                                    {actionTypeMap[log.action_type]?.label || log.action_type}
-                                                </Badge>
-                                            </TD>
-                                            <TD>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="p-1.5 bg-gradient-to-br from-purple-100 to-purple-200 rounded-lg">
-                                                        <User className="h-3.5 w-3.5 text-purple-600" />
-                                                    </div>
-                                                    <div>
-                                                        <div className="text-sm font-semibold text-gray-900">{log.actor_snapshot?.name || log.user_name || '-'}</div>
-                                                        <div className="text-[10px] text-gray-500">{log.actor_snapshot ? workActorLabel(log) : '歷史身分未記錄'}</div>
-                                                    </div>
-                                                </div>
-                                            </TD>
-                                            <TD className="whitespace-nowrap text-sm">
-                                                {workTypeLabel(log.work_type || (['pick','pack'].includes(log.action_type)?log.action_type:null)) || '—'}
-                                                {(() => {let details=log.details;try{if(typeof details==='string')details=JSON.parse(details);}catch{details={};}return details?.operation_context==='assistance'?<span className="ml-2 text-xs text-amber-700">協助</span>:null;})()}
-                                            </TD>
-                                            <TD className="max-w-xs">
-                                                <div className="text-xs text-gray-600 space-y-0.5">{formatDetails(log.details)}</div>
-                                            </TD>
-                                        </TR>
-                                    ))
-                                )}
-                            </TBody>
-                        </Table>
-                    </CardContent>
-                </Card>
-            </div>
-        );
+            </Card>
+            <LogResults key={JSON.stringify([appliedKey, run, apiClient.getSessionIdentity()])} applied={applied} />
+        </div>
+    );
 }

@@ -114,7 +114,7 @@ app.set('io', io);
 // 全局中間件
 // =================================================================
 app.use(helmet());
-app.use(morgan('dev'));
+app.use(morgan(require('./utils/accessLogFormat').accessLogFormat));
 
 app.use((req, res, next) => {
     try {

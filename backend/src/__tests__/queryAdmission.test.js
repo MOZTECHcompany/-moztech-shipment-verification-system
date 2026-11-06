@@ -14,3 +14,13 @@ test('scan commands bypass the bounded read queue; overflow is explicit',()=>{
     admit({method:'POST',path:'/api/orders/update_item'},response(),scan);expect(scan).toHaveBeenCalledTimes(1);
     admit({method:'GET',path:'/api/tasks'},queued,()=>{});expect(queued.status).toHaveBeenCalledWith(503);first.end();
 });
+test.each(['/api/operation-logs/', '/API/Operation-Logs', '/api/operation-logs/STATS/', '/API/OPERATION-LOGS/STATS'])(
+    'Express-equivalent operation log URL %s cannot bypass the read queue', path => {
+        const admit = createQueryAdmission({ maxQueued: 0 }), first = response(), queued = response(), next = jest.fn();
+        admit({ method: 'GET', path: '/api/tasks' }, first, () => {});
+        admit({ method: 'GET', path }, queued, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(queued.status).toHaveBeenCalledWith(503);
+        first.end();
+    }
+);
