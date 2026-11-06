@@ -66,10 +66,12 @@ apiClient.interceptors.response.use(
 
         // Sentry 上報，附加 Request ID 與後端錯誤碼
         try {
-            Sentry.captureException(error, {
-                tags: { requestId, status, code },
-                extra: { url: response?.config?.url, method: response?.config?.method, data }
-            });
+            if (!error.config?.skipErrorReporting && code !== 'ERR_CANCELED' && error.code !== 'ERR_CANCELED') {
+                Sentry.captureException(error, {
+                    tags: { requestId, status, code },
+                    extra: { url: response?.config?.url, method: response?.config?.method, data }
+                });
+            }
         } catch { /* Error reporting must not interrupt the original API error. */ }
 
         // 將標準欄位附加回錯誤物件，給呼叫端使用

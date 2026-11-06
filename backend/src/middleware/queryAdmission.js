@@ -27,7 +27,9 @@ function createQueryAdmission({ maxQueued = 16, waitMs = 1500 } = {}) {
         entry.next();
     }
     return (req, res, next) => {
-        if (req.method !== 'GET' || !/^\/api\/(tasks(?:\/completed)?|analytics|operation-logs(?:\/stats)?|scan-errors)$/.test(req.path)) return next();
+        const boundedRead = /^\/api\/(tasks(?:\/completed)?|analytics|scan-errors)$/.test(req.path) ||
+            /^\/api\/operation-logs(?:\/stats)?\/?$/i.test(req.path);
+        if (req.method !== 'GET' || !boundedRead) return next();
         const entry = { res, next };
         if (!active) return admit(entry);
         if (waiting.length >= maxQueued) return busy(res);
