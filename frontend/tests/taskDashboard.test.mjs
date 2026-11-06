@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
 import { filterTasks, canBatchPick, canBatchClaim, batchStagesForRole, matchesTaskSearch, isActiveTaskForRole } from '../src/utils/taskFilters.js';
-import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
+import { TASK_PAGE_SIZE, taskCompletedDate, taskQueryScope, taskPageUrl, readTaskPage } from '../src/utils/taskPage.js';
 import * as signedOrder from '../src/utils/signedOrder.js';
 import * as workCapabilities from '../src/utils/workCapabilities.js';
 
@@ -79,7 +79,7 @@ function dashboard({ role = 'admin', initialView = 'active', pinned = [], stage 
         },
         '@/api/socket.js': { socket: { on: (name, callback) => listeners.set(name, callback), off: noop } },
         '@/utils/taskFilters': { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole },
-        '@/utils/taskPage': { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage },
+        '@/utils/taskPage': { TASK_PAGE_SIZE, taskCompletedDate, taskQueryScope, taskPageUrl, readTaskPage },
         '@/utils/signedOrder': signedOrder,
         '@/utils/workCapabilities': workCapabilities,
         '@/contexts/WorkModeContext': { useWorkMode: () => ({ stage: selectedStage, loading: false, choosing: false, error: modeError, selectStage: async next => { selectedStage = next; modeSelections.push(next); dirty = true; return true; } }) },
@@ -732,4 +732,103 @@ test('a claim with unknown result and failed readback blocks stage switching unt
     assert.equal(view.card(1).props.claimDisabled,true);
     view.button('重試載入').props.onClick();view.reads[2].resolve({data:fixtures});await view.settle();
     assert.equal(view.find(view.render(),node=>node.type==='WorkModeControls').props.disabled,false);
+});
+
+const queryOf = read => new URL(read.url, 'http://local.test').searchParams;
+const dateControl = view => view.find(view.render(), node => node.props?.id === 'completed-date');
+const dateTypeControl = view => view.find(view.render(), node => node.props?.id === 'completed-date-type');
+
+test('completed browsing defaults to Taiwan today but a keyword searches across dates and ignores the old today response', async () => {
+    const view = dashboard({ initialView: 'completed' });
+    const todayRequest = view.reads[0];
+    assert.equal(queryOf(todayRequest).get('date'), workCapabilities.taiwanWorkDate());
+    view.filters().props.onSearch('000-2026/10/22'); view.render();
+    assert.equal(dateControl(view).props.value, '', 'pending search should not show a hidden today filter');
+    view.advanceSearch();
+    const lookup = view.reads[1];
+    assert.equal(queryOf(lookup).get('q'), '000-2026/10/22');
+    assert.equal(queryOf(lookup).has('date'), false);
+    assert.equal(queryOf(lookup).has('match'), false);
+    lookup.resolve({ data: [{ id: 81, voucher_number: '000-2026/10/22', status: 'completed', task_type: 'done' }] }); await view.settle();
+    todayRequest.resolve({ data: [{ id: 82, voucher_number: 'TODAY-OTHER', status: 'completed', task_type: 'done' }] }); await view.settle();
+    assert.ok(view.card(81)); assert.equal(view.card(82), undefined);
+    assert.match(view.text(view.render()), /未限制日期/);
+});
+
+test('an explicit completed date and date basis survive search and switching; clear removes only the date restriction', async () => {
+    const view = dashboard({ initialView: 'completed', role: 'picker' });
+    dateControl(view).props.onChange({ target: { value: '2026-10-22' } }); view.render();
+    dateTypeControl(view).props.onChange({ target: { value: 'completed' } }); view.render();
+    view.filters().props.onSearch('TEST-002'); view.render(); view.advanceSearch();
+    assert.equal(queryOf(view.reads.at(-1)).get('q'), 'TEST-002');
+    assert.equal(queryOf(view.reads.at(-1)).get('date'), '2026-10-22');
+    assert.equal(queryOf(view.reads.at(-1)).get('dateType'), 'completed');
+    assert.equal(queryOf(view.reads.at(-1)).has('stage'), false);
+    view.button('進行中').props.onClick(); view.render();
+    assert.equal(queryOf(view.reads.at(-1)).get('q'), 'TEST-002');
+    assert.equal(queryOf(view.reads.at(-1)).get('stage'), 'pick');
+    assert.equal(queryOf(view.reads.at(-1)).has('date'), false);
+    assert.equal(queryOf(view.reads.at(-1)).has('dateType'), false);
+    view.button('已完成').props.onClick(); view.render();
+    assert.equal(dateControl(view).props.value, '2026-10-22');
+    assert.equal(dateTypeControl(view).props.value, 'completed');
+    assert.equal(queryOf(view.reads.at(-1)).get('dateType'), 'completed');
+    view.reads.at(-1).resolve({ data: [] }); await view.settle();
+    view.button('清除日期限制').props.onClick(); view.render();
+    assert.equal(queryOf(view.reads.at(-1)).get('q'), 'TEST-002');
+    assert.equal(queryOf(view.reads.at(-1)).has('date'), false);
+    assert.equal(queryOf(view.reads.at(-1)).has('dateType'), false);
+    assert.equal(view.filters().props.search, 'TEST-002');
+    assert.equal(view.posts.length, 0);
+});
+
+test('empty search results can switch both directions using the latest unchanged search', async () => {
+    const view = dashboard({ role: 'packer' });
+    view.filters().props.onSearch('old term'); view.render();
+    view.filters().props.onSearch('NEW-0007'); view.render(); view.advanceSearch();
+    view.reads.at(-1).resolve({ data: [] }); await view.settle();
+    view.button('到已完成查找').props.onClick(); view.render();
+    assert.match(view.reads.at(-1).url, /\/api\/tasks\/completed\?/);
+    assert.equal(queryOf(view.reads.at(-1)).get('q'), 'NEW-0007');
+    assert.equal(queryOf(view.reads.at(-1)).has('date'), false);
+    view.reads.at(-1).resolve({ data: [] }); await view.settle();
+    view.button('到進行中查找').props.onClick(); view.render();
+    assert.match(view.reads.at(-1).url, /\/api\/tasks\?/);
+    assert.equal(queryOf(view.reads.at(-1)).get('q'), 'NEW-0007');
+    assert.equal(queryOf(view.reads.at(-1)).get('stage'), 'pack');
+    assert.deepEqual(view.modeSelections, []);
+});
+
+test('explicit scanner search submits full voucher immediately, never claims, and invalidates the earlier broad cursor', async () => {
+    const view = dashboard({ initialView: 'completed' });
+    view.filters().props.onSearch('0007-A/01'); view.render(); view.advanceSearch();
+    const broad = view.reads.at(-1);
+    broad.resolve(pageEnvelope([{ id: 44, voucher_number: '0007-A/01X', status: 'completed', task_type: 'done' }], 'broad-next')); await view.settle();
+    view.button('下一頁').props.onClick(); view.render();
+    const stalePage = view.reads.at(-1);
+    view.filters().props.onExactSearch(true); view.render();
+    const exact = view.reads.at(-1);
+    assert.equal(queryOf(exact).get('match'), 'exact');
+    assert.equal(queryOf(exact).get('q'), '0007-A/01');
+    assert.equal(queryOf(exact).has('cursor'), false);
+    stalePage.resolve({ data: [{ id: 45, voucher_number: 'broad-second-page', status: 'completed', task_type: 'done' }] }); await view.settle();
+    assert.equal(view.card(45), undefined);
+    view.filters().props.onSearch('0008-B/02'); view.render();
+    assert.equal(view.reads.at(-1), exact, 'typing waits for the debounce');
+    view.filters().props.onSubmitSearch('0008-B/02'); view.render();
+    const scanned = view.reads.at(-1);
+    assert.equal(queryOf(scanned).get('q'), '0008-B/02');
+    assert.equal(queryOf(scanned).get('match'), 'exact');
+    const count = view.reads.length; view.advanceSearch(); assert.equal(view.reads.length, count, 'scanner Enter does not issue a duplicate delayed request');
+    scanned.resolve({ data: [{ id: 46, voucher_number: '0008-B/02', status: 'completed', task_type: 'done' }] }); await view.settle();
+    assert.ok(view.card(46)); assert.deepEqual(view.navigation, []); assert.equal(view.posts.length, 0);
+});
+
+test('empty exact mode does not send an invalid match parameter or a duplicate request', async () => {
+    const view = await loaded({ initialView: 'completed' });
+    view.filters().props.onExactSearch(true); view.render();
+    assert.equal(view.reads.length, 1);
+    view.filters().props.onRefresh(); view.render();
+    assert.equal(queryOf(view.reads.at(-1)).has('match'), false);
+    assert.equal(queryOf(view.reads.at(-1)).has('q'), false);
 });

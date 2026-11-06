@@ -228,6 +228,8 @@ export function AdminDashboard({ user }) {
                         <h2 className="text-base font-semibold text-slate-900">出貨作業</h2>
                         <p className="mt-2 text-sm text-slate-500">認領任務、揀貨與裝箱核對</p>
                         <Button as={Link} to="/tasks" variant="secondary" className="mt-5 justify-between">開啟工作台<ArrowRight size={17} /></Button>
+                        <Button as={Link} to="/tasks" state={{ view: 'completed' }} variant="secondary" className="mt-2 justify-between">查已完成任務<ArrowRight size={17} /></Button>
+                        {isAdmin && <Button as={Link} to="/admin/operation-logs?actionType=pack" variant="secondary" className="mt-2 justify-between">查裝箱記錄<ArrowRight size={17} /></Button>}
                         <Button as={Link} to="/team" variant="ghost" className="mt-2 justify-between">團隊公告<ArrowRight size={17} /></Button>
                     </aside>
                 </div>

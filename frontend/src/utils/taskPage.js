@@ -1,13 +1,21 @@
 export const TASK_PAGE_SIZE = 50;
-export const taskQueryScope = ({ view, date, search, status, urgent, group = 'all', stage }) => JSON.stringify([view, view === 'completed' ? date : '', search.trim(), status, urgent, group, view === 'completed' ? '' : stage || '']);
+// null is the automatic default; an explicit empty value means all dates.
+export const taskCompletedDate = (selection, search, today) => selection ?? (search.trim() ? '' : today);
+export const taskQueryScope = ({ view, date, dateType, search, status, urgent, group = 'all', stage, exact = false }) => JSON.stringify([view, view === 'completed' ? date || '' : '', view === 'completed' && date && dateType === 'completed' ? 'completed' : '', search.trim(), Boolean(search.trim() && exact), status, urgent, group, view === 'completed' ? '' : stage || '']);
 
-export function taskPageUrl({ view, date, search, status, urgent, cursor, group = 'all', stage }) {
+export function taskPageUrl({ view, date, dateType, search, status, urgent, cursor, group = 'all', stage, exact = false }) {
     const params = new URLSearchParams({ pagination: 'cursor', limit: String(TASK_PAGE_SIZE) });
-    if (search.trim()) params.set('q', search.trim());
+    if (search.trim()) {
+        params.set('q', search.trim());
+        if (exact) params.set('match', 'exact');
+    }
     if (status !== 'all') params.set('status', status);
     if (group !== 'all') params.set('group', group);
     if (urgent) params.set('urgent', 'true');
-    if (view === 'completed') params.set('date', date);
+    if (view === 'completed' && date) {
+        params.set('date', date);
+        if (dateType === 'completed') params.set('dateType', 'completed');
+    }
     if (view !== 'completed' && ['pick', 'pack'].includes(stage)) params.set('stage', stage);
     if (cursor) params.set('cursor', cursor);
     return `/api/tasks${view === 'completed' ? '/completed' : ''}?${params}`;

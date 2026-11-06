@@ -19,11 +19,11 @@ import DefectReportModal from './DefectReportModal';
 import { PageHeader, Button, Skeleton, SkeletonText } from '@/ui';
 import TaskListFilters from './TaskListFilters';
 import { filterTasks, canBatchClaim, batchStagesForRole, isActiveTaskForRole } from '@/utils/taskFilters';
-import { TASK_PAGE_SIZE, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
+import { TASK_PAGE_SIZE, taskCompletedDate, taskQueryScope, taskPageUrl, readTaskPage } from '@/utils/taskPage';
 import { signedDocumentLabel } from '@/utils/signedOrder';
 import { useWorkMode } from '@/contexts/WorkModeContext';
 import { WorkModeControls } from './WorkModeControls';
-import { canWork, orderWorkUrl } from '@/utils/workCapabilities';
+import { canWork, orderWorkUrl, taiwanWorkDate } from '@/utils/workCapabilities';
 
 // Counts should stay readable while tasks refresh.
 function NumberTicker({ value }) {
@@ -386,7 +386,6 @@ export function TaskDashboard({ user }) {
     const initialView = location?.state?.view === 'completed' ? 'completed' : 'active';
     const [currentView, setCurrentView] = useState(initialView); // 'active' | 'completed'
     const currentViewRef = useRef(currentView);
-    const prevViewRef = useRef(currentView);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -396,32 +395,15 @@ export function TaskDashboard({ user }) {
         };
     }, []);
 
-    const getLocalISODate = useCallback(() => {
-        // 與已完成清單 API 的 Asia/Taipei 日期範圍一致。
-        const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-        const datePart = (type) => parts.find(part => part.type === type).value;
-        return `${datePart('year')}-${datePart('month')}-${datePart('day')}`;
-    }, []);
-
-    const [completedDate, setCompletedDate] = useState(() => getLocalISODate());
-    
     currentViewRef.current = currentView;
-
-    useEffect(() => {
-        // 每次「切換到已完成」都強制回到今天（避免保留上次選的日期）
-        const prev = prevViewRef.current;
-        if (currentView === 'completed' && prev !== 'completed') {
-            setCompletedDate(getLocalISODate());
-        }
-        prevViewRef.current = currentView;
-    }, [currentView, getLocalISODate]);
-
-
+    const [selectedCompletedDate, setSelectedCompletedDate] = useState(null);
+    const [completedDateType, setCompletedDateType] = useState('updated');
     const [selectedTasks, setSelectedTasks] = useState([]);
     const [batchMode, setBatchMode] = useState(false);
     const batchLabel = batchMode === 'pack' ? '裝箱' : '揀貨';
     const [search, setSearch] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [exactSearch, setExactSearch] = useState(false);
     useEffect(() => {
         const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
         return () => clearTimeout(timer);
@@ -430,10 +412,16 @@ export function TaskDashboard({ user }) {
     const [taskSummary, setTaskSummary] = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
     const [urgentOnly, setUrgentOnly] = useState(false);
-    const hasFilters = Boolean(search.trim()) || statusFilter !== 'all' || urgentOnly || taskGroup !== 'all';
-    const query = { view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup, stage: workMode };
+    const hasKeyword = Boolean(search.trim());
+    const hasFilters = hasKeyword || statusFilter !== 'all' || urgentOnly || taskGroup !== 'all';
+    const today = currentView === 'completed' ? taiwanWorkDate() : '';
+    const completedDate = taskCompletedDate(selectedCompletedDate, search, today);
+    const queryDate = currentView === 'completed' ? taskCompletedDate(selectedCompletedDate, debouncedSearch, today) : '';
+    const dateType = queryDate ? completedDateType : '';
+    const exact = Boolean(debouncedSearch && exactSearch);
+    const query = { view: currentView, date: queryDate, dateType, search: debouncedSearch, exact, status: statusFilter, urgent: urgentOnly, group: taskGroup, stage: workMode };
     const queryScope = taskQueryScope(query);
-    requestScopeRef.current = taskQueryScope({ ...query, search });
+    requestScopeRef.current = taskQueryScope({ ...query, date: completedDate, dateType: completedDateType, search, exact: exactSearch });
     const searchPending = search.trim() !== debouncedSearch;
     const pageIndex = pagination.scope === queryScope ? pagination.index : 0;
     const pageCursors = pagination.scope === queryScope ? pagination.cursors : [null];
@@ -444,7 +432,8 @@ export function TaskDashboard({ user }) {
     const requestKey = `${queryScope}:${pageCursor || ''}`;
     const requestKeyRef = useRef(requestKey);
     requestKeyRef.current = requestKey;
-    const resetFilters = () => { setTaskGroup('all'); setSearch(''); setStatusFilter('all'); setUrgentOnly(false); };
+    const resetFilters = () => { setTaskGroup('all'); setSearch(''); setExactSearch(false); setStatusFilter('all'); setUrgentOnly(false); };
+    const submitSearch = value => { setSearch(value); setDebouncedSearch(value.trim()); };
     const changeView = (view) => {
         if (view !== currentViewRef.current) claimContextRef.current += 1;
         setCurrentView(view);
@@ -454,7 +443,7 @@ export function TaskDashboard({ user }) {
         setBatchMode(false);
         setSelectedTasks([]);
     };
-    useEffect(() => { setSelectedTasks([]); }, [search, statusFilter, urgentOnly, currentView, completedDate, taskGroup]);
+    useEffect(() => { setSelectedTasks([]); }, [search, exactSearch, statusFilter, urgentOnly, currentView, completedDate, completedDateType, taskGroup]);
     const [pickHighlight, setPickHighlight] = useState(false);
     const [pinnedTaskIds, setPinnedTaskIds] = useState([]);
     
@@ -568,7 +557,7 @@ export function TaskDashboard({ user }) {
             setPageInfo({ hasMore: false, nextCursor: null });
         }
         try {
-            const endpoint = taskPageUrl({ view: currentView, date: completedDate, search: debouncedSearch, status: statusFilter, urgent: urgentOnly, group: taskGroup, cursor: pageCursor, stage: workMode });
+            const endpoint = taskPageUrl({ view: currentView, date: queryDate, dateType, search: debouncedSearch, exact, status: statusFilter, urgent: urgentOnly, group: taskGroup, cursor: pageCursor, stage: workMode });
             const response = await apiClient.get(endpoint, { timeout: 15000 });
             if (!isCurrent()) return;
             const page = readTaskPage(response.data);
@@ -582,7 +571,7 @@ export function TaskDashboard({ user }) {
         } finally {
             if (isCurrent()) setLoading(false);
         }
-    }, [user, currentView, completedDate, debouncedSearch, statusFilter, urgentOnly, taskGroup, pageCursor, queryScope, requestKey, searchPending, workMode]);
+    }, [user, currentView, queryDate, dateType, debouncedSearch, exact, statusFilter, urgentOnly, taskGroup, pageCursor, queryScope, requestKey, searchPending, workMode]);
 
     const refreshTasks = () => {
         setSelectedTasks([]);
@@ -846,24 +835,32 @@ export function TaskDashboard({ user }) {
                           </button>
                       </div>
 
-                                            {/* 已完成：日期篩選（預設今天，可選日期） */}
+                                            {/* Only an explicit date constrains a keyword search. */}
                                             {currentView === 'completed' && (
-                                                <div className="flex items-center gap-2 bg-white/50 backdrop-blur-sm rounded-xl px-3 py-1.5 border border-gray-200/50 shadow-sm">
-                                                    <label htmlFor="completed-date" className="text-xs font-bold text-gray-600">更新日期</label>
+                                                <div className="flex flex-wrap items-center gap-2 bg-white/50 backdrop-blur-sm rounded-xl px-3 py-1.5 border border-gray-200/50 shadow-sm" role="group" aria-label="日期篩選（台灣時間）">
+                                                    <label htmlFor="completed-date-type" className="sr-only">日期依據</label>
+                                                    <select id="completed-date-type" value={completedDateType} disabled={!completedDate}
+                                                        onChange={e => { setCompletedDateType(e.target.value); setSelectedCompletedDate(completedDate); }}
+                                                        className="min-h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm">
+                                                        <option value="updated">更新日期</option>
+                                                        <option value="completed">裝箱完成日</option>
+                                                    </select>
+                                                    <label htmlFor="completed-date" className="sr-only">{completedDateType === 'completed' ? '裝箱完成日' : '更新日期'}</label>
                                                     <input
                                                         id="completed-date"
                                                         type="date"
                                                         value={completedDate}
-                                                        onChange={(e) => setCompletedDate(e.target.value || getLocalISODate())}
-                                                        className="text-sm bg-white/70 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                                        onChange={e => setSelectedCompletedDate(e.target.value)}
+                                                        className="min-h-9 text-sm bg-white/70 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
                                                     />
                                                     <button
-                                                        onClick={() => setCompletedDate(getLocalISODate())}
-                                                        className="text-xs font-bold text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100/70"
-                                                        title="回到今天"
+                                                        type="button"
+                                                        onClick={() => setSelectedCompletedDate(taiwanWorkDate())}
+                                                        className="min-h-9 text-xs font-bold text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100/70"
                                                     >
                                                         今天
                                                     </button>
+                                                    {completedDate && <button type="button" onClick={() => setSelectedCompletedDate('')} className="min-h-9 rounded-lg px-2 text-xs font-semibold text-blue-700 hover:bg-blue-50">清除日期</button>}
                                                 </div>
                                             )}
 
@@ -901,6 +898,7 @@ export function TaskDashboard({ user }) {
 
                 <TaskListFilters
                     search={search} onSearch={setSearch}
+                    exactSearch={exactSearch} onExactSearch={setExactSearch} onSubmitSearch={submitSearch} completedSearch={currentView === 'completed'}
                     status={statusFilter} onStatus={setStatusFilter}
                     urgentOnly={urgentOnly} onUrgentOnly={setUrgentOnly}
                     showUrgent={true}
@@ -910,7 +908,7 @@ export function TaskDashboard({ user }) {
                     serverSearch pageIndex={pageIndex} pageSize={TASK_PAGE_SIZE} hasMore={pageInfo.hasMore}
                 />
                 {batchMode && <p className="text-sm text-slate-700 mb-4">請勾選待{batchLabel}任務。認領後逐筆開啟作業。</p>}
-                {currentView === 'completed' && <p className="text-xs text-slate-600 mb-4">依台灣時間的訂單更新日期查詢；包含已完成揀貨與裝箱的階段，搜尋涵蓋所有符合條件的訂單。</p>}
+                {currentView === 'completed' && <p className="text-xs text-slate-600 mb-4">{completedDate ? completedDateType === 'completed' ? '依台灣時間的裝箱完成日查詢，只顯示已完成裝箱的訂單。' : '依台灣時間的訂單更新日期查詢，包含已完成揀貨與裝箱。' : '未限制日期，搜尋涵蓋有權查看的完成階段任務。'}{selectedCompletedDate === null && !hasKeyword && ' 輸入單號、客戶或日期可跨日搜尋。'}</p>}
                 {listChanged && !loading && (
                     <div role="status" className="flex flex-wrap items-center justify-between gap-2 mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                         <span>任務有更新，統計與清單可能已變動。請重新整理以取得最新資料。</span>
@@ -967,11 +965,13 @@ export function TaskDashboard({ user }) {
                 ) : loadError && tasks.length === 0 ? null : visibleTasks.length === 0 ? (
                     <div className="text-center py-12 px-6 bg-white/75 border border-white rounded-2xl">
                         <Package size={26} className="mx-auto mb-4 text-slate-400" />
-                        <h2 className="text-xl font-semibold text-slate-800">{hasFilters ? '沒有符合條件的任務' : currentView === 'completed' ? '這個日期沒有完成階段的任務' : '目前沒有可處理的任務'}</h2>
-                        <p className="text-sm text-slate-600 mt-2">{hasFilters ? '可修改單號、客戶或作業狀態，也可以清除篩選。' : currentView === 'completed' ? '請選擇其他更新日期，或回到進行中的任務。' : '收到出貨任務後，選擇「開始揀貨」或「開始裝箱」即可刷條碼核對。'}</p>
-                        <div className="flex justify-center gap-3 mt-5">
+                        <h2 className="text-xl font-semibold text-slate-800">{hasFilters ? '沒有符合條件的任務' : currentView === 'completed' ? completedDate ? '這個日期沒有完成階段的任務' : '目前沒有完成階段的任務' : '目前沒有可處理的任務'}</h2>
+                        <p className="text-sm text-slate-600 mt-2">{hasKeyword ? exactSearch ? '請核對完整單號，或用相同單號切換分頁查找。' : '可調整單號、客戶或作業狀態，也能用相同關鍵字到另一個分頁查找。' : hasFilters ? '可調整作業狀態或清除篩選。' : currentView === 'completed' ? '可輸入單號或客戶查找，或回到進行中的任務。' : '收到出貨任務後，選擇「開始揀貨」或「開始裝箱」即可刷條碼核對。'}</p>
+                        <div className="flex flex-wrap justify-center gap-3 mt-5">
                             {hasFilters ? <Button variant="secondary" onClick={resetFilters}>清除篩選</Button> : <Button variant="secondary" onClick={fetchTasks}>重新整理任務</Button>}
-                            {currentView === 'completed' && <Button variant="secondary" onClick={() => changeView('active')}>查看進行中</Button>}
+                            {currentView === 'completed' && completedDate && <Button variant="secondary" onClick={() => setSelectedCompletedDate('')}>清除日期限制</Button>}
+                            {currentView === 'completed' && <Button variant="secondary" onClick={() => changeView('active')}>{hasKeyword ? '到進行中查找' : '查看進行中'}</Button>}
+                            {currentView === 'active' && hasKeyword && <Button variant="secondary" onClick={() => changeView('completed')}>到已完成查找</Button>}
                             {!hasFilters && currentView === 'active' && ['admin', 'superadmin', 'dispatcher'].includes(user?.role) && <Button onClick={() => navigate('/admin')}>匯入出貨單</Button>}
                         </div>
                     </div>
@@ -1109,7 +1109,7 @@ export function TaskDashboard({ user }) {
                                     </div>
                                     <div>
                                         <h2 className="text-lg font-bold text-gray-900 leading-none">已完成任務</h2>
-                                        <p className="text-xs text-green-600/80 font-medium mt-1">{completedDate} 更新的訂單</p>
+                                        <p className="text-xs text-green-600/80 font-medium mt-1">{completedDate ? `${completedDate} ${completedDateType === 'completed' ? '裝箱完成' : '更新'}的訂單` : '跨日查詢'}</p>
                                     </div>
                                 </div>
                                 <span className="px-3 py-1 rounded-lg bg-white text-green-600 text-sm font-bold shadow-sm border border-green-100">

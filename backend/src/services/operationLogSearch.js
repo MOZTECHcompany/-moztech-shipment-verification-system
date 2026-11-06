@@ -1,5 +1,6 @@
 const { createHash } = require('node:crypto');
 const { boundedLimit, dateRange, isoDate } = require('../utils/queryLimits');
+const { tokenizeErpSearch, parseErpDate, parseErpVoucher, voucherDatePattern, packingWords } = require('../utils/erpSearchTerms');
 
 const badRequest = message => Object.assign(new Error(message), { status: 400 });
 const normalize = value => value.normalize('NFKC').replace(/[‐‑‒–—−－]/g, '-').trim().toLowerCase();
@@ -9,7 +10,7 @@ const like = value => `%${value.replace(/[\\%_]/g, '\\$&')}%`;
 const workType = "COALESCE(ol.work_type, CASE WHEN ol.action_type IN ('pick','pack') THEN ol.action_type END)";
 const actionTerms = {
     '匯入': ['import'], '匯入訂單': ['import'], '認領': ['claim'], '認領任務': ['claim'],
-    '揀貨': ['pick'], '揀貨操作': ['pick'], '裝箱': ['pack'], '裝貨': ['pack'], '裝箱操作': ['pack'],
+    '揀貨': ['pick'], '揀貨操作': ['pick'],
     '作廢': ['void'], '作廢訂單': ['void'], '完成': ['complete'], '完成訂單': ['complete'],
     '交接': ['transfer'], '任務交接': ['transfer'], '暫停': ['work_pause'], '暫停作業': ['work_pause'],
     '繼續': ['work_resume'], '繼續作業': ['work_resume'], '恢復': ['work_resume'],
@@ -33,9 +34,7 @@ function parseFilters(query, { statistics = false } = {}) {
         if (query[key] !== undefined && typeof query[key] !== 'string') throw badRequest('查詢參數格式不正確');
     }
     const q = normalize(query.q || '');
-    // ERP displays sometimes insert spaces around the voucher's final hyphen.
-    // Keep its sequence suffix attached instead of independently matching a day.
-    const terms = q.replace(/\b(\d{4}[/-]\d{2}[/-]\d{2}|\d{8})\s*-\s*(\d+)\b/g, '$1-$2').split(/\s+/).filter(Boolean);
+    const terms = tokenizeErpSearch(q);
     if (q.length > 200 || terms.length > 8) throw badRequest('搜尋文字最多 200 個字、8 個以空白分隔的關鍵字');
     const orderId = normalize(query.orderId || '');
     if (orderId.length > 255) throw badRequest('訂單編號過長');
@@ -46,7 +45,7 @@ function parseFilters(query, { statistics = false } = {}) {
     if (query.workType && !['pick', 'pack'].includes(query.workType)) throw badRequest('作業階段格式不正確');
     const range = dateRange(query.startDate || undefined, query.endDate || undefined);
     const filters = { terms, orderId, userId, actionType, workType: query.workType || '', ...range };
-    const scope = createHash('sha256').update(JSON.stringify(filters)).digest('hex').slice(0, 24);
+    const scope = createHash('sha256').update('shipment-search-v2:' + JSON.stringify(filters)).digest('hex').slice(0, 24);
     if (statistics) return filters;
     return { ...filters, scope, limit: boundedLimit(query.limit, 100, 1000), cursor: decodeCursor(query.cursor, scope) };
 }
@@ -71,6 +70,9 @@ function buildFilter(filters) {
     const params = [], conditions = [];
     const param = value => { params.push(value); return `$${params.length}`; };
     const normalized = field => `lower(normalize(COALESCE(${field}, ''), NFKC))`;
+    const datedVoucherMatch = (day, sequence) => `btrim(${normalized('o.voucher_number')}) ~ ${param(voucherDatePattern(day, sequence))}`;
+    const dayStart = date => `(${date}::date::timestamp AT TIME ZONE 'Asia/Taipei')`;
+    const dayEnd = date => `((${date}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Taipei')`;
     const voucher = `regexp_replace(${normalized('o.voucher_number')}, '[[:space:]/‐‑‒–—−－-]', '', 'g')`;
     const voucherMatch = term => {
         const simple = compactVoucher(term);
@@ -82,14 +84,36 @@ function buildFilter(filters) {
         // searches the human voucher number, so operators need not know DB IDs.
         if (/^\d+$/.test(filters.orderId)) {
             conditions.push(Number(filters.orderId) <= 2147483647 ? `ol.order_id = ${param(Number(filters.orderId))}` : 'FALSE');
-        } else conditions.push(`(${voucherMatch(filters.orderId)})`);
+        } else {
+            const full = parseErpVoucher(filters.orderId.replace(/\s/g, ''));
+            const day = parseErpDate(filters.orderId);
+            conditions.push(full ? datedVoucherMatch(full.day, full.sequence) : day ? datedVoucherMatch(day) : `(${voucherMatch(filters.orderId)})`);
+        }
     }
     if (filters.userId) conditions.push(`ol.user_id = ${param(Number(filters.userId))}`);
     if (filters.actionType) conditions.push(`ol.action_type = ${param(filters.actionType)}`);
     if (filters.workType) conditions.push(`${workType} = ${param(filters.workType)}`);
     if (filters.start) conditions.push(`ol.created_at >= (${param(filters.start)}::date::timestamp AT TIME ZONE 'Asia/Taipei')`);
     if (filters.end) conditions.push(`ol.created_at < ((${param(filters.end)}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Taipei')`);
+    let scanTerms = false;
     for (const term of filters.terms) {
+        // An operation word identifies a scan event, not a customer's name or
+        // a claim/error that happened during the packing stage.
+        if (packingWords.has(term)) {
+            conditions.push("ol.action_type = 'pack'");
+            continue;
+        }
+        const day = parseErpDate(term);
+        if (day) {
+            const date = param(day);
+            conditions.push(`(${datedVoucherMatch(day)} OR (ol.created_at >= ${dayStart(date)} AND ol.created_at < ${dayEnd(date)}))`);
+            continue;
+        }
+        const full = parseErpVoucher(term);
+        if (full) {
+            conditions.push(datedVoucherMatch(full.day, full.sequence));
+            continue;
+        }
         const literal = param(like(term));
         const matches = ['u.name', 'u.username', "ol.actor_snapshot->>'name'", "ol.actor_snapshot->>'username'", 'o.customer_name', 'ol.action_type']
             .map(field => `${normalized(field)} LIKE ${literal} ESCAPE '\\'`);
@@ -97,8 +121,10 @@ function buildFilter(filters) {
         if (/^\d+$/.test(term) && Number(term) > 0 && Number(term) <= 2147483647) matches.push(`ol.order_id = ${param(Number(term))}`);
         const actions = Object.hasOwn(actionTerms, term) ? actionTerms[term] : null;
         if (actions) matches.push(`ol.action_type = ANY(${param(actions)}::text[])`);
-        if (['揀貨', '裝箱', '裝貨'].includes(term)) matches.push(`${workType} = ${param(term === '揀貨' ? 'pick' : 'pack')}`);
-        for (const key of isScanTerm(term) ? ['serialNumber', 'scanRaw', 'barcode', 'scanValue', 'oldSn', 'newSn'] : []) {
+        if (term === '揀貨') matches.push(`${workType} = ${param('pick')}`);
+        const scan = isScanTerm(term);
+        scanTerms ||= scan;
+        for (const key of scan ? ['serialNumber', 'scanRaw', 'barcode', 'scanValue', 'oldSn', 'newSn'] : []) {
             matches.push(`(jsonb_typeof(scan.data->'${key}') = 'string' AND ${normalized(`scan.data->>'${key}'`)} LIKE ${literal} ESCAPE '\\')`);
         }
         conditions.push(`(${matches.join(' OR ')})`);
@@ -106,7 +132,7 @@ function buildFilter(filters) {
     // details is legacy TEXT, sometimes plain text or malformed JSON. PostgreSQL
     // 17 pg_input_is_valid also rejects invalid JSONB numbers/Unicode; IS JSON
     // alone would not make the cast safe. Never search arbitrary audit details.
-    const scanJoin = filters.terms.some(isScanTerm) ? `LEFT JOIN LATERAL (
+    const scanJoin = scanTerms ? `LEFT JOIN LATERAL (
         SELECT CASE WHEN ol.action_type IN ('pick','pack','scan_error','defect_exchange') AND octet_length(ol.details) <= 65536
             THEN CASE WHEN pg_input_is_valid(ol.details, 'jsonb') THEN ol.details::jsonb END END AS data
     ) scan ON TRUE` : '';
