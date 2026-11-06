@@ -91,6 +91,14 @@ export function logFilterParams(filters) {
     }
     return params;
 }
+export function smartLogSearchFilters(draft) {
+    // The main search starts a fresh order lookup. An explicit order filter
+    // can still be combined with keywords via the advanced Apply button.
+    return draft.q.trim() ? { ...draft, orderId: '' } : draft;
+}
+export function keywordOnlyLogFilters({ q, limit }) {
+    return { ...readLogFilters(new URLSearchParams()), q, limit };
+}
 export function logFilterError({ q, startDate, endDate }) {
     if (q.trim().length > 200 || q.trim().split(/\s+/u).length > 8) return '請將關鍵字縮短至 200 字以內、最多 8 個詞。';
     if (startDate && endDate && startDate > endDate) return '開始日期不能晚於結束日期。';

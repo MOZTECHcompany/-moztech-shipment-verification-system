@@ -72,16 +72,41 @@ test('operation log queries preserve permissions, literal search and stable Taip
             assert.deepEqual(ids(await get({ q: '已離職' })), [6]);
             assert.deepEqual(ids(await get({ q: '舊姓名 不存在的客戶' })), []);
         });
-        await t.test('normalizes ERP separators/fullwidth dates but q dates do not silently become operation dates', async () => {
+        await t.test('normalizes ERP separators/fullwidth dates and preserves exact voucher and legacy IDs', async () => {
             for (const q of ['20261106-12', '2026/11/06-12', '2026-11-06-12', '２０２６１１０６—１２', '2026/11/06 -12', '2026/11/06 - 12']) {
                 assert.deepEqual(ids(await get({ q })), [2, 1], q);
             }
-            for (const q of ['20261106', '2026/11/06', '2026-11-06']) assert.deepEqual(ids(await get({ q })), [2, 3, 1]);
+            for (const q of ['20261106', '2026/11/06', '2026-11-06']) {
+                const found = ids(await get({ q }));
+                assert.equal(found.length, 22);
+                assert.ok(!found.includes(4) && !found.includes(5));
+            }
             assert.deepEqual(ids(await get({ q: '120045' })), [7]);
             assert.deepEqual(ids(await get({ q: '123' })), [14]);
             assert.deepEqual(ids(await get({ orderId: '42' })), [2, 1]);
             assert.deepEqual(ids(await get({ orderId: '2026/11/06-12' })), [2, 1]);
             assert.deepEqual(ids(await get({ orderId: '120045' })), [], 'legacy numeric orderId remains a DB ID');
+        });
+        await t.test('shipment searches combine voucher and Taipei packing days without returning claims or scan errors', async () => {
+            try {
+                await db.exec(`INSERT INTO orders VALUES(61,'2026/10/22 -2','客戶 A','completed'),
+                    (62,'2026/10/22 -22','客戶 B','completed'),(63,'20261021-3','客戶 C','completed');`);
+                await add(301, 2, 61, 'pack', '{}', '2026-10-22T16:00:00Z', undefined, 'pack');
+                await add(302, 2, 62, 'claim', '{}', '2026-10-22T15:30:00Z', undefined, 'pack');
+                await add(303, 2, 62, 'scan_error', '{}', '2026-10-22T15:31:00Z', undefined, 'pack');
+                await add(304, 2, 63, 'pack', '{}', '2026-10-22T15:59:59.999999Z', undefined, 'pack');
+                for (const q of ['20261022 出貨', '20261022出貨', '２０２６／１０／２２ 裝箱', '2026-10-22的出貨記錄']) {
+                    assert.deepEqual(ids(await get({ q })), [301, 304], q);
+                }
+                assert.deepEqual(ids(await get({ q: '2026/10/22 - 2 出貨' })), [301]);
+                assert.deepEqual(ids(await get({ q: '2026/10/22 -2裝箱' })), [301]);
+                assert.deepEqual(ids(await get({ q: '20261022-2' })), [301], '-2 is not a prefix of -22');
+                assert.deepEqual(ids(await get({ q: '20261022 出貨', orderId: '2026/10/19' })), []);
+                assert.deepEqual(ids(await get({ q: '20261022 出貨', startDate: '2026-10-22', endDate: '2026-10-22' })), [304]);
+                assert.equal((await get({ q: '20261022 出貨' }, '/api/operation-logs/stats')).body.total, 2);
+            } finally {
+                await db.exec('DELETE FROM operation_logs WHERE id BETWEEN 301 AND 304; DELETE FROM orders WHERE id BETWEEN 61 AND 63;');
+            }
         });
         await t.test('wildcards, backslashes and SQL text are literal rather than query syntax', async () => {
             assert.deepEqual(ids(await get({ q: '%_\\' })), [13, 12, 11, 10, 9, 8]);

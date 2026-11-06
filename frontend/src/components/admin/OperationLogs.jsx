@@ -6,7 +6,8 @@ import { socket } from '@/api/socket.js';
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton } from '../../ui';
 import {
     actions, actionLabel, actionVariant, logActor, logDetailFields, logFilterError, logFilterParams, logRole,
-    logStage, logSummary, logTime, operationLogsCSV, parseLogDetails, readLogFilters, taipeiDay,
+    keywordOnlyLogFilters, logStage, logSummary, logTime, operationLogsCSV, parseLogDetails, readLogFilters,
+    smartLogSearchFilters, taipeiDay,
 } from '../../utils/operationLogs';
 
 const field = 'w-full min-w-0 min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
@@ -95,7 +96,7 @@ function LogDetail({ log, onClose }) {
     );
 }
 
-function LogResults({ applied }) {
+function LogResults({ applied, onKeywordOnly }) {
     const [cursors, setCursors] = useState([null]);
     const [refresh, setRefresh] = useState(0);
     const [hasUpdates, setHasUpdates] = useState(false);
@@ -146,7 +147,9 @@ function LogResults({ applied }) {
             )}
             {!result ? <div className="space-y-4 p-5">{[1, 2, 3].map(n => <Skeleton key={n} className="h-10 w-full" />)}</div>
                 : result.error ? <div role="alert" className="p-5 text-sm text-red-700">{result.error}</div>
-                : logs.length === 0 ? <div className="p-5"><EmptyState title="找不到符合的操作" description="試試較短的關鍵字，或放寬操作日期與其他篩選條件。" /></div>
+                : logs.length === 0 ? <div className="p-5"><EmptyState
+                    title="找不到符合的操作" description="搜尋會同時套用上方顯示的條件。試試只查關鍵字，或放寬操作日期。"
+                    action={onKeywordOnly ? '只查關鍵字' : undefined} onAction={onKeywordOnly} /></div>
                 : (
                     <>
                     <div aria-hidden="true" className="hidden grid-cols-[7rem_minmax(0,1.25fr)_minmax(0,1.25fr)_minmax(0,1fr)_auto] gap-x-3 bg-slate-50 px-5 py-2 text-xs font-semibold text-slate-600 lg:grid">
@@ -235,7 +238,8 @@ export function OperationLogs() {
         if (query.toString() === appliedKey) setRun(value => value + 1);
         else setParams(query);
     };
-    const preset = (from, to) => apply({ ...draft, startDate: taipeiDay(from), endDate: taipeiDay(to) });
+    const quickSearch = draft.q.trim() === applied.q.trim() ? draft : smartLogSearchFilters(draft);
+    const preset = (from, to) => apply({ ...quickSearch, startDate: taipeiDay(from), endDate: taipeiDay(to) });
     const chips = [
         ['q', applied.q, '關鍵字'], ['orderId', applied.orderId, '訂單'],
         ['userId', applied.userId, '人員 ID'], ['actionType', applied.actionType && actionLabel(applied.actionType), '操作'],
@@ -250,7 +254,7 @@ export function OperationLogs() {
             <PageHeader title="操作日誌" description="查詢誰在什麼時候做了哪些操作"
                 actions={<Button as={Link} to="/settings" variant="secondary" size="sm" leadingIcon={ArrowLeft}>返回設定</Button>} />
             <Card className="p-4 sm:p-5">
-                <form onSubmit={event => { event.preventDefault(); apply(draft); }} className="space-y-3">
+                <form onSubmit={event => { event.preventDefault(); apply(smartLogSearchFilters(draft)); }} className="space-y-3">
                     <label className={label} htmlFor="operation-log-search">智慧搜尋</label>
                     <div className="flex min-w-0 gap-2">
                         <div className="relative min-w-0 flex-1">
@@ -260,8 +264,18 @@ export function OperationLogs() {
                         </div>
                         <Button type="submit" className="shrink-0">搜尋</Button>
                     </div>
-                    <p id="operation-log-search-help" className="text-xs text-slate-500">例如：2026/10/19、姓名 裝箱。多個關鍵字用空格分開。</p>
+                    <p id="operation-log-search-help" className="text-xs text-slate-600">
+                        例如：20261022 出貨、2026/10/22 -22。日期可比對單號日期或實際操作日；「出貨」查裝箱操作。
+                    </p>
+                    {draft.q.trim() && draft.orderId && (
+                        <p className="text-xs text-slate-600">按「搜尋」會取代舊單號條件；要同時套用請用「進階篩選」。</p>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
+                        <Button type="button" variant={applied.actionType === 'pack' ? 'primary' : 'secondary'} size="sm"
+                            aria-pressed={applied.actionType === 'pack'}
+                            onClick={() => apply({ ...quickSearch, workType: '', actionType: applied.actionType === 'pack' ? '' : 'pack' })}>
+                            只看裝箱
+                        </Button>
                         <span className="text-xs font-medium text-slate-600">操作日期（台灣）</span>
                         {[[0, 0, '今天'], [-1, -1, '昨天'], [-6, 0, '近 7 天'], [-29, 0, '近 30 天']].map(([from, to, text]) => (
                             <Button key={text} type="button" variant="secondary" size="sm" aria-pressed={applied.startDate === taipeiDay(from) && applied.endDate === taipeiDay(to)}
@@ -287,7 +301,7 @@ export function OperationLogs() {
                                 {!pageSizes.includes(draft.limit) && <option value={draft.limit}>{draft.limit} 筆</option>}
                                 {pageSizes.map(size => <option key={size} value={size}>{size} 筆</option>)}
                             </select></label>
-                            <div className="flex items-end"><Button type="submit" variant="secondary" size="sm">套用篩選</Button></div>
+                            <div className="flex items-end"><Button type="button" variant="secondary" size="sm" onClick={() => apply(draft)}>套用篩選</Button></div>
                         </div>
                     </details>
                     {filterError && <p role="alert" className="text-sm text-red-700">{filterError}</p>}
@@ -305,7 +319,9 @@ export function OperationLogs() {
                     </div>
                 )}
             </Card>
-            <LogResults key={JSON.stringify([appliedKey, run, apiClient.getSessionIdentity()])} applied={applied} />
+            <LogResults key={JSON.stringify([appliedKey, run, apiClient.getSessionIdentity()])} applied={applied}
+                onKeywordOnly={applied.q && chips.some(([key]) => !['q', 'limit'].includes(key))
+                    ? () => apply(keywordOnlyLogFilters(applied)) : undefined} />
         </div>
     );
 }

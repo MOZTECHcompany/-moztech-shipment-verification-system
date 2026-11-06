@@ -1,5 +1,6 @@
 const { workTypes } = require('./warehouseWork');
 const { createHash } = require('node:crypto');
+const { tokenizeErpSearch, parseErpDate, parseErpVoucher, voucherDatePattern } = require('./erpSearchTerms');
 
 const badRequest = message => Object.assign(new Error(message), { status: 400 });
 const compact = value => value.replace(/[^\p{L}\p{N}]/gu, '');
@@ -9,11 +10,16 @@ const roles = new Set(['admin', 'dispatcher', 'picker', 'packer']);
 function parseTaskPage(user, query, view) {
     const role = user.role === 'superadmin' ? 'admin' : user.role;
     if (!roles.has(role)) throw Object.assign(new Error('使用者角色無效'), { status: 403 });
-    for (const key of ['q', 'status', 'date', 'urgent', 'limit', 'cursor', 'group', 'stage']) {
+    for (const key of ['q', 'status', 'date', 'dateType', 'match', 'urgent', 'limit', 'cursor', 'group', 'stage']) {
         if (query[key] !== undefined && typeof query[key] !== 'string') throw badRequest('查詢參數格式不正確');
     }
     const search = (query.q || '').normalize('NFKC').trim().toLocaleLowerCase();
     if (search.length > 120) throw badRequest('搜尋文字最多 120 個字');
+    const match = query.match || 'smart';
+    if (!['smart', 'exact'].includes(match)) throw badRequest('搜尋方式無效');
+    if (match === 'exact' && !search) throw badRequest('精確單號搜尋需要完整單號');
+    const terms = tokenizeErpSearch(search).map(term => term.toLocaleLowerCase());
+    if (match !== 'exact' && terms.length > 8) throw badRequest('搜尋最多 8 個以空白分隔的關鍵字');
     const status = query.status || 'all';
     if (!['all', 'pending', 'picking', 'picked', 'packing', 'completed'].includes(status)) throw badRequest('作業狀態無效');
     const group = query.group || 'all';
@@ -23,11 +29,13 @@ function parseTaskPage(user, query, view) {
     const allowed = workTypes(user);
     const date = query.date || '';
     if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)) throw badRequest('日期格式無效');
+    const dateType = query.dateType || 'updated';
+    if (!['updated', 'completed'].includes(dateType) || (view !== 'completed' && dateType === 'completed')) throw badRequest('日期類型無效');
     if (query.urgent && !['true', 'false', '1', '0'].includes(query.urgent)) throw badRequest('緊急篩選格式無效');
     if (query.limit && !/^\d+$/.test(query.limit)) throw badRequest('分頁大小無效');
     const limit = Math.min(Math.max(Number(query.limit || 50), 1), 100);
     const urgent = ['true', '1'].includes(query.urgent);
-    const scope = createHash('sha256').update(JSON.stringify([String(user.id), role, view, search, status, date, urgent, limit, group, stage, allowed])).digest('hex').slice(0, 24);
+    const scope = createHash('sha256').update(JSON.stringify([String(user.id), role, view, search, status, date, dateType, match, urgent, limit, group, stage, allowed])).digest('hex').slice(0, 24);
     let cursor = null;
     if (query.cursor) {
         try {
@@ -36,7 +44,7 @@ function parseTaskPage(user, query, view) {
             if (cursor.v !== 1 || cursor.scope !== scope || ![cursor.mine, cursor.pin, cursor.urgent].every(v => v === 0 || v === 1) || !/^-?\d+(\.\d{1,6})?$/.test(String(cursor.at)) || !/^[1-9]\d{0,14}$/.test(String(cursor.id))) throw new Error();
         } catch { throw badRequest('分頁已失效，請重新整理清單'); }
     }
-    return { userId: user.id, role, view, search, status, date, urgent, limit, scope, cursor, group, stage, work_types: allowed };
+    return { userId: user.id, role, view, search, terms, match, status, date, dateType, urgent, limit, scope, cursor, group, stage, work_types: allowed };
 }
 
 // Opt-in page contract. The legacy array routes remain unchanged.
@@ -61,21 +69,40 @@ async function getTaskPage(pool, user, query, view) {
     const timeColumn = view === 'completed' ? 'updated_at' : 'created_at';
     if (page.date) {
         const date = param(page.date);
-        conditions.push(`o.${timeColumn} >= ((${date}::date)::timestamp AT TIME ZONE 'Asia/Taipei') AND o.${timeColumn} < ((${date}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Taipei')`);
+        const dateColumn = page.dateType === 'completed' ? 'completed_at' : timeColumn;
+        if (page.dateType === 'completed') conditions.push("o.status = 'completed'");
+        conditions.push(`o.${dateColumn} >= ((${date}::date)::timestamp AT TIME ZONE 'Asia/Taipei') AND o.${dateColumn} < ((${date}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Taipei')`);
     }
     if (page.search) {
         const fields = ['o.voucher_number', 'o.customer_name'];
         const normalized = field => `lower(normalize(COALESCE(${field}, ''), NFKC))`;
         const stripped = field => `regexp_replace(${normalized(field)}, '[^[:alnum:]]', '', 'g')`;
-        const terms = page.search.split(/\s+/).map(term => {
-            const literal = param(like(term));
-            const simple = compact(term);
-            const simpleParam = simple ? param(like(simple)) : null;
-            return `(${fields.map(field => `(${normalized(field)} LIKE ${literal} ESCAPE '\\'${simpleParam ? ` OR ${stripped(field)} LIKE ${simpleParam} ESCAPE '\\'` : ''})`).join(' OR ')})`;
-        });
-        const whole = compact(page.search);
-        const wholeParam = whole ? param(like(whole)) : null;
-        conditions.push(`((${terms.join(' AND ')})${wholeParam ? ` OR ${fields.map(field => `${stripped(field)} LIKE ${wholeParam} ESCAPE '\\'`).join(' OR ')}` : ''})`);
+        if (page.match === 'exact') {
+            // Scanned shipment labels contain the voucher, not the internal ID.
+            // Keep punctuation/leading zeroes; never turn an exact scan into a
+            // customer, date or partial-number match.
+            conditions.push(`btrim(${normalized('o.voucher_number')}) = ${param(page.search)}`);
+        } else {
+            const terms = page.terms.map(term => {
+                const literal = param(like(term));
+                const simple = compact(term);
+                const simpleParam = simple ? param(like(simple)) : null;
+                const day = parseErpDate(term), voucher = parseErpVoucher(term);
+                const matches = fields.map(field => {
+                    if (field === 'o.voucher_number' && (day || voucher)) {
+                        return `btrim(${normalized(field)}) ~ ${param(voucherDatePattern(day || voucher.day, voucher?.sequence))}`;
+                    }
+                    return `(${normalized(field)} LIKE ${literal} ESCAPE '\\'${simpleParam ? ` OR ${stripped(field)} LIKE ${simpleParam} ESCAPE '\\'` : ''})`;
+                });
+                if (day && view === 'completed') {
+                    const date = param(day);
+                    matches.push(`(o.status = 'completed' AND o.completed_at >= (${date}::date::timestamp AT TIME ZONE 'Asia/Taipei')
+                        AND o.completed_at < ((${date}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Taipei'))`);
+                }
+                return `(${matches.join(' OR ')})`;
+            });
+            conditions.push(`(${terms.join(' AND ')})`);
+        }
     }
     // Older installations create the shared pins relation on its first use.
     // Do not migrate or write while serving a task query.
@@ -99,7 +126,7 @@ async function getTaskPage(pool, user, query, view) {
     const result = await pool.query(`
         WITH eligible AS (
             SELECT o.id, o.voucher_number, o.customer_name, o.status, o.document_type, o.picker_id, o.packer_id, o.pick_paused_at, o.pack_paused_at,
-                COALESCE(o.is_urgent, FALSE) AS is_urgent, o.updated_at AS completed_at,
+                COALESCE(o.is_urgent, FALSE) AS is_urgent, o.completed_at, o.updated_at,
                 import_log.user_id AS imported_by_user_id,
                 CASE WHEN $2 = 'dispatcher' AND import_log.user_id = $1 THEN 1 ELSE 0 END AS _mine,
                 CASE WHEN ${pinExpression} THEN 1 ELSE 0 END AS _pin,
