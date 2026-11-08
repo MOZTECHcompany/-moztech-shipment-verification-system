@@ -1,5 +1,5 @@
 const {randomUUID}=require('node:crypto');
-const {readOrderImportRows,parseOrderRows,matchesSourceHeader}=require('./orderImportParser');
+const {readOrderImportRows,parseOrderRows,matchesSourceHeader,isEcountPickingExport}=require('./orderImportParser');
 const {mutateFlow}=require('./warehouseRelease');
 const {assertUploadScope}=require('./marketplaceUploadScopes');
 const clean=v=>String(v??'').trim();
@@ -52,9 +52,14 @@ async function importMarketplaceReturn(buffer,pool,requiredId,user){
  // Validate native source sheets before a database lookup, preserving original
  // Excel cell metadata, row numbers and the existing SN grammar.
  const nativeHeader=raw.find(r=>r.some(v=>matchesSourceHeader(v,'voucherNumber')));
- if(nativeHeader&&nativeHeader.some(v=>matchesSourceHeader(v,'productName'))){
+ const validateNativeRows=()=>{
+  if(!nativeHeader||!nativeHeader.some(v=>matchesSourceHeader(v,'productName')))return;
   try{parseOrderRows(raw);}catch(e){if(!/^第 \d+ 列：國際條碼必填/.test(e.message))throw e;}
- }
+ };
+ // Independent ECOUNT exports are validated by the direct import with the
+ // saved SKU and carton identities. Linked returns retain their own contract.
+ const deferNativeValidation=!requiredId&&isEcountPickingExport(raw);
+ if(!deferNativeValidation)validateNativeRows();
  const names=source.rows[0],get=(r,n)=>clean(r[names.indexOf(n)]);
  const identities=[...new Map(source.rows.slice(1).filter(r=>get(r,'來源明細號')).map(r=>{
   const identity=['平台','店鋪','商城訂單編號'].map(n=>get(r,n));return [JSON.stringify(identity),identity];
@@ -74,6 +79,7 @@ async function importMarketplaceReturn(buffer,pool,requiredId,user){
   return null; // Original independent, non-marketplace imports retain their existing path.
  }
  if(matches.size!==1)throw fail('請從這次轉檔的「匯回 ECOUNT 理貨單」入口上傳整份檔案，以核對完整轉檔版本');
+ if(deferNativeValidation)validateNativeRows();
  const id=[...matches][0];
  try{return await mutateFlow(pool,id,source.logistics?'confirm-return':'confirm-sales',{rows:source.rows,savedSalesConfirmed:true,commandId:randomUUID(),expectedActorId:user.id},user);}catch(e){e.warehouseIntakeId=id;throw e;}
 }

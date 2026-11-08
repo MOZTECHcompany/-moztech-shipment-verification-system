@@ -1,4 +1,5 @@
-const {readOrderImportRows,parseOrderRows,SOURCE_HEADERS,sourceHeaderIndex,matchesSourceHeader}=require('./orderImportParser');
+const {readOrderImportRows,parseOrderRows,SOURCE_HEADERS,sourceHeaderIndex,matchesSourceHeader,isEcountPickingExport}=require('./orderImportParser');
+const {readEcountPickingIdentities}=require('./ecountPickingIdentities');
 const {normalizeSourceIdentity}=require('./orderSourceIdentity');
 const clean=v=>String(v??'').trim();
 const key=g=>JSON.stringify([clean(g.sourcePlatform),clean(g.sourceStore),clean(g.sourceOrderNumber)]);
@@ -8,13 +9,15 @@ const getRecord=async(db,g)=>(await db.query('SELECT * FROM marketplace_intake_o
 async function parseMarketplaceLinkedImport(buffer,db,requiredIntakeId){
  const data=readOrderImportRows(buffer),headerIndex=sourceHeaderIndex(data);
  if(headerIndex<0)return parseOrderRows(data);
+ const columns=columnsFor(data[headerIndex]);
+ const ecount=!requiredIntakeId&&isEcountPickingExport(data,headerIndex)
+  ? await readEcountPickingIdentities(db,data.slice(headerIndex+1),columns):undefined;
  try {
-  const parsed=parseOrderRows(data);
+  const parsed=parseOrderRows(data,{ecount});
   if(!requiredIntakeId)return {...parsed,omittedNonStock:[]};
  } catch(error) {
   if(!/^第 \d+ 列：國際條碼必填/.test(error.message))throw error;
  }
- const columns=columnsFor(data[headerIndex]);
  const cache=new Map(),omittedNonStock=[],seenNonStock=new Set();
  const filtered=data.map(r=>[...r]);
  for(let i=headerIndex+1;i<data.length;i++){
@@ -33,7 +36,7 @@ async function parseMarketplaceLinkedImport(buffer,db,requiredIntakeId){
    filtered[i]=[];
   }
  }
- const parsed=parseOrderRows(filtered);
+ const parsed=parseOrderRows(filtered,{ecount});
  if(omittedNonStock.some(item=>item.voucherNumber!==parsed.voucherNumber))throw fail('運費與商品不屬於同一張理貨單，未匯入');
  return {...parsed,omittedNonStock};
 }

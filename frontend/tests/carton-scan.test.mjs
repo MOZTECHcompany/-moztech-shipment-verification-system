@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isCartonScan, applyCartonResponse, sendCartonCommand, makeCartonCommand } from '../src/utils/cartonScan.js';
+import { isCartonScan, applyCartonResponse, applyStickerSerialResponse, getStickerSerialReview, sendCartonCommand, makeCartonCommand } from '../src/utils/cartonScan.js';
 
 const previous = 'a'.repeat(64), next = 'b'.repeat(64);
 const snapshot = { order: { id: 7 }, items: [], instances: [], stateToken: previous };
@@ -32,4 +32,44 @@ test('account/token change during an uncertain response never retries under the 
     const api = { getSessionIdentity: () => session, post: async () => { sends++; session = 'new-session'; throw new Error('connection lost'); } };
     await assert.rejects(sendCartonCommand(api, 7, { commandId: 'same' }), error => error.code === 'SESSION_CHANGED');
     assert.equal(sends, 1);
+});
+
+test('unregistered sticker offers only the exact SNs eligible at this order stage', () => {
+    const serials = Array.from({ length: 32 }, (_, index) => `SYN-${String(index + 1).padStart(2, '0')}`);
+    const order = {
+        items: [
+            { id: 1, product_name: 'Assigned item', quantity: 15 },
+            { id: 2, product_name: 'Expected carton', quantity: 1, expected_carton_id: 'BOX' },
+            { id: 3, product_name: 'Partially assigned item', quantity: 2 }
+        ],
+        instances: [
+            ...serials.slice(0, 15).map((serial_number, index) => ({ order_item_id: 1, serial_number, status: index === 0 ? 'picked' : 'pending' })),
+            { order_item_id: 2, serial_number: serials[15], status: 'pending' },
+            { order_item_id: 3, serial_number: serials[16], status: 'pending' }
+        ]
+    };
+    const scanValue = serials.join(', ');
+    const pick = getStickerSerialReview(scanValue, 'pick', order);
+    assert.deepEqual(pick.candidates.map(row => row.serial), serials.slice(1, 15));
+    assert.equal(pick.excluded, 18);
+    const pack = getStickerSerialReview(scanValue, 'pack', order);
+    assert.deepEqual(pack.candidates.map(row => row.serial), serials.slice(0, 1));
+    assert.equal(pack.excluded, 31);
+    assert.deepEqual(getStickerSerialReview('syn-02,SYN-03', 'pick', order).candidates.map(row => row.serial), ['SYN-03']);
+    assert.deepEqual(getStickerSerialReview('SYN-02,SYN-03', 'pick', {
+        items: [...order.items, { id: 4, quantity: 1 }],
+        instances: [...order.instances, { ...order.instances[1], order_item_id: 4 }]
+    }).candidates.map(row => row.serial), ['SYN-03']);
+    assert.equal(getStickerSerialReview('SYN-01,SYN-01', 'pick', order), null);
+    assert.equal(getStickerSerialReview('CARTON:ABC,DEF', 'pick', order), null);
+});
+
+test('sticker confirmation applies only the full snapshot from the same command and exact selected SNs', () => {
+    const command = { commandId: 'receipt-1', selectedSerials: ['SYN-02', 'SYN-03'] };
+    const receipt = { ...snapshot, stateToken: next, baseState: previous, commandId: command.commandId, confirmedSerials: ['SYN-03', 'SYN-02'] };
+    assert.deepEqual(applyStickerSerialResponse(snapshot, receipt, command), { ...snapshot, stateToken: next });
+    assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, order: { id: 8 } }, command));
+    assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, commandId: 'receipt-2' }, command));
+    assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, baseState: next }, command));
+    assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, confirmedSerials: ['SYN-02', 'syn-03'] }, command));
 });

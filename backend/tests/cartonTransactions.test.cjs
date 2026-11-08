@@ -4,6 +4,7 @@ const { randomUUID } = require('node:crypto');
 const request = require('supertest');
 const { createCartonFixture } = require('./cartonFixture.cjs');
 const { guardUnitScan, assertNoCartonAllocations } = require('../src/services/cartonGuards');
+const { applyOrderChangeProposal } = require('../src/services/orderChangeService');
 const { matchesItem } = require('../src/services/cartonContents');
 const { assertSchemaReady } = require('../src/config/schemaReadiness');
 
@@ -114,6 +115,33 @@ async function suite(t, postgres) {
         assert.ok(packed.instances.every(unit => unit.status === 'packed'));
         assert.equal(packed.order.status, 'completed'); assert.equal(packed.items[0].picked_quantity, 0);
     });
+    await t.test('an unregistered SN sticker verifies only selected order SNs and replays without a carton allocation', async () => {
+        const orderSNs = ['Loose-01', 'Loose-02', 'Loose-03'];
+        const { order } = await f.seedOrder({ quantity: 3, actualSN: orderSNs, serialMode: 'exact' });
+        const submit = (user, body) => api(user, 'post', '/api/orders/update_item', { orderId: order.id, ...body });
+        ok(await submit(2, { scanValue: orderSNs[0], type: 'pick' }));
+        const path = `/api/orders/${order.id}/work-snapshot`;
+        const snapshot = ok(await api(2, 'get', path));
+        const qr = {
+            scanValue: [...orderSNs, 'Other-01'].join(','), type: 'pick', responseMode: 'delta-v1',
+            commandId: randomUUID(), expectedState: snapshot.stateToken, selectedSerials: orderSNs.slice(1)
+        };
+        const rejected = await submit(2, { ...qr, selectedSerials: [orderSNs[1], 'Other-01'] });
+        assert.equal(rejected.status, 409);
+        assert.deepEqual(ok(await api(2, 'get', path)).instances, snapshot.instances);
+        const picked = ok(await submit(2, qr));
+        assert.deepEqual(picked.confirmedSerials, orderSNs.slice(1));
+        assert.equal(picked.order.status, 'picked');
+        assert.deepEqual(ok(await submit(2, qr)), picked);
+        ok(await api(3, 'post', `/api/orders/${order.id}/claim`, { stage: 'pack' }));
+        const packing = ok(await api(3, 'get', path));
+        const packed = ok(await submit(3, {
+            ...qr, type: 'pack', commandId: randomUUID(), expectedState: packing.stateToken, selectedSerials: orderSNs
+        }));
+        assert.equal(packed.order.status, 'completed');
+        assert.ok(packed.instances.every(instance => instance.status === 'packed'));
+        assert.deepEqual(ok(await api(3, 'get', `/api/orders/${order.id}/carton-shipments`)).allocations, []);
+    });
     await t.test('exact SN ownership rejects double registration and count mismatch without partial carton', async () => {
         const duplicate = await api(1, 'post', '/api/cartons', box('DUP-SN', 1, ['Vendor-A-01']));
         assert.equal(duplicate.status, 409);
@@ -130,6 +158,48 @@ async function suite(t, postgres) {
         await scan(second.order.id, { scanValue: 'SPLIT', type: 'pick' });
         const packed = await scan(first.order.id, { scanValue: 'SPLIT', type: 'pack' }, 3);
         assert.equal(packed.items[0].packed_quantity, 3); assert.equal(packed.carton.lines[0].remainingQuantity, 0);
+    });
+    await t.test('ECOUNT expected carton rejects the wrong box and ordinary scan before applying a split', async () => {
+        const expected = await create(box('EXPECTED-N1')), other = await create(box('EXPECTED-N2'));
+        const { order, item } = await f.seedOrder({ quantity: 2 });
+        const path = `/api/orders/${order.id}`;
+        const split = carton => ({ scanValue: `CARTON:${carton.cartonId}`, type: 'pick', mode: 'split',
+            selections: [{ lineId: carton.lines[0].lineId, orderItemId: item.id, quantity: 2 }] });
+        const unbound = await preview(order.id, split(expected));
+        await f.db.query('UPDATE order_items SET expected_carton_id=$1 WHERE id=$2', [expected.cartonId, item.id]);
+        const correct = await preview(order.id, split(expected));
+        assert.notEqual(correct.expectedState, unbound.expectedState);
+        assert.equal(correct.expectedCartonRevision, other.stateRevision);
+        for (const [endpoint, payload] of [
+            ['carton-preview', split(other)],
+            ['carton-scan', scanBody(correct, split(other))]
+        ]) {
+            const response = await api(2, 'post', `${path}/${endpoint}`, payload);
+            assert.equal(response.status, 409);
+            assert.equal(response.body.code, 'CARTON_EXPECTED_MISMATCH');
+        }
+        const ordinary = await api(2, 'post', '/api/orders/update_item',
+            { orderId: order.id, orderItemId: item.id, scanValue: item.barcode, type: 'pick', amount: 1 });
+        assert.equal(ordinary.status, 409);
+        assert.match(ordinary.body.message, /EXPECTED-N1/);
+        const client = await f.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await assert.rejects(applyOrderChangeProposal({ client, orderId: order.id, actorUserId: 1,
+                proposal: { note: 'Synthetic quantity edit', items: [{ barcode: item.barcode, orderItemId: item.id, productName: item.product_name,
+                    quantityChange: -1, noSn: true }] } }), { code: 'CARTON_EXPECTED_REQUIRED' });
+        } finally {
+            await client.query('ROLLBACK');
+            client.release();
+        }
+        assert.equal((await f.db.query('SELECT picked_quantity FROM order_items WHERE id=$1', [item.id])).rows[0].picked_quantity, 0);
+        assert.equal(ok(await api(2, 'get', '/api/cartons/EXPECTED-N2')).lines[0].remainingQuantity, 10);
+        const picked = ok(await api(2, 'post', `${path}/carton-scan`, scanBody(correct, split(expected))));
+        assert.equal(picked.items[0].picked_quantity, 2);
+        assert.equal(picked.carton.lines[0].remainingQuantity, 8);
+        const packed = await scan(order.id, { scanValue: `CARTON:${expected.cartonId}`, type: 'pack' }, 3);
+        assert.equal(packed.items[0].packed_quantity, 2);
+        assert.equal(packed.carton.lines[0].remainingQuantity, 8);
     });
     await t.test('SN split requires selected real SNs and preserves unselected SN ownership', async () => {
         const sns = ['Split-SN-01', 'Split-SN-02', 'Split-SN-03'];

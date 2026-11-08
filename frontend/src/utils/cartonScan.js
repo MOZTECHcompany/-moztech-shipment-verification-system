@@ -5,6 +5,41 @@ export function parseSerialInput(value) {
     return String(value || '').split(/[\r\n,]+/).map(v => v.trim()).filter(Boolean);
 }
 
+export function getStickerSerialReview(value, type, snapshot) {
+    if (!value.includes(',') || /^(?:CARTON:|CTN-)/i.test(value.trim()) || !['pick', 'pack'].includes(type)) return null;
+    const serials = value.split(',').map(serial => serial.trim());
+    if (serials.some(serial => !serial) || new Set(serials).size !== serials.length) return null;
+    const items = new Map(snapshot.items.map(item => [item.id, item]));
+    const instances = new Map(), assignedCounts = new Map();
+    for (const unit of snapshot.instances) {
+        instances.set(unit.serial_number, instances.has(unit.serial_number) ? null : unit);
+        assignedCounts.set(unit.order_item_id, (assignedCounts.get(unit.order_item_id) ?? 0) + 1);
+    }
+    const requiredStatus = type === 'pick' ? 'pending' : 'picked';
+    const candidates = [];
+    for (const serial of serials) {
+        const unit = instances.get(serial);
+        const item = items.get(unit?.order_item_id);
+        if (unit?.status === requiredStatus && item && Number(item.quantity_sign ?? 1) === 1
+            && assignedCounts.get(item.id) === Number(item.quantity) && !item.expected_carton_id && !item.carton_serial_binding) {
+            candidates.push({ serial, productName: item.product_name });
+        }
+    }
+    return { candidates, excluded: serials.length - candidates.length };
+}
+
+export function applyStickerSerialResponse(snapshot, result, command) {
+    const confirmedSerials = result?.confirmedSerials;
+    if (!result?.order || String(result.order.id) !== String(snapshot.order?.id) || result.commandId !== command.commandId
+        || result.baseState !== snapshot.stateToken || !/^[0-9a-f]{64}$/.test(result.stateToken || '')
+        || !Array.isArray(result.items) || !Array.isArray(result.instances)
+        || !Array.isArray(confirmedSerials) || confirmedSerials.length !== command.selectedSerials.length
+        || !command.selectedSerials.every(serial => confirmedSerials.includes(serial))) {
+        throw new Error('SN 清單掃描回應不完整，請重新核對');
+    }
+    return { order: result.order, items: result.items, instances: result.instances, stateToken: result.stateToken };
+}
+
 export function makeCartonCommand(preview, input) {
     const expectedState = preview.expectedState || preview.stateToken;
     const revision = preview.expectedCartonRevision ?? preview.carton?.stateRevision;

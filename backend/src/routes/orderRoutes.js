@@ -15,7 +15,8 @@ const { logOperation } = require('../services/operationLogService');
 const { normalizeSerialScanInput, pickExactSerial } = require('../utils/serialNumber');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
-const { assertNoCartonAllocations, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
+const { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
+const { readSerialQrSelection, applySerialQrSelection } = require('../services/serialQrScan');
 
 const router = express.Router();
 const {warehouseOnly} = require('../utils/managementScope');
@@ -542,8 +543,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             if (marketplaceSource) await client.query('INSERT INTO marketplace_work_order_links(intake_order_id,order_id) VALUES($1,$2)', [marketplaceSource.id,orderId]);
             for (const item of group.items) {
                 checkDeadline();
-                const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id, international_barcode, internal_scan_code, code_type, source_sku, serial_identity_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id',
-                    [orderId, item.productCode, item.productName, item.quantity, item.barcode, ...sourceIdentityValues(item),item.internationalBarcode||null,item.internalScanCode||null,item.codeType||'legacy',item.sourceSku||null,item.serialMode === 'exact' ? 'exact' : 'legacy']);
+                const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, source_order_number, source_platform, source_store, source_line_id, international_barcode, internal_scan_code, code_type, source_sku, serial_identity_mode, expected_carton_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id',
+                    [orderId, item.productCode, item.productName, item.quantity, item.barcode, ...sourceIdentityValues(item),item.internationalBarcode||null,item.internalScanCode||null,item.codeType||'legacy',item.sourceSku||null,item.serialMode === 'exact' ? 'exact' : 'legacy',item.expectedCartonId ?? null]);
                 for (const serial of item.serials) {
                     instanceItemIds.push(inserted.rows[0].id);
                     serialValues.push(serial);
@@ -553,7 +554,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             if (groupSerialValues.length) await guardSerialImport(client, orderId, groupSerialValues);
             // Attribution and every child audit belong to the batch transaction.
             const details = { voucherNumber: workVoucher, batchId, batchNumber: batchId ? voucherNumber : null,
-                sourceDetails:group.items.map(i=>({sourceLineId:i.sourceLineId||null,sourceRow:i.sourceRow,summary:i.sourceSummary||'',serialField:i.sourceSerials||'',serialSource:i.serialSource||'legacy',serials:i.serials})),
+                sourceDetails:group.items.map(i=>({sourceLineId:i.sourceLineId||null,sourceRow:i.sourceRow,summary:i.sourceSummary||'',serialField:i.sourceSerials||'',serialSource:i.serialSource||'legacy',serials:i.serials,
+                    ...(i.expectedCartonId ? { expectedCartonId: i.expectedCartonId } : {}) })),
                 marketplaceIntakeId: marketplaceSource?.intake_id || null, omittedNonStock: parsed.omittedNonStock || [],
                 sourceOrderNumber: group.sourceOrderNumber || null, sourcePlatform: group.sourcePlatform || null, sourceStore: group.sourceStore || null,
                 workBarcode, itemCount: group.items.length, totalQuantity: group.totalQuantity, serialCount: group.serialCount };
@@ -655,8 +657,13 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
     let releaseError;
     let commitAttempted = false;
     let rejectedScanAudit;
-    let command;
-    try { command = parseCommand(req.body, userId); } catch (error) { return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
+    let command, serialQr;
+    try {
+        serialQr = readSerialQrSelection(req.body, userId);
+        command = parseCommand(req.body, userId);
+    } catch (error) {
+        return res.status(error.status ?? 400).json({ code: 'SCAN_NOT_APPLIED', message: error.message });
+    }
     let changedItemId, changedInstanceId, cartonUnitContext;
     const events = deferredEvents(io);
     try {
@@ -682,8 +689,9 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
+        let before;
         if (command) {
-            const before = await readLines(client,orderId);
+            before = await readLines(client,orderId);
             if (stateToken(order,before.items,before.instances) !== req.body.expectedState) {
                 throw Object.assign(new Error('訂單已更新，請重新載入核對後再掃描'), {status:409,scanReason:'STATE_CHANGED'});
             }
@@ -733,10 +741,10 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         let matchedBy = 'exact';
 
         // 先走精準匹配（支援舊貨掃到 SN: 前綴）
-        const instanceResult = await trackedQuery(
+        const instanceResult = serialQr ? { rows: [] } : await trackedQuery(
             client,
             'match_instance_exact_for_update',
-            `SELECT i.id, i.status, i.serial_number, COALESCE((to_jsonb(oi)->>'quantity_sign')::int, 1) AS quantity_sign
+            `SELECT i.id, i.status, i.serial_number, COALESCE((to_jsonb(oi)->>'quantity_sign')::int, 1) AS quantity_sign, oi.expected_carton_id
              FROM order_item_instances i
              JOIN order_items oi ON i.order_item_id = oi.id
              WHERE oi.order_id = $1 AND (i.serial_number = $2 OR i.serial_number = $3 OR UPPER(i.serial_number) = $4)
@@ -752,7 +760,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         if (exactMatch.instance) {
             instanceRow = exactMatch.instance;
             matchedBy = exactMatch.match;
-        } else {
+        } else if (!serialQr) {
             // 純數字新條碼：允許用 digitsOnly 去比對資料庫內 SN（移除非數字後）
             // 同時也支援：舊貨掃到 SN: 前綴但資料庫存的是去前綴後的值
             const digitsMinLen = parseInt(process.env.SN_DIGITS_MIN_LEN || '8', 10);
@@ -774,7 +782,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                                 const digitsResult = await trackedQuery(
                                         client,
                                         'match_instance_digits_for_update',
-                    `SELECT i.id, i.status, i.serial_number, COALESCE((to_jsonb(oi)->>'quantity_sign')::int, 1) AS quantity_sign
+                    `SELECT i.id, i.status, i.serial_number, COALESCE((to_jsonb(oi)->>'quantity_sign')::int, 1) AS quantity_sign, oi.expected_carton_id
                      FROM order_item_instances i
                      JOIN order_items oi ON i.order_item_id = oi.id
                      WHERE oi.order_id = $1
@@ -795,9 +803,21 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
             }
         }
 
-        if (instanceRow) {
+        let confirmedSerials;
+        if (serialQr) {
+            confirmedSerials = await applySerialQrSelection(client, before, serialQr, type);
+            await logOperation({
+                userId,
+                orderId,
+                operationType: type,
+                details: { serialNumbers: confirmedSerials, amount: confirmedSerials.length, matchedBy: 'serial-qr' },
+                io: events,
+                db: client
+            });
+        } else if (instanceRow) {
             if (cartonLooseCorrection && order.status !== (type === 'pick' ? 'picking' : 'packing')) throw Object.assign(new Error('此 SN 階段已完成，請透過原工作站核對'), { status: 409 });
             const instance = instanceRow;
+            assertExpectedCartonScan(instance.expected_carton_id);
             changedInstanceId = instance.id;
             await guardUnitScan(client, orderId, { instanceId: instance.id, serialNumber: instance.serial_number, quantitySign: instance.quantity_sign ?? 1, type, amount: amountNum });
             let newStatus = '';
@@ -840,7 +860,8 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                         oi.id,
                         oi.quantity,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
-                        COALESCE(oi.packed_quantity, 0) as packed_quantity
+                        COALESCE(oi.packed_quantity, 0) as packed_quantity,
+                        oi.expected_carton_id
                     FROM order_items oi
                     WHERE oi.order_id = $1
                       AND oi.id = $2
@@ -866,6 +887,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                         oi.quantity,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
                         COALESCE(oi.packed_quantity, 0) as packed_quantity,
+                        oi.expected_carton_id,
                         (SELECT CASE WHEN bool_or(s.source_order_number IS NOT NULL) THEN count(*) ELSE 0 END
                          FROM order_items s WHERE s.order_id = oi.order_id AND s.barcode = oi.barcode) AS source_match_count
                     FROM order_items oi
@@ -899,6 +921,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 throw Object.assign(new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`), { status: 400 });
             }
             const item = itemResult.rows[0];
+            assertExpectedCartonScan(item.expected_carton_id);
             cartonUnitContext = await guardUnitScan(client, orderId, { orderItemId: item.id, type, amount: amountNum });
             changedItemId = item.id;
             if (type === 'pick') { 
@@ -968,7 +991,11 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
         // Prepare the response before COMMIT so a failed read cannot report a committed scan as failed.
         const updatedOrderResult = await trackedQuery(client, 'refresh_order', 'SELECT o.*, (SELECT b.voucher_number FROM warehouse_import_batches b WHERE b.id=o.import_batch_id) AS batch_number FROM orders o WHERE o.id = $1', [orderId]);
         markStage('refreshReadMs');
-        const response = command ? {
+        const response = confirmedSerials ? {
+            order: updatedOrderResult.rows[0], items: updatedItemsResult.rows, instances: updatedInstancesResult.rows,
+            stateToken: stateToken(updatedOrderResult.rows[0], updatedItemsResult.rows, updatedInstancesResult.rows),
+            confirmedSerials, commandId: command.id, baseState: req.body.expectedState
+        } : command ? {
             format:'delta-v1',commandId:command.id,baseState:req.body.expectedState,
             stateToken:stateToken(updatedOrderResult.rows[0],updatedItemsResult.rows,updatedInstancesResult.rows),
             order:updatedOrderResult.rows[0],

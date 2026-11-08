@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import api from '@/api/api';
 import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
-import { applyCartonResponse, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey } from '@/utils/cartonScan';
+import { applyCartonResponse, applyStickerSerialResponse, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey, getStickerSerialReview } from '@/utils/cartonScan';
+import { makeScanCommand } from '@/utils/scanDelta';
 import { CartonDialog } from './CartonDialog';
 import { buildCartonShipmentTrace } from '@/utils/cartonShipmentTrace.mjs';
 
@@ -29,6 +30,7 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
     const [selections, setSelections] = useState([]), [error, setError] = useState(''), [reading, setReading] = useState(false);
     const [shipments, setShipments] = useState(null), [detailsOpen, setDetailsOpen] = useState(false);
     const [release, setRelease] = useState(null), [reason, setReason] = useState('');
+    const [serialReview, setSerialReview] = useState(null);
     const readRequest = useRef(0), alive = useRef(true);
     const clearLookup = () => { readRequest.current++; setReading(false); setBox(null); setSelections([]); };
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -41,7 +43,9 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         setShipments(data);
         return data;
     }, [orderId, user]);
-    useEffect(() => { setShipments(null); setBox(null); setOpen(false); }, [orderId]);
+    useEffect(() => { setShipments(null); setBox(null); setOpen(false); setSerialReview(null); }, [orderId]);
+    const reviewStale = serialReview && (serialReview.expectedState !== orderData.stateToken || serialReview.type !== stage
+        || serialReview.session !== cartonSessionKey(api, user) || !/^[0-9a-f]{64}$/.test(serialReview.expectedState || ''));
     const submit = (value, type, options = {}) => {
         if (blocked || !type) return false;
         const snapshot = orderData;
@@ -66,6 +70,14 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
                 toast.success(`箱號${type === 'pick' ? '揀貨' : '裝箱'}已確認`);
             } catch (err) {
                 if (!alive.current) return;
+                if (!sent && current() && err.response?.status === 404 && err.response.data?.code === 'CARTON_NOT_FOUND') {
+                    const review = getStickerSerialReview(value, type, snapshot);
+                    if (review) {
+                        setOpen(false); clearLookup(); setError('');
+                        setSerialReview({ ...review, value, type, session, expectedState: snapshot.stateToken, selectedSerials: [] });
+                        return;
+                    }
+                }
                 setError(message(err));
                 const unknown = sent && (!err.response || (err.response.status >= 500 && !err.response.data?.scanNotApplied && err.response.data?.code !== 'SCAN_NOT_APPLIED'));
                 onError(value, err, unknown);
@@ -75,6 +87,40 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         onBusy(true, value); void result.completion; return true;
     };
     useImperativeHandle(ref, () => ({ scan: (value, type) => submit(value, type) }));
+    const confirmSerialReview = () => {
+        if (blocked || reviewStale || !serialReview?.selectedSerials.length) return;
+        const { value, type, session, selectedSerials } = serialReview;
+        const snapshot = orderData;
+        const current = () => alive.current && session === cartonSessionKey(api, user);
+        const result = submissionRef.current.submit(value, async () => {
+            let sent = false;
+            try {
+                if (!current()) return;
+                const command = makeScanCommand(snapshot, { orderId, scanValue: value, selectedSerials, type, expectedActorId: user.id });
+                sent = true;
+                const { data } = await sendCartonMutation(api, '/api/orders/update_item', command);
+                const updated = applyStickerSerialResponse(snapshot, data, command);
+                if (!current()) return;
+                onResponse(updated, { value: 'SN QR Code', type, amount: selectedSerials.length });
+                setSerialReview(null); setError('');
+                toast.success(`已核對 ${selectedSerials.length} 個 SN`);
+            } catch (err) {
+                if (!current()) return;
+                const unknown = sent && (!err.response || err.response.data?.code === 'SCAN_RESULT_UNKNOWN'
+                    || (err.response.status >= 500 && !err.response.data?.scanNotApplied && err.response.data?.code !== 'SCAN_NOT_APPLIED'));
+                const changed = err.response?.data?.reason === 'STATE_CHANGED' || err.response?.data?.code === 'STATE_CHANGED';
+                if (unknown || changed) setSerialReview(null);
+                else setError(message(err));
+                onError(value, err, unknown || changed);
+            } finally {
+                if (alive.current) {
+                    if (!current()) onError(value, new Error('登入已更新，請重新載入訂單'), sent);
+                    onBusy(false);
+                }
+            }
+        });
+        if (result.accepted) { onBusy(true, value); void result.completion; }
+    };
     const lookup = async () => {
         if (!scanValue.trim()) return;
         const request = ++readRequest.current; setReading(true); setError(''); setBox(null);
@@ -142,6 +188,28 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
             <div className="flex gap-2"><input autoFocus aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submit(scanValue.trim(), stage); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
             {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
             {box?.lines.map(line => <SplitLine key={line.lineId} line={line} selections={selections} setSelections={setSelections} items={orderData.items} stage={stage} />)}
+        </CartonDialog>
+        <CartonDialog open={!!serialReview} title="舊箱貼 SN 核對" onClose={() => { if (!submissionRef.current.isBusy()) { setSerialReview(null); setError(''); } }}
+            footer={<Button disabled={blocked || reviewStale || !serialReview?.selectedSerials.length} onClick={confirmSerialReview}>確認{serialReview?.type === 'pack' ? '裝箱' : '揀貨'}（{serialReview?.selectedSerials.length ?? 0}）</Button>}>
+            {serialReview && <>
+                <p className="mb-3 text-sm">這張箱貼查不到已登記的箱號。</p>
+                {serialReview.candidates.length
+                    ? <p className="mb-3 text-sm">請勾選這次實際{serialReview.type === 'pack' ? '裝箱' : '揀貨'}的 SN。符合本單 {serialReview.candidates.length} 個，已排除 {serialReview.excluded} 個。</p>
+                    : <p role="alert" className="mb-3 text-sm text-red-700">這張箱貼沒有符合本單目前作業狀態的 SN，已排除 {serialReview.excluded} 個。</p>}
+                {reviewStale && <p role="alert" className="mb-3 text-sm text-red-700">訂單或登入狀態已變更，請關閉後重新核對。</p>}
+                {error && <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>}
+                <div className="grid max-h-64 gap-2 overflow-y-auto sm:grid-cols-2">{serialReview.candidates.map(({ serial, productName }) => (
+                    <label key={serial} className="flex items-start gap-2 break-all rounded-lg border p-2 text-sm">
+                        <input type="checkbox" className="mt-1" disabled={blocked || reviewStale} checked={serialReview.selectedSerials.includes(serial)}
+                            onChange={event => {
+                                const checked = event.target.checked;
+                                setSerialReview(review => review && ({ ...review, selectedSerials: checked
+                                    ? [...review.selectedSerials, serial] : review.selectedSerials.filter(value => value !== serial) }));
+                            }} />
+                        <span>{serial}{productName && <span className="block text-xs text-slate-600">{productName}</span>}</span>
+                    </label>
+                ))}</div>
+            </>}
         </CartonDialog>
         <CartonDialog open={detailsOpen} title="出貨箱號明細" onClose={() => setDetailsOpen(false)} footer={<Button variant="secondary" onClick={exportFile}>匯出對照</Button>}>
             {error && <p role="alert" className="text-red-700 mb-3">{error}</p>}

@@ -149,7 +149,16 @@ function ecountTerminalFooterIndex(data, headerIndex) {
     return date && '日一二三四五六'[date.getUTCDay()] === footer[2] ? index : -1;
 }
 
-function parseSourceOrderRows(data, headerIndex) {
+function isEcountPickingExport(data, headerIndex = sourceHeaderIndex(data)) {
+    return ecountTerminalFooterIndex(data, headerIndex) >= 0 &&
+        data[headerIndex].some(value => normalizedHeader(value) === '序號/批號');
+}
+
+function ecountSerialTokens(value) {
+    return value.replace(/SN\s*[:：]\s*/gi, '').split(/[\/\s,，、ㆍ·・•]+/).filter(Boolean);
+}
+
+function parseSourceOrderRows(data, headerIndex, ecount) {
     const header = data[headerIndex];
     const columns = {};
     for (const field of Object.keys(SOURCE_HEADERS)) {
@@ -160,7 +169,7 @@ function parseSourceOrderRows(data, headerIndex) {
     for (const field of ['voucherNumber', 'sourceOrderNumber', 'productCode', 'productName', 'quantity']) {
         if (columns[field] < 0) throw invalid(`理貨明細缺少欄位：${SOURCE_HEADERS[field][0]}`);
     }
-    if(columns.barcode<0&&columns.internalScanCode<0)throw invalid('理貨明細缺少欄位：國際條碼／內部掃描碼');
+    if(columns.barcode<0&&columns.internalScanCode<0&&!ecount)throw invalid('理貨明細缺少欄位：國際條碼／內部掃描碼');
     let voucherNumber = null, customerName = null;
     const identities = [], seenLines = new Set();
     // Reuse the established quantity/SN validation through an explicit internal
@@ -182,19 +191,52 @@ function parseSourceOrderRows(data, headerIndex) {
             if (!cell('sourceOrderNumber')) throw invalid('商城訂單編號必填');
             const source = normalizeSourceIdentity(Object.fromEntries(Object.keys(SOURCE_HEADERS).filter(key => key.startsWith('source')).map(key => [key, cell(key)])));
             if (!source.sourceOrderNumber) throw invalid('商城訂單編號必填');
-            if (!cell('productCode')) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
-            const internationalBarcode=cell('barcode')||null,internalScanCode=cell('internalScanCode')||null;
+            const productCode = cell('productCode');
+            if (!productCode) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
+            const internationalBarcode = cell('barcode') || null;
+            let internalScanCode = cell('internalScanCode') || null;
+            if (!internationalBarcode && !internalScanCode && ecount) {
+                const codes = ecount.scanCodes.get(productCode) ?? [];
+                if (codes.length !== 1) throw invalid(`國際條碼必填；品項 ${productCode} ${codes.length ? '對應多個內部掃描碼，請確認唯一對照' : '尚無對應的內部掃描碼，請先建立品項對照'}`);
+                [internalScanCode] = codes;
+            }
             if(!internationalBarcode&&!internalScanCode)throw invalid('國際條碼必填；無國條商品請明確提供內部掃描碼，不能用品項編碼代替');
             if(internalScanCode&&!/^ITM-[A-Za-z0-9._-]{1,96}$/.test(internalScanCode))throw invalid('內部掃描碼須為 ITM- 開頭的完整文字識別');
             const scanCode=internationalBarcode||internalScanCode;
             const codeType=internationalBarcode?'international':'internal';
             if(cell('sourceSku').length>255||/[\u0000-\u001f\u007f]/.test(cell('sourceSku')))throw invalid('來源SKU不可超過255字或含控制字元');
             const context = importSheetContext.get(data) || {};
-            const address = xlsx.utils.encode_cell({ r: index, c: internationalBarcode?columns.barcode:columns.internalScanCode });
-            validateBarcode(scanCode, context.worksheet?.[address], { sheet: context.sheetName, row: sourceRow, cell: address });
+            const scanColumn = internationalBarcode ? columns.barcode : cell('internalScanCode') ? columns.internalScanCode : -1;
+            if (scanColumn >= 0) {
+                const address = xlsx.utils.encode_cell({ r: index, c: scanColumn });
+                validateBarcode(scanCode, context.worksheet?.[address], { sheet: context.sheetName, row: sourceRow, cell: address });
+            }
             if (!cell('productName') || !cell('quantity')) throw invalid('品項名稱與數量必填');
-            const exact=exactSerials(cell('actualSN'),cell('quantity'));
-            const explicit = parseSerials(cell('serials'), cell('barcode'), Number(cell('quantity')), true);
+            const sourceSerials = cell('serials');
+            const carton = ecount?.cartons.get(sourceSerials);
+            const tokens = ecount && !carton ? ecountSerialTokens(sourceSerials) : [];
+            if (tokens.some(token => ecount.cartons.has(token))) {
+                throw invalid('同列包含箱批號與其他識別，請在 ECOUNT 按箱分列');
+            }
+            const actual = exactSerials(cell('actualSN'), cell('quantity'));
+            const nativeSNs = tokens.filter(token => token.toUpperCase() !== cell('barcode').toUpperCase());
+            const nativeExact = nativeSNs.length && nativeSNs.every(token => /^[A-Za-z0-9]{12,13}$/.test(token))
+                ? exactSerials(nativeSNs, cell('quantity')) : [];
+            if (actual.length && nativeExact.length && JSON.stringify([...actual].sort()) !== JSON.stringify([...nativeExact].sort())) {
+                throw invalid('實際SN與序號/批號欄的 SN 不一致');
+            }
+            const exact = actual.length ? actual : nativeExact;
+            if (carton) {
+                if (carton.serialCollision) throw invalid('序號/批號同時對應箱號與單件 SN，請核對識別');
+                if (carton.status !== 'sealed') throw invalid(`箱批號 ${sourceSerials} 尚未封箱或已作廢`);
+                const matchingLines = carton.lines.filter(line => line.item_code === productCode &&
+                    (internationalBarcode ? line.international_barcode === internationalBarcode : line.internal_scan_code === internalScanCode));
+                if (!matchingLines.length) throw invalid(`箱批號 ${sourceSerials} 的品項或掃描碼與理貨單不符`);
+                if (exact.some(sn => !matchingLines.some(line => line.actual_sns.includes(sn)))) {
+                    throw invalid(`箱批號 ${sourceSerials} 不含理貨單指定的實際 SN`);
+                }
+            }
+            const explicit = carton || nativeExact.length ? [] : parseSerials(sourceSerials, cell('barcode'), Number(cell('quantity')), true);
             const legacySummary = summaryRequiresExplicitSerials(cell('summary'), cell('barcode'), cell('quantity'));
             const fromSummary = legacySummary ? parseSerials(cell('summary'), cell('barcode'), Number(cell('quantity')), false) : [];
             if (explicit.length && fromSummary.length && JSON.stringify([...explicit].sort()) !== JSON.stringify([...fromSummary].sort())) {
@@ -213,8 +255,9 @@ function parseSourceOrderRows(data, headerIndex) {
             // Per-order customers may differ inside one warehouse document.
             // Only expose a document-level customer if every supplied value agrees.
             if (customer) customerName = customerName === null ? customer : customerName === customer ? customerName : '';
-            normalizedRows.push([scanCode, cell('productCode'), cell('productName'), cell('quantity'), exact.length?'':legacy.join(' '),exact.join(',')]);
-            identities.push({ ...source, sourceSku:cell('sourceSku')||null,internationalBarcode,internalScanCode,codeType,sourceRow, sourceSummary:cell('summary'), sourceSerials:cell('serials'), serialSource:exact.length?'實際SN':explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null });
+            normalizedRows.push([scanCode, productCode, cell('productName'), cell('quantity'), exact.length?'':legacy.join(' '),exact.join(',')]);
+            identities.push({ ...source, sourceSku:cell('sourceSku')||null,internationalBarcode,internalScanCode,codeType,sourceRow, sourceSummary:cell('summary'), sourceSerials, serialSource:actual.length?'實際SN':carton?'箱批號':nativeExact.length||explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null,
+                ...(carton ? { expectedCartonId: sourceSerials } : {}) });
         } catch (error) {
             if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${sourceRow} 列：${error.message}`;
             throw error;
@@ -246,7 +289,8 @@ function isPrintTimestampRow(row) {
         date.getUTCDate() === Number(day) && Number(hour) < 24 && Number(minute) < 60 && Number(second) < 60;
 }
 
-function parseOrderRows(data, { worksheet, sheetName } = importSheetContext.get(data) || {}) {
+function parseOrderRows(data, options = {}) {
+    const { worksheet, sheetName, ecount } = { ...importSheetContext.get(data), ...options };
     if (!Array.isArray(data) || data.length > IMPORT_LIMITS.sheetRows) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetRows} 列`, 413);
     for (const row of data) {
         if (!Array.isArray(row)) throw invalid('工作表列格式錯誤');
@@ -254,7 +298,7 @@ function parseOrderRows(data, { worksheet, sheetName } = importSheetContext.get(
         if (row.some(value => String(value ?? '').length > IMPORT_LIMITS.cellCharacters)) throw invalid('單一儲存格內容過長', 413);
     }
     const sourceIndex = sourceHeaderIndex(data);
-    if (sourceIndex >= 0) return parseSourceOrderRows(data, sourceIndex);
+    if (sourceIndex >= 0) return parseSourceOrderRows(data, sourceIndex, ecount);
     const fallback = index => String(data[index]?.[0] ?? '').split(/[:：]/).slice(1).join(':').trim();
     const voucherNumber = labelValue(data, ['憑證號碼', '憑證號', '訂單編號', '訂單號碼', '訂單號', '單號', 'Voucher']) || fallback(1);
     const customerName = labelValue(data, ['客戶名稱', '客戶', '收貨人', 'Customer']) || fallback(2) || null;
@@ -332,7 +376,8 @@ function readOrderImportRows(buffer) {
     try {
         // raw preserves CSV text identifiers (including leading zeros and literal
         // exponent strings). XLS/XLSX retain typed cells for precision checks.
-        const workbook = xlsx.read(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
+        const { readOrderImportWorkbook } = require('./orderImportWorkbook');
+        const workbook = readOrderImportWorkbook(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
         sheetName = workbook.SheetNames[0];
         sheetCount = workbook.SheetNames.length;
         worksheet = workbook.Sheets[sheetName];
@@ -357,4 +402,4 @@ function parseOrderImport(buffer) {
         throw error;
     }
 }
-module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows, readOrderImportRows, SOURCE_HEADERS, sourceHeaderIndex, matchesSourceHeader };
+module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows, readOrderImportRows, SOURCE_HEADERS, sourceHeaderIndex, matchesSourceHeader, isEcountPickingExport, ecountSerialTokens };

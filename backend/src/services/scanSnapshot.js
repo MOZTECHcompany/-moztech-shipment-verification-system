@@ -7,7 +7,8 @@ const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
 function stateToken(order, items, instances) {
     return digest([
         [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.import_batch_id,order.source_order_number,order.source_platform,order.source_store,order.work_barcode],
-        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.carton_serial_binding ?? false,i.serial_identity_mode ?? 'legacy',i.international_barcode,i.internal_scan_code,i.code_type,i.source_sku,...sourceIdentityValues(sourceIdentityFromRow(i))]),
+        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.carton_serial_binding ?? false,i.serial_identity_mode ?? 'legacy',i.international_barcode,i.internal_scan_code,i.code_type,i.source_sku,...sourceIdentityValues(sourceIdentityFromRow(i)),
+            ...(i.expected_carton_id ? [i.expected_carton_id] : [])]),
         sorted(instances).map(i=>[i.id,i.order_item_id,i.serial_number,i.status])
     ]);
 }
@@ -21,7 +22,8 @@ function parseCommand(body, userId) {
     if (body.responseMode !== 'delta-v1' || typeof body.commandId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.commandId) || typeof body.expectedState !== 'string' || !/^[0-9a-f]{64}$/.test(body.expectedState)) {
         throw Object.assign(new Error('掃碼識別無效，請重新載入訂單'),{status:400});
     }
-    return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState])};
+    return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState,
+        ...(body.selectedSerials ? [[...body.selectedSerials].sort()] : [])])};
 }
 function createWorkSnapshot(pool) {
     return async (req,res,next) => {

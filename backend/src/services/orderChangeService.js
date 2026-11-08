@@ -274,6 +274,9 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
         } else if (existingItems.length > 1 && existingItems.some(item => item.source_order_number)) {
             throw Object.assign(new Error('此條碼包含多筆商城商品明細，請指定 orderItemId 後再申請異動'), { status: 409 });
         }
+        const expectedItem = existingItems.find(item => item.expected_carton_id);
+        if (expectedItem) throw Object.assign(new Error(`理貨明細指定箱號 ${expectedItem.expected_carton_id}，請核對原理貨單後處理`),
+            { status: 409, code: 'CARTON_EXPECTED_REQUIRED' });
         const requestedSource = normalizeSourceIdentity(change);
         const source = existingItems.length ? sourceIdentityFromRow(existingItems[0]) : requestedSource;
         if (order.import_batch_id && ['sourceOrderNumber', 'sourcePlatform', 'sourceStore'].some(key => source[key] !== (order[SOURCE_FIELDS[key]] || null))) {

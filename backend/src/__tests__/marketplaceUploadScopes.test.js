@@ -29,7 +29,7 @@ describe('upload scope membership and per-order version guards (local PGlite SQL
  afterEach(async()=>{await db?.close();});
 
  test('migration is discovered automatically and defaults old sources to version zero',async()=>{
-  expect(loadMigrationManifest().at(-1).name).toBe('042_marketplace_upload_scopes.sql');
+  expect(loadMigrationManifest().map(migration=>migration.name)).toContain('042_marketplace_upload_scopes.sql');
   const owner=await batch('OLD'),saved=await source(owner,'#A');
   expect(saved.draft_version).toBe(0);
   await expect(db.query('UPDATE marketplace_intake_orders SET draft_version=-1 WHERE id=$1',[saved.id])).rejects.toMatchObject({code:'23514'});

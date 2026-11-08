@@ -92,8 +92,16 @@ function choosePickLines(carton, body, items, instances) {
         const quantity = request.quantity === undefined ? (actualSN.length || line.remainingQuantity) : positive(request.quantity, '拆箱數量');
         if (quantity > line.remainingQuantity || quantity <= 0) throw fail('CARTON_QUANTITY_EXCEEDED', '所選數量超過箱內剩餘');
         if (line.actualSN.length && quantity !== actualSN.length) throw fail('CARTON_EXACT_SN_REQUIRED', 'SN 拆箱必須選出確切 SN，不能只輸入數量');
-        const candidates = items.filter(item => matchesItem(line, item));
-        if (!candidates.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '箱內品項或掃描碼不屬於此訂單');
+        const matchingItems = items.filter(item => matchesItem(line, item));
+        if (!matchingItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '箱內品項或掃描碼不屬於此訂單');
+        const targetItems = request.orderItemId === undefined
+            ? matchingItems : matchingItems.filter(item => item.id === Number(request.orderItemId));
+        if (!targetItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '指定品項列不屬於箱內品項');
+        const candidates = targetItems.filter(item => !item.expected_carton_id || item.expected_carton_id === carton.cartonId);
+        if (!candidates.length) {
+            const expected = [...new Set(targetItems.map(item => item.expected_carton_id))];
+            throw fail('CARTON_EXPECTED_MISMATCH', `理貨明細指定箱號 ${expected.join('、')}，請掃描對應實體箱`);
+        }
         const groups = new Map();
         if (actualSN.length && request.orderItemId === undefined && candidates.length > 1) {
             // Source lines with the same product are resolved only by each
@@ -107,9 +115,7 @@ function choosePickLines(carton, body, items, instances) {
             }
         } else {
             if (candidates.length > 1 && request.orderItemId === undefined) throw fail('CARTON_ORDER_LINE_REQUIRED', '此品項在訂單有多列，請明確選擇對應品項列');
-            const item = request.orderItemId === undefined ? candidates[0] : candidates.find(item => item.id === Number(request.orderItemId));
-            if (!item) throw fail('CARTON_ITEM_NOT_IN_ORDER', '指定品項列不屬於箱內品項');
-            groups.set(item.id, actualSN);
+            groups.set(candidates[0].id, actualSN);
         }
         for (const [itemId, groupSN] of groups) {
             const item = candidates.find(row => row.id === itemId), pair = `${line.lineId}:${itemId}`;

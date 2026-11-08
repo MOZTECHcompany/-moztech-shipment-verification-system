@@ -48,6 +48,10 @@ async function assertLegacyOrderSerialEditing(db, orderId, proposal) {
         assertLegacySerialValues(proposed);
     }
 }
+function assertExpectedCartonScan(expectedCartonId) {
+    if (expectedCartonId) throw Object.assign(new Error(`理貨明細指定箱號 ${expectedCartonId}，請掃描對應實體箱或拆箱揀貨`),
+        { status: 409, code: 'CARTON_EXPECTED_REQUIRED' });
+}
 async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumber, quantitySign, type, amount }) {
     let unit;
     if (instanceId) {
@@ -91,5 +95,5 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     }
     return context;
 }
-module.exports = { assertNoCartonAllocations, guardUnitScan, lockCartonSerials, guardSerialImport,
+module.exports = { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, lockCartonSerials, guardSerialImport,
     assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing };
