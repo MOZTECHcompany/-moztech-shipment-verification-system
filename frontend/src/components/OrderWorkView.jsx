@@ -302,6 +302,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const [scanNeedsReview, setScanNeedsReview] = useState(false);
     const orderDataVersionRef = useRef(0);
     const orderRequestSequenceRef = useRef(0);
+    const freightReconciliationRef = useRef({ inFlight: false, stateKey: null });
     const activeOrderIdRef = useRef(orderId);
     activeOrderIdRef.current = orderId;
 
@@ -408,19 +409,41 @@ function AuthenticatedOrderWorkView({ user }) {
         if (!id) return;
         const sequence = ++orderRequestSequenceRef.current;
         const dataVersion = orderDataVersionRef.current;
-        const isCurrent = () => sequence === orderRequestSequenceRef.current
+        const runtime = getNativeRuntime();
+        const isCurrent = () => mountedRef.current && isNativeSessionCurrent(runtime)
+            && sequence === orderRequestSequenceRef.current
             && dataVersion === orderDataVersionRef.current
             && String(id) === String(activeOrderIdRef.current);
+        const canApply = () => isCurrent() && !scanSubmissionRef.current.isBusy();
+        const snapshotPath = `/api/orders/${id}/work-snapshot`;
+        const freightReconciliation = freightReconciliationRef.current;
+        let attemptedFreightState = null;
         try {
             setLoading(true);
             setLoadError('');
-            const response = await apiClient.get(`/api/orders/${id}/work-snapshot`, { timeout: 15000 });
-            if (isCurrent() && !scanSubmissionRef.current.isBusy()) setCurrentOrderData(response.data);
+            let { data: snapshot } = await apiClient.get(snapshotPath, { timeout: 15000 });
+            if (!canApply()) return;
+            if (snapshot?.freightReconciliationNeeded === true && typeof snapshot.stateToken === 'string' && snapshot.stateToken) {
+                const stateKey = `${id}:${snapshot.stateToken}`;
+                if (!freightReconciliation.inFlight && freightReconciliation.stateKey !== stateKey) {
+                    freightReconciliation.inFlight = true;
+                    attemptedFreightState = stateKey;
+                    // The detail endpoint rechecks completion under the order lock.
+                    await apiClient.get(`/api/orders/${id}`, { timeout: 15000 });
+                    if (!canApply()) return;
+                    ({ data: snapshot } = await apiClient.get(snapshotPath, { timeout: 15000 }));
+                }
+            }
+            if (!canApply()) return;
+            if (snapshot?.freightReconciliationNeeded !== true) freightReconciliation.stateKey = null;
+            else if (attemptedFreightState) freightReconciliation.stateKey = attemptedFreightState;
+            setCurrentOrderData(snapshot);
         } catch (err) {
             if (!isCurrent()) return;
             setLoadError(err.response?.data?.message || '暫時無法更新訂單，請檢查連線後重試。');
         } finally {
-            if (sequence === orderRequestSequenceRef.current) setLoading(false);
+            if (attemptedFreightState) freightReconciliation.inFlight = false;
+            if (mountedRef.current && sequence === orderRequestSequenceRef.current) setLoading(false);
         }
     }, [navigate]);
 

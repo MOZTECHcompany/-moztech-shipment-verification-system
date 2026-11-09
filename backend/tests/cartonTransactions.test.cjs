@@ -93,6 +93,63 @@ async function suite(t, postgres) {
         await assert.rejects(f.db.query('DELETE FROM orders WHERE id=$1', [order.id]), error => ['23503','23001'].includes(error.code) && error.message.includes('wms_carton_allocations_order_id_fkey'));
         assert.equal(ok(await api(2, 'get', `/api/orders/${order.id}/carton-shipments`)).allocations[0].lines[0].quantity, 10);
     });
+    await t.test('legacy freight stays unscanned while physical items complete both warehouse stages', async () => {
+        const addFreight = async order => {
+            await f.db.query(`INSERT INTO operation_logs(user_id,order_id,action_type,details)
+                VALUES(1,$1,'import',$2)`, [order.id, JSON.stringify({ voucherNumber: order.voucher_number })]);
+            return (await f.db.query(`INSERT INTO order_items(order_id,product_code,product_name,barcode,quantity)
+                VALUES($1,'00001','運費','00001',36) RETURNING id`, [order.id])).rows[0].id;
+        };
+        const freightCounts = async id => (await f.db.query('SELECT quantity,picked_quantity,packed_quantity FROM order_items WHERE id=$1', [id])).rows[0];
+        const snapshot = async (user, orderId) => ok(await api(user, 'get', `/api/orders/${orderId}/work-snapshot`));
+        const unitScan = (user, orderId, state, body) => api(user, 'post', '/api/orders/update_item', {
+            orderId, responseMode: 'delta-v1', commandId: randomUUID(), expectedState: state.stateToken, ...body
+        });
+
+        const { order, item } = await f.seedOrder({ quantity: 1 });
+        const freightId = await addFreight(order);
+        const picking = await snapshot(2, order.id);
+        assert.deepEqual(picking.items.map(row => row.id), [item.id]);
+        for (const target of [{}, { orderItemId: freightId }]) {
+            const rejected = await unitScan(2, order.id, picking, { scanValue: '00001', type: 'pick', ...target });
+            assert.equal(rejected.status, 400);
+            assert.match(rejected.body.message, /運費已自動放行/);
+        }
+        const picked = ok(await unitScan(2, order.id, picking, { scanValue: item.barcode, type: 'pick' }));
+        assert.equal(picked.order.status, 'picked');
+        assert.equal(picked.item.picked_quantity, 1);
+        ok(await api(3, 'post', `/api/orders/${order.id}/claim`, { stage: 'pack' }));
+        const packing = await snapshot(3, order.id);
+        const packed = ok(await unitScan(3, order.id, packing, { scanValue: item.barcode, type: 'pack' }));
+        assert.equal(packed.order.status, 'completed');
+        assert.equal(packed.item.packed_quantity, 1);
+        assert.deepEqual(await freightCounts(freightId), { quantity: 36, picked_quantity: 0, packed_quantity: 0 });
+
+        const historical = await f.seedOrder({ quantity: 1, status: 'packing' });
+        const historicalFreightId = await addFreight(historical.order);
+        await f.db.query('UPDATE order_items SET picked_quantity=1,packed_quantity=1 WHERE id=$1', [historical.item.id]);
+        const historicalSnapshot = await snapshot(3, historical.order.id);
+        assert.equal(historicalSnapshot.freightReconciliationNeeded, true);
+        assert.equal(historicalSnapshot.order.status, 'packing');
+        assert.equal((await f.db.query('SELECT status FROM orders WHERE id=$1', [historical.order.id])).rows[0].status, 'packing');
+        const reconciled = ok(await api(3, 'get', `/api/orders/${historical.order.id}`));
+        assert.equal(reconciled.order.status, 'completed');
+        assert.deepEqual(await freightCounts(historicalFreightId), { quantity: 36, picked_quantity: 0, packed_quantity: 0 });
+
+        const xlsx = require('xlsx');
+        const book = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([
+            ['憑證號碼：TEST-FREIGHT-EXPLICIT-BARCODE'],
+            ['國際條碼', '品項名稱', '數量', '摘要'],
+            ['00001', '運費', 1, '']
+        ]), '理貨');
+        const imported = ok(await request(server).post('/api/orders/import').set('x-fixture-user', '1')
+            .attach('orderFile', xlsx.write(book, { type: 'buffer', bookType: 'xlsx' }), 'explicit-barcode.xlsx'), 201);
+        const explicit = await snapshot(2, imported.orderId);
+        assert.deepEqual(explicit.items.map(row => [row.barcode, row.quantity]), [['00001', 1]]);
+        await f.db.query("DELETE FROM operation_logs WHERE order_id=$1 AND action_type='import'", [imported.orderId]);
+        assert.deepEqual((await snapshot(2, imported.orderId)).items, explicit.items);
+    });
     await t.test('no EAN and newly assigned ITM code use confirmed item identity, while wrong product/EAN never matches', async () => {
         const { order } = await f.seedOrder({ quantity: 2, itemCode: 'NO-EAN', barcode: null });
         await create(box('INTERNAL', 2, [], { itemCode: 'NO-EAN', ean: null, internalScanCode: 'ITM-SOURCE-SKU' }));

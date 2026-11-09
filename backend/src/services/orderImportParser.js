@@ -8,6 +8,7 @@ function exactSerials(value, quantity) {
 const importSheetContext = new WeakMap();
 const { normalizeSourceIdentity, sourceIdentityValues } = require('./orderSourceIdentity');
 const { groupSourceWorkOrders } = require('./warehouseBatch');
+const { PICKING_FREIGHT_CODE, isPickingFreight } = require('./pickingFreight');
 
 const IMPORT_LIMITS = Object.freeze({
     fileBytes: 10 * 1024 * 1024,
@@ -309,6 +310,8 @@ function parseOrderRows(data, options = {}) {
     if (headerIndex < 0) throw invalid('找不到完整品項表頭：需包含品項編碼／國際條碼、品項名稱、數量');
     const header = data[headerIndex];
     const barcodeIndex = header.findIndex(isBarcodeHeader);
+    const scanIdentityIndexes = header.flatMap((value, index) =>
+        matchesSourceHeader(value, 'barcode') || matchesSourceHeader(value, 'internalScanCode') ? [index] : []);
     const nameIndex = header.findIndex(value => String(value).includes('品項名稱'));
     const quantityIndex = header.findIndex(value => String(value).includes('數量'));
     const modelIndex = header.findIndex(value => /品項型號|型號|Product Code/.test(String(value)));
@@ -318,12 +321,14 @@ function parseOrderRows(data, options = {}) {
     const actualSNIndex=actualIndices[0]??-1;
     const dedicatedSerialColumn = summaryIndex >= 0 && !String(header[summaryIndex]).includes('摘要');
     const items = [];
+    const omittedNonStock = [];
     const seenSerials = new Set();
     let totalQuantity = 0;
+    let freightExemptQuantity = 0;
     const lastContentIndex = data.findLastIndex(row => row.some(value => String(value ?? '').trim()));
     for (let index = headerIndex + 1; index < data.length; index++) {
         const row = data[index];
-        if (index === lastContentIndex && items.length > 0 && isPrintTimestampRow(row)) continue;
+        if (index === lastContentIndex && (items.length || omittedNonStock.length) && isPrintTimestampRow(row)) continue;
         const barcode = String(row[barcodeIndex] ?? '').trim();
         const rawName = String(row[nameIndex] ?? '').trim();
         const rawQuantity = String(row[quantityIndex] ?? '').trim();
@@ -351,14 +356,22 @@ function parseOrderRows(data, options = {}) {
             if(exact.length&&legacy.length&&JSON.stringify([...exact].sort())!==JSON.stringify([...legacy].sort()))throw invalid('實際SN與舊SN欄不一致');
             const serials=exact.length?exact:legacy;
             const serialMode=exact.length?'exact':'legacy';
+            if (items.length + omittedNonStock.length >= IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
+            if (totalQuantity + freightExemptQuantity + quantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
+            if (normalizedHeader(header[barcodeIndex]) === '品項編碼' &&
+                barcode === PICKING_FREIGHT_CODE && isPickingFreight(productCode, rawName) &&
+                !serials.length && !String(row[summaryIndex] ?? '').trim() &&
+                scanIdentityIndexes.every(column => !String(row[column] ?? '').trim())) {
+                omittedNonStock.push({ productCode, productName, quantity, sourceRow: index + 1 });
+                freightExemptQuantity += quantity;
+                continue;
+            }
             for (const serial of serials) {
                 if (seenSerials.has(serial)) throw invalid(`SN ${serial} 在其他品項已出現，請勿重複匯入`);
                 seenSerials.add(serial);
             }
             totalQuantity += quantity;
-            if (items.length >= IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
             if (seenSerials.size > IMPORT_LIMITS.serials) throw invalid(`每單最多 ${IMPORT_LIMITS.serials} 筆 SN`, 413);
-            if (totalQuantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
             items.push({ barcode, productCode, productName, quantity, serials, serialMode,sourceRow: index + 1 });
         } catch (error) {
             if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${index + 1} 列：${error.message}`;
@@ -366,7 +379,8 @@ function parseOrderRows(data, options = {}) {
         }
     }
     if (!items.length) throw invalid('沒有可匯入的品項，未建立訂單');
-    return { voucherNumber, customerName, items, totalQuantity, serialCount: seenSerials.size };
+    return { voucherNumber, customerName, items, totalQuantity, serialCount: seenSerials.size,
+        ...(omittedNonStock.length ? { omittedNonStock, freightExemptQuantity } : {}) };
 }
 
 function readOrderImportRows(buffer) {

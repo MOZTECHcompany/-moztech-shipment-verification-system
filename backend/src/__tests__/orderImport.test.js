@@ -16,6 +16,47 @@ function workbook(data, bookType = 'xlsx') {
     return xlsx.write(wb, { type: 'buffer', bookType });
 }
 
+const makeFreightPickingRows = (items, identifierHeader = '品項編碼') => [
+    ['理貨單'], ['憑證號碼：TEST-FREIGHT-1'], ['客戶名稱：Fixture'], ['出庫倉庫：Fixture'],
+    [identifierHeader, '品項名稱(規格)', '數量', '摘要'], ...items
+];
+
+test('imports a legacy picking workbook with freight recorded outside physical scan quantities', () => {
+    const rows = makeFreightPickingRows([
+        ['00001', ' 運費 ', 36, ''],
+        ['4710000000001', 'Physical item', 2, '']
+    ]);
+    const parsed = parseOrderImport(workbook(rows));
+
+    expect(parsed.totalQuantity).toBe(2);
+    expect(parsed.serialCount).toBe(0);
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]).toMatchObject({ productCode: '4710000000001', quantity: 2, sourceRow: 7 });
+    expect(parsed.omittedNonStock).toEqual([
+        { productCode: '00001', productName: '運費', quantity: 36, sourceRow: 6 }
+    ]);
+});
+
+test('rejects a freight-only legacy picking workbook with no physical items', () => {
+    const rows = makeFreightPickingRows([['00001', '運費', 36, '']]);
+
+    expect(() => parseOrderImport(workbook(rows))).toThrow(/沒有可匯入的品項/);
+});
+
+test.each([
+    ['a different product name', '品項編碼', ['00001', '運費券', 1, ''], []],
+    ['a different SKU', '品項編碼', ['00002', '運費', 1, ''], []],
+    ['an international barcode column', '國際條碼', ['00001', '運費', 1, ''], []],
+    ['a physical serial number', '品項編碼', ['00001', '運費', 1, 'SN:TESTSN000001'], ['TESTSN000001']]
+])('keeps a legacy picking row with %s in the physical scan items', (_, identifierHeader, item, serials) => {
+    const parsed = parseOrderImport(workbook(makeFreightPickingRows([item], identifierHeader)));
+
+    expect(parsed.totalQuantity).toBe(1);
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]).toMatchObject({ productCode: item[0], productName: item[1], serials });
+    expect(parsed.omittedNonStock ?? []).toEqual([]);
+});
+
 test.each(['xlsx', 'biff8', 'csv'])('parses actual %s workbook using the existing labels and SKU syntax', bookType => {
     const parsed = parseOrderImport(workbook(makeRows(), bookType));
     expect(parsed).toMatchObject({ voucherNumber: 'TEST-20260909-1', customerName: 'Fixture Company', totalQuantity: 2, serialCount: 0 });

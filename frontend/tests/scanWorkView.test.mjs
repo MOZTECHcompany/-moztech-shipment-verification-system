@@ -56,10 +56,10 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
         },
         get: url => {
             if (url.endsWith('/exceptions')) return Promise.resolve({ data: { items: exceptions } });
-            if (!deferRead || url !== '/api/orders/1/work-snapshot') return Promise.resolve({ data: fixture });
-            let resolve;
-            const pending = new Promise(done => { resolve = done; });
-            reads.push({ resolve });
+            if (!deferRead || !['/api/orders/1/work-snapshot', '/api/orders/1'].includes(url)) return Promise.resolve({ data: fixture });
+            let resolve, reject;
+            const pending = new Promise((done, fail) => { resolve = done; reject = fail; });
+            reads.push({ url, resolve, reject });
             return pending;
         }
     };
@@ -229,9 +229,86 @@ test('an older order GET cannot overwrite the accepted scan snapshot', async () 
     accepted.items[0].picked_quantity = 1;
     view.posts[0].resolve({ data: accepted });
     await settle();
-    view.reads[0].resolve({ data: view.fixture });
+    view.reads[0].resolve({ data: { ...view.fixture, stateToken: 'a'.repeat(64), freightReconciliationNeeded: true } });
     await settle();
     assert.equal(view.currentData().items[0].picked_quantity, 1);
+    assert.equal(view.reads.length, 1);
+});
+
+test('legacy freight reconciliation refreshes the work snapshot with the new token and status', async () => {
+    const view = workView({ deferRead: true });
+    const snapshotPath = '/api/orders/1/work-snapshot';
+    const flagged = structuredClone(view.fixture);
+    flagged.items[0].picked_quantity = flagged.items[0].quantity;
+    flagged.stateToken = 'a'.repeat(64);
+    flagged.freightReconciliationNeeded = true;
+    view.render();
+    const loadEffect = view.effects.find(callback => callback.toString().includes('fetchOrderDetails(orderId)') && !callback.toString().includes('active_sessions_update'));
+    loadEffect();
+    view.reads[0].resolve({ data: flagged });
+    await settle();
+    assert.deepEqual(view.reads.map(read => read.url), [snapshotPath, '/api/orders/1']);
+
+    view.reads[1].resolve({ data: { order: flagged.order } });
+    await settle();
+    assert.equal(view.reads[2].url, snapshotPath);
+    const refreshed = { order: { ...flagged.order, status: 'picked' }, items: flagged.items,
+        instances: flagged.instances, stateToken: 'b'.repeat(64) };
+    view.reads[2].resolve({ data: refreshed });
+    await settle();
+    assert.equal(view.currentData().stateToken, refreshed.stateToken);
+    assert.equal(view.currentData().order.status, 'picked');
+});
+
+test('legacy freight reconciliation deduplicates in-flight requests and retries after failure or a cleared flag', async () => {
+    const view = workView({ deferRead: true });
+    const snapshotPath = '/api/orders/1/work-snapshot';
+    const detailPath = '/api/orders/1';
+    const flagged = structuredClone(view.fixture);
+    flagged.items[0].picked_quantity = flagged.items[0].quantity;
+    flagged.stateToken = 'a'.repeat(64);
+    flagged.freightReconciliationNeeded = true;
+    view.render();
+    const loadEffect = view.effects.find(callback => callback.toString().includes('fetchOrderDetails(orderId)') && !callback.toString().includes('active_sessions_update'));
+    const load = async (data = flagged) => {
+        loadEffect();
+        assert.equal(view.reads.at(-1).url, snapshotPath);
+        view.reads.at(-1).resolve({ data });
+        await settle();
+    };
+
+    await load();
+    const firstDetail = view.reads.at(-1);
+    assert.equal(firstDetail.url, detailPath);
+    await load();
+    assert.deepEqual(view.reads.map(read => read.url), [snapshotPath, detailPath, snapshotPath]);
+    firstDetail.reject(new Error('detail read failed'));
+    await settle();
+
+    await load();
+    assert.equal(view.reads.at(-1).url, detailPath);
+    view.reads.at(-1).resolve({ data: { order: flagged.order } });
+    await settle();
+    assert.equal(view.reads.at(-1).url, snapshotPath);
+    view.reads.at(-1).reject(new Error('snapshot refresh failed'));
+    await settle();
+
+    await load();
+    assert.equal(view.reads.at(-1).url, detailPath);
+    view.reads.at(-1).resolve({ data: { order: flagged.order } });
+    await settle();
+    view.reads.at(-1).resolve({ data: flagged });
+    await settle();
+    await load();
+    assert.equal(view.reads.at(-1).url, snapshotPath);
+
+    await load({ ...flagged, freightReconciliationNeeded: false });
+    await load();
+    assert.equal(view.reads.at(-1).url, detailPath);
+    view.reads.at(-1).resolve({ data: { order: flagged.order } });
+    await settle();
+    view.reads.at(-1).resolve({ data: flagged });
+    await settle();
 });
 
 

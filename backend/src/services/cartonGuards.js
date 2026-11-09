@@ -95,5 +95,5 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     }
     return context;
 }
-module.exports = { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, lockCartonSerials, guardSerialImport,
+module.exports = { activeAllocations, assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, lockCartonSerials, guardSerialImport,
     assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing };

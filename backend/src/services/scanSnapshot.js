@@ -1,5 +1,7 @@
 const { createHash } = require('node:crypto');
 const { sourceIdentityFromRow, sourceIdentityValues } = require('./orderSourceIdentity');
+const { projectPickingItems } = require('./pickingFreight');
+const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
 // Opaque optimistic concurrency token. Only warehouse-relevant fields, so
@@ -15,7 +17,7 @@ function stateToken(order, items, instances) {
 async function readLines(db, orderId) {
     const items = (await db.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId])).rows;
     const instances = (await db.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id',[orderId])).rows;
-    return {items,instances};
+    return { ...await projectPickingItems(db, orderId, items, instances), instances };
 }
 function parseCommand(body, userId) {
     if (body.responseMode === undefined) return null;
@@ -37,9 +39,18 @@ function createWorkSnapshot(pool) {
                 (SELECT ol.user_id FROM operation_logs ol WHERE ol.order_id=o.id AND ol.action_type='import' ORDER BY ol.created_at DESC,ol.id DESC LIMIT 1) AS imported_by_user_id
                 FROM orders o LEFT JOIN users p ON p.id=o.picker_id LEFT JOIN users pk ON pk.id=o.packer_id WHERE o.id=$1`,[req.params.orderId])).rows[0];
             if(!order){await db.query('ROLLBACK');open=false;return res.status(404).json({message:'找不到訂單'});}
-            const {items,instances}=await readLines(db,order.id);
+            const {items,instances,exemptItemIds}=await readLines(db,order.id);
+            let freightReconciliationNeeded = false;
+            if (exemptItemIds.length && !order.warehouse_hold && canAutoComplete(order.status)) {
+                const { allPicked, allPacked } = getOrderCompletion(items, instances);
+                if (allPacked || (allPicked && ['pending', 'picking'].includes(order.status))) {
+                    const openExceptions = await db.query("SELECT 1 FROM order_exceptions WHERE order_id=$1 AND status='open' LIMIT 1", [order.id]);
+                    freightReconciliationNeeded = !openExceptions.rows.length;
+                }
+            }
             await db.query('COMMIT');open=false;
-            res.set('Cache-Control','private, no-store').json({order,items,instances,stateToken:stateToken(order,items,instances)});
+            res.set('Cache-Control','private, no-store').json({order,items,instances,stateToken:stateToken(order,items,instances),
+                ...(freightReconciliationNeeded ? { freightReconciliationNeeded } : {})});
         }catch(error){next(error)}finally{if(open)try{await db.query('ROLLBACK')}catch(e){releaseError=e}db?.release(releaseError)}
     };
 }
