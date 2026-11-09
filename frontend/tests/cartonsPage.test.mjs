@@ -8,6 +8,7 @@ import * as editorHelpers from '../src/utils/cartonEditor.js';
 import * as scanHelpers from '../src/utils/cartonScan.js';
 
 const source=await readFile(new URL('../src/components/CartonsPage.jsx',import.meta.url),'utf8');
+const importTemplate=await readFile(new URL('../src/components/cartonImportTemplate.json',import.meta.url),'utf8');
 const {code}=await transform(`${source}\nexport { SerialLookup, QrLabel };`,{loader:'jsx',format:'cjs'});
 function page({role='admin',scope='orders',storage=new Map(),component='CartonsPage',onOpen=()=>{}}={}) {
     const hooks=[],effects=[],timers=new Map(),reads=[],posts=[];let cursor=0,dirty=false,tree,timerId=0,mounted=true,updatesAfterUnmount=0;
@@ -21,7 +22,7 @@ function page({role='admin',scope='orders',storage=new Map(),component='CartonsP
     };
     const deferred=(bucket,fields)=>new Promise((resolve,reject)=>bucket.push({...fields,resolve:data=>resolve({data}),reject}));
     const api={getSessionIdentity:()=>session,get:(url,options)=>deferred(reads,{url,options}),post:(url,body,options)=>deferred(posts,{url,body,options}),patch:(url,body,options)=>deferred(posts,{url,body,options,method:'PATCH'})};
-    const imports={react,'@/api/api':api,'@/utils/cartonScan':scanHelpers,'@/utils/cartonEditor':editorHelpers,'@/ui':{Button:'Button'},'./CartonDialog':{CartonDialog:'CartonDialog'},'./CartonItemEditor':{CartonItemEditor:'CartonItemEditor',cartonFieldClass:'field'},sonner:{toast:{success:()=>{},info:()=>{},error:()=>{}}}};
+    const imports={react,'@/api/api':api,'@/utils/cartonScan':scanHelpers,'@/utils/cartonEditor':editorHelpers,'@/ui':{Button:'Button'},'./cartonImportTemplate.json?raw':importTemplate,'./CartonDialog':{CartonDialog:'CartonDialog'},'./CartonItemEditor':{CartonItemEditor:'CartonItemEditor',cartonFieldClass:'field'},sonner:{toast:{success:()=>{},info:()=>{},error:()=>{}}}};
     const generic=new Proxy({}, {get:(_,key)=>key==='__esModule'?false:String(key)}),module={exports:{}};
     vm.runInNewContext(code,{module,exports:module.exports,require:name=>imports[name]||generic,React:react,crypto:webcrypto,console,
         setTimeout:fn=>{const id=++timerId;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),
@@ -47,6 +48,21 @@ function page({role='admin',scope='orders',storage=new Map(),component='CartonsP
 const saved=(request,status='draft')=>({cartonId:request.body.cartonId,status,contentRevision:1,stateRevision:1,allocations:[],lines:request.body.lines.map((line,i)=>({...line,lineId:i+1,remainingQuantity:line.quantity,remainingSN:line.actualSN}))});
 const load=async view=>{view.advance();view.reads.at(-1).resolve({cartons:[]});await view.settle();};
 const enterPhysical=view=>{view.button('新增箱號').props.onClick();view.line(0).props.onSelect({itemCode:'SKU-01',productName:'Fixture product',importedBarcode:'00123'});view.line(0).props.onChange({quantity:2});view.button('確認內容').props.onClick();};
+
+test('physical carton managers can download the exact JSON import template', () => {
+    const view = page({ scope: 'warehouse' });
+    const { props } = view.button('下載箱號範本');
+    assert.equal(props.as, 'a');
+    assert.equal(props.download, 'WMS-箱號匯入範本.json');
+    const prefix = 'data:application/json;charset=utf-8,';
+    assert.ok(props.href.startsWith(prefix));
+    assert.equal(decodeURIComponent(props.href.slice(prefix.length)), importTemplate);
+    assert.equal(JSON.parse(importTemplate).format, 'corely-cartons-v1');
+    assert.equal(view.posts.length, 0);
+    view.tab('箱規').props.onClick();
+    assert.equal(view.button('下載箱號範本'), undefined);
+    assert.equal(page({ role: 'picker' }).button('下載箱號範本'), undefined);
+});
 
 test('three-step carton create uses an automatic identity, requires a real count and waits for seal before presenting print',async()=>{
     const view=page();await load(view);view.button('新增箱號').props.onClick();assert.equal(view.line(0).props.line.quantity,'');

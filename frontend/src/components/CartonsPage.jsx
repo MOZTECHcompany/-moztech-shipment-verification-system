@@ -8,6 +8,9 @@ import { parseSerialInput, cartonSessionKey } from '@/utils/cartonScan';
 import { appendCartonSerial, blankCartonLine, canManageCartons, cartonLabelSize, editorLinePayload, pendingBoxCreationKey, pendingCartonEditorKey } from '@/utils/cartonEditor';
 import { CartonDialog } from './CartonDialog';
 import { CartonItemEditor, cartonFieldClass as field } from './CartonItemEditor';
+import cartonImportTemplate from './cartonImportTemplate.json?raw';
+
+const importTemplateHref = 'data:application/json;charset=utf-8,' + encodeURIComponent(cartonImportTemplate);
 
 const newId = kind => `${kind === 'spec' ? 'BSP' : 'CTN'}-${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 8)}`;
 const errText = error => error.response?.data?.message || error.message || '操作失敗';
@@ -254,7 +257,11 @@ export function CartonsPage({ user }) {
     const record = detail?.record;
     const displayedRecords = tab === 'physical' ? [...records].sort((a, b) => String(a.cartonId).localeCompare(String(b.cartonId), 'zh-TW', { numeric: true })) : records;
     return <section className="space-y-4">
-        <header className="flex min-h-11 flex-col items-start justify-between gap-3 sm:flex-row sm:items-center"><h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1><div className="flex min-h-11 flex-wrap gap-2"><Button variant="secondary" onClick={() => setHelp(true)}>怎麼使用</Button>{canManage && <>{tab === 'physical' && <><Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button><Button onClick={() => edit(null, 'physical')} disabled={busy}><Plus size={16} />新增箱號</Button></>}{tab === 'spec' && <Button onClick={() => edit(null, 'spec')} disabled={busy}><Plus size={16} />新增箱規</Button>}<input ref={importRef} type="file" accept=".json,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" /></>}</div></header>
+        <header className="flex min-h-11 flex-col items-start justify-between gap-3 sm:flex-row sm:items-center"><h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1><div className="flex min-h-11 flex-wrap gap-2"><Button variant="secondary" onClick={() => setHelp(true)}>怎麼使用</Button>{canManage && <>{tab === 'physical' && <>
+            <Button as="a" variant="secondary" href={importTemplateHref} download="WMS-箱號匯入範本.json">下載箱號範本</Button>
+            <Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button>
+            <Button onClick={() => edit(null, 'physical')} disabled={busy}><Plus size={16} />新增箱號</Button>
+        </>}{tab === 'spec' && <Button onClick={() => edit(null, 'spec')} disabled={busy}><Plus size={16} />新增箱規</Button>}<input ref={importRef} type="file" accept=".json,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" /></>}</div></header>
         <div role="tablist" aria-label="箱號管理分類" className="flex flex-wrap gap-2">{[['spec','箱規'],['physical','實體箱／SN'],['serials','SN查詢']].map(([value, text]) => <button key={value} type="button" role="tab" aria-selected={tab === value} disabled={busy} onClick={() => { if (value === tab) return; listRequest.current++; detailRequest.current++; setTab(value); setQuery(''); setError(''); }} className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${tab === value ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}>{text}</button>)}</div>
         <p className="min-h-10 text-sm text-slate-600">{tabDescriptions[tab]}</p>
         {error && !editor && !labels && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
