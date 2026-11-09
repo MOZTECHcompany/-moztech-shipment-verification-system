@@ -8,6 +8,9 @@ import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
 import { parseSerialInput, cartonSessionKey } from '@/utils/cartonScan';
 import { CartonDialog } from './CartonDialog';
+import cartonImportTemplate from './cartonImportTemplate.json?raw';
+
+const templateHref = `data:application/json;charset=utf-8,${encodeURIComponent(cartonImportTemplate)}`;
 
 const blankLine = () => ({ itemCode: '', productName: '', ean: '', internalScanCode: '', quantity: 10, serialInput: '' });
 const newId = () => `CTN-${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 8)}`;
@@ -83,7 +86,15 @@ export function CartonsPage({ user }) {
         win.document.open(); win.document.write(`<html><head><title>箱號貼紙</title><style>@page{size:60mm 75mm;margin:0}body{margin:0;font-family:sans-serif} [data-carton-label]{width:54mm;padding:3mm;border:0;font-size:12px;overflow-wrap:anywhere}svg{display:block;margin:2mm auto}</style></head><body>${markup}</body></html>`); win.document.close(); win.focus(); win.print();
     };
     return <section className="space-y-4">
-        <header className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1>{canManage && <div className="flex gap-2"><Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button><Button onClick={() => edit(null)} disabled={busy}><Plus size={16} />新增箱號</Button><input ref={importRef} type="file" accept=".json,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" /></div>}</header>
+        <header className="flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1>
+            {canManage && <div className="flex flex-wrap gap-2">
+                <Button as="a" variant="secondary" href={templateHref} download="WMS-箱號匯入範本.json">下載箱號範本</Button>
+                <Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button>
+                <Button onClick={() => edit(null)} disabled={busy}><Plus size={16} />新增箱號</Button>
+                <input ref={importRef} type="file" accept=".json,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" />
+            </div>}
+        </header>
         <input aria-label="搜尋箱號或品號" placeholder="搜尋箱號或品號" value={query} onChange={e => setQuery(e.target.value)} className={`${inputClass} max-w-sm`} />
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
         <div className="overflow-x-auto rounded-xl border bg-white"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr><th className="p-3">箱號</th><th>狀態</th><th>品項</th><th>剩餘／總件數</th></tr></thead><tbody>{cartons.map(c => <tr key={c.cartonId} className="border-t"><td className="p-3"><button className="text-blue-700 underline break-all" onClick={() => open(c.cartonId)}>{c.cartonId}</button></td><td>{c.status === 'sealed' ? '已確認' : '待確認'}</td><td>{c.lines?.length ?? c.lineCount ?? '—'}</td><td>{c.lines ? `${c.lines.reduce((s,l)=>s+l.remainingQuantity,0)}／${c.lines.reduce((s,l)=>s+l.quantity,0)}` : `${c.remainingQuantity ?? '—'}／${c.quantity ?? '—'}`}</td></tr>)}</tbody></table>{loading && <p role="status" className="p-4">載入中…</p>}{!loading && !cartons.length && <p className="p-6 text-slate-500">尚無符合的箱號</p>}</div>
