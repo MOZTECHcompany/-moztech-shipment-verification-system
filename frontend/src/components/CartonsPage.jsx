@@ -8,9 +8,8 @@ import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
 import { parseSerialInput, cartonSessionKey } from '@/utils/cartonScan';
 import { CartonDialog } from './CartonDialog';
-import cartonImportTemplate from './cartonImportTemplate.json?raw';
-
-const templateHref = `data:application/json;charset=utf-8,${encodeURIComponent(cartonImportTemplate)}`;
+import { parseCartonExcel } from '@/utils/cartonExcel';
+import templateHref from './cartonImportTemplate.xlsx?url';
 
 const blankLine = () => ({ itemCode: '', productName: '', ean: '', internalScanCode: '', quantity: 10, serialInput: '' });
 const newId = () => `CTN-${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 8)}`;
@@ -71,8 +70,26 @@ export function CartonsPage({ user }) {
         if (!file) return;
         void mutate(async ensureCurrent => {
             if (file.size > 2 * 1024 * 1024) throw new Error('箱號檔案不可超過 2 MB');
-            const body = JSON.parse(await file.text());
-            if (body.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons)) throw new Error('請選擇 ERP 匯出的箱號檔案');
+            let body;
+            if (/\.xlsx$/i.test(file.name)) {
+                const XLSX = await import('xlsx');
+                let workbook;
+                try {
+                    workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: true, cellNF: true });
+                } catch {
+                    throw new Error('無法讀取 Excel，請使用下載的 .xlsx 範本。');
+                }
+                body = parseCartonExcel(workbook, XLSX);
+            } else {
+                try {
+                    body = JSON.parse(await file.text());
+                } catch {
+                    throw new Error('請選擇 Excel 範本或有效的箱號 JSON 檔。');
+                }
+                if (body?.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons)) {
+                    throw new Error('請選擇 Excel 範本或有效的箱號 JSON 檔。');
+                }
+            }
             ensureCurrent(); await api.post('/api/cartons/import', { ...body, expectedActorId: user.id }); ensureCurrent(); toast.success(`已匯入 ${body.cartons.length} 箱`);
         });
     };
@@ -89,10 +106,10 @@ export function CartonsPage({ user }) {
         <header className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1>
             {canManage && <div className="flex flex-wrap gap-2">
-                <Button as="a" variant="secondary" href={templateHref} download="WMS-箱號匯入範本.json">下載箱號範本</Button>
+                <Button as="a" variant="secondary" href={templateHref} download="WMS-箱號匯入範本.xlsx">下載 Excel 範本</Button>
                 <Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button>
                 <Button onClick={() => edit(null)} disabled={busy}><Plus size={16} />新增箱號</Button>
-                <input ref={importRef} type="file" accept=".json,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" />
+                <input ref={importRef} type="file" accept=".xlsx,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" />
             </div>}
         </header>
         <input aria-label="搜尋箱號或品號" placeholder="搜尋箱號或品號" value={query} onChange={e => setQuery(e.target.value)} className={`${inputClass} max-w-sm`} />

@@ -21,6 +21,7 @@ export default defineConfig(({ mode, command }) => {
   define: { 'import.meta.env.VITE_SOURCE_COMMIT': JSON.stringify(sourceCommit) },
   experimental: { renderBuiltUrl: (_filename, context) => context.hostType === 'js' ? { relative: true } : { relative: false } },
   build: {
+    assetsInlineLimit: file => path.basename(file) === 'cartonImportTemplate.xlsx' ? true : undefined,
     // The SDK loads all styles into its ShadowRoot. Lazy chunks may only
     // preload JavaScript; they must not inject unscoped CSS into the ERP head.
     cssCodeSplit: false,
