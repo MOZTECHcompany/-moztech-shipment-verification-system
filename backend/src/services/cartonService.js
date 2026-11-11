@@ -95,6 +95,23 @@ function createCartonService({ pool }) {
         }
         throw fail('CARTON_NOT_FOUND', '找不到箱號；SN 清單必須完全等於已登記箱的 SN', 404);
     }
+    async function lookupCarton(db, scanValue, matchSerialSubset) {
+        try {
+            return await readCarton(db, await resolve(db, scanValue));
+        } catch (error) {
+            if (error.code !== 'CARTON_NOT_FOUND' || !matchSerialSubset || !scanValue.includes(',') || /^CARTON:/i.test(scanValue.trim())) throw error;
+            const matchedSerials = serials(scanValue.split(',').map(sn => sn.trim()));
+            const registered = (await db.query(`SELECT l.carton_id FROM wms_carton_serials s
+                JOIN wms_carton_lines l ON l.id=s.line_id WHERE s.serial_number=ANY($1::text[])`, [matchedSerials])).rows;
+            if (!registered.length) throw error;
+            const sourceCartons = [...new Set(registered.map(row => row.carton_id))];
+            if (sourceCartons.length !== 1 || registered.length !== matchedSerials.length) {
+                throw fail('CARTON_SN_SOURCE_MIXED', '這組 SN 分屬不同箱，或含未登記的 SN。請逐箱掃描實體箱號後拆箱揀貨');
+            }
+            const carton = await readCarton(db, sourceCartons[0]);
+            return { ...carton, matchedSerials };
+        }
+    }
     async function history(db, cartonId, eventType, actor, details) {
         await db.query(`INSERT INTO wms_carton_history(carton_id,event_type,content_revision,state_revision,actor_id,details)
             SELECT carton_id,$2,content_revision,state_revision,$3,$4 FROM wms_cartons WHERE carton_id=$1`,
@@ -185,8 +202,11 @@ function createCartonService({ pool }) {
     async function get(cartonId, actor) {
         return transaction(async db => { await staff(db, actor); return readCarton(db, text(cartonId, '箱號', { max: 128 })); }, { readOnly: true });
     }
-    async function lookup(scanValue, actor) {
-        return transaction(async db => { await staff(db, actor); return readCarton(db, await resolve(db, scanValue)); }, { readOnly: true });
+    async function lookup(scanValue, actor, matchSerialSubset = false) {
+        return transaction(async db => {
+            await staff(db, actor);
+            return lookupCarton(db, scanValue, matchSerialSubset);
+        }, { readOnly: true });
     }
     async function edit(cartonId, body, actor) {
         const lines = normalizeLines(body.lines);
@@ -284,7 +304,8 @@ function createCartonService({ pool }) {
             const user = await staff(db, actor), snapshot = await orderSnapshot(db, orderId);
             expectedActor(body, user, true);
             await checkStation(db, snapshot, user, body.type);
-            const carton = await readCarton(db, await resolve(db, body.scanValue));
+            const carton = await lookupCarton(db, body.scanValue, body.matchSerialSubset === true);
+            if (carton.matchedSerials) return { carton, expectedState: snapshot.stateToken, expectedActorId: user.id };
             const result = await plan(db, snapshot, carton, body);
             if (body.type === 'pick') await checkSerialOwnership(db, snapshot, result.selection);
             return { ...snapshot, ...result, carton, expectedState: snapshot.stateToken, expectedCartonRevision: carton.stateRevision, expectedActorId: user.id };

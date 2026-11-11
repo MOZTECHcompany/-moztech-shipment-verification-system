@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import api from '@/api/api';
 import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
-import { applyCartonResponse, applyStickerSerialResponse, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey, getStickerSerialReview } from '@/utils/cartonScan';
+import { addCartonSplitSerial, applyCartonResponse, applyStickerSerialResponse, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey, getStickerSerialReview } from '@/utils/cartonScan';
 import { makeScanCommand } from '@/utils/scanDelta';
 import { CartonDialog } from './CartonDialog';
 import { buildCartonShipmentTrace } from '@/utils/cartonShipmentTrace.mjs';
@@ -31,8 +31,9 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
     const [shipments, setShipments] = useState(null), [detailsOpen, setDetailsOpen] = useState(false);
     const [release, setRelease] = useState(null), [reason, setReason] = useState('');
     const [serialReview, setSerialReview] = useState(null);
-    const readRequest = useRef(0), alive = useRef(true);
-    const clearLookup = () => { readRequest.current++; setReading(false); setBox(null); setSelections([]); };
+    const [splitSerialValue, setSplitSerialValue] = useState('');
+    const readRequest = useRef(0), alive = useRef(true), splitSerialInput = useRef(null);
+    const clearLookup = () => { readRequest.current++; setReading(false); setBox(null); setSelections([]); setSplitSerialValue(''); };
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
     const orderId = orderData.order?.id;
     const loadShipments = useCallback(async () => {
@@ -44,6 +45,25 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         return data;
     }, [orderId, user]);
     useEffect(() => { setShipments(null); setBox(null); setOpen(false); setSerialReview(null); }, [orderId]);
+    const showCarton = carton => {
+        const matchedSerials = carton.matchedSerials || [];
+        const available = new Set(carton.lines.flatMap(line => line.remainingSN));
+        const selected = new Set(matchedSerials.every(sn => available.has(sn)) ? matchedSerials : []);
+        setBox(carton);
+        setSplitSerialValue('');
+        setSelections(carton.lines.map(line => {
+            const matches = orderData.items.filter(item => item.product_code === line.itemCode && Number(item.quantity_sign ?? 1) === 1);
+            const item = matches.length === 1 ? matches[0] : null;
+            const remaining = item ? Number(item.quantity) - Number(item.picked_quantity || 0) : line.remainingQuantity;
+            const actualSN = line.remainingSN.filter(sn => selected.has(sn));
+            const quantity = line.actualSN.length || matchedSerials.length ? actualSN.length : Math.max(0, Math.min(line.remainingQuantity, remaining));
+            return { lineId: line.lineId, orderItemId: item?.id || '', quantity, actualSN };
+        }));
+        if (matchedSerials.length && !selected.size && stage === 'pick') setError('貼紙含已分配的 SN，請逐件掃描本次要揀的 SN');
+    };
+    useEffect(() => {
+        if (open && box && stage === 'pick' && !blocked) splitSerialInput.current?.focus();
+    }, [open, box, stage, blocked]);
     const reviewStale = serialReview && (serialReview.expectedState !== orderData.stateToken || serialReview.type !== stage
         || serialReview.session !== cartonSessionKey(api, user) || !/^[0-9a-f]{64}$/.test(serialReview.expectedState || ''));
     const submit = (value, type, options = {}) => {
@@ -55,9 +75,14 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
             let sent = false;
             try {
                 const body = { scanValue: value, type, serialPolicy: 'from-carton', expectedActorId: user.id, ...options };
-                const { data: preview } = await api.post(`/api/orders/${orderId}/carton-preview`, body, { timeout: 15000 });
+                const { data: preview } = await api.post(`/api/orders/${orderId}/carton-preview`,
+                    { ...body, matchSerialSubset: options.mode !== 'split' }, { timeout: 15000 });
                 if (!current()) return;
                 if ((preview.expectedState || preview.stateToken) !== snapshot.stateToken) throw new Error('訂單已更新，請重新載入後再掃箱號');
+                if (preview.carton?.matchedSerials?.length) {
+                    clearLookup(); setError(''); setScanValue(value); showCarton(preview.carton); setOpen(true);
+                    return;
+                }
                 const command = makeCartonCommand(preview, body);
                 sent = true;
                 const { data } = await sendCartonCommand(api, orderId, command);
@@ -126,22 +151,25 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         const request = ++readRequest.current; setReading(true); setError(''); setBox(null);
         const session = cartonSessionKey(api, user);
         try {
-            const { data } = await api.get('/api/cartons/lookup', { params: { scanValue: scanValue.trim() } });
+            const { data } = await api.get('/api/cartons/lookup', { params: { scanValue: scanValue.trim(), matchSerialSubset: true } });
             if (!alive.current || request !== readRequest.current || session !== cartonSessionKey(api, user)) return;
-            const carton = data.carton || data; setBox(carton);
-            setSelections(carton.lines.map(line => {
-                const matches = orderData.items.filter(item => item.product_code === line.itemCode && Number(item.quantity_sign ?? 1) === 1);
-                const item = matches.length === 1 ? matches[0] : null;
-                const remaining = item ? Number(item.quantity) - Number(item.picked_quantity || 0) : line.remainingQuantity;
-                return { lineId: line.lineId, orderItemId: item?.id || '', quantity: line.actualSN.length ? 0 : Math.max(0, Math.min(line.remainingQuantity, remaining)), actualSN: [] };
-            }));
+            showCarton(data.carton || data);
         } catch (err) { if (alive.current && session === cartonSessionKey(api, user) && request === readRequest.current) setError(message(err)); }
         finally { if (request === readRequest.current) setReading(false); }
     };
+    const scanSplitSerial = value => {
+        if (blocked || !box || !value.trim()) return;
+        setSplitSerialValue('');
+        try {
+            setSelections(addCartonSplitSerial(box, selections, orderData.instances, value));
+            setError('');
+        } catch (error) { setError(message(error)); }
+    };
     const split = () => {
+        if (!box) return;
         const selected = selections.filter(s => s.actualSN.length || Number(s.quantity) > 0).map(s => ({ lineId: s.lineId, ...(s.orderItemId ? { orderItemId: Number(s.orderItemId) } : {}), quantity: Number(s.quantity), actualSN: s.actualSN }));
         if (!selected.length) { setError('請選擇要出貨的數量或 SN'); return; }
-        submit(scanValue.trim(), 'pick', { mode: 'split', selections: selected });
+        submit(`CARTON:${box.cartonId}`, 'pick', { mode: 'split', selections: selected });
     };
     const exportFile = async () => {
         const session = cartonSessionKey(api, user);
@@ -181,11 +209,26 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         });
         if (result.accepted) { onBusy(true, release.cartonId); void result.completion; }
     };
+    const showSerialScanner = stage === 'pick' && box?.lines.some(line => line.actualSN.length);
+    const selectedSerialCount = selections.reduce((count, selection) => count + selection.actualSN.length, 0);
     return <section className="rounded-xl border bg-white p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold flex items-center gap-2"><Box size={18} />箱號作業</h3><Button size="sm" variant="secondary" disabled={blocked || !stage} onClick={() => { setScanValue(''); clearLookup(); setError(''); setOpen(true); }}>掃箱／拆箱</Button></div>
         <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" disabled={reading} onClick={() => { setError(''); setDetailsOpen(true); loadShipments().catch(err => setError(message(err))); }}>箱號明細</Button><Button size="sm" variant="secondary" disabled={reading} onClick={exportFile}><FileDown size={14} />匯出對照</Button></div>
-        <CartonDialog open={open} title={stage === 'pack' ? '箱號裝箱核對' : '箱號揀貨'} onClose={() => { if (!blocked) { clearLookup(); setOpen(false); } }} footer={<><Button variant="secondary" disabled={blocked || !scanValue.trim()} onClick={() => submit(scanValue.trim(), stage)}>整箱{stage === 'pack' ? '裝箱' : '揀貨'}</Button>{stage === 'pick' && box && <Button disabled={blocked} onClick={split}>確認拆箱揀貨</Button>}</>}>
-            <div className="flex gap-2"><input autoFocus aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submit(scanValue.trim(), stage); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
+        <CartonDialog open={open} title={stage === 'pack' ? '箱號裝箱核對' : '箱號揀貨'} onClose={() => { if (!blocked) { clearLookup(); setOpen(false); } }} footer={<><Button variant="secondary" disabled={blocked || !scanValue.trim() || !!box?.matchedSerials?.length} onClick={() => submit(scanValue.trim(), stage)}>整箱{stage === 'pack' ? '裝箱' : '揀貨'}</Button>{stage === 'pick' && box && !showSerialScanner && <Button disabled={blocked} onClick={split}>確認拆箱揀貨</Button>}</>}>
+            <div className="flex gap-2"><input autoFocus aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (!reading && !blocked) void lookup(); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
+            {box && <p className="mt-3 text-sm font-medium">來源箱號 {box.cartonId}</p>}
+            {box?.matchedSerials?.length > 0 && stage === 'pack' && <p className="mt-2 text-sm">請掃描來源箱號做裝箱核對</p>}
+            {showSerialScanner && <div className="mt-3">
+                <div className="flex flex-wrap items-end gap-2">
+                    <label className="min-w-48 flex-1 text-sm">掃描箱內 SN
+                        <input ref={splitSerialInput} value={splitSerialValue} className={field} disabled={blocked}
+                            onChange={event => setSplitSerialValue(event.target.value)}
+                            onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); scanSplitSerial(event.currentTarget.value); } }} />
+                    </label>
+                    <Button disabled={blocked || !selections.some(selection => Number(selection.quantity) > 0)} onClick={split}>確認拆箱揀貨</Button>
+                </div>
+                <p aria-live="polite" className="mt-1 text-sm">已選 {selectedSerialCount} 個 SN</p>
+            </div>}
             {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
             {box?.lines.map(line => <SplitLine key={line.lineId} line={line} selections={selections} setSelections={setSelections} items={orderData.items} stage={stage} />)}
         </CartonDialog>

@@ -5,6 +5,30 @@ export function parseSerialInput(value) {
     return String(value || '').split(/[\r\n,]+/).map(v => v.trim()).filter(Boolean);
 }
 
+export function addCartonSplitSerial(carton, selections, instances, value) {
+    const serial = value.trim();
+    const line = carton.lines.find(row => row.remainingSN.includes(serial));
+    if (!line) throw new Error('此 SN 不在來源箱的可揀內容中');
+    if (selections.some(selection => selection.actualSN.includes(serial))) throw new Error('此 SN 已選取');
+
+    const owners = instances.filter(unit => unit.serial_number === serial);
+    if (owners.length > 1 || owners.some(unit => unit.status !== 'pending')) {
+        throw new Error('此 SN 已核對或無法唯一對應本單待揀明細');
+    }
+    const groups = selections.filter(selection => selection.lineId === line.lineId);
+    const owner = owners[0];
+    const unassigned = groups.filter(selection => !selection.orderItemId);
+    const target = (owner && groups.find(selection => Number(selection.orderItemId) === owner.order_item_id))
+        || (unassigned.length === 1 ? unassigned[0] : null)
+        || (!owner && groups.length === 1 ? groups[0] : null);
+    if (!target) throw new Error('請先選擇此 SN 對應的理貨單品項');
+    if (!owner && target.orderItemId && instances.some(unit => unit.order_item_id === Number(target.orderItemId))) {
+        throw new Error('此 SN 不在所選理貨單品項的待揀清單中');
+    }
+    const actualSN = [...target.actualSN, serial];
+    return selections.map(selection => selection === target ? { ...target, actualSN, quantity: actualSN.length } : selection);
+}
+
 export function getStickerSerialReview(value, type, snapshot) {
     if (!value.includes(',') || /^(?:CARTON:|CTN-)/i.test(value.trim()) || !['pick', 'pack'].includes(type)) return null;
     const serials = value.split(',').map(serial => serial.trim());

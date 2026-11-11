@@ -5,7 +5,7 @@ const request = require('supertest');
 const { createCartonFixture } = require('./cartonFixture.cjs');
 const { guardUnitScan, assertNoCartonAllocations } = require('../src/services/cartonGuards');
 const { applyOrderChangeProposal } = require('../src/services/orderChangeService');
-const { matchesItem } = require('../src/services/cartonContents');
+const { choosePickLines, matchesItem } = require('../src/services/cartonContents');
 const { assertSchemaReady } = require('../src/config/schemaReadiness');
 
 async function suite(t, postgres) {
@@ -159,6 +159,47 @@ async function suite(t, postgres) {
         assert.equal(matchesItem(line, { product_code: 'P', code_type: 'internal', internal_scan_code: 'OTHER' }), false);
         assert.equal(matchesItem({ ...line, ean: 'WRONG' }, { product_code: 'P', barcode: 'REAL' }), false);
         assert.equal(matchesItem(line, { product_code: 'OTHER' }), false);
+    });
+    await t.test('a 6-of-40 registered SN label opens source-carton split and records the exact preassigned SNs', async () => {
+        const sns = Array.from({ length: 40 }, (_, index) => `Source-SN-${String(index + 1).padStart(2, '0')}`);
+        const selected = sns.slice(0, 6);
+        const barcode = '4711299271052';
+        const carton = await create(box('CTN-SYN-MOA11', 40, sns, { itemCode: 'MOA11', ean: barcode }));
+        const other = await create(box('CTN-SYN-OTHER', 1, ['Other-Source-SN']));
+        const { order, item } = await f.seedOrder({ quantity: 6, itemCode: '測試-不出貨', barcode, actualSN: selected, serialMode: 'exact' });
+        const lookup = value => api(2, 'get', `/api/cartons/lookup?matchSerialSubset=true&scanValue=${encodeURIComponent(value)}`);
+        const sticker = selected.join(',');
+        const found = ok(await lookup(sticker));
+        assert.equal(found.cartonId, carton.cartonId);
+        assert.deepEqual(found.matchedSerials, selected);
+        assert.equal(ok(await lookup(sns.join(','))).matchedSerials, undefined);
+        assert.equal((await lookup([sns[0], 'Other-Source-SN'].join(','))).body.code, 'CARTON_SN_SOURCE_MIXED');
+        assert.equal((await lookup([sns[0], 'Unknown-Source-SN'].join(','))).body.code, 'CARTON_SN_SOURCE_MIXED');
+        assert.equal((await lookup('Loose-A,Loose-B')).body.code, 'CARTON_NOT_FOUND');
+
+        const review = await preview(order.id, { type: 'pick', scanValue: sticker, matchSerialSubset: true });
+        assert.equal(review.carton.cartonId, carton.cartonId);
+        assert.deepEqual(review.carton.matchedSerials, selected);
+        assert.equal(review.selection, undefined);
+        assert.equal(review.carton.lines[0].remainingQuantity, 40);
+        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, scanBody({
+            ...review, expectedCartonRevision: carton.stateRevision
+        }, { type: 'pick', scanValue: sticker, matchSerialSubset: true }))).body.code, 'CARTON_NOT_FOUND');
+
+        const split = { scanValue: `CARTON:${carton.cartonId}`, type: 'pick', mode: 'split', serialPolicy: 'from-carton',
+            selections: [{ lineId: carton.lines[0].lineId, quantity: 6, actualSN: selected }] };
+        await f.db.query('UPDATE order_items SET expected_carton_id=$1 WHERE id=$2', [other.cartonId, item.id]);
+        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-preview`, split)).body.code, 'CARTON_EXPECTED_MISMATCH');
+        await f.db.query('UPDATE order_items SET expected_carton_id=$1 WHERE id=$2', [carton.cartonId, item.id]);
+        const picked = await scan(order.id, split);
+        assert.equal(picked.carton.lines[0].remainingQuantity, 34);
+        assert.equal(picked.allocation.cartonId, carton.cartonId);
+        assert.deepEqual(picked.allocation.lines[0].actualSN, selected);
+        assert.equal(picked.items[0].product_code, '測試-不出貨');
+        const packed = await scan(order.id, { scanValue: `CARTON:${carton.cartonId}`, type: 'pack' }, 3);
+        assert.equal(packed.carton.lines[0].remainingQuantity, 34);
+        assert.equal(packed.allocation.cartonId, carton.cartonId);
+        assert.deepEqual(packed.allocation.lines[0].actualSN, selected);
     });
     await t.test('10 exact SNs expand atomically, legacy comma QR resolves only the entire exact set', async () => {
         const sns = Array.from({ length: 10 }, (_, index) => `Vendor-A-${String(index + 1).padStart(2, '0')}`);
@@ -653,6 +694,29 @@ async function suite(t, postgres) {
             [['1Shop','Synthetic Store','SYN-EC-ORDER','L06',fullSku,'ITM-SKU-NO-EAN',null],['1Shop','Synthetic Store','SYN-EC-ORDER','L04',fullSku,'ITM-SKU-NO-EAN',null]]);
     });
 }
+test('a barcode-only SKU mismatch cannot bind untracked, wrong, ambiguous, or signed units', () => {
+    const barcode = '4711299271052';
+    const line = { lineId: 1, itemCode: 'MOA11', ean: barcode, remainingQuantity: 2, actualSN: ['S1', 'S2'], remainingSN: ['S1', 'S2'] };
+    const carton = { cartonId: 'BOX', lines: [line] };
+    const item = { id: 7, product_code: 'ALIAS', international_barcode: barcode, barcode, code_type: 'international', quantity: 1 };
+    const assigned = [{ order_item_id: item.id, serial_number: 'S1', status: 'pending' }];
+    const body = { mode: 'split', serialPolicy: 'from-carton', selections: [{ lineId: 1, actualSN: ['S1'], quantity: 1 }] };
+    assert.equal(choosePickLines(carton, body, [item], assigned)[0].orderItemId, item.id);
+    const rejected = (box, orderItems, instances, request = body) => assert.throws(
+        () => choosePickLines(box, request, orderItems, instances), { code: 'CARTON_ITEM_NOT_IN_ORDER' });
+    rejected(carton, [item], []);
+    rejected(carton, [item], [{ ...assigned[0], status: 'picked' }]);
+    rejected(carton, [item], [{ ...assigned[0], serial_number: 'S2' }]);
+    rejected(carton, [item, { ...item, id: 8, product_code: 'AMBIGUOUS' }], assigned);
+    rejected(carton, [{ ...item, quantity_sign: -1 }], assigned);
+    rejected(carton, [{ ...item, carton_serial_binding: true }], assigned);
+    rejected(carton, [{ ...item, barcode: 'ITM-ALIAS', international_barcode: null, internal_scan_code: 'ITM-ALIAS', code_type: 'internal' }], assigned);
+    rejected({ ...carton, lines: [{ ...line, actualSN: [], remainingSN: [] }] }, [item], [], {
+        ...body, selections: [{ lineId: 1, quantity: 1 }]
+    });
+    rejected(carton, [item], assigned, { mode: 'whole', serialPolicy: 'from-carton' });
+});
+
 test('carton HTTP + PostgreSQL semantics on disposable PGlite (transactions serialized)', { timeout: 120000 }, t => suite(t, false));
 test('carton HTTP + actual multi-connection PostgreSQL lock contention on disposable loopback database', {
     skip: process.env.WMS_CARTON_PG !== '1', timeout: 120000

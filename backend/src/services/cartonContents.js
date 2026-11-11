@@ -65,6 +65,26 @@ function matchesItem(line, item) {
     if (item.internal_scan_code) return item.internal_scan_code === line.internalScanCode;
     return true;
 }
+function preassignedBarcodeItem(carton, line, items, instances, selectedSN) {
+    const barcode = line.ean;
+    if (!/^(?:\d{8}|\d{12,14})$/.test(barcode || '') || items.some(item => item.product_code === line.itemCode)
+        || carton.lines.some(other => other.ean === barcode && other.itemCode !== line.itemCode)) return null;
+
+    const matching = items.filter(item => item.barcode === barcode || item.international_barcode === barcode);
+    if (matching.length !== 1) return null;
+    const item = matching[0];
+    const confirmedBarcode = item.international_barcode === barcode
+        || ((item.code_type ?? 'legacy') === 'legacy' && !item.international_barcode && item.barcode === barcode);
+    if (!confirmedBarcode || item.internal_scan_code || item.carton_serial_binding || Number(item.quantity_sign ?? 1) !== 1) return null;
+
+    const assigned = instances.filter(unit => unit.order_item_id === item.id);
+    const selected = new Set(selectedSN);
+    const matches = instances.filter(unit => selected.has(unit.serial_number));
+    if (assigned.length !== Number(item.quantity) || matches.length !== selected.size
+        || new Set(matches.map(unit => unit.serial_number)).size !== selected.size
+        || matches.some(unit => unit.order_item_id !== item.id || unit.status !== 'pending')) return null;
+    return item;
+}
 function choosePickLines(carton, body, items, instances) {
     const mode = body.mode ?? 'whole';
     const serialPolicy = body.serialPolicy ?? 'preassigned';
@@ -93,7 +113,11 @@ function choosePickLines(carton, body, items, instances) {
         if (quantity > line.remainingQuantity || quantity <= 0) throw fail('CARTON_QUANTITY_EXCEEDED', '所選數量超過箱內剩餘');
         if (line.actualSN.length && quantity !== actualSN.length) throw fail('CARTON_EXACT_SN_REQUIRED', 'SN 拆箱必須選出確切 SN，不能只輸入數量');
         const matchingItems = items.filter(item => matchesItem(line, item));
-        if (!matchingItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '箱內品項或掃描碼不屬於此訂單');
+        if (!matchingItems.length && mode === 'split' && request.actualSN !== undefined && actualSN.length) {
+            const preassigned = preassignedBarcodeItem(carton, line, items, instances, actualSN);
+            if (preassigned) matchingItems.push(preassigned);
+        }
+        if (!matchingItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '箱內品項或掃描碼不屬於此訂單。請核對箱內品號、國條與理貨單 SN');
         const targetItems = request.orderItemId === undefined
             ? matchingItems : matchingItems.filter(item => item.id === Number(request.orderItemId));
         if (!targetItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '指定品項列不屬於箱內品項');

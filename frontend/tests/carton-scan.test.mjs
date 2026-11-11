@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isCartonScan, applyCartonResponse, applyStickerSerialResponse, getStickerSerialReview, sendCartonCommand, makeCartonCommand } from '../src/utils/cartonScan.js';
+import { addCartonSplitSerial, isCartonScan, applyCartonResponse, applyStickerSerialResponse, getStickerSerialReview, sendCartonCommand, makeCartonCommand } from '../src/utils/cartonScan.js';
 
 const previous = 'a'.repeat(64), next = 'b'.repeat(64);
 const snapshot = { order: { id: 7 }, items: [], instances: [], stateToken: previous };
@@ -72,4 +72,19 @@ test('sticker confirmation applies only the full snapshot from the same command 
     assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, commandId: 'receipt-2' }, command));
     assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, baseState: next }, command));
     assert.throws(() => applyStickerSerialResponse(snapshot, { ...receipt, confirmedSerials: ['SYN-02', 'syn-03'] }, command));
+});
+
+
+test('scanning individual carton SN adds exact available units and preserves earlier scans', () => {
+    const carton = { lines: [{ lineId: 11, remainingSN: ['Unit-01', 'Unit-02', 'Unit-03'] }] };
+    const selections = [{ lineId: 11, orderItemId: 8, actualSN: [], quantity: 0 }];
+    const instances = ['Unit-01', 'Unit-02'].map(serial_number => ({ serial_number, order_item_id: 8, status: 'pending' }));
+    const first = addCartonSplitSerial(carton, selections, instances, ' Unit-01 ');
+    const second = addCartonSplitSerial(carton, first, instances, 'Unit-02');
+    assert.deepEqual(second, [{ lineId: 11, orderItemId: 8, actualSN: ['Unit-01', 'Unit-02'], quantity: 2 }]);
+    assert.deepEqual(selections[0].actualSN, []);
+    assert.throws(() => addCartonSplitSerial(carton, second, instances, 'Unit-01'), /已選取/);
+    assert.throws(() => addCartonSplitSerial(carton, second, instances, 'unit-01'), /不在來源箱/);
+    assert.throws(() => addCartonSplitSerial(carton, second, instances, 'Unit-03'), /不在所選理貨單/);
+    assert.throws(() => addCartonSplitSerial(carton, selections, [{ ...instances[0], status: 'picked' }], 'Unit-01'), /已核對/);
 });
