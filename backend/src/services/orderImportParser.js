@@ -144,7 +144,7 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const lastContentIndex = data.findLastIndex(row => row.some(value => String(value ?? '').trim()));
     for (let index = headerIndex + 1; index < data.length; index++) {
         const row = data[index];
-        if (index === lastContentIndex && items.length > 0 && isPrintTimestampRow(row)) continue;
+        if (index === lastContentIndex && (items.length > 0 || shippingNotes.length > 0) && isPrintTimestampRow(row)) continue;
         const barcode = String(row[barcodeIndex] ?? '').trim();
         const rawName = String(row[nameIndex] ?? '').trim();
         const rawQuantity = String(row[quantityIndex] ?? '').trim();
@@ -209,7 +209,10 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
             throw error;
         }
     }
-    if (!items.length) throw invalid('沒有可匯入的品項，未建立訂單');
+    if (!items.length) {
+        if (shippingNotes.length) throw invalid('只有出貨備註（WMS-NOTE），沒有可匯入的品項。請重新匯出含商品明細的理貨單。');
+        throw invalid('沒有可匯入的品項，未建立訂單');
+    }
     const negativeQuantity = items.filter(item => item.quantity < 0).reduce((sum, item) => sum + Math.abs(item.quantity), 0);
     const positiveQuantity = totalQuantity - negativeQuantity;
     const signedTotalQuantity = positiveQuantity - negativeQuantity;
