@@ -1,6 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, choosePickLines } = require('./cartonContents');
-const { stateToken, readLines } = require('./scanSnapshot');
+const { stateToken, readLines, withShippingNotes } = require('./scanSnapshot');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
 const { lockCartonSerials } = require('./cartonGuards');
@@ -490,7 +490,7 @@ function createCartonService({ pool }) {
         await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-scan-command'),hashtext($1))", [`${user.id}:${request.id}`]);
         const saved = (await db.query('SELECT request_hash,response FROM wms_scan_commands WHERE user_id=$1 AND command_id=$2', [user.id, request.id])).rows[0];
         if (saved && saved.request_hash !== request.hash) throw fail('CARTON_COMMAND_CONFLICT', '同一 command ID 不可用於不同作業');
-        return saved?.response;
+        return withShippingNotes(saved?.response);
     }
     async function saveReceipt(db, user, orderId, request, response) {
         await db.query('INSERT INTO wms_scan_commands(user_id,command_id,order_id,request_hash,response) VALUES($1,$2,$3,$4,$5)', [user.id, request.id, orderId, request.hash, JSON.stringify(response)]);

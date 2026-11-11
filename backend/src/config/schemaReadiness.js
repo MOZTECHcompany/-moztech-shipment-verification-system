@@ -20,7 +20,7 @@ const requiredColumns = {
     wms_logistics_expected_returns: ['id', 'shipment_id', 'status'],
     warehouse_daily_modes: ['user_id', 'work_date', 'choice_stage', 'assigned_stage', 'assigned_by', 'assigned_by_snapshot', 'assigned_at', 'updated_at'],
     users: ['can_pick', 'can_pack', 'management_scope', 'id', 'username', 'password', 'name', 'role', 'created_at'],
-    orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'document_type', 'pick_paused_at', 'pack_paused_at'],
+    orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'document_type', 'pick_paused_at', 'pack_paused_at', 'shipping_notes'],
     order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'quantity_sign', 'carton_serial_binding', 'serial_identity_mode'],
     order_item_instances: ['id', 'order_item_id', 'serial_number', 'status', 'created_at', 'updated_at'],
     operation_logs: ['id', 'user_id', 'order_id', 'item_id', 'action_type', 'operation_type', 'actor_snapshot', 'work_type', 'details', 'created_at'],
@@ -55,6 +55,8 @@ async function assertSchemaReady(db, { manifest = expectedMigrations } = {}) {
     if (Object.entries(requiredColumns).some(([table, names]) => names.some(name => !found.has(`${table}.${name}`)))) throw notReady('REQUIRED_COLUMNS_MISSING');
     const timestamps = columns.rows.filter(row => row.table_name === 'orders' && ['created_at', 'updated_at'].includes(row.column_name));
     if (timestamps.some(row => row.data_type !== 'timestamp with time zone')) throw notReady('ORDER_TIMEZONE_SCHEMA_MISMATCH');
+    const notes = columns.rows.find(row => row.table_name === 'orders' && row.column_name === 'shipping_notes');
+    if (notes.data_type !== 'jsonb') throw notReady('ORDER_SHIPPING_NOTES_SCHEMA_MISMATCH');
     return true;
 }
 module.exports = { assertSchemaReady, requiredColumns };

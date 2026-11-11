@@ -207,7 +207,7 @@ export function AdminDashboard({ user }) {
                                 {importState.phase === 'uploading' ? '正在處理訂單' : '選擇訂單檔案'}
                             </Button>
                             <input data-testid="import-file" type="file" ref={fileInputRef} onChange={handleExcelImport} disabled={importBlocked} accept=".xlsx,.xls,.csv" className="hidden" aria-label="訂單檔案" />
-                            <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援 .xlsx、.xls、.csv，最大 10 MiB<br />每單最多 5,000 列、1,000 個品項、10,000 筆 SN，總核對數量 50,000</p><p className="mt-2">支援負數沖正及正負混合的 ERP 理貨單，每次匯入會建立一筆獨立任務。新增與沖正品項都需核對。</p></details>
+                            <details className="mt-3 text-xs leading-5 text-slate-500"><summary className="cursor-pointer py-2">檔案格式與限制</summary><p>支援 .xlsx、.xls、.csv，最大 10 MiB<br />每單最多 5,000 列、1,000 個品項、10,000 筆 SN，總核對數量 50,000</p><p className="mt-2">支援負數沖正及正負混合的 ERP 理貨單，每次匯入會建立一筆獨立任務。新增與沖正品項都需核對。</p><p className="mt-2">出貨備註另填一列：品項編碼填 <code>WMS-NOTE</code>、品項名稱填備註、數量填 0，國際條碼與 SN 留空。備註不用掃描。</p></details>
                         </div>
 
                         {importState.phase !== 'idle' && <div data-testid="import-result" role={['error', 'unknown'].includes(importState.phase) ? 'alert' : 'status'} aria-live="polite" className={`mt-4 rounded-xl border p-4 text-sm ${resultColor}`}>

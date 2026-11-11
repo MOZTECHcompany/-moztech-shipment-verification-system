@@ -5,9 +5,11 @@ import { toast } from 'sonner';
 import api from '@/api/api';
 import { Button } from '@/ui';
 import { parseSerialInput, cartonSessionKey } from '@/utils/cartonScan';
+import { parseCartonExcel } from '@/utils/cartonExcel';
 import { appendCartonSerial, blankCartonLine, canManageCartons, cartonLabelSize, editorLinePayload, pendingBoxCreationKey, pendingCartonEditorKey } from '@/utils/cartonEditor';
 import { CartonDialog } from './CartonDialog';
 import { CartonItemEditor, cartonFieldClass as field } from './CartonItemEditor';
+import importTemplateHref from './cartonImportTemplate.xlsx?url';
 
 const newId = kind => `${kind === 'spec' ? 'BSP' : 'CTN'}-${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 8)}`;
 const errText = error => error.response?.data?.message || error.message || '操作失敗';
@@ -227,7 +229,32 @@ export function CartonsPage({ user }) {
         toast.success(confirm ? current.kind === 'spec' ? '箱規已啟用，可建立實體箱' : '實體箱已確認，請列印 QR' : '草稿已儲存');
     });
     const reviewContent = () => { try { editorLinePayload(linesRef.current, editor.kind); setError(''); setReview(true); } catch (error) { setError(error.message); } };
-    const importFile = event => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; void mutate(async ensureCurrent => { if (file.size > 2 * 1024 * 1024) throw new Error('箱號檔案不可超過 2 MB'); const body = JSON.parse(await file.text()); if (body.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons)) throw new Error('請選擇 ERP 匯出的箱號檔案'); ensureCurrent(); await api.post('/api/cartons/import', { ...body, expectedActorId: user.id }); ensureCurrent(); toast.success(`已匯入 ${body.cartons.length} 箱`); }); };
+    const importFile = event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+        void mutate(async ensureCurrent => {
+            if (file.size > 2 * 1024 * 1024) throw new Error('箱號檔案不可超過 2 MB');
+            let body;
+            if (/\.xlsx$/i.test(file.name)) {
+                const XLSX = await import('xlsx');
+                let workbook;
+                try {
+                    workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: true, cellNF: true });
+                } catch {
+                    throw new Error('無法讀取 Excel 檔案，請使用下載的箱號範本另存為 .xlsx 後再試');
+                }
+                body = parseCartonExcel(workbook, XLSX);
+            } else {
+                body = JSON.parse(await file.text());
+                if (body.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons)) throw new Error('請選擇有效的箱號 JSON 檔案');
+            }
+            ensureCurrent();
+            await api.post('/api/cartons/import', { ...body, expectedActorId: user.id });
+            ensureCurrent();
+            toast.success(`已匯入 ${body.cartons.length} 箱`);
+        });
+    };
     const sealDetail = () => mutate(async ensureCurrent => { const { kind, record } = detail; ensureCurrent(); const { data } = await api.post(`${endpoint(kind)}/${encodeURIComponent(idOf(record, kind))}/${kind === 'spec' ? 'activate' : 'seal'}`, { expectedContentRevision: record.contentRevision, expectedActorId: user.id }); ensureCurrent(); const saved = unwrap(data, kind, idOf(record, kind)); setDetail({ kind, record: saved }); if (kind === 'physical') showLabels([saved]); });
     const reopen = () => mutate(async ensureCurrent => { const { record } = detail; if (!reopenReason?.trim()) throw new Error('請填寫重新編輯原因。'); ensureCurrent(); const { data } = await api.post(`/api/cartons/${encodeURIComponent(record.cartonId)}/reopen`, { reason: reopenReason.trim(), expectedContentRevision: record.contentRevision, expectedStateRevision: record.stateRevision, expectedActorId: user.id }); ensureCurrent(); setReopenReason(null); edit(unwrap(data, 'physical', record.cartonId), 'physical'); });
     const createFromSpec = () => mutate(async ensureCurrent => {
@@ -254,7 +281,11 @@ export function CartonsPage({ user }) {
     const record = detail?.record;
     const displayedRecords = tab === 'physical' ? [...records].sort((a, b) => String(a.cartonId).localeCompare(String(b.cartonId), 'zh-TW', { numeric: true })) : records;
     return <section className="space-y-4">
-        <header className="flex min-h-11 flex-col items-start justify-between gap-3 sm:flex-row sm:items-center"><h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1><div className="flex min-h-11 flex-wrap gap-2"><Button variant="secondary" onClick={() => setHelp(true)}>怎麼使用</Button>{canManage && <>{tab === 'physical' && <><Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button><Button onClick={() => edit(null, 'physical')} disabled={busy}><Plus size={16} />新增箱號</Button></>}{tab === 'spec' && <Button onClick={() => edit(null, 'spec')} disabled={busy}><Plus size={16} />新增箱規</Button>}<input ref={importRef} type="file" accept=".json,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" /></>}</div></header>
+        <header className="flex min-h-11 flex-col items-start justify-between gap-3 sm:flex-row sm:items-center"><h1 className="text-xl font-semibold flex items-center gap-2"><Box size={22} />箱號管理</h1><div className="flex min-h-11 flex-wrap gap-2"><Button variant="secondary" onClick={() => setHelp(true)}>怎麼使用</Button>{canManage && <>{tab === 'physical' && <>
+            <Button as="a" variant="secondary" href={importTemplateHref} download="WMS-箱號匯入範本.xlsx">下載 Excel 範本</Button>
+            <Button variant="secondary" onClick={() => importRef.current.click()} disabled={busy}><Upload size={16} />匯入箱號</Button>
+            <Button onClick={() => edit(null, 'physical')} disabled={busy}><Plus size={16} />新增箱號</Button>
+        </>}{tab === 'spec' && <Button onClick={() => edit(null, 'spec')} disabled={busy}><Plus size={16} />新增箱規</Button>}<input ref={importRef} type="file" accept=".xlsx,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/json" onChange={importFile} className="hidden" aria-label="匯入箱號檔案" /></>}</div></header>
         <div role="tablist" aria-label="箱號管理分類" className="flex flex-wrap gap-2">{[['spec','箱規'],['physical','實體箱／SN'],['serials','SN查詢']].map(([value, text]) => <button key={value} type="button" role="tab" aria-selected={tab === value} disabled={busy} onClick={() => { if (value === tab) return; listRequest.current++; detailRequest.current++; setTab(value); setQuery(''); setError(''); }} className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${tab === value ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}>{text}</button>)}</div>
         <p className="min-h-10 text-sm text-slate-600">{tabDescriptions[tab]}</p>
         {error && !editor && !labels && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}

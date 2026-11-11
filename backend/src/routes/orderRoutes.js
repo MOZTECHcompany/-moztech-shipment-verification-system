@@ -55,7 +55,7 @@ router.get('/order-reviews', async (req,res,next) => {
         res.json({items:rows.rows,total:rows.rows[0]?.total || 0,canReview});
     } catch(error) { next(error); }
 });
-const { stateToken, readLines, parseCommand, createWorkSnapshot } = require('../services/scanSnapshot');
+const { stateToken, readLines, parseCommand, createWorkSnapshot, withShippingNotes } = require('../services/scanSnapshot');
 router.get('/orders/:orderId/work-snapshot', createWorkSnapshot(pool));
 const { createReconcilePicking } = require('../services/reconcilePicking');
 router.post('/orders/:orderId/reconcile-picking', warehouseOnly, authorizeAdmin, createReconcilePicking(pool));
@@ -439,7 +439,7 @@ router.patch('/orders/:orderId/urgent', authorizeRoles('admin', 'dispatcher'), a
         }
 
         const result = await pool.query(
-            'UPDATE orders SET is_urgent = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, voucher_number, is_urgent',
+            'UPDATE orders SET is_urgent = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, voucher_number, is_urgent, shipping_notes',
             [isUrgent, orderId]
         );
 
@@ -486,7 +486,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 
-    const { voucherNumber, customerName, items, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity } = parsed;
+    const { voucherNumber, customerName, items, shippingNotes, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity } = parsed;
     const events = deferredEvents(req.app.get('io'));
     let client;
     let transactionOpen = false;
@@ -510,7 +510,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             await client.query('ROLLBACK'); transactionOpen = false;
             return res.status(409).json({ code: 'IMPORT_ALREADY_EXISTS', message: `訂單 ${voucherNumber} 已存在，未重複建立`, voucherNumber, orderId: existingOrder.rows[0].id });
         }
-        const orderResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status, document_type) VALUES ($1, $2, $3, $4) RETURNING id', [voucherNumber, customerName, 'pending', documentType]);
+        const orderResult = await client.query('INSERT INTO orders (voucher_number, customer_name, status, document_type, shipping_notes) VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id', [voucherNumber, customerName, 'pending', documentType, JSON.stringify(shippingNotes)]);
         orderId = orderResult.rows[0].id;
         const instanceItemIds = [];
         const serialValues = [];
@@ -531,7 +531,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) SELECT * FROM unnest($1::int[], $2::text[])', [instanceItemIds, serialValues]);
         }
         // Import attribution is still based on this log, so it is required and may not be swallowed.
-        const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
+        const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length };
         const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details, actor_snapshot) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
             [req.user.id, orderId, 'import', JSON.stringify(details), JSON.stringify(require('../utils/warehouseWork').actorSnapshot(req.user))]);
         events.emit('new_operation_log', {
@@ -547,7 +547,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         transactionOpen = false;
         events.publish();
         return res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, operation: documentType, documentType,
-            orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount, signedTotalQuantity, positiveQuantity, negativeQuantity });
+            orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length });
     } catch (error) {
         let notApplied = !transactionOpen && !commitAttempted;
         if (transactionOpen) {
@@ -640,7 +640,7 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
                 if (receipt.request_hash !== command.hash) throw Object.assign(new Error('同一掃碼識別不可用於不同作業'), {status:409});
                 await client.query('ROLLBACK'); transactionOpen=false;
                 scanOutcome='replayed';
-                return res.json(receipt.response);
+                return res.json(withShippingNotes(receipt.response));
             }
         }
         const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);

@@ -1,3 +1,5 @@
+import { readShippingNotes, SHIPPING_NOTE_MARKER } from './shippingNotes.js';
+
 export function signedQuantity(item) {
     const quantity = Math.abs(Number(item?.quantity) || 0);
     return Number(item?.quantity_sign) === -1 ? -quantity : quantity;
@@ -37,16 +39,23 @@ export function signedScanChoices(snapshot, barcode, stage) {
 
 export function signedOrderReportRows(snapshot) {
     const serialsByItem = new Map();
+    const signed = isSignedDocument(snapshot.order);
     for (const instance of snapshot.instances || []) {
         const serials = serialsByItem.get(instance.order_item_id) || [];
         serials.push(instance.serial_number);
         serialsByItem.set(instance.order_item_id, serials);
     }
-    return (snapshot.items || []).map(item => ({
+    const itemRows = (snapshot.items || []).map(item => ({
         '國際條碼': item.barcode, '品項型號': item.product_code, '品項名稱': item.product_name,
         '應出數量': signedQuantity(item),
-        ...(isSignedDocument(snapshot.order) ? { '作業方向': signedQuantity(item) < 0 ? '沖正' : '新增', '核對件數': item.quantity } : {}),
+        ...(signed ? { '作業方向': signedQuantity(item) < 0 ? '沖正' : '新增', '核對件數': item.quantity } : {}),
         '已揀數量(計數)': item.picked_quantity, '已裝箱數量(計數)': item.packed_quantity,
         'SN列表': (serialsByItem.get(item.id) || []).join(', '),
     }));
+    const noteRows = readShippingNotes(snapshot.order).map(note => ({
+        '國際條碼': '', '品項型號': SHIPPING_NOTE_MARKER, '品項名稱': note.text, '應出數量': 0,
+        ...(signed ? { '作業方向': '', '核對件數': '' } : {}),
+        '已揀數量(計數)': '', '已裝箱數量(計數)': '', 'SN列表': '',
+    }));
+    return [...itemRows, ...noteRows];
 }

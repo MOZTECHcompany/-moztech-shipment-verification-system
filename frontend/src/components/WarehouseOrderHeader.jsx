@@ -3,6 +3,7 @@ import React from 'react';
 import { Box, Camera, Check, CheckCheck, FileDown, Maximize2, Minimize2, Package, ScanLine, TriangleAlert, Users, XCircle } from 'lucide-react';
 import { ShippingLabel, PickingList } from './LabelPrinter';
 import { signedDocumentLabel } from '@/utils/signedOrder';
+import { readShippingNotes } from '@/utils/shippingNotes';
 
 const stages = [
   { label: '待揀貨', icon: Package },
@@ -16,6 +17,7 @@ const actionClass = 'inline-flex min-h-[44px] items-center justify-center gap-2 
 
 export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCamera, onOpenDefectModal, activeSessions = [], order, items, isFocusMode, toggleFocusMode }) {
   const stage = statusIndex[order.status];
+  const notes = readShippingNotes(order);
   const canManageDefect = isWarehouseAdmin(user)
     || (user?.role === 'dispatcher' && Number(order.imported_by_user_id) === Number(user.id));
   const metrics = [
@@ -32,6 +34,12 @@ export function WarehouseOrderHeader({ stats, onExport, onVoid, user, onOpenCame
           <h1 className="break-all text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">{order.voucher_number}</h1>
           {signedDocumentLabel(order.document_type) && <span className="mt-2 inline-flex rounded-lg bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-800">{signedDocumentLabel(order.document_type)}</span>}
           <p className="mt-1 break-words text-sm text-slate-600">{order.customer_name || '未指定客戶'}</p>
+          {notes.length > 0 && <aside aria-label="出貨備註｜不用掃描" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">
+            <h2 className="text-sm font-semibold">出貨備註｜不用掃描</h2>
+            <ul tabIndex={0} className="mt-1 max-h-40 list-disc space-y-1 overflow-y-auto overscroll-contain pl-5 text-sm leading-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700">
+              {notes.map((note, index) => <li key={`${note.sourceRow}:${index}`} className="whitespace-pre-wrap [overflow-wrap:anywhere]">{note.text}</li>)}
+            </ul>
+          </aside>}
         </div>
         <span className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${order.status === 'voided' ? 'bg-red-50 text-red-700' : order.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel[order.status] || '狀態待確認'}</span>
       </div>
