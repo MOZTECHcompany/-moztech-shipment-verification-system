@@ -392,9 +392,10 @@ test('next and previous pages replace the bounded list and retain the page-size 
     const view = dashboard();
     assert.match(view.reads[0].url, /pagination=cursor/);
     assert.match(view.reads[0].url, /limit=50/);
-    view.reads[0].resolve(pageEnvelope(fixtures, 'page-two'));
+    view.reads[0].resolve(summaryPage(fixtures, 'page-two'));
     await view.settle();
-    assert.match(view.text(view.render()), /統計涵蓋目前權限/);
+    assert.match(view.text(view.render()), /本頁\s+3\s+筆/);
+    assert.equal(view.find(statButton(view, '總任務'), node => node.type?.name === 'NumberTicker').props.value, 504);
     view.button('下一頁').props.onClick(); view.render();
     assert.match(view.reads[1].url, /cursor=page-two/);
     view.reads[1].resolve(pageEnvelope([{ ...fixtures[0], id: 50, voucher_number: 'PAGE-TWO' }]));
