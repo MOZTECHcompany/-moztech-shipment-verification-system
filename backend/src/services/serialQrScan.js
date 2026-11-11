@@ -1,4 +1,4 @@
-const { fail, serials } = require('./cartonContents');
+const { assertCartonNotVoided, fail, serials } = require('./cartonContents');
 const { assertExpectedCartonScan, lockCartonSerials } = require('./cartonGuards');
 
 function readSerialQrSelection(body, actorId) {
@@ -37,8 +37,13 @@ async function applySerialQrSelection(db, snapshot, selected, type) {
     }
     for (const instance of matches) assertExpectedCartonScan(items.get(instance.order_item_id).expected_carton_id);
     await lockCartonSerials(db, selected);
-    const registered = await db.query('SELECT 1 FROM wms_carton_serials WHERE serial_number=ANY($1::text[]) LIMIT 1', [selected]);
-    if (registered.rows.length) throw fail('CARTON_ALLOCATION_GUARD', '所選 SN 已登記在箱內容，請使用箱號揀貨或裝箱');
+    const registered = (await db.query(`SELECT c.carton_id AS "cartonId",c.status FROM wms_carton_serials s
+        JOIN wms_carton_lines l ON l.id=s.line_id JOIN wms_cartons c ON c.carton_id=l.carton_id
+        WHERE s.serial_number=ANY($1::text[]) ORDER BY (c.status='void') DESC LIMIT 1`, [selected])).rows[0];
+    if (registered) {
+        assertCartonNotVoided(registered);
+        throw fail('CARTON_ALLOCATION_GUARD', '所選 SN 已登記在箱內容，請使用箱號揀貨或裝箱');
+    }
     const changed = await db.query(`UPDATE order_item_instances SET status=$1, updated_at=CURRENT_TIMESTAMP
         WHERE id=ANY($2::int[]) AND status=$3`, [after, matches.map(instance => instance.id), before]);
     if (changed.rowCount !== selected.length) throw fail('SERIAL_QR_NOT_ELIGIBLE', '訂單序號狀態已更新，請重新掃描核對');

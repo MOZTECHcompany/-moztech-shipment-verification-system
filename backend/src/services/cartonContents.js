@@ -1,6 +1,10 @@
 const { createHash } = require('node:crypto');
 const fail = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function assertCartonNotVoided(carton) {
+    if (carton.status === 'void') throw fail('CARTON_VOID', `箱號 ${carton.cartonId} 已作廢，請核對實物與來源批次`);
+    return carton;
+}
 function text(value, name, { optional = false, max = 255 } = {}) {
     if (optional && (value === undefined || value === null || value === '')) return null;
     if (typeof value !== 'string' || !value.trim() || value.trim().length > max || /[\u0000-\u001f\u007f]/.test(value)) {
@@ -194,4 +198,4 @@ function choosePickLines(carton, body, items, instances) {
     }
     return selected;
 }
-module.exports = { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines };
+module.exports = { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines, assertCartonNotVoided };

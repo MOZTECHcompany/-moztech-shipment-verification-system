@@ -1,5 +1,5 @@
 const { randomUUID } = require('node:crypto');
-const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, choosePickLines } = require('./cartonContents');
+const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, choosePickLines, assertCartonNotVoided } = require('./cartonContents');
 const { stateToken, readLines } = require('./scanSnapshot');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
@@ -97,7 +97,7 @@ function createCartonService({ pool }) {
     }
     async function lookupCarton(db, scanValue, matchSerialSubset) {
         try {
-            return await readCarton(db, await resolve(db, scanValue));
+            return assertCartonNotVoided(await readCarton(db, await resolve(db, scanValue)));
         } catch (error) {
             if (error.code !== 'CARTON_NOT_FOUND' || !matchSerialSubset || !scanValue.includes(',') || /^CARTON:/i.test(scanValue.trim())) throw error;
             const matchedSerials = serials(scanValue.split(',').map(sn => sn.trim()));
@@ -108,7 +108,7 @@ function createCartonService({ pool }) {
             if (sourceCartons.length !== 1 || registered.length !== matchedSerials.length) {
                 throw fail('CARTON_SN_SOURCE_MIXED', '這組 SN 分屬不同箱，或含未登記的 SN。請逐箱掃描實體箱號後拆箱揀貨');
             }
-            const carton = await readCarton(db, sourceCartons[0]);
+            const carton = assertCartonNotVoided(await readCarton(db, sourceCartons[0]));
             return { ...carton, matchedSerials };
         }
     }
@@ -133,14 +133,18 @@ function createCartonService({ pool }) {
         await insertLines(db, input.cartonId, input.lines);
         await history(db, input.cartonId, 'created', user, input);
     }
+    async function assertUnusedSerials(db, sns, outcome) {
+        if (sns.length && (await db.query("SELECT 1 FROM order_item_instances WHERE serial_number=ANY($1::text[]) AND status<>'pending' LIMIT 1", [sns])).rows.length) {
+            throw fail('CARTON_SN_OCCUPIED', `箱內 SN 已揀貨或裝箱，請先核對實物與原訂單；${outcome}`);
+        }
+    }
     async function sealed(db, carton, user, { serialLocksHeld = false } = {}) {
+        assertCartonNotVoided(carton);
         if (carton.status === 'sealed') return carton;
         if (carton.status !== 'draft') throw fail('CARTON_NOT_DRAFT', '只有草稿箱可以封箱');
         const sns = carton.lines.flatMap(line => line.actualSN);
         if (!serialLocksHeld) await lockCartonSerials(db, sns);
-        if (sns.length && (await db.query("SELECT 1 FROM order_item_instances WHERE serial_number=ANY($1::text[]) AND status<>'pending' LIMIT 1", [sns])).rows.length) {
-            throw fail('CARTON_SN_OCCUPIED', '箱內 SN 已揀貨或裝箱，請先核對實物與原訂單；未封箱');
-        }
+        await assertUnusedSerials(db, sns, '未封箱');
         const result = await db.query("UPDATE wms_cartons SET status='sealed',sealed_at=NOW(),state_revision=state_revision+1,updated_by=$2,updated_at=NOW() WHERE carton_id=$1 RETURNING *", [carton.cartonId, user.id]);
         await history(db, carton.cartonId, 'sealed', user, { content: carton.lines });
         return asCarton(result.rows[0]);
@@ -216,7 +220,7 @@ function createCartonService({ pool }) {
             const user = await staff(db, actor, true), carton = await readCarton(db, cartonId, true);
             expectedActor(body, user);
             if (carton.contentRevision !== body.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入');
-            if (carton.status !== 'draft' || carton.allocations.length) throw fail('CARTON_CONTENT_LOCKED', '封箱或已分配的內容不能改寫；請保留原紀錄');
+            if (carton.status !== 'draft' || carton.allocations.length) throw fail('CARTON_CONTENT_LOCKED', '已確認、作廢或已分配的箱內容不能改寫；請保留原紀錄');
             await db.query('DELETE FROM wms_carton_lines WHERE carton_id=$1', [cartonId]);
             await insertLines(db, cartonId, lines);
             await db.query('UPDATE wms_cartons SET content_revision=content_revision+1,state_revision=state_revision+1,updated_at=NOW(),updated_by=$2 WHERE carton_id=$1', [cartonId, user.id]);
@@ -232,6 +236,37 @@ function createCartonService({ pool }) {
             if (carton.contentRevision !== body.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入');
             await sealed(db, carton, user);
             return readCarton(db, cartonId);
+        });
+    }
+    async function voidDraft(cartonId, body, actor) {
+        const reason = text(body?.reason, '作廢原因', { max: 1000 });
+        const contentRevision = revision(body?.expectedContentRevision);
+        return transaction(async db => {
+            const user = await staff(db, actor, true);
+            expectedActor(body, user, true);
+            const carton = await readCarton(db, cartonId, true);
+            if (carton.contentRevision !== contentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入後核對');
+            if (carton.status === 'void') {
+                const event = carton.history.find(entry => entry.event_type === 'voided');
+                if (event?.actor_id === user.id && event.details?.reason === reason) return carton;
+                throw fail('CARTON_ALREADY_VOID', '此箱已作廢，請重新查詢作廢紀錄');
+            }
+            if (carton.status !== 'draft' || carton.allocations.length) {
+                throw fail('CARTON_VOID_DRAFT_ONLY', '僅可作廢尚未確認且沒有分配紀錄的草稿箱');
+            }
+            const sns = carton.lines.flatMap(line => line.actualSN);
+            await lockCartonSerials(db, sns);
+            await assertUnusedSerials(db, sns, '未作廢');
+            await db.query(`UPDATE wms_carton_serials s SET available=FALSE FROM wms_carton_lines l
+                WHERE s.line_id=l.id AND l.carton_id=$1`, [cartonId]);
+            await db.query('UPDATE wms_carton_lines SET remaining_quantity=0 WHERE carton_id=$1', [cartonId]);
+            await db.query(`UPDATE wms_cartons SET status='void',state_revision=state_revision+1,
+                updated_at=NOW(),updated_by=$2 WHERE carton_id=$1`, [cartonId, user.id]);
+            await history(db, cartonId, 'voided', user, { reason });
+            return readCarton(db, cartonId);
+        }).catch(error => {
+            if (error.code === 'SCAN_RESULT_UNKNOWN') error.message = '尚未收到作廢結果。請重新查詢，或用相同原因再次確認作廢。';
+            throw error;
         });
     }
     async function sealBatch(body, actor) {
@@ -304,6 +339,7 @@ function createCartonService({ pool }) {
     }
     async function plan(db, snapshot, carton, body) {
         if (!['pick','pack'].includes(body.type)) throw fail('CARTON_INVALID_INPUT', '箱掃描類型無效', 400);
+        assertCartonNotVoided(carton);
         if (carton.status !== 'sealed') throw fail('CARTON_NOT_SEALED', '此箱尚未封箱核對，不能出貨');
         const allocation = carton.allocations.find(row => row.orderId === snapshot.order.id && row.status !== 'released');
         if (body.type === 'pick') {
@@ -518,6 +554,6 @@ function createCartonService({ pool }) {
                 }) })) };
         }, { readOnly: true });
     }
-    return { create, importManifest, list, get, lookup, edit, seal, sealBatch, preview, scan, release, shipments };
+    return { create, importManifest, list, get, lookup, edit, seal, voidDraft, sealBatch, preview, scan, release, shipments };
 }
 module.exports = { createCartonService };

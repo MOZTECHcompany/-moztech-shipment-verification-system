@@ -11,6 +11,7 @@ import { CartonDialog } from './CartonDialog';
 import { parseCartonExcel, resolveCartonExcelItems } from '@/utils/cartonExcel';
 import templateHref from './cartonImportTemplate.xlsx?url';
 
+const cartonStatus = { draft: '待確認', sealed: '已確認', void: '已作廢' };
 const blankLine = () => ({ itemCode: '', productName: '', ean: '', internalScanCode: '', quantity: 10, serialInput: '' });
 const newId = () => `CTN-${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 8)}`;
 const errText = error => error.response?.data?.message || error.message || '操作失敗';
@@ -33,6 +34,7 @@ export function CartonsPage({ user }) {
     const [query, setQuery] = useState(''), [cartons, setCartons] = useState([]), [detail, setDetail] = useState(null);
     const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
     const [editor, setEditor] = useState(null), [lines, setLines] = useState([blankLine()]), [label, setLabel] = useState(null);
+    const [voidReason, setVoidReason] = useState(null);
     const [importedBatch, setImportedBatch] = useState(null), [checkedCartons, setCheckedCartons] = useState(new Set());
     const importRef = useRef(null), mutationRef = useRef(false), listRequest = useRef(0), detailRequest = useRef(0);
     const alive = useRef(true);
@@ -54,7 +56,7 @@ export function CartonsPage({ user }) {
         catch (err) { if (alive.current) setError(errText(err)); }
         finally { mutationRef.current = false; if (alive.current) setBusy(false); }
     };
-    const open = async id => { const request = ++detailRequest.current, session = cartonSessionKey(api, user); try { const { data } = await api.get(`/api/cartons/${encodeURIComponent(id)}`); if (alive.current && request === detailRequest.current && session === cartonSessionKey(api, user)) setDetail(data.carton || data); } catch (err) { if (alive.current && request === detailRequest.current) setError(errText(err)); } };
+    const open = async id => { const request = ++detailRequest.current, session = cartonSessionKey(api, user); try { const { data } = await api.get(`/api/cartons/${encodeURIComponent(id)}`); if (alive.current && request === detailRequest.current && session === cartonSessionKey(api, user)) { setDetail(data.carton || data); setVoidReason(null); } } catch (err) { if (alive.current && request === detailRequest.current) setError(errText(err)); } };
     const edit = carton => {
         setEditor(carton ? { cartonId: carton.cartonId, expectedContentRevision: carton.contentRevision, editing: true } : { cartonId: newId() });
         setLines(carton ? carton.lines.map(l => ({ ...l, serialInput: l.actualSN.join('\n') })) : [blankLine()]); setError('');
@@ -135,6 +137,22 @@ export function CartonsPage({ user }) {
     const seal = () => mutate(async ensureCurrent => {
         ensureCurrent(); const { data } = await api.post(`/api/cartons/${encodeURIComponent(detail.cartonId)}/seal`, { expectedContentRevision: detail.contentRevision, expectedActorId: user.id }); ensureCurrent(); setDetail(data.carton || data); toast.success('已確認箱內內容');
     });
+    const voidDraft = () => mutate(async ensureCurrent => {
+        ensureCurrent();
+        const { data } = await api.post(`/api/cartons/${encodeURIComponent(detail.cartonId)}/void`, {
+            reason: voidReason.trim(), expectedContentRevision: detail.contentRevision, expectedActorId: user.id,
+        });
+        ensureCurrent();
+        if (data?.cartonId !== detail.cartonId || data.status !== 'void' || data.contentRevision !== detail.contentRevision) {
+            throw new Error('尚未收到完整作廢結果，請重新查詢或使用同一原因再試一次。');
+        }
+        setDetail(data);
+        setVoidReason(null);
+        toast.success('草稿箱已作廢');
+    });
+    const canVoidDraft = canManage && detail?.status === 'draft' && !detail.allocations?.length;
+    const voidingDraft = canVoidDraft && voidReason !== null;
+    const voidEvent = detail?.history?.find(event => event.event_type === 'voided');
     const print = () => {
         const markup = getWorkspaceRoot()?.querySelector('[data-carton-label]')?.outerHTML;
         const win = markup && window.open('', '_blank');
@@ -153,7 +171,7 @@ export function CartonsPage({ user }) {
         </header>
         <input aria-label="搜尋箱號或品號" placeholder="搜尋箱號或品號" value={query} onChange={e => setQuery(e.target.value)} className={`${inputClass} max-w-sm`} />
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-        <div className="overflow-x-auto rounded-xl border bg-white"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr><th className="p-3">箱號</th><th>狀態</th><th>品項</th><th>剩餘／總件數</th></tr></thead><tbody>{cartons.map(c => <tr key={c.cartonId} className="border-t"><td className="p-3"><button className="text-blue-700 underline break-all" onClick={() => open(c.cartonId)}>{c.cartonId}</button></td><td>{c.status === 'sealed' ? '已確認' : '待確認'}</td><td>{c.lines?.length ?? c.lineCount ?? '—'}</td><td>{c.lines ? `${c.lines.reduce((s,l)=>s+l.remainingQuantity,0)}／${c.lines.reduce((s,l)=>s+l.quantity,0)}` : `${c.remainingQuantity ?? '—'}／${c.quantity ?? '—'}`}</td></tr>)}</tbody></table>{loading && <p role="status" className="p-4">載入中…</p>}{!loading && !cartons.length && <p className="p-6 text-slate-500">尚無符合的箱號</p>}</div>
+        <div className="overflow-x-auto rounded-xl border bg-white"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr><th className="p-3">箱號</th><th>狀態</th><th>品項</th><th>剩餘／總件數</th></tr></thead><tbody>{cartons.map(c => <tr key={c.cartonId} className="border-t"><td className="p-3"><button className="text-blue-700 underline break-all" onClick={() => open(c.cartonId)}>{c.cartonId}</button></td><td>{cartonStatus[c.status] || '—'}</td><td>{c.lines?.length ?? c.lineCount ?? '—'}</td><td>{c.lines ? `${c.lines.reduce((s,l)=>s+l.remainingQuantity,0)}／${c.lines.reduce((s,l)=>s+l.quantity,0)}` : `${c.remainingQuantity ?? '—'}／${c.quantity ?? '—'}`}</td></tr>)}</tbody></table>{loading && <p role="status" className="p-4">載入中…</p>}{!loading && !cartons.length && <p className="p-6 text-slate-500">尚無符合的箱號</p>}</div>
         <CartonDialog open={!!visibleBatch} title="匯入箱號結果" onClose={() => { if (!busy) setImportedBatch(null); }}
             footer={<><Button variant="secondary" disabled={busy} onClick={() => setImportedBatch(null)}>關閉</Button>
                 {!!drafts.length && <Button disabled={busy || !selectedCartons.length} onClick={confirmBatch}>確認所選 {selectedCartons.length} 箱</Button>}</>}>
@@ -173,7 +191,7 @@ export function CartonsPage({ user }) {
                                 setCheckedCartons(old => { const next = new Set(old); if (checked) next.add(item.cartonId); else next.delete(item.cartonId); return next; });
                             }} /><span className="break-all">{item.cartonId}</span>
                         </label> : <span className="min-w-0 break-all">{item.cartonId}</span>}
-                        <span className="shrink-0 text-right text-xs text-slate-600">{item.quantity} 件 · {item.serialCount ? `${item.serialCount} 個 SN` : '無 SN'} · {item.status === 'sealed' ? '已確認' : item.status === 'draft' ? '待確認' : '不可確認'}</span>
+                        <span className="shrink-0 text-right text-xs text-slate-600">{item.quantity} 件 · {item.serialCount ? `${item.serialCount} 個 SN` : '無 SN'} · {cartonStatus[item.status] || '不可確認'}</span>
                     </li>)}
                 </ul>
             </>}
@@ -184,10 +202,24 @@ export function CartonsPage({ user }) {
             {lines.map((line, index) => <fieldset key={index} className="mb-3 rounded-lg border p-3"><legend className="px-1 text-sm">品項 {index + 1}</legend><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{[['itemCode','WMS／ECOUNT 品號'],['productName','品名'],['ean','國際條碼'],['internalScanCode','內部掃描碼'],['quantity','數量']].map(([key, caption]) => <label key={key} className="text-sm">{caption}<input type={key === 'quantity' ? 'number' : 'text'} min={key === 'quantity' ? 1 : undefined} step={key === 'quantity' ? 1 : undefined} value={line[key] ?? ''} onChange={e => setLines(old => old.map((l,i) => i === index ? { ...l, [key]: e.target.value } : l))} className={inputClass} /></label>)}<label className="sm:col-span-2 text-sm">箱內 SN<textarea value={line.serialInput} onChange={e => setLines(old => old.map((l,i) => i === index ? { ...l, serialInput: e.target.value } : l))} rows={3} className={inputClass} /></label></div>{lines.length > 1 && <button onClick={() => setLines(old => old.filter((_,i)=>i!==index))} className="mt-2 text-sm text-red-700">移除此品項</button>}</fieldset>)}
             <Button variant="secondary" onClick={() => setLines(old => [...old, blankLine()])}>新增品項</Button>
         </CartonDialog>
-        <CartonDialog open={!!detail && !editor} title={detail?.cartonId || '箱號明細'} onClose={() => { if (!busy) { detailRequest.current++; setDetail(null); } }} footer={<>{canManage && detail?.status === 'draft' && <><Button variant="secondary" onClick={() => edit(detail)} disabled={busy}>編輯</Button><Button onClick={seal} disabled={busy}>確認箱內內容</Button></>}<Button variant="secondary" onClick={() => setLabel(detail)}><Printer size={16} />列印貼紙</Button></>}>
+        <CartonDialog open={!!detail && !editor} title={detail?.cartonId || '箱號明細'} onClose={() => {
+            if (!busy) { detailRequest.current++; setDetail(null); setVoidReason(null); }
+        }} footer={voidingDraft ? <>
+            <Button variant="secondary" disabled={busy} onClick={() => { setVoidReason(null); setError(''); }}>取消</Button>
+            <Button variant="destructive" disabled={busy || !voidReason.trim()} onClick={voidDraft}>確認作廢</Button>
+        </> : <>
+            {canVoidDraft && <Button variant="secondary" disabled={busy} onClick={() => { setVoidReason(''); setError(''); }}>作廢草稿箱</Button>}
+            {canManage && detail?.status === 'draft' && <><Button variant="secondary" onClick={() => edit(detail)} disabled={busy}>編輯</Button><Button onClick={seal} disabled={busy}>確認箱內內容</Button></>}
+            {detail?.status !== 'void' && <Button variant="secondary" onClick={() => setLabel(detail)}><Printer size={16} />列印貼紙</Button>}
+        </>}>
             {error && <p role="alert" className="mb-3 text-red-700">{error}</p>}
-            {(detail?.lines || []).map(l => <div key={l.lineId} className="mb-3 rounded-lg border p-3"><strong>{l.productName || l.itemCode}</strong><p className="text-sm">品號 {l.itemCode} · 剩餘 {l.remainingQuantity}／{l.quantity}</p>{l.ean && <p className="text-sm">國條 {l.ean}</p>}{l.internalScanCode && <p className="text-sm">內碼 {l.internalScanCode}</p>}{!!l.actualSN.length && <details className="mt-2 text-sm"><summary>箱內 SN（共 {l.actualSN.length} 個，可用 {l.remainingSN.length} 個）</summary><ul className="mt-2 space-y-1">{l.actualSN.map(sn => <li key={sn} className="flex items-start justify-between gap-3"><span className="min-w-0 break-all">{sn}</span><span className="shrink-0 text-slate-500">{l.remainingSN.includes(sn) ? '可用' : '已分配'}</span></li>)}</ul></details>}</div>)}
-            {!!detail?.history?.length && <details className="text-sm"><summary>異動紀錄</summary>{detail.history.map((h,i) => <p key={h.id || i} className="mt-2">{({ created: '建立', sealed: '確認箱內內容', contents_revised: '修改內容', picked: '揀貨', packed: '裝箱', released: '解除分配' })[h.event_type] || h.event_type || h.action} · {new Date(h.createdAt || h.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</p>)}</details>}
+            {detail?.status === 'void' && <p className="mb-3 text-sm text-red-700">已作廢{voidEvent?.details?.reason ? ` · ${voidEvent.details.reason}` : ''}</p>}
+            {voidingDraft && <div className="mb-3 rounded-lg border border-red-200 p-3">
+                <p className="mb-2 text-sm">作廢後無法掃箱出貨，系統會保留箱號、原始 SN 和作廢紀錄。</p>
+                <label className="block text-sm">作廢原因<input className={inputClass} value={voidReason} disabled={busy} maxLength={1000} onChange={event => setVoidReason(event.target.value)} /></label>
+            </div>}
+            {(detail?.lines || []).map(l => <div key={l.lineId} className="mb-3 rounded-lg border p-3"><strong>{l.productName || l.itemCode}</strong><p className="text-sm">品號 {l.itemCode} · 剩餘 {l.remainingQuantity}／{l.quantity}</p>{l.ean && <p className="text-sm">國條 {l.ean}</p>}{l.internalScanCode && <p className="text-sm">內碼 {l.internalScanCode}</p>}{!!l.actualSN.length && <details className="mt-2 text-sm"><summary>箱內 SN（共 {l.actualSN.length} 個，可用 {l.remainingSN.length} 個）</summary><ul className="mt-2 space-y-1">{l.actualSN.map(sn => <li key={sn} className="flex items-start justify-between gap-3"><span className="min-w-0 break-all">{sn}</span><span className="shrink-0 text-slate-500">{detail.status === 'void' ? '已作廢' : l.remainingSN.includes(sn) ? '可用' : '已分配'}</span></li>)}</ul></details>}</div>)}
+            {!!detail?.history?.length && <details className="text-sm"><summary>異動紀錄</summary>{detail.history.map((h,i) => <p key={h.id || i} className="mt-2">{({ created: '建立', sealed: '確認箱內內容', contents_revised: '修改內容', voided: '作廢草稿箱', picked: '揀貨', packed: '裝箱', released: '解除分配' })[h.event_type] || h.event_type || h.action} · {new Date(h.createdAt || h.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</p>)}</details>}
         </CartonDialog>
         <CartonDialog open={!!label} title="箱號貼紙" onClose={() => setLabel(null)} footer={<Button onClick={print}><Printer size={16} />列印</Button>}>{label && <QrLabel carton={label} />}</CartonDialog>
     </section>;

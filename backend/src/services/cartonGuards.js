@@ -1,3 +1,5 @@
+const { assertCartonNotVoided } = require('./cartonContents');
+
 const blocked = () => Object.assign(new Error('此內容已有箱號分配，請先解除未裝箱分配；已裝箱需另外處理退貨／箱號，不可直接改單品數量或 SN'),
     { status: 409, code: 'CARTON_ALLOCATION_GUARD' });
 async function activeAllocations(db, orderId) {
@@ -62,9 +64,12 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
         unit = serialNumber ? { serial_number: serialNumber } : (await db.query('SELECT order_item_id,serial_number FROM order_item_instances WHERE id=$1', [instanceId])).rows[0];
         if (unit) {
             await lockCartonSerials(db, [unit.serial_number]);
-            const sealed = await db.query(`SELECT c.carton_id FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id
-                JOIN wms_cartons c ON c.carton_id=l.carton_id WHERE s.serial_number=$1 AND c.status='sealed'`, [unit.serial_number]);
-            if (sealed.rows.length) throw Object.assign(new Error('此 SN 已登記在封箱內容，請掃描箱號或拆箱選擇此 SN'), { status: 409, code: 'CARTON_ALLOCATION_GUARD' });
+            const carton = (await db.query(`SELECT c.carton_id AS "cartonId",c.status FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id
+                JOIN wms_cartons c ON c.carton_id=l.carton_id WHERE s.serial_number=$1 AND c.status IN ('sealed','void')`, [unit.serial_number])).rows[0];
+            if (carton) {
+                assertCartonNotVoided(carton);
+                throw Object.assign(new Error('此 SN 已登記在封箱內容，請掃描箱號或拆箱選擇此 SN'), { status: 409, code: 'CARTON_ALLOCATION_GUARD' });
+            }
         }
     }
     const allocations = await activeAllocations(db, orderId);

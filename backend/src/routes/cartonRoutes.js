@@ -25,6 +25,7 @@ function createCartonRouter({ pool }) {
     router.get('/:cartonId', handler(req => service.get(req.params.cartonId, req.user)));
     router.patch('/:cartonId', handler(req => service.edit(req.params.cartonId, req.body, req.user)));
     router.post('/:cartonId/seal', handler(req => service.seal(req.params.cartonId, req.body, req.user)));
+    router.post('/:cartonId/void', handler(req => service.voidDraft(req.params.cartonId, req.body, req.user)));
     return router;
 }
 function createOrderCartonRouter({ pool }) {

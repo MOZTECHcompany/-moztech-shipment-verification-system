@@ -80,6 +80,81 @@ async function suite(t, postgres) {
         assert.equal((await api(1, 'patch', '/api/cartons/REVISION', { expectedContentRevision: 2, lines: box('x', 3).lines })).body.code, 'CARTON_CONTENT_LOCKED');
         assert.ok(ok(await api(2, 'get', '/api/cartons?q=ITEM')).items.length);
     });
+    await t.test('only a warehouse admin can void an unused draft, retaining original SN and rejecting all positive scan paths', async () => {
+        const cartonId = 'CTN-SYN-VOID-DRAFT';
+        const sns = ['Void-Exact-SN-01', 'Void-Exact-SN-02', 'Void-Exact-SN-03'];
+        const manifest = { format: 'corely-cartons-v1', sourceSystem: 'ERP', sourceReference: 'VOID-SOURCE',
+            cartons: [box(cartonId, sns.length, sns)] };
+        const imported = ok(await api(1, 'post', '/api/cartons/import', manifest)).items[0].carton;
+        const path = `/api/cartons/${cartonId}`;
+        const request = { reason: 'ERP 退回草稿', expectedContentRevision: imported.contentRevision };
+        assert.equal((await api(2, 'post', path + '/void', request)).status, 403);
+        assert.equal((await api(5, 'post', path + '/void', request)).status, 403);
+        assert.equal((await api(1, 'post', path + '/void', { ...request, reason: ' ' })).status, 400);
+        assert.equal((await api(1, 'post', path + '/void', { ...request, expectedActorId: 2 })).body.code, 'CARTON_ACTOR_CHANGED');
+        assert.equal((await api(1, 'post', path + '/void', { ...request, expectedContentRevision: 2 })).body.code, 'CARTON_CONTENT_CHANGED');
+
+        f.failAfterNext(sql => sql === 'COMMIT');
+        const unknown = await api(1, 'post', path + '/void', request);
+        assert.equal(unknown.body.code, 'SCAN_RESULT_UNKNOWN');
+        const voided = ok(await api(1, 'post', path + '/void', request));
+        assert.equal(voided.status, 'void');
+        assert.equal(voided.sourceReference, 'VOID-SOURCE');
+        assert.equal(voided.contentRevision, imported.contentRevision);
+        assert.equal(voided.stateRevision, imported.stateRevision + 1);
+        assert.equal(voided.lines[0].quantity, sns.length);
+        assert.equal(voided.lines[0].remainingQuantity, 0);
+        assert.deepEqual(voided.lines[0].actualSN, sns);
+        assert.deepEqual(voided.lines[0].remainingSN, []);
+        assert.deepEqual(voided.history.filter(event => event.event_type === 'voided').map(event =>
+            [event.actor_id, event.details.reason]), [[1, request.reason]]);
+        assert.equal((await api(1, 'post', path + '/void', { ...request, reason: '另一次作廢' })).body.code, 'CARTON_ALREADY_VOID');
+        assert.equal(ok(await api(1, 'post', '/api/cartons/import', manifest)).items[0].carton.status, 'void');
+        assert.equal((await api(1, 'post', path + '/seal', request)).body.code, 'CARTON_VOID');
+        assert.equal((await api(1, 'post', '/api/cartons', box('CTN-SYN-VOID-DUPLICATE', 1, sns.slice(0, 1)))).body.code, 'CARTON_ID_OR_SN_CONFLICT');
+
+        const { order } = await f.seedOrder({ quantity: sns.length, actualSN: sns, serialMode: 'exact' });
+        const orderPath = `/api/orders/${order.id}`;
+        const snapshot = ok(await api(2, 'get', orderPath + '/work-snapshot'));
+        const whole = { type: 'pick', scanValue: `CARTON:${cartonId}` };
+        for (const scanValue of [whole.scanValue, sns.join(','), sns.slice(0, 2).join(',')]) {
+            assert.equal((await api(2, 'post', orderPath + '/carton-preview', { ...whole, scanValue, matchSerialSubset: true })).body.code, 'CARTON_VOID');
+        }
+        assert.equal((await api(2, 'post', orderPath + '/carton-scan', scanBody({
+            expectedState: snapshot.stateToken, expectedCartonRevision: voided.stateRevision
+        }, whole))).body.code, 'CARTON_VOID');
+        const unit = { orderId: order.id, scanValue: sns[0], type: 'pick' };
+        assert.equal((await api(2, 'post', '/api/orders/update_item', unit)).body.code, 'CARTON_VOID');
+        assert.equal((await api(2, 'post', '/api/orders/update_item', { ...unit, scanValue: sns.join(','),
+            selectedSerials: sns.slice(0, 2), responseMode: 'delta-v1', commandId: randomUUID(),
+            expectedState: snapshot.stateToken })).body.code, 'CARTON_VOID');
+        assert.equal(ok(await api(2, 'get', orderPath + '/work-snapshot')).stateToken, snapshot.stateToken);
+    });
+    await t.test('a picked SN in a draft and a sealed carton cannot be voided', async () => {
+        const draftId = 'CTN-SYN-VOID-USED-SN', sn = 'Used-While-Draft-Exact-SN';
+        await create({ ...box(draftId, 1, [sn]), seal: false });
+        const { order } = await f.seedOrder({ quantity: 1, actualSN: [sn], serialMode: 'exact' });
+        ok(await api(2, 'post', '/api/orders/update_item', { orderId: order.id, scanValue: sn, type: 'pick' }));
+        const request = { reason: 'ERP 退回草稿', expectedContentRevision: 1 };
+        assert.equal((await api(1, 'post', `/api/cartons/${draftId}/void`, request)).body.code, 'CARTON_SN_OCCUPIED');
+        assert.equal(ok(await api(1, 'get', `/api/cartons/${draftId}`)).status, 'draft');
+
+        const sealed = await create(box('CTN-SYN-VOID-SEALED'));
+        assert.equal((await api(1, 'post', `/api/cartons/${sealed.cartonId}/void`, request)).body.code, 'CARTON_VOID_DRAFT_ONLY');
+    });
+    await t.test('draft void and an individual scan contend for the same SN without both succeeding', { skip: !postgres }, async () => {
+        const cartonId = 'CTN-SYN-VOID-RACE', sn = 'Racing-Void-SN';
+        await create({ ...box(cartonId, 1, [sn]), seal: false });
+        const { order } = await f.seedOrder({ quantity: 1, actualSN: [sn], serialMode: 'exact' });
+        const [voided, picked] = await Promise.all([
+            api(1, 'post', `/api/cartons/${cartonId}/void`, { reason: 'ERP 退回草稿', expectedContentRevision: 1 }),
+            api(2, 'post', '/api/orders/update_item', { orderId: order.id, scanValue: sn, type: 'pick' }),
+        ]);
+        assert.deepEqual([voided.status, picked.status].sort(), [200, 409]);
+        if (voided.status === 200) assert.equal(picked.body.code, 'CARTON_VOID');
+        else assert.equal(voided.body.code, 'CARTON_SN_OCCUPIED');
+        assert.equal(ok(await api(1, 'get', `/api/cartons/${cartonId}`)).status, voided.status === 200 ? 'void' : 'draft');
+    });
     await t.test('selected imported drafts confirm together, preserve exact SN/quantity, and replay without duplicate history', async () => {
         const ids = ['BATCH-SEAL-SN', 'BATCH-SEAL-PLAIN', 'BATCH-SEAL-UNSELECTED'];
         const sn = 'Batch-Seal-Exact-SN';
