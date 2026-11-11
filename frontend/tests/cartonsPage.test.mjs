@@ -6,9 +6,14 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import * as editorHelpers from '../src/utils/cartonEditor.js';
 import * as scanHelpers from '../src/utils/cartonScan.js';
+import { parseCartonExcel } from '../src/utils/cartonExcel.js';
+import XLSX from 'xlsx';
 
 const source=await readFile(new URL('../src/components/CartonsPage.jsx',import.meta.url),'utf8');
-const {code}=await transform(`${source}\nexport { SerialLookup, QrLabel };`,{loader:'jsx',format:'cjs'});
+const importTemplate = await readFile(new URL('../src/components/cartonImportTemplate.xlsx', import.meta.url));
+const templateMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const templateHref = `data:application/octet-stream;base64,${importTemplate.toString('base64')}`;
+const {code}=await transform(`${source}\nexport { SerialLookup, QrLabel };`,{loader:'jsx',format:'cjs',supported:{'dynamic-import':false}});
 function page({role='admin',scope='orders',storage=new Map(),component='CartonsPage',onOpen=()=>{}}={}) {
     const hooks=[],effects=[],timers=new Map(),reads=[],posts=[];let cursor=0,dirty=false,tree,timerId=0,mounted=true,updatesAfterUnmount=0;
     let session='token-A';
@@ -21,7 +26,7 @@ function page({role='admin',scope='orders',storage=new Map(),component='CartonsP
     };
     const deferred=(bucket,fields)=>new Promise((resolve,reject)=>bucket.push({...fields,resolve:data=>resolve({data}),reject}));
     const api={getSessionIdentity:()=>session,get:(url,options)=>deferred(reads,{url,options}),post:(url,body,options)=>deferred(posts,{url,body,options}),patch:(url,body,options)=>deferred(posts,{url,body,options,method:'PATCH'})};
-    const imports={react,'@/api/api':api,'@/utils/cartonScan':scanHelpers,'@/utils/cartonEditor':editorHelpers,'@/ui':{Button:'Button'},'./CartonDialog':{CartonDialog:'CartonDialog'},'./CartonItemEditor':{CartonItemEditor:'CartonItemEditor',cartonFieldClass:'field'},sonner:{toast:{success:()=>{},info:()=>{},error:()=>{}}}};
+    const imports={react,'@/api/api':api,'@/utils/cartonScan':scanHelpers,'@/utils/cartonEditor':editorHelpers,'@/ui':{Button:'Button'},'@/utils/cartonExcel':{parseCartonExcel},xlsx:XLSX,'./cartonImportTemplate.xlsx?url':templateHref,'./CartonDialog':{CartonDialog:'CartonDialog'},'./CartonItemEditor':{CartonItemEditor:'CartonItemEditor',cartonFieldClass:'field'},sonner:{toast:{success:()=>{},info:()=>{},error:()=>{}}}};
     const generic=new Proxy({}, {get:(_,key)=>key==='__esModule'?false:String(key)}),module={exports:{}};
     vm.runInNewContext(code,{module,exports:module.exports,require:name=>imports[name]||generic,React:react,crypto:webcrypto,console,
         setTimeout:fn=>{const id=++timerId;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),
@@ -47,6 +52,52 @@ function page({role='admin',scope='orders',storage=new Map(),component='CartonsP
 const saved=(request,status='draft')=>({cartonId:request.body.cartonId,status,contentRevision:1,stateRevision:1,allocations:[],lines:request.body.lines.map((line,i)=>({...line,lineId:i+1,remainingQuantity:line.quantity,remainingSN:line.actualSN}))});
 const load=async view=>{view.advance();view.reads.at(-1).resolve({cartons:[]});await view.settle();};
 const enterPhysical=view=>{view.button('新增箱號').props.onClick();view.line(0).props.onSelect({itemCode:'SKU-01',productName:'Fixture product',importedBarcode:'00123'});view.line(0).props.onChange({quantity:2});view.button('確認內容').props.onClick();};
+
+test('physical carton managers can download the Excel template and the picker accepts both file formats', () => {
+    const view = page({ scope: 'warehouse' });
+    const { props } = view.button('下載 Excel 範本');
+    assert.equal(props.as, 'a');
+    assert.equal(props.download, 'WMS-箱號匯入範本.xlsx');
+    assert.equal(props.href, templateHref);
+    assert.equal(view.input('匯入箱號檔案').props.accept, `.xlsx,.json,${templateMime},application/json`);
+    assert.equal(view.posts.length, 0);
+    view.tab('箱規').props.onClick();
+    assert.equal(view.button('下載 Excel 範本'), undefined);
+    assert.equal(page({ role: 'picker' }).button('下載 Excel 範本'), undefined);
+});
+
+test('Excel template and existing JSON import use the same carton manifest API', async () => {
+    const manifest = parseCartonExcel(XLSX.read(importTemplate, { type: 'buffer', cellText: true, cellNF: true }), XLSX);
+    assert.equal(manifest.format, 'corely-cartons-v1');
+    assert.equal(manifest.cartons.length, 2);
+    const files = [
+        { name: 'WMS-箱號匯入範本.xlsx', size: importTemplate.length, arrayBuffer: async () => Uint8Array.from(importTemplate).buffer },
+        { name: '箱號.json', size: 1024, text: async () => JSON.stringify(manifest) }
+    ];
+    for (const file of files) {
+        const view = page({ scope: 'warehouse' });
+        await load(view);
+        view.input('匯入箱號檔案').props.onChange({ target: { files: [file], value: file.name } });
+        await view.settle();
+        assert.equal(view.posts.length, 1);
+        assert.equal(view.posts[0].url, '/api/cartons/import');
+        assert.deepEqual(JSON.parse(JSON.stringify(view.posts[0].body)), { ...manifest, expectedActorId: 7 });
+        view.posts[0].resolve({});
+        await view.settle();
+        view.reads.at(-1).resolve({ cartons: [] });
+        await view.settle();
+    }
+});
+
+test('an unreadable Excel upload shows a friendly error without importing cartons', async () => {
+    const view = page({ scope: 'warehouse' });
+    await load(view);
+    const file = { name: '壞檔.xlsx', size: 8, arrayBuffer: async () => { throw new Error('Unable to read'); } };
+    view.input('匯入箱號檔案').props.onChange({ target: { files: [file], value: file.name } });
+    await view.settle();
+    assert.equal(view.posts.length, 0);
+    assert.match(view.text(view.render()), /無法讀取 Excel 檔案/);
+});
 
 test('three-step carton create uses an automatic identity, requires a real count and waits for seal before presenting print',async()=>{
     const view=page();await load(view);view.button('新增箱號').props.onClick();assert.equal(view.line(0).props.line.quantity,'');

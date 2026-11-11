@@ -14,6 +14,7 @@ export default defineConfig(({ mode, command }) => {
   return {
   plugins: [react()],
   build: {
+    assetsInlineLimit: file => path.basename(file) === 'cartonImportTemplate.xlsx' ? true : undefined,
     rollupOptions: {
       input: { main: path.resolve(projectDir, 'index.html'), migrate: path.resolve(projectDir, 'migrate.html') },
     },
