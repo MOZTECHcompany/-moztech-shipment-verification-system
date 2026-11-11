@@ -14,7 +14,7 @@ async function parseMarketplaceLinkedImport(buffer,db,requiredIntakeId){
   ? await readEcountPickingIdentities(db,data.slice(headerIndex+1),columns):undefined;
  try {
   const parsed=parseOrderRows(data,{ecount});
-  if(!requiredIntakeId)return {...parsed,omittedNonStock:[]};
+  if(!requiredIntakeId)return {...parsed,omittedNonStock:parsed.omittedNonStock||[]};
  } catch(error) {
   if(!/^第 \d+ 列：國際條碼必填/.test(error.message))throw error;
  }
@@ -38,7 +38,7 @@ async function parseMarketplaceLinkedImport(buffer,db,requiredIntakeId){
  }
  const parsed=parseOrderRows(filtered,{ecount});
  if(omittedNonStock.some(item=>item.voucherNumber!==parsed.voucherNumber))throw fail('運費與商品不屬於同一張理貨單，未匯入');
- return {...parsed,omittedNonStock};
+ return {...parsed,omittedNonStock:[...omittedNonStock,...(parsed.omittedNonStock||[])]};
 }
 function compareMarketplaceItems(expected,actual,number){
  if(expected.length!==actual.length)throw fail(`商城訂單 ${number} 的商品明細列數與轉檔資料不同，未建立工作單`);

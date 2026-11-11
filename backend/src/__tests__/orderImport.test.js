@@ -2,6 +2,7 @@ jest.mock('../config/database', () => ({ pool: { connect: jest.fn(), query: jest
 jest.mock('../utils/logger', () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
 const xlsx = require('xlsx');
 const { IMPORT_LIMITS, parseOrderImport, parseOrderRows } = require('../services/orderImportParser');
+const { parseMarketplaceLinkedImport } = require('../services/marketplaceImportLink');
 const { pool } = require('../config/database');
 const router = require('../routes/orderRoutes');
 const route = router.stack.find(layer => layer.route?.path === '/orders/import').route;
@@ -41,6 +42,15 @@ test('rejects a freight-only legacy picking workbook with no physical items', ()
     const rows = makeFreightPickingRows([['00001', '運費', 36, '']]);
 
     expect(() => parseOrderImport(workbook(rows))).toThrow(/沒有可匯入的品項/);
+});
+
+test('treats a repeated fee code in a separate barcode column as the same non-stock fee', () => {
+    const rows = makeFreightPickingRows([
+        ['00001', '運費', 36, '', '00001'],
+        ['4710000000001', 'Physical item', 2, '', '4710000000001']
+    ]);
+    rows[4].push('國際條碼');
+    expect(parseOrderImport(workbook(rows))).toMatchObject({ totalQuantity: 2, freightExemptQuantity: 36 });
 });
 
 test.each([
@@ -105,6 +115,15 @@ const ecountExportRows = () => [
     ['TEST-ERP-1', 'SKU-2', 'Synthetic item B', '', 'TEST-ORDER-C', 'Shopify', 'Test store C', 'LINE-1', '4710000000013', 'Synthetic item B', 1, 'Test warehouse', 'Test customer C', '', ''],
     ['2026/09/14 (一) 23:56:04']
 ];
+
+test.each(['', '00001'])('direct ECOUNT detail import exempts fee with %j as its barcode', async barcode => {
+    const rows = ecountExportRows();
+    rows.splice(2, 0, ['TEST-ERP-1', '00001', '運費', '', 'TEST-ORDER-A', 'Shopify', 'Test store A', '', barcode, '運費', 36]);
+    const parsed = await parseMarketplaceLinkedImport(workbook(rows), { query: async () => ({ rows: [] }) });
+    expect(parsed).toMatchObject({ totalQuantity: 4, serialCount: 1, freightExemptQuantity: 36 });
+    expect(parsed.items.map(item => item.sourceRow)).toEqual([4, 5, 6]);
+    expect(parsed.omittedNonStock).toEqual([{ productCode: '00001', productName: '運費', quantity: 36, sourceRow: 3 }]);
+});
 
 test.each(['xlsx', 'biff8', 'csv'])('recognizes the confirmed ECOUNT envelope in %s without changing source row numbers', bookType => {
     const parsed = parseOrderImport(workbook(ecountExportRows(), bookType));

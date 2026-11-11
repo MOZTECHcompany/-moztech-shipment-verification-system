@@ -24,6 +24,13 @@ function invalid(message, status = 400) {
     return Object.assign(new Error(message), { status, code: 'IMPORT_NOT_APPLIED' });
 }
 
+function positivePickingQuantity(value) {
+    const normalized = /^\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(value) ? value.replace(/,/g, '') : value;
+    const quantity = Number(normalized);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) throw invalid('數量必須為正整數');
+    return quantity;
+}
+
 function validateBarcode(value, cell, location) {
     const scientific = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*[eE]\s*[+-]?\s*\d+$/;
     let reason;
@@ -172,7 +179,8 @@ function parseSourceOrderRows(data, headerIndex, ecount) {
     }
     if(columns.barcode<0&&columns.internalScanCode<0&&!ecount)throw invalid('理貨明細缺少欄位：國際條碼／內部掃描碼');
     let voucherNumber = null, customerName = null;
-    const identities = [], seenLines = new Set();
+    const identities = [], seenLines = new Set(), omittedNonStock = [];
+    let freightExemptQuantity = 0;
     // Reuse the established quantity/SN validation through an explicit internal
     // mapping. Never let the legacy fuzzy headers interpret import grouping 序號.
     const normalizedRows = [['憑證號碼：SOURCE-DOCUMENT'], ['國際條碼', '品項型號', '品項名稱', '數量', 'SN列表','實際SN']];
@@ -196,6 +204,16 @@ function parseSourceOrderRows(data, headerIndex, ecount) {
             if (!productCode) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
             const internationalBarcode = cell('barcode') || null;
             let internalScanCode = cell('internalScanCode') || null;
+            // A linked marketplace fee is reconciled against the saved source
+            // line. Direct ECOUNT exports can identify a fee by item code/name.
+            if (ecount && !source.sourceLineId && isPickingFreight(productCode, cell('productName')) &&
+                (!internationalBarcode || internationalBarcode === PICKING_FREIGHT_CODE) &&
+                !internalScanCode && !cell('serials') && !cell('actualSN') && !cell('summary')) {
+                const quantity = positivePickingQuantity(cell('quantity'));
+                omittedNonStock.push({ productCode, productName: cell('productName'), quantity, sourceRow });
+                freightExemptQuantity += quantity;
+                continue;
+            }
             if (!internationalBarcode && !internalScanCode && ecount) {
                 const codes = ecount.scanCodes.get(productCode) ?? [];
                 if (codes.length !== 1) throw invalid(`國際條碼必填；品項 ${productCode} ${codes.length ? '對應多個內部掃描碼，請確認唯一對照' : '尚無對應的內部掃描碼，請先建立品項對照'}`);
@@ -273,7 +291,10 @@ function parseSourceOrderRows(data, headerIndex, ecount) {
         throw error;
     }
     if (parsed.items.length !== identities.length) throw invalid('理貨明細包含無法辨識的商品列，未建立訂單');
+    if (parsed.items.length + omittedNonStock.length > IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
+    if (parsed.totalQuantity + freightExemptQuantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
     const result = { ...parsed, importFormat: 'source-details', voucherNumber, customerName: customerName || null, items: parsed.items.map((item, index) => ({ ...item, ...identities[index] })) };
+    if (omittedNonStock.length) Object.assign(result, { omittedNonStock, freightExemptQuantity });
     result.workOrders = groupSourceWorkOrders(result);
     return result;
 }
@@ -339,9 +360,7 @@ function parseOrderRows(data, options = {}) {
             if (!barcode || !rawName || !rawQuantity) throw invalid('品項編碼、名稱與數量皆必填');
             const cellAddress = xlsx.utils.encode_cell({ r: index, c: barcodeIndex });
             validateBarcode(barcode, worksheet?.[cellAddress] || (typeof row[barcodeIndex] === 'number' ? { t: 'n', v: row[barcodeIndex] } : undefined), { sheet: sheetName, row: index + 1, cell: cellAddress });
-            const normalizedQuantity = /^\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(rawQuantity) ? rawQuantity.replace(/,/g, '') : rawQuantity;
-            const quantity = Number(normalizedQuantity);
-            if (!Number.isSafeInteger(quantity) || quantity <= 0) throw invalid('數量必須為正整數');
+            const quantity = positivePickingQuantity(rawQuantity);
             let productCode = modelIndex >= 0 ? String(row[modelIndex] ?? '').trim() : '';
             let productName = rawName;
             if (!productCode) {
@@ -361,7 +380,10 @@ function parseOrderRows(data, options = {}) {
             if (normalizedHeader(header[barcodeIndex]) === '品項編碼' &&
                 barcode === PICKING_FREIGHT_CODE && isPickingFreight(productCode, rawName) &&
                 !serials.length && !String(row[summaryIndex] ?? '').trim() &&
-                scanIdentityIndexes.every(column => !String(row[column] ?? '').trim())) {
+                scanIdentityIndexes.every(column => {
+                    const value = String(row[column] ?? '').trim();
+                    return !value || (matchesSourceHeader(header[column], 'barcode') && value === PICKING_FREIGHT_CODE);
+                })) {
                 omittedNonStock.push({ productCode, productName, quantity, sourceRow: index + 1 });
                 freightExemptQuantity += quantity;
                 continue;

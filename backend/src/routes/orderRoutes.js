@@ -578,11 +578,11 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         await client.query('COMMIT');
         transactionOpen = false;
         events.publish();
+        const freightNotice = parsed.freightExemptQuantity ? { freightExemptQuantity: parsed.freightExemptQuantity } : {};
         return res.status(201).json(batchId
             ? { message: `批次 ${voucherNumber} 已建立 ${importedOrders.length} 張工作單`, batchId, batchNumber: voucherNumber,
-                workOrderCount: importedOrders.length, orders: importedOrders, itemCount: items.length, totalQuantity, serialCount }
-            : { message: `訂單 ${voucherNumber} 匯入成功`, orderId, voucherNumber, workBarcode: importedOrders[0].workBarcode, itemCount: items.length, totalQuantity, serialCount,
-                ...(parsed.freightExemptQuantity ? { freightExemptQuantity: parsed.freightExemptQuantity } : {}) });
+                workOrderCount: importedOrders.length, orders: importedOrders, itemCount: items.length, totalQuantity, serialCount, ...freightNotice }
+            : { message: `訂單 ${voucherNumber} 匯入成功`, orderId, voucherNumber, workBarcode: importedOrders[0].workBarcode, itemCount: items.length, totalQuantity, serialCount, ...freightNotice });
     } catch (error) {
         let notApplied = !transactionOpen && !commitAttempted;
         if (transactionOpen) {
