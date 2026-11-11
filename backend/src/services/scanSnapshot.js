@@ -1,6 +1,13 @@
 const { createHash } = require('node:crypto');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
+// Receipts created before shipping notes existed describe orders whose note
+// list was empty. Preserve the stored command result/token while supplying the
+// additive field; never re-run a scan or rewrite its historical receipt.
+function withShippingNotes(snapshot) {
+    if (!snapshot?.order || Object.hasOwn(snapshot.order, 'shipping_notes')) return snapshot;
+    return { ...snapshot, order: { ...snapshot.order, shipping_notes: [] } };
+}
 // Opaque optimistic concurrency token. Only warehouse-relevant fields, so
 // joined user names and SQL column order do not create false mismatches.
 function stateToken(order, items, instances) {
@@ -40,4 +47,4 @@ function createWorkSnapshot(pool) {
         }catch(error){next(error)}finally{if(open)try{await db.query('ROLLBACK')}catch(e){releaseError=e}db?.release(releaseError)}
     };
 }
-module.exports={stateToken,readLines,parseCommand,createWorkSnapshot};
+module.exports={stateToken,readLines,parseCommand,createWorkSnapshot,withShippingNotes};

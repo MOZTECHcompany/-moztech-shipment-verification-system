@@ -18,6 +18,8 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_SHIPPING_NOTES_2026-11-11.md`：使用 `WMS-NOTE` 匯入零數量出貨備註，揀貨、裝箱與明細匯出保留原文。
+
 - `docs/WMS_OPERATION_LOG_SEARCH_2026-11-06.md`：操作日誌智慧搜尋、台灣日期、分頁、條件統計與本頁匯出。
 - `docs/WMS_CARTON_MANAGEMENT_UPDATE_2026-10-15.md`：箱號管理分頁閃跳修正、箱規用途、接續建箱與持久原批重印。ECOUNT 官方 OAPI 不支援修改已登錄單據，且目前沒有客製 API；自動回寫未啟用，不得用新增銷貨替代。
 - `docs/WMS_ECOUNT_CARTON_REFERENCE_2026-10-15.md`：既有 ECOUNT 銷貨單與 WMS 已裝箱明細對照、公司／單號參考、人工明細核對、防重送與內容變動失效。只保存追溯，不新增銷貨或扣正式庫存；人工核對不是官方自動回寫成功。實際發布狀態仍須讀回 Cloud Run。

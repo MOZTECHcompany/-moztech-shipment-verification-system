@@ -13,6 +13,9 @@ const IMPORT_LIMITS = Object.freeze({
     items: 1000,
     serials: 10000,
     totalQuantity: 50000,
+    shippingNotes: 100,
+    shippingNoteCharacters: 2000,
+    shippingNotesCharacters: 10000,
     cellCharacters: 200000
 });
 
@@ -101,19 +104,30 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
         if (row.length > IMPORT_LIMITS.sheetColumns) throw invalid(`工作表最多 ${IMPORT_LIMITS.sheetColumns} 欄`, 413);
         if (row.some(value => String(value ?? '').length > IMPORT_LIMITS.cellCharacters)) throw invalid('單一儲存格內容過長', 413);
     }
-    const fallback = index => {
-        const text = String(data[index]?.[0] ?? '').trim();
-        return /^(?:備註\s*[:：]\s*)?(?:原|沖正原)/.test(text) ? '' : text.split(/[:：]/).slice(1).join(':').trim();
-    };
-    const voucherNumber = labelValue(data, ['憑證號碼', '憑證號', '訂單編號', '訂單號碼', '訂單號', '單號', 'Voucher']) || fallback(1);
-    const customerName = labelValue(data, ['客戶名稱', '客戶', '收貨人', 'Customer']) || fallback(2) || null;
-    if (!voucherNumber) throw invalid('找不到訂單號碼（憑證號碼），請確認檔案含「憑證號碼：xxxx」或「訂單編號：xxxx」');
-    if (voucherNumber.length > 255 || (customerName?.length || 0) > 255) throw invalid('訂單號碼或客戶名稱不可超過 255 字');
     const isBarcodeHeader = value => /品項編碼|國際條碼|條碼/.test(String(value));
     const headerIndex = data.findIndex(row => row.some(isBarcodeHeader) && row.some(value => String(value).includes('品項名稱')) && row.some(value => String(value).includes('數量')));
+    const header = headerIndex >= 0 ? data[headerIndex] : [];
+    const itemCodeIndices = header.flatMap((value, index) => /品項編碼/.test(String(value)) ? [index] : []);
+    const itemCodeIndex = itemCodeIndices[0] ?? -1;
+    // Instructions can contain labels such as 客戶採購單號 or 訂單編號. They
+    // cannot supply document identity, including the legacy fixed-row fallback.
+    const metadata = data.map((row, index) => index > headerIndex && itemCodeIndex >= 0 &&
+        String(row[itemCodeIndex] ?? '').trim() === 'WMS-NOTE' ? [] : row);
+    const fallback = index => {
+        const text = String(metadata[index]?.[0] ?? '').trim();
+        return /^(?:備註\s*[:：]\s*)?(?:原|沖正原)/.test(text) ? '' : text.split(/[:：]/).slice(1).join(':').trim();
+    };
+    const voucherNumber = labelValue(metadata, ['憑證號碼', '憑證號', '訂單編號', '訂單號碼', '訂單號', '單號', 'Voucher']) || fallback(1);
+    const customerName = labelValue(metadata, ['客戶名稱', '客戶', '收貨人', 'Customer']) || fallback(2) || null;
+    if (!voucherNumber) throw invalid('找不到訂單號碼（憑證號碼），請確認檔案含「憑證號碼：xxxx」或「訂單編號：xxxx」');
+    if (voucherNumber.length > 255 || (customerName?.length || 0) > 255) throw invalid('訂單號碼或客戶名稱不可超過 255 字');
     if (headerIndex < 0) throw invalid('找不到完整品項表頭：需包含品項編碼／國際條碼、品項名稱、數量');
-    const header = data[headerIndex];
     const barcodeIndex = header.findIndex(isBarcodeHeader);
+    // Only the actual item-code column reserves WMS-NOTE. A separate barcode
+    // or model column must never silently turn a real zero-quantity SKU into a note.
+    const physicalBarcodeIndices = header.flatMap((value, index) => /國際條碼|條碼/.test(String(value)) && !/品項編碼/.test(String(value)) ? [index] : []);
+    const serialIndices = header.flatMap((value, index) => /SN|序號/i.test(String(value)) && !/摘要/.test(String(value)) ? [index] : []);
+    const summaryIndices = header.flatMap((value, index) => /摘要/.test(String(value)) ? [index] : []);
     const nameIndex = header.findIndex(value => String(value).includes('品項名稱'));
     const quantityIndex = header.findIndex(value => String(value).includes('數量'));
     const modelIndex = header.findIndex(value => /品項型號|型號|Product Code/.test(String(value)));
@@ -123,6 +137,8 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const actualSNIndex=actualIndices[0]??-1;
     const dedicatedSerialColumn = summaryIndex >= 0 && !String(header[summaryIndex]).includes('摘要');
     const items = [];
+    const shippingNotes = [];
+    let shippingNotesCharacters = 0;
     const seenSerials = new Set();
     let totalQuantity = 0;
     const lastContentIndex = data.findLastIndex(row => row.some(value => String(value ?? '').trim()));
@@ -132,6 +148,29 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
         const barcode = String(row[barcodeIndex] ?? '').trim();
         const rawName = String(row[nameIndex] ?? '').trim();
         const rawQuantity = String(row[quantityIndex] ?? '').trim();
+        if (itemCodeIndex >= 0 && String(row[itemCodeIndex] ?? '').trim() === 'WMS-NOTE') {
+            try {
+                if (itemCodeIndices.length !== 1) throw invalid('品項編碼欄位重複，無法確認 WMS-NOTE 備註列');
+                if (rawQuantity && !/^[+-]?0+(?:\.0+)?$/.test(rawQuantity)) throw invalid('WMS-NOTE 備註列的數量只能為 0 或空白');
+                if (!rawName) throw invalid('WMS-NOTE 備註列必須在品項名稱填寫備註文字');
+                if (physicalBarcodeIndices.some(column => String(row[column] ?? '').trim())) throw invalid('WMS-NOTE 備註列不可填寫獨立的國際條碼／條碼');
+                if (serialIndices.some(column => String(row[column] ?? '').trim())) throw invalid('WMS-NOTE 備註列不可包含 SN／序號');
+                for (const column of summaryIndices) {
+                    try { parseSerials(row[column], 'WMS-NOTE', 0, false); }
+                    catch { throw invalid('WMS-NOTE 備註列不可在摘要填寫 SN／序號'); }
+                }
+                if (rawName.length > IMPORT_LIMITS.shippingNoteCharacters) throw invalid(`每則出貨備註最多 ${IMPORT_LIMITS.shippingNoteCharacters} 字`, 413);
+                if (shippingNotes.length >= IMPORT_LIMITS.shippingNotes || shippingNotesCharacters + rawName.length > IMPORT_LIMITS.shippingNotesCharacters) {
+                    throw invalid(`每單出貨備註最多 ${IMPORT_LIMITS.shippingNotes} 則、合計 ${IMPORT_LIMITS.shippingNotesCharacters} 字`, 413);
+                }
+                shippingNotes.push({ sourceRow: index + 1, text: rawName });
+                shippingNotesCharacters += rawName.length;
+                continue;
+            } catch (error) {
+                if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${index + 1} 列：${error.message}`;
+                throw error;
+            }
+        }
         if (!barcode && !rawName && !rawQuantity) continue;
         if (/^(?:合計|總計|小計|備註|以下空白|TOTAL|SUBTOTAL)[:：]?$/i.test(barcode) && !rawName) continue;
         if (isBarcodeHeader(barcode) && rawName.includes('品項名稱') && rawQuantity.includes('數量')) continue;
@@ -175,7 +214,7 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const positiveQuantity = totalQuantity - negativeQuantity;
     const signedTotalQuantity = positiveQuantity - negativeQuantity;
     const documentType = negativeQuantity ? positiveQuantity ? 'adjustment' : 'reversal' : 'shipment';
-    return { voucherNumber, customerName, items, totalQuantity, serialCount: seenSerials.size,
+    return { voucherNumber, customerName, items, shippingNotes, totalQuantity, serialCount: seenSerials.size,
         documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
 }
 
