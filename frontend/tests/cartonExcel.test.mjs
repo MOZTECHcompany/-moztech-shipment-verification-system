@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { parseCartonExcel } from '../src/utils/cartonExcel.js';
+import { parseCartonExcel, resolveCartonExcelItems } from '../src/utils/cartonExcel.js';
 
 const require = createRequire(import.meta.url);
 const XLSX = require('xlsx');
@@ -17,6 +17,40 @@ function workbook(rows, configure, { name = '箱號明細', dense = false } = {}
 const parse = book => parseCartonExcel(book, XLSX);
 const simple = (...rows) => workbook([header, ...rows]);
 const snList = (prefix, count) => Array.from({ length: count }, (_, index) => `${prefix}-${index}`).join(',');
+
+test('ERP carton export imports whole and tail cartons with source batch and typed identifiers', async () => {
+    const book = workbook([
+        ['國際條碼', '品名', '產品型號', '數量', '箱號', 'SN', '品號', '內部掃描碼', '來源系統', '來源識別'],
+        ['04711299273087', '測試商品', 'MODEL-A', 2, 'CTN-001', '00001,00002', '000077', '', 'corely-erp-sn-labels', 'batch-123'],
+        ['', '無 SN', 'MODEL-B', 1, 'CTN-002', '', '000078', 'ITM-NOSN', 'corely-erp-sn-labels', 'batch-456'],
+    ]);
+    const manifest = await resolveCartonExcelItems(parse(book), () => assert.fail('Explicit SKU does not require lookup'));
+    assert.equal(manifest.cartons[0].sourceReference, 'batch-123');
+    assert.equal(manifest.cartons[0].sourceSystem, 'corely-erp-sn-labels');
+    assert.equal(manifest.cartons[0].lines[0].itemCode, '000077');
+    assert.deepEqual(manifest.cartons[0].lines[0].actualSN, ['00001', '00002']);
+    assert.equal(manifest.cartons[1].lines[0].quantity, 1);
+    assert.equal(manifest.cartons[1].lines[0].internalScanCode, 'ITM-NOSN');
+    assert.deepEqual(manifest.cartons[1].lines[0].actualSN, []);
+});
+
+test('v5 feedback workbook uses exact active ECOUNT match, never the model as product code', async () => {
+    const barcode = '4711299271052';
+    const book = workbook([
+        ['國際條碼(必填)', '品名(必填)', '產品型號', '數量(必填)', '箱號(必填)', 'SN'],
+        [barcode, '測試商品', 'MOA11', 2, 'CTN-001', 'SN001,SN002'],
+    ], undefined, { name: '箱號明細.範本' });
+    const resolve = match => resolveCartonExcelItems(parse(book), async codes => {
+        assert.deepEqual(codes, [barcode]);
+        return { products: { [barcode]: match } };
+    });
+    const product = { erp_sku: 'ERP-001', barcode, active: true };
+    const manifest = await resolve({ status: 'matched', matches: [product] });
+    assert.equal(manifest.cartons[0].lines[0].itemCode, 'ERP-001');
+    assert.equal(manifest.cartons[0].lines[0].excelSource, undefined);
+    await assert.rejects(resolve({ status: 'ambiguous', matches: [product, { ...product, erp_sku: 'ERP-002' }] }), /第 2 列.*無法唯一對應/);
+    await assert.rejects(resolve({ status: 'matched', matches: [{ ...product, barcode: '00001234' }] }), /第 2 列.*無法唯一對應/);
+});
 
 test('real XLSX roundtrip groups nonadjacent carton lines and preserves explicit identities', () => {
     const book = workbook([

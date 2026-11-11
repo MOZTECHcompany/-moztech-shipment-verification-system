@@ -8,7 +8,7 @@ import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
 import { parseSerialInput, cartonSessionKey } from '@/utils/cartonScan';
 import { CartonDialog } from './CartonDialog';
-import { parseCartonExcel } from '@/utils/cartonExcel';
+import { parseCartonExcel, resolveCartonExcelItems } from '@/utils/cartonExcel';
 import templateHref from './cartonImportTemplate.xlsx?url';
 
 const blankLine = () => ({ itemCode: '', productName: '', ean: '', internalScanCode: '', quantity: 10, serialInput: '' });
@@ -79,7 +79,12 @@ export function CartonsPage({ user }) {
                 } catch {
                     throw new Error('無法讀取 Excel，請使用下載的 .xlsx 範本。');
                 }
-                body = parseCartonExcel(workbook, XLSX);
+                body = await resolveCartonExcelItems(parseCartonExcel(workbook, XLSX), async skus => {
+                    ensureCurrent();
+                    const { data } = await api.post('/api/marketplace-products/resolve', { skus });
+                    ensureCurrent();
+                    return data;
+                });
             } else {
                 try {
                     body = JSON.parse(await file.text());
