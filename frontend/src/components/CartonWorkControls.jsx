@@ -32,7 +32,7 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
     const [release, setRelease] = useState(null), [reason, setReason] = useState('');
     const [serialReview, setSerialReview] = useState(null);
     const [splitSerialValue, setSplitSerialValue] = useState('');
-    const readRequest = useRef(0), alive = useRef(true), splitSerialInput = useRef(null);
+    const readRequest = useRef(0), alive = useRef(true), cartonInput = useRef(null), splitSerialInput = useRef(null);
     const clearLookup = () => { readRequest.current++; setReading(false); setBox(null); setSelections([]); setSplitSerialValue(''); };
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
     const orderId = orderData.order?.id;
@@ -62,7 +62,9 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         if (matchedSerials.length && !selected.size && stage === 'pick') setError('貼紙含已分配的 SN，請逐件掃描本次要揀的 SN');
     };
     useEffect(() => {
-        if (open && box && stage === 'pick' && !blocked) splitSerialInput.current?.focus();
+        if (!open || blocked) return;
+        if (box && stage === 'pick' && splitSerialInput.current) splitSerialInput.current.focus();
+        else if (!box) cartonInput.current?.focus();
     }, [open, box, stage, blocked]);
     const reviewStale = serialReview && (serialReview.expectedState !== orderData.stateToken || serialReview.type !== stage
         || serialReview.session !== cartonSessionKey(api, user) || !/^[0-9a-f]{64}$/.test(serialReview.expectedState || ''));
@@ -215,7 +217,7 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold flex items-center gap-2"><Box size={18} />箱號作業</h3><Button size="sm" variant="secondary" disabled={blocked || !stage} onClick={() => { setScanValue(''); clearLookup(); setError(''); setOpen(true); }}>掃箱／拆箱</Button></div>
         <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" disabled={reading} onClick={() => { setError(''); setDetailsOpen(true); loadShipments().catch(err => setError(message(err))); }}>箱號明細</Button><Button size="sm" variant="secondary" disabled={reading} onClick={exportFile}><FileDown size={14} />匯出對照</Button></div>
         <CartonDialog open={open} title={stage === 'pack' ? '箱號裝箱核對' : '箱號揀貨'} onClose={() => { if (!blocked) { clearLookup(); setOpen(false); } }} footer={<><Button variant="secondary" disabled={blocked || !scanValue.trim() || !!box?.matchedSerials?.length} onClick={() => submit(scanValue.trim(), stage)}>整箱{stage === 'pack' ? '裝箱' : '揀貨'}</Button>{stage === 'pick' && box && !showSerialScanner && <Button disabled={blocked} onClick={split}>確認拆箱揀貨</Button>}</>}>
-            <div className="flex gap-2"><input autoFocus aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (!reading && !blocked) void lookup(); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
+            <div className="flex gap-2"><input ref={cartonInput} aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (!reading && !blocked) void lookup(); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
             {box && <p className="mt-3 text-sm font-medium">來源箱號 {box.cartonId}</p>}
             {box?.matchedSerials?.length > 0 && stage === 'pack' && <p className="mt-2 text-sm">請掃描來源箱號做裝箱核對</p>}
             {showSerialScanner && <div className="mt-3">
