@@ -33,6 +33,7 @@ export function CartonsPage({ user }) {
     const [query, setQuery] = useState(''), [cartons, setCartons] = useState([]), [detail, setDetail] = useState(null);
     const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
     const [editor, setEditor] = useState(null), [lines, setLines] = useState([blankLine()]), [label, setLabel] = useState(null);
+    const [importedBatch, setImportedBatch] = useState(null), [checkedCartons, setCheckedCartons] = useState(new Set());
     const importRef = useRef(null), mutationRef = useRef(false), listRequest = useRef(0), detailRequest = useRef(0);
     const alive = useRef(true);
     useEffect(() => { alive.current = true; return () => { alive.current = false; listRequest.current++; detailRequest.current++; }; }, []);
@@ -95,7 +96,40 @@ export function CartonsPage({ user }) {
                     throw new Error('請選擇 Excel 範本或有效的箱號 JSON 檔。');
                 }
             }
-            ensureCurrent(); await api.post('/api/cartons/import', { ...body, expectedActorId: user.id }); ensureCurrent(); toast.success(`已匯入 ${body.cartons.length} 箱`);
+            ensureCurrent();
+            const { data } = await api.post('/api/cartons/import', { ...body, expectedActorId: user.id });
+            ensureCurrent();
+            if (!Array.isArray(data?.items) || data.items.length !== body.cartons.length || data.items.some(item =>
+                !item?.carton || item.carton.cartonId !== item.cartonId || !Number.isSafeInteger(item.carton.contentRevision) || !Array.isArray(item.carton.lines))) {
+                throw new Error('匯入結果不完整，請重新查詢箱號。');
+            }
+            setCheckedCartons(new Set());
+            setImportedBatch({ session: cartonSessionKey(api, user), items: data.items.map(({ carton }) => ({
+                cartonId: carton.cartonId, status: carton.status, contentRevision: carton.contentRevision,
+                quantity: carton.lines.reduce((sum, line) => sum + line.quantity, 0),
+                serialCount: carton.lines.reduce((sum, line) => sum + line.actualSN.length, 0),
+            })) });
+        });
+    };
+    const visibleBatch = canManage && importedBatch?.session === cartonSessionKey(api, user) ? importedBatch : null;
+    const drafts = visibleBatch?.items.filter(carton => carton.status === 'draft') || [];
+    const selectedCartons = drafts.filter(carton => checkedCartons.has(carton.cartonId));
+    const confirmBatch = () => {
+        if (!selectedCartons.length) return;
+        void mutate(async ensureCurrent => {
+            const cartons = selectedCartons.map(({ cartonId, contentRevision }) => ({ cartonId, expectedContentRevision: contentRevision }));
+            ensureCurrent();
+            const { data } = await api.post('/api/cartons/seal-batch', { cartons, expectedActorId: user.id }, { timeout: 30000 });
+            ensureCurrent();
+            const results = new Map(Array.isArray(data?.items) ? data.items.map(item => [item?.cartonId, item]) : []);
+            if (results.size !== cartons.length || cartons.some(item => results.get(item.cartonId)?.status !== 'sealed'
+                || results.get(item.cartonId)?.contentRevision !== item.expectedContentRevision)) {
+                throw new Error('尚未收到完整確認結果，可再次確認同一批箱號。');
+            }
+            setImportedBatch(batch => batch === visibleBatch ? { ...batch, items: batch.items.map(item =>
+                results.has(item.cartonId) ? { ...item, status: 'sealed' } : item) } : batch);
+            setCheckedCartons(new Set());
+            toast.success(`所選 ${cartons.length} 箱均已確認`);
         });
     };
     const seal = () => mutate(async ensureCurrent => {
@@ -120,6 +154,30 @@ export function CartonsPage({ user }) {
         <input aria-label="搜尋箱號或品號" placeholder="搜尋箱號或品號" value={query} onChange={e => setQuery(e.target.value)} className={`${inputClass} max-w-sm`} />
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
         <div className="overflow-x-auto rounded-xl border bg-white"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr><th className="p-3">箱號</th><th>狀態</th><th>品項</th><th>剩餘／總件數</th></tr></thead><tbody>{cartons.map(c => <tr key={c.cartonId} className="border-t"><td className="p-3"><button className="text-blue-700 underline break-all" onClick={() => open(c.cartonId)}>{c.cartonId}</button></td><td>{c.status === 'sealed' ? '已確認' : '待確認'}</td><td>{c.lines?.length ?? c.lineCount ?? '—'}</td><td>{c.lines ? `${c.lines.reduce((s,l)=>s+l.remainingQuantity,0)}／${c.lines.reduce((s,l)=>s+l.quantity,0)}` : `${c.remainingQuantity ?? '—'}／${c.quantity ?? '—'}`}</td></tr>)}</tbody></table>{loading && <p role="status" className="p-4">載入中…</p>}{!loading && !cartons.length && <p className="p-6 text-slate-500">尚無符合的箱號</p>}</div>
+        <CartonDialog open={!!visibleBatch} title="匯入箱號結果" onClose={() => { if (!busy) setImportedBatch(null); }}
+            footer={<><Button variant="secondary" disabled={busy} onClick={() => setImportedBatch(null)}>關閉</Button>
+                {!!drafts.length && <Button disabled={busy || !selectedCartons.length} onClick={confirmBatch}>確認所選 {selectedCartons.length} 箱</Button>}</>}>
+            {visibleBatch && <>
+                <p className="font-medium" role="status">本次匯入檔案共 {visibleBatch.items.length} 箱，{drafts.length} 箱待確認。</p>
+                {!!drafts.length && <p className="mt-1 text-sm text-slate-600">請先核對箱內實物，再勾選要確認的箱號。未勾選的箱子仍會保留待確認。</p>}
+                {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
+                {!!drafts.length && <Button variant="secondary" className="my-3" disabled={busy} onClick={() =>
+                    setCheckedCartons(new Set(selectedCartons.length === drafts.length ? [] : drafts.map(item => item.cartonId)))}>
+                    {selectedCartons.length === drafts.length ? '取消全選' : '全選待確認箱'}
+                </Button>}
+                <ul className="max-h-72 divide-y overflow-y-auto border-y">
+                    {visibleBatch.items.map(item => <li key={item.cartonId} className="flex items-center justify-between gap-3 px-2 py-2 text-sm">
+                        {item.status === 'draft' ? <label className="flex min-w-0 items-center gap-2">
+                            <input type="checkbox" disabled={busy} checked={checkedCartons.has(item.cartonId)} onChange={event => {
+                                const checked = event.target.checked;
+                                setCheckedCartons(old => { const next = new Set(old); if (checked) next.add(item.cartonId); else next.delete(item.cartonId); return next; });
+                            }} /><span className="break-all">{item.cartonId}</span>
+                        </label> : <span className="min-w-0 break-all">{item.cartonId}</span>}
+                        <span className="shrink-0 text-right text-xs text-slate-600">{item.quantity} 件 · {item.serialCount ? `${item.serialCount} 個 SN` : '無 SN'} · {item.status === 'sealed' ? '已確認' : item.status === 'draft' ? '待確認' : '不可確認'}</span>
+                    </li>)}
+                </ul>
+            </>}
+        </CartonDialog>
         <CartonDialog open={!!editor} title={editor?.editing ? '編輯箱內內容' : '新增箱號'} onClose={() => !busy && setEditor(null)} footer={<><Button variant="secondary" disabled={busy} onClick={() => setEditor(null)}>取消</Button><Button disabled={busy} onClick={save}>儲存</Button></>}>
             {error && <p role="alert" className="mb-3 text-red-700">{error}</p>}
             <label className="block mb-3 text-sm">箱號<input autoFocus value={editor?.cartonId || ''} readOnly={editor?.editing} onChange={e => setEditor({ ...editor, cartonId: e.target.value })} className={inputClass} /></label>

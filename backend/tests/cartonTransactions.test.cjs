@@ -80,6 +80,67 @@ async function suite(t, postgres) {
         assert.equal((await api(1, 'patch', '/api/cartons/REVISION', { expectedContentRevision: 2, lines: box('x', 3).lines })).body.code, 'CARTON_CONTENT_LOCKED');
         assert.ok(ok(await api(2, 'get', '/api/cartons?q=ITEM')).items.length);
     });
+    await t.test('selected imported drafts confirm together, preserve exact SN/quantity, and replay without duplicate history', async () => {
+        const ids = ['BATCH-SEAL-SN', 'BATCH-SEAL-PLAIN', 'BATCH-SEAL-UNSELECTED'];
+        const sn = 'Batch-Seal-Exact-SN';
+        const imported = ok(await api(1, 'post', '/api/cartons/import', { format: 'corely-cartons-v1',
+            cartons: [box(ids[0], 1, [sn]), box(ids[1], 10), box(ids[2], 2)] }));
+        assert.equal(imported.items.length, 3);
+        assert.ok(imported.items.every(item => item.carton.status === 'draft' && item.carton.contentRevision === 1));
+        const command = { cartons: ids.slice(0, 2).map(cartonId => ({ cartonId, expectedContentRevision: 1 })) };
+        assert.equal((await api(2, 'post', '/api/cartons/seal-batch', command)).status, 403);
+        assert.equal((await api(5, 'post', '/api/cartons/seal-batch', command)).status, 403);
+        assert.equal((await api(1, 'post', '/api/cartons/seal-batch', { ...command, expectedActorId: 5 })).body.code, 'CARTON_ACTOR_CHANGED');
+        assert.equal((await api(1, 'post', '/api/cartons/seal-batch', { cartons: [command.cartons[0], command.cartons[0]] })).status, 400);
+        const confirmed = ok(await api(1, 'post', '/api/cartons/seal-batch', command));
+        assert.deepEqual(confirmed.items.map(item => [item.cartonId, item.status, item.stateRevision, item.alreadyConfirmed]),
+            ids.slice(0, 2).map(id => [id, 'sealed', 2, false]));
+        assert.equal(ok(await api(1, 'get', `/api/cartons/${ids[2]}`)).status, 'draft');
+        const plain = ok(await api(1, 'get', `/api/cartons/${ids[1]}`));
+        const serial = ok(await api(1, 'get', `/api/cartons/${ids[0]}`));
+        assert.equal(plain.lines[0].remainingQuantity, 10);
+        assert.deepEqual(serial.lines[0].remainingSN, [sn]);
+        assert.equal(serial.history.filter(event => event.event_type === 'sealed' && event.actor_id === 1).length, 1);
+        const replay = ok(await api(1, 'post', '/api/cartons/seal-batch', command));
+        assert.deepEqual(replay.items, confirmed.items.map(item => ({ ...item, alreadyConfirmed: true })));
+        assert.deepEqual(ok(await api(1, 'get', `/api/cartons/${ids[0]}`)), serial);
+    });
+    await t.test('a later occupied SN or stale revision leaves every selected draft and audit trail untouched', async () => {
+        const clearId = 'BATCH-SEAL-A-CLEAR', conflictId = 'BATCH-SEAL-Z-CONFLICT', sn = 'Batch-Seal-Occupied-SN';
+        await create({ ...box(clearId, 3), seal: false });
+        await create({ ...box(conflictId, 1, [sn]), seal: false });
+        const { item } = await f.seedOrder({ quantity: 1, actualSN: [sn] });
+        await f.db.query("UPDATE order_item_instances SET status='picked' WHERE order_item_id=$1", [item.id]);
+        const command = { cartons: [conflictId, clearId].map(cartonId => ({ cartonId, expectedContentRevision: 1 })) };
+        const occupied = await api(1, 'post', '/api/cartons/seal-batch', command);
+        assert.equal(occupied.status, 409);
+        assert.equal(occupied.body.code, 'CARTON_SN_OCCUPIED');
+        assert.match(occupied.body.message, new RegExp(conflictId));
+        const assertClearDraft = async () => {
+            const current = ok(await api(1, 'get', `/api/cartons/${clearId}`));
+            assert.equal(current.status, 'draft');
+            assert.equal(current.stateRevision, 1);
+            assert.deepEqual(current.history.map(row => row.event_type), ['created']);
+        };
+        await assertClearDraft();
+        ok(await api(1, 'patch', `/api/cartons/${conflictId}`, { expectedContentRevision: 1, lines: box('x', 2).lines }));
+        const stale = await api(1, 'post', '/api/cartons/seal-batch', command);
+        assert.equal(stale.status, 409);
+        assert.equal(stale.body.code, 'CARTON_CONTENT_CHANGED');
+        await assertClearDraft();
+    });
+    await t.test('batch confirmation with a lost commit response can be retried at the original revisions', async () => {
+        const ids = ['BATCH-ACK-01', 'BATCH-ACK-02'];
+        for (const id of ids) await create({ ...box(id, 1), seal: false });
+        const body = { cartons: ids.map(cartonId => ({ cartonId, expectedContentRevision: 1 })) };
+        f.failAfterNext(sql => sql === 'COMMIT');
+        const unknown = await api(1, 'post', '/api/cartons/seal-batch', body);
+        assert.equal(unknown.status, 503);
+        assert.match(unknown.body.message, /再次確認同一批箱號/);
+        const recovered = ok(await api(1, 'post', '/api/cartons/seal-batch', body));
+        assert.ok(recovered.items.every(item => item.status === 'sealed' && item.alreadyConfirmed && item.stateRevision === 2));
+        for (const id of ids) assert.equal(ok(await api(1, 'get', `/api/cartons/${id}`)).history.filter(row => row.event_type === 'sealed').length, 1);
+    });
     await t.test('10 ordinary units pick once, pack same allocation without deducting remaining twice', async () => {
         await create(box('ORDINARY'));
         const { order } = await f.seedOrder();

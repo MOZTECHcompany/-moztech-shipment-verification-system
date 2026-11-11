@@ -133,16 +133,17 @@ function createCartonService({ pool }) {
         await insertLines(db, input.cartonId, input.lines);
         await history(db, input.cartonId, 'created', user, input);
     }
-    async function sealed(db, carton, user) {
-        if (carton.status === 'sealed') return;
+    async function sealed(db, carton, user, { serialLocksHeld = false } = {}) {
+        if (carton.status === 'sealed') return carton;
         if (carton.status !== 'draft') throw fail('CARTON_NOT_DRAFT', '只有草稿箱可以封箱');
         const sns = carton.lines.flatMap(line => line.actualSN);
-        await lockCartonSerials(db, sns);
+        if (!serialLocksHeld) await lockCartonSerials(db, sns);
         if (sns.length && (await db.query("SELECT 1 FROM order_item_instances WHERE serial_number=ANY($1::text[]) AND status<>'pending' LIMIT 1", [sns])).rows.length) {
             throw fail('CARTON_SN_OCCUPIED', '箱內 SN 已揀貨或裝箱，請先核對實物與原訂單；未封箱');
         }
-        await db.query("UPDATE wms_cartons SET status='sealed',sealed_at=NOW(),state_revision=state_revision+1,updated_by=$2,updated_at=NOW() WHERE carton_id=$1", [carton.cartonId, user.id]);
+        const result = await db.query("UPDATE wms_cartons SET status='sealed',sealed_at=NOW(),state_revision=state_revision+1,updated_by=$2,updated_at=NOW() WHERE carton_id=$1 RETURNING *", [carton.cartonId, user.id]);
         await history(db, carton.cartonId, 'sealed', user, { content: carton.lines });
+        return asCarton(result.rows[0]);
     }
     async function create(body, actor) {
         const input = normalizeCarton(body);
@@ -231,6 +232,52 @@ function createCartonService({ pool }) {
             if (carton.contentRevision !== body.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新載入');
             await sealed(db, carton, user);
             return readCarton(db, cartonId);
+        });
+    }
+    async function sealBatch(body, actor) {
+        if (!Array.isArray(body?.cartons) || !body.cartons.length || body.cartons.length > 100) {
+            throw fail('CARTON_INVALID_INPUT', '每次請選擇 1 至 100 箱確認', 400);
+        }
+        const requests = body.cartons.map(entry => ({ cartonId: text(entry?.cartonId, '箱號', { max: 128 }),
+            expectedContentRevision: revision(entry?.expectedContentRevision) }));
+        if (new Set(requests.map(entry => entry.cartonId)).size !== requests.length) {
+            throw fail('CARTON_INVALID_INPUT', '同批不可重複選擇同一箱號', 400);
+        }
+        const identify = (error, cartonId) => {
+            if (Number.isInteger(error.status)) error.message = `整批未確認。箱號 ${cartonId}：${error.message}`;
+            throw error;
+        };
+        return transaction(async db => {
+            const user = await staff(db, actor, true);
+            expectedActor(body, user, true);
+            const cartons = [];
+            // Match manifest import's carton lock order, then lock the combined
+            // SN set before any confirmation so other writers see one boundary.
+            for (const entry of [...requests].sort((a,b) => a.cartonId.localeCompare(b.cartonId))) {
+                try {
+                    const carton = await readCarton(db, entry.cartonId, true);
+                    if (carton.contentRevision !== entry.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新核對後再確認');
+                    cartons.push(carton);
+                } catch (error) { identify(error, entry.cartonId); }
+            }
+            const sns = cartons.filter(carton => carton.status === 'draft').flatMap(carton => carton.lines.flatMap(line => line.actualSN));
+            if (sns.length > 10000) throw fail('CARTON_INVALID_INPUT', '每次確認最多 10000 個 SN，請分批確認', 400);
+            await lockCartonSerials(db, sns);
+            const results = new Map();
+            for (const carton of cartons) {
+                try {
+                    // Same immutable content revision is safe to replay after
+                    // an uncertain response or concurrent single confirmation.
+                    const confirmed = await sealed(db, carton, user, { serialLocksHeld: true });
+                    results.set(carton.cartonId, { cartonId: carton.cartonId, status: confirmed.status,
+                        contentRevision: confirmed.contentRevision, stateRevision: confirmed.stateRevision,
+                        sealedAt: confirmed.sealedAt, alreadyConfirmed: carton.status === 'sealed' });
+                } catch (error) { identify(error, carton.cartonId); }
+            }
+            return { items: requests.map(entry => results.get(entry.cartonId)) };
+        }).catch(error => {
+            if (error.code === 'SCAN_RESULT_UNKNOWN') error.message = '尚未收到確認結果。請重新核對，或再次確認同一批箱號；已確認的箱子不會重複處理。';
+            throw error;
         });
     }
     async function orderSnapshot(db, orderId, lock = false) {
@@ -471,6 +518,6 @@ function createCartonService({ pool }) {
                 }) })) };
         }, { readOnly: true });
     }
-    return { create, importManifest, list, get, lookup, edit, seal, preview, scan, release, shipments };
+    return { create, importManifest, list, get, lookup, edit, seal, sealBatch, preview, scan, release, shipments };
 }
 module.exports = { createCartonService };

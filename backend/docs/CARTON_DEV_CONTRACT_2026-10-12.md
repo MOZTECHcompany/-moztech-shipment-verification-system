@@ -57,6 +57,15 @@ GET `/api/cartons?q=&limit=` searches ID/item code; GET `/lookup?scanValue=`
 resolves QR, GET `/:cartonId` returns detail. PATCH `/:cartonId` takes
 `{expectedContentRevision,expectedActorId?,lines}` and only edits an unused
 draft. POST `/:cartonId/seal` takes `{expectedContentRevision,expectedActorId?}`.
+`POST /api/cartons/seal-batch` takes `{cartons:[{cartonId,expectedContentRevision}],expectedActorId}`.
+Only a warehouse administrator can confirm 1–100 distinct boxes, with at most
+10000 SNs in the selected drafts. This is a separate, explicit confirmation
+after checking the physical contents; import itself stays draft. The entire
+selection either succeeds or remains unchanged. A sealed box at the same
+content revision is returned with `alreadyConfirmed: true`, without a new
+history entry or any quantity change. A stale revision or conflicting SN
+blocks the selection and identifies the affected box. The response's `items`
+carry current status and revisions, in request order.
 Contents have an immutable sealed revision/history; `stateRevision` changes
 with allocations and packing independently of `contentRevision`.
 
