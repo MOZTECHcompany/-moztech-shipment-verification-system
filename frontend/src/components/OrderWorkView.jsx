@@ -406,7 +406,7 @@ function AuthenticatedOrderWorkView({ user }) {
         if (currentOrderData.order?.id && isWorkspaceFocusIdle()) barcodeInputRef.current?.focus();
     }, [currentOrderData.order?.id]);
 
-    const fetchOrderDetails = useCallback(async (id) => {
+    const fetchOrderDetails = useCallback(async (id, { retryTransientSnapshot = false } = {}) => {
         if (!id) return;
         const sequence = ++orderRequestSequenceRef.current;
         const dataVersion = orderDataVersionRef.current;
@@ -417,12 +417,29 @@ function AuthenticatedOrderWorkView({ user }) {
             && String(id) === String(activeOrderIdRef.current);
         const canApply = () => isCurrent() && !scanSubmissionRef.current.isBusy();
         const snapshotPath = `/api/orders/${id}/work-snapshot`;
+        const retryDelays = retryTransientSnapshot ? [500, 1500] : [];
+        const readSnapshot = async () => {
+            for (;;) {
+                try {
+                    return await apiClient.get(snapshotPath, {
+                        timeout: 15000, suppressTransientErrorToast: retryDelays.length > 0,
+                    });
+                } catch (error) {
+                    const transient = [502, 503, 504].includes(error.response?.status)
+                        || (!error.response && ['ERR_NETWORK', 'ECONNABORTED', 'ETIMEDOUT'].includes(error.code));
+                    const delay = retryDelays.shift();
+                    if (!transient || delay === undefined || !canApply()) throw error;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    if (!canApply()) throw error;
+                }
+            }
+        };
         const freightReconciliation = freightReconciliationRef.current;
         let attemptedFreightState = null;
         try {
             setLoading(true);
             setLoadError('');
-            let { data: snapshot } = await apiClient.get(snapshotPath, { timeout: 15000 });
+            let { data: snapshot } = await readSnapshot();
             if (!canApply()) return;
             if (snapshot?.freightReconciliationNeeded === true && typeof snapshot.stateToken === 'string' && snapshot.stateToken) {
                 const stateKey = `${id}:${snapshot.stateToken}`;
@@ -432,7 +449,7 @@ function AuthenticatedOrderWorkView({ user }) {
                     // The detail endpoint rechecks completion under the order lock.
                     await apiClient.get(`/api/orders/${id}`, { timeout: 15000 });
                     if (!canApply()) return;
-                    ({ data: snapshot } = await apiClient.get(snapshotPath, { timeout: 15000 }));
+                    ({ data: snapshot } = await readSnapshot());
                 }
             }
             if (!canApply()) return;
@@ -1688,7 +1705,7 @@ function AuthenticatedOrderWorkView({ user }) {
             });
             if (!result.isConfirmed || !result.value || !current()) return;
             orderDataVersionRef.current++;
-            const snapshot = await fetchOrderDetails(id);
+            const snapshot = await fetchOrderDetails(id, { retryTransientSnapshot: true });
             if (!current()) return;
             if (canOperateWorkStage(user, snapshot?.order, takeover.type)) toast.success(`已${takeoverLabel}`);
             else if (result.value.error) toast.error(result.value.error);

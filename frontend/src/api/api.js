@@ -117,8 +117,9 @@ apiClient.interceptors.response.use(
         const code = data.code || (status === 401 ? 'AUTH_REQUIRED' : status === 403 ? 'FORBIDDEN' : error.code);
         const message = data.message || error.message || '發生未知錯誤';
 
-        // 視情況提示（避免對某些頁面重複彈出可在呼叫端關閉）
-        if (status >= 500 || status === 401 || status === 403) {
+        const retryingRead = error.config?.method === 'get' && error.config.suppressTransientErrorToast === true
+            && [502, 503, 504].includes(status);
+        if (!retryingRead && (status >= 500 || status === 401 || status === 403)) {
             toast.error(message, {
                 description: !getNativeRuntime() && requestId ? `Request ID: ${requestId}` : undefined,
             });

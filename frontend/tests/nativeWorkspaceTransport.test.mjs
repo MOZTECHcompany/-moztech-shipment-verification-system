@@ -41,6 +41,22 @@ test('native adapter preserves transformed mutation body, original credentials, 
     assert.equal(response.status, 201); assert.equal(response.data.commandId, 'original');
     restore();
 });
+test('only an opted-in transient read skips the error toast while keeping the original error', async () => {
+    const { default: api, configureWorkspaceTransport, toasts, reports } = fixture({ native: true });
+    let status;
+    const restore = configureWorkspaceTransport(async () => ({ status, data: { message: `HTTP ${status}` } }));
+    const path = '/api/orders/1/work-snapshot';
+    try {
+        for (status of [502, 503, 504, 500, 401, 403]) {
+            await assert.rejects(api.get(path, { suppressTransientErrorToast: true }), error => error.response.status === status);
+        }
+        status = 503;
+        await assert.rejects(api.get(path), error => error.response.status === 503);
+        await assert.rejects(api.post('/api/tasks/1/transfer', {}, { suppressTransientErrorToast: true }), error => error.response.status === 503);
+        assert.deepEqual(toasts.map(([message]) => message), ['HTTP 500', 'HTTP 401', 'HTTP 403', 'HTTP 503', 'HTTP 503']);
+        assert.equal(reports.length, 8);
+    } finally { restore(); }
+});
 test('native mutation failure is reported once with upstream status and message', async () => {
     const { default: api, configureWorkspaceTransport } = fixture(); let calls = 0;
     const restore = configureWorkspaceTransport(async () => { calls++; return { status: 409, data: { code: 'SCAN_NOT_APPLIED', message: 'State changed' } }; });

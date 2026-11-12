@@ -19,7 +19,7 @@ const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
 // Execute the real component event handlers with controlled hooks and transport.
 // Child components and DOM rendering are omitted; no application server is started.
 function workView({ role = 'picker', deferRead = false, initialData, managementScope: userManagementScope,
-    exceptions = [], userFields = {}, showDialog = () => Promise.resolve({}) } = {}) {
+    exceptions = [], userFields = {}, showDialog = () => Promise.resolve({}), scheduleTimeout } = {}) {
     const order = { id: 1, status: role === 'picker' ? 'picking' : 'packing', picker_id: 1, packer_id: 1 };
     const fixture = initialData || { order, items: [{ id: 11, quantity: 100, picked_quantity: 0, packed_quantity: 0, barcode: 'ITEM' }], instances: [] };
     const states = [fixture, false, ''];
@@ -92,7 +92,7 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => imports[name] || generic,
-        setTimeout: noop, setInterval: () => 1, clearInterval: noop,
+        setTimeout: scheduleTimeout || noop, setInterval: () => 1, clearInterval: noop,
         navigator: {}, console, window: { location: { reload: noop } }
     });
     function render() {
@@ -117,13 +117,15 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
-test('projected warehouse administrator must confirm transfer and reload the assigned order before scanning', async () => {
+test('confirmed manager transfer retries an unavailable snapshot without reposting or enabling the scanner early', async () => {
     const initialData = { order: { id: 1, status: 'picking', picker_id: 2, picker_name: 'Fixture picker' }, items: [], instances: [] };
     const button = view => view.find(view.render(), node => node.props?.children?.includes('接手揀貨'));
     const ordinary = workView({ initialData, userFields: { erpSubject: 'fixture' } });
     assert.equal(button(ordinary), undefined);
     let dialog;
+    const waits = [];
     const manager = workView({ initialData, deferRead: true, userFields: { erpSubject: 'fixture', permissions: ['wms_admin'] },
+        scheduleTimeout: (callback, delay) => waits.push({ callback, delay }),
         showDialog: async options => {
             dialog = options;
             return { isConfirmed: true, value: await options.preConfirm('  接手本班揀貨  ') };
@@ -141,10 +143,51 @@ test('projected warehouse administrator must confirm transfer and reload the ass
     await settle();
     assert.equal(manager.reads[0].url, '/api/orders/1/work-snapshot');
     assert.equal(manager.input().props.disabled, true);
-    manager.reads[0].resolve({ data: { ...initialData, order: { ...initialData.order, picker_id: 1 } } });
+    manager.reads[0].reject({ response: { status: 502 } });
+    await settle();
+    assert.equal(waits.length, 1);
+    assert.equal(waits[0].delay, 500);
+    assert.equal(manager.input().props.disabled, true);
+    waits.shift().callback();
+    await settle();
+    assert.deepEqual(manager.reads.map(({ url }) => url), Array(2).fill('/api/orders/1/work-snapshot'));
+    manager.reads[1].resolve({ data: { ...initialData, order: { ...initialData.order, picker_id: 1 } } });
     await completion;
+    assert.equal(manager.posts.length, 1);
     assert.equal(manager.input().props.disabled, false);
     assert.equal(button(manager), undefined);
+});
+
+test('post-transfer snapshot retry is bounded and stops on a permission response', async () => {
+    const initialData = { order: { id: 1, status: 'picking', picker_id: 2 }, items: [], instances: [] };
+    for (const errors of [
+        [{ response: { status: 503 } }, { code: 'ERR_NETWORK' }, { response: { status: 504 } }],
+        [{ response: { status: 504 } }, { response: { status: 403 } }],
+    ]) {
+        const waits = [];
+        const manager = workView({ initialData, deferRead: true, userFields: { erpSubject: 'fixture', permissions: ['wms_admin'] },
+            scheduleTimeout: (callback, delay) => waits.push({ callback, delay }),
+            showDialog: async options => ({ isConfirmed: true, value: await options.preConfirm('接手本班揀貨') }) });
+        const button = manager.find(manager.render(), node => node.props?.children?.includes('接手揀貨'));
+        const completion = button.props.onClick();
+        await settle();
+        manager.posts[0].resolve({ data: { message: '任務已成功轉移' } });
+        await settle();
+        for (const [index, error] of errors.entries()) {
+            manager.reads[index].reject(error);
+            await settle();
+            assert.equal(manager.input().props.disabled, true);
+            if (index < errors.length - 1) {
+                assert.equal(waits[0]?.delay, [500, 1500][index]);
+                waits.shift().callback();
+                await settle();
+            }
+        }
+        await completion;
+        assert.equal(waits.length, 0);
+        assert.equal(manager.reads.length, errors.length);
+        assert.equal(manager.posts.length, 1);
+    }
 });
 
 for (const [role, type, status] of [['picker', 'pick', 'picked'], ['packer', 'pack', 'completed']]) {
