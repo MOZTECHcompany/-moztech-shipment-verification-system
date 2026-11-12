@@ -25,7 +25,7 @@ import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/sca
 import { isCartonScan } from '@/utils/cartonScan';
 import { CartonWorkControls } from './CartonWorkControls';
 import SerialList from './SerialList';
-import { buildWorkItems, filterWorkItems, workStage, canOperateWorkStage as canOperateAssignedStage } from '@/utils/orderWorkProgress';
+import { buildWorkItems, filterWorkItems, workStage, managerTakeover, canOperateWorkStage as canOperateAssignedStage } from '@/utils/orderWorkProgress';
 import { sourceOrderKey, sourceOrderLabel, groupSourceOrders, findSourceOrders, filterSourceWorkItems, resolveSourceScanTarget, orderChangeItemIdentity } from '@/utils/sourceOrders';
 import voiceNotification from '@/utils/voiceNotification';
 import desktopNotification from '@/utils/desktopNotification';
@@ -296,6 +296,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const [rejectedScan, setRejectedScan] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const scanSubmissionRef = useRef(null);
+    const takeoverPendingRef = useRef(false);
     const cartonScannerRef = useRef(null);
     const cartonRejectedRef = useRef(null);
     if (!scanSubmissionRef.current) scanSubmissionRef.current = createScanSubmission();
@@ -438,6 +439,7 @@ function AuthenticatedOrderWorkView({ user }) {
             if (snapshot?.freightReconciliationNeeded !== true) freightReconciliation.stateKey = null;
             else if (attemptedFreightState) freightReconciliation.stateKey = attemptedFreightState;
             setCurrentOrderData(snapshot);
+            return snapshot;
         } catch (err) {
             if (!isCurrent()) return;
             setLoadError(err.response?.data?.message || '暫時無法更新訂單，請檢查連線後重試。');
@@ -1649,6 +1651,52 @@ function AuthenticatedOrderWorkView({ user }) {
     const orderStatus = currentOrderData.order?.status;
     const canScanNow = canOperateWorkStage(user, currentOrderData.order, 'pick')
         || canOperateWorkStage(user, currentOrderData.order, 'pack');
+    const takeover = managerTakeover(user, currentOrderData.order);
+    const takeoverLabel = takeover?.type === 'pick' ? '接手揀貨' : '接手裝箱';
+    const handleManagerTakeover = async () => {
+        if (!takeover || !orderChangeReady || isUpdating || scanNeedsReview || takeoverPendingRef.current) return;
+        const id = currentOrderData.order.id;
+        const runtime = getNativeRuntime();
+        const current = () => mountedRef.current && isNativeSessionCurrent(runtime) && String(id) === String(activeOrderIdRef.current);
+        takeoverPendingRef.current = true;
+        try {
+            const result = await MySwal.fire({
+                title: takeoverLabel,
+                text: takeover.ownerName ? `目前負責人 ${takeover.ownerName}` : '接手會變更目前作業的負責人',
+                input: 'text',
+                inputLabel: '接手原因',
+                inputAttributes: { maxlength: 500 },
+                inputValidator: value => !value.trim() ? '請輸入接手原因' : undefined,
+                showCancelButton: true,
+                cancelButtonText: '取消',
+                confirmButtonText: '確認接手',
+                showLoaderOnConfirm: true,
+                allowOutsideClick: () => !MySwal.isLoading(),
+                allowEscapeKey: () => !MySwal.isLoading(),
+                preConfirm: async reason => {
+                    if (!current()) return false;
+                    try {
+                        await apiClient.post(`/api/tasks/${id}/transfer`, {
+                            takeover: true, task_type: takeover.type, to_user_id: user.id,
+                            expected_owner_user_id: takeover.ownerId, reason: reason.trim(),
+                        }, { timeout: 15000 });
+                        return { accepted: true };
+                    } catch (error) {
+                        return { error: error.response?.data?.message || '尚未確認接手結果，請重新整理核對負責人' };
+                    }
+                },
+            });
+            if (!result.isConfirmed || !result.value || !current()) return;
+            orderDataVersionRef.current++;
+            const snapshot = await fetchOrderDetails(id);
+            if (!current()) return;
+            if (canOperateWorkStage(user, snapshot?.order, takeover.type)) toast.success(`已${takeoverLabel}`);
+            else if (result.value.error) toast.error(result.value.error);
+            else toast.warning('已送出接手，請重新整理確認作業負責人');
+        } finally {
+            takeoverPendingRef.current = false;
+        }
+    };
 
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(e.currentTarget?.value ?? barcodeInput); } };
     const handleClick = () => { barcodeInputRef.current?.focus(); handleScan(); };
@@ -1866,7 +1914,13 @@ function AuthenticatedOrderWorkView({ user }) {
                                     掃描作業
                                 </h3>
                                 <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品、SN 或箱號，按 Enter 送出</p>
-                                {!canScanNow && canOperate && !['completed', 'voided'].includes(orderStatus) && <p role="status" className="mb-3 text-sm text-amber-800">請先到任務看板認領目前階段。若已由他人認領，需請管理員轉交給你後再核對商品。</p>}
+                                {!canScanNow && canOperate && !['completed', 'voided'].includes(orderStatus) && (takeover
+                                    ? <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-800">
+                                        <span>目前負責人 {takeover.ownerName || '其他作業人員'}</span>
+                                        <Button type="button" size="sm" variant="secondary" onClick={handleManagerTakeover}
+                                            disabled={!orderChangeReady || isUpdating || scanNeedsReview}>{takeoverLabel}</Button>
+                                    </div>
+                                    : <p role="status" className="mb-3 text-sm text-amber-800">請先到任務看板認領目前階段。若已由他人認領，需請管理員轉交給你後再核對商品。</p>)}
                                 <PersonalSoundControls user={user} compact />
                                 <VoiceControls compact />
                                 <div className="mb-4 flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">

@@ -12,7 +12,7 @@ const { logOperation } = require('../services/operationLogService');
 // Legacy comment/mention TIMESTAMP columns contain UTC wall time. Expose them
 // as instants; leave stored values and microsecond cursor text unchanged.
 const router = express.Router();
-const {warehouseOnly,isOrderManager} = require('../utils/managementScope');
+const { warehouseOnly, isOrderManager, isWarehouseAdmin } = require('../utils/managementScope');
 const { deferredEvents } = require('../utils/transactionEvents');
 
 const rateMap = new Map();
@@ -622,28 +622,45 @@ router.get('/tasks/:orderId/sessions', async (req, res) => {
 
 router.post('/tasks/:orderId/transfer', warehouseOnly, async (req, res) => {
     const { orderId } = req.params;
-    const { to_user_id, task_type, reason } = req.body;
+    const { to_user_id, task_type, reason, takeover, expected_owner_user_id } = req.body ?? {};
     const { id: fromUserId, role } = req.user;
-    const isAdmin = ['admin', 'superadmin'].includes(role);
+    const isAdmin = isWarehouseAdmin(req.user);
+    const selfTakeover = takeover === true;
+    const handoverReason = selfTakeover && typeof reason === 'string' ? reason.trim() : reason;
     const events = deferredEvents(req.app.get('io'));
     const fail = (status, message) => Object.assign(new Error(message), { status });
     if (!['pick', 'pack'].includes(task_type) || !Number.isSafeInteger(Number(to_user_id)) || Number(to_user_id) <= 0) return res.status(400).json({ message: '請提供正確的作業類型與接手人員' });
+    const expectedRole = task_type === 'pick' ? 'picker' : 'packer';
+    if (selfTakeover) {
+        const erpStationManager = req.erpSession && req.user.erpSubject && role === expectedRole
+            && req.user.management_scope !== 'orders' && Array.isArray(req.user.permissions)
+            && req.user.permissions.includes('wms_admin');
+        if ((!isAdmin && !erpStationManager) || Number(to_user_id) !== fromUserId) {
+            return res.status(403).json({ message: '僅倉儲管理員可在目前工作站接手給自己' });
+        }
+        if (!Number.isSafeInteger(expected_owner_user_id) || expected_owner_user_id <= 0 || expected_owner_user_id === fromUserId
+            || typeof handoverReason !== 'string' || !handoverReason || handoverReason.length > 500) {
+            return res.status(400).json({ message: '請核對原負責人並填寫接手原因（最多 500 字）' });
+        }
+    }
     let client, transactionOpen = false, commitAttempted = false, releaseError;
     try {
         client = await pool.connect();
         await client.query('BEGIN'); transactionOpen = true;
-        const order = (await client.query('SELECT id, status, picker_id, packer_id FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
+        const order = (await client.query('SELECT id, status, picker_id, packer_id, warehouse_hold FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到指定訂單');
-        const expectedRole = task_type === 'pick' ? 'picker' : 'packer';
         const owner = task_type === 'pick' ? order.picker_id : order.packer_id;
-        if (!isAdmin && (role !== expectedRole || owner !== fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
+        if (!selfTakeover && !isAdmin && (role !== expectedRole || owner !== fromUserId)) throw fail(403, '僅能轉交自己負責的作業');
         if (order.status !== (task_type === 'pick' ? 'picking' : 'packing')) throw fail(409, '僅能轉交進行中的同階段作業');
+        if (selfTakeover && (owner !== expected_owner_user_id || order.warehouse_hold)) throw fail(409, '作業負責人或可接手狀態已變更，請重新載入核對');
         const target = (await client.query('SELECT id, role, management_scope FROM users WHERE id=$1 FOR SHARE', [to_user_id])).rows[0];
         if (!target || isOrderManager(target) || ![expectedRole, 'admin', 'superadmin'].includes(target.role)) throw fail(400, '接手人員沒有此作業的權限');
-        await client.query('INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason) VALUES ($1,$2,$3,$4,$5)', [orderId, fromUserId, to_user_id, task_type, reason]);
+        const previousOwner = selfTakeover ? owner : fromUserId;
+        await client.query('INSERT INTO task_assignments (order_id, from_user_id, to_user_id, task_type, reason) VALUES ($1,$2,$3,$4,$5)', [orderId, previousOwner, to_user_id, task_type, handoverReason]);
         await client.query(task_type === 'pick' ? 'UPDATE orders SET picker_id=$1, updated_at=NOW() WHERE id=$2' : 'UPDATE orders SET packer_id=$1, updated_at=NOW() WHERE id=$2', [to_user_id, orderId]);
-        await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', details: { to_user_id, task_type, reason }, db: client, io: events });
-        events.emit('task_transferred', { orderId, from_user_id: fromUserId, to_user_id, task_type });
+        const details = { to_user_id, task_type, reason: handoverReason, ...(selfTakeover ? { takeover: true, previous_owner_user_id: owner } : {}) };
+        await logOperation({ userId: fromUserId, orderId, operationType: 'transfer', details, db: client, io: events });
+        events.emit('task_transferred', { orderId, from_user_id: previousOwner, to_user_id, task_type });
         commitAttempted = true; await client.query('COMMIT'); transactionOpen = false;
         events.publish();
         res.json({ message: '任務已成功轉移' });

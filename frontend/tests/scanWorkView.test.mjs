@@ -18,7 +18,8 @@ const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
 
 // Execute the real component event handlers with controlled hooks and transport.
 // Child components and DOM rendering are omitted; no application server is started.
-function workView({ role = 'picker', deferRead = false, initialData, managementScope: userManagementScope, exceptions = [] } = {}) {
+function workView({ role = 'picker', deferRead = false, initialData, managementScope: userManagementScope,
+    exceptions = [], userFields = {}, showDialog = () => Promise.resolve({}) } = {}) {
     const order = { id: 1, status: role === 'picker' ? 'picking' : 'packing', picker_id: 1, packer_id: 1 };
     const fixture = initialData || { order, items: [{ id: 11, quantity: 100, picked_quantity: 0, packed_quantity: 0, barcode: 'ITEM' }], instances: [] };
     const states = [fixture, false, ''];
@@ -85,7 +86,7 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
         '@/utils/soundNotification': { play: sound => sounds.push(sound) },
         '@/utils/voiceNotification': { speakScanSuccess: (...args) => spoken.push(['progress', ...args]), speakScanError: (...args) => spoken.push(['error', ...args]), speakOperationError: noop, speakTaskComplete: type => spoken.push(['complete', type]) },
         '@/utils/desktopNotification': { notifyScanError: noop },
-        'sweetalert2-react-content': () => ({ fire: () => Promise.resolve({}) })
+        'sweetalert2-react-content': () => ({ fire: showDialog })
     };
     const generic = new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) });
     const module = { exports: {} };
@@ -96,7 +97,7 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
     });
     function render() {
         stateCursor = 0; refCursor = 0; effects.length = 0;
-        const shell = module.exports.OrderWorkView({ user: { id: 1, role, management_scope: userManagementScope } });
+        const shell = module.exports.OrderWorkView({ user: { id: 1, role, management_scope: userManagementScope, ...userFields } });
         return typeof shell.type === 'function' ? shell.type(shell.props) : shell;
     }
     function find(tree, predicate) {
@@ -115,6 +116,36 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
 }
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+test('projected warehouse administrator must confirm transfer and reload the assigned order before scanning', async () => {
+    const initialData = { order: { id: 1, status: 'picking', picker_id: 2, picker_name: 'Fixture picker' }, items: [], instances: [] };
+    const button = view => view.find(view.render(), node => node.props?.children?.includes('接手揀貨'));
+    const ordinary = workView({ initialData, userFields: { erpSubject: 'fixture' } });
+    assert.equal(button(ordinary), undefined);
+    let dialog;
+    const manager = workView({ initialData, deferRead: true, userFields: { erpSubject: 'fixture', permissions: ['wms_admin'] },
+        showDialog: async options => {
+            dialog = options;
+            return { isConfirmed: true, value: await options.preConfirm('  接手本班揀貨  ') };
+        } });
+    assert.equal(manager.input().props.disabled, true);
+    const completion = button(manager).props.onClick();
+    await settle();
+    assert.equal(dialog.inputValidator('  '), '請輸入接手原因');
+    assert.equal(manager.posts.length, 1);
+    assert.equal(manager.posts[0].url, '/api/tasks/1/transfer');
+    assert.deepEqual(JSON.parse(JSON.stringify(manager.posts[0].body)), {
+        takeover: true, task_type: 'pick', to_user_id: 1, expected_owner_user_id: 2, reason: '接手本班揀貨',
+    });
+    manager.posts[0].resolve({ data: { message: '任務已成功轉移' } });
+    await settle();
+    assert.equal(manager.reads[0].url, '/api/orders/1/work-snapshot');
+    assert.equal(manager.input().props.disabled, true);
+    manager.reads[0].resolve({ data: { ...initialData, order: { ...initialData.order, picker_id: 1 } } });
+    await completion;
+    assert.equal(manager.input().props.disabled, false);
+    assert.equal(button(manager), undefined);
+});
 
 for (const [role, type, status] of [['picker', 'pick', 'picked'], ['packer', 'pack', 'completed']]) {
     test(`${role} final accepted scan announces completion before return and ignores late duplicate socket`, async () => {

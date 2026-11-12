@@ -1,7 +1,21 @@
+import { isWarehouseAdmin } from './managementScope.js';
+
 export function workStage(role, status) {
     if (role === 'picker') return 'pick';
     if (role === 'packer') return 'pack';
     return status === 'pending' || status === 'picking' ? 'pick' : 'pack';
+}
+
+export function managerTakeover(user, order) {
+    const picking = order?.status === 'picking';
+    if ((!picking && order?.status !== 'packing') || order.warehouse_hold) return null;
+    const role = picking ? 'picker' : 'packer';
+    const projectedManager = user?.erpSubject && user.role === role && user.management_scope !== 'orders'
+        && Array.isArray(user.permissions) && user.permissions.includes('wms_admin');
+    if (!isWarehouseAdmin(user) && !projectedManager) return null;
+    const ownerId = order[picking ? 'picker_id' : 'packer_id'];
+    if (!Number.isSafeInteger(ownerId) || ownerId <= 0 || ownerId === user.id) return null;
+    return { type: picking ? 'pick' : 'pack', ownerId, ownerName: order[picking ? 'picker_name' : 'packer_name'] };
 }
 
 // Index serials once per response instead of re-scanning all serials for every card.

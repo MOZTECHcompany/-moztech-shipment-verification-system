@@ -853,6 +853,41 @@ test('a barcode-only SKU mismatch cannot bind untracked, wrong, ambiguous, or si
     rejected(carton, [item], assigned, { mode: 'whole', serialPolicy: 'from-carton' });
 });
 
+test('verified ERP picking manager can take over only as the audited new owner', async t => {
+    const f = await createCartonFixture();
+    f.attachLegacyRoutes({ transferActors: new Map([
+        [2, { user: { id: 2, role: 'picker', erpSubject: 'fixture-ordinary' }, erpSession: 'verified' }],
+        [3, { user: { id: 3, role: 'packer', erpSubject: 'fixture-packer', permissions: ['wms_admin'] }, erpSession: 'verified' }],
+        [6, { user: { id: 6, role: 'picker', erpSubject: 'fixture-manager', permissions: ['wms_admin'] }, erpSession: 'verified' }],
+    ]) });
+    const server = await new Promise(resolve => { const listener = f.app.listen(0, '127.0.0.1', () => resolve(listener)); });
+    t.after(async () => { await new Promise(resolve => server.close(resolve)); await f.close(); });
+    const { order } = await f.seedOrder({ quantity: 10, pickerId: 2 });
+    await f.service.create({ cartonId: 'CTN-TAKEOVER', seal: true,
+        lines: [{ itemCode: 'ITEM', ean: '4710000000010', quantity: 10, actualSN: [] }] }, { id: 1 });
+    const carton = { scanValue: 'CTN-TAKEOVER', type: 'pick', expectedActorId: 6 };
+    const preview = actor => request(server).post(`/api/orders/${order.id}/carton-preview`).set('x-fixture-user', String(actor))
+        .send({ ...carton, expectedActorId: actor });
+    const transfer = (actor, overrides = {}) => request(server).post(`/api/tasks/${order.id}/transfer`)
+        .set('x-fixture-user', String(actor)).send({ takeover: true, to_user_id: actor, task_type: 'pick',
+            expected_owner_user_id: 2, reason: '  Synthetic shift handoff  ', ...overrides });
+    assert.equal((await preview(6)).body.code, 'CARTON_NOT_ASSIGNED');
+    assert.equal((await transfer(2, { expected_owner_user_id: 6 })).status, 403);
+    assert.equal((await transfer(3)).status, 403);
+    assert.equal((await transfer(6, { to_user_id: 1 })).status, 403);
+    assert.equal((await transfer(6, { reason: ' ' })).status, 400);
+    assert.equal((await transfer(6, { expected_owner_user_id: 3 })).status, 409);
+    const accepted = await transfer(6);
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.equal((await transfer(6)).status, 409);
+    assert.equal((await preview(2)).body.code, 'CARTON_NOT_ASSIGNED');
+    assert.equal((await preview(6)).status, 200);
+    const assignments = (await f.db.query('SELECT from_user_id,to_user_id,task_type,reason FROM task_assignments WHERE order_id=$1', [order.id])).rows;
+    assert.deepEqual(assignments, [{ from_user_id: 2, to_user_id: 6, task_type: 'pick', reason: 'Synthetic shift handoff' }]);
+    const audit = (await f.db.query("SELECT user_id,details::jsonb AS details FROM operation_logs WHERE order_id=$1 AND action_type='transfer'", [order.id])).rows;
+    assert.deepEqual(audit, [{ user_id: 6, details: { to_user_id: 6, task_type: 'pick', reason: 'Synthetic shift handoff', takeover: true, previous_owner_user_id: 2 } }]);
+});
+
 test('carton HTTP + PostgreSQL semantics on disposable PGlite (transactions serialized)', { timeout: 120000 }, t => suite(t, false));
 test('carton HTTP + actual multi-connection PostgreSQL lock contention on disposable loopback database', {
     skip: process.env.WMS_CARTON_PG !== '1', timeout: 120000

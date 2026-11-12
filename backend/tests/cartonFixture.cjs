@@ -93,7 +93,7 @@ async function createCartonFixture({ postgres = false } = {}) {
         if (actualSN.length) await db.query('INSERT INTO order_item_instances(order_item_id,serial_number) SELECT $1,unnest($2::text[])', [item.id, actualSN]);
         return { order, item };
     }
-    function attachLegacyRoutes() {
+    function attachLegacyRoutes({ transferActors } = {}) {
         // Only this synthetic process: inject the disposable pool before loading
         // the unchanged production router/auth/audit logic. Never read DB env.
         const databasePath = require.resolve('../src/config/database'), prior = require.cache[databasePath];
@@ -101,6 +101,17 @@ async function createCartonFixture({ postgres = false } = {}) {
         for (const path of ['../src/routes/orderRoutes','../src/services/operationLogService','../src/services/orderReviewService','../src/services/reconcilePicking']) delete require.cache[require.resolve(path)];
         try {
             app.use('/api', require('../src/routes/orderRoutes'));
+            if (transferActors) {
+                app.use('/api/tasks/:orderId/transfer', (req, res, next) => {
+                    const actor = transferActors.get(req.user?.id);
+                    if (!actor) return res.sendStatus(401);
+                    req.user = actor.user;
+                    req.erpSession = actor.erpSession;
+                    next();
+                });
+                delete require.cache[require.resolve('../src/routes/commentRoutes')];
+                app.use('/api', require('../src/routes/commentRoutes'));
+            }
             app.use((error, req, res, next) => res.status(error.status ?? 500).json({ code: error.code, message: error.message }));
         } finally { if (prior) require.cache[databasePath] = prior; else delete require.cache[databasePath]; }
     }
