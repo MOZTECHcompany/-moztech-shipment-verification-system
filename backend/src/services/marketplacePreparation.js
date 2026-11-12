@@ -2,6 +2,8 @@ const {createHash,randomBytes}=require('node:crypto');
 const {lookupProducts,oneShopProductMatch,previewCatalogMappingIssues}=require('./marketplaceProductCatalog');
 const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
 const {resolveShopifyStore}=require('./shopifyStoreRouting');
+const {createVerificationCache}=require('./marketplaceVerificationCache');
+const {verifiedFulfilledOrderNumbers}=require('./shopifyFulfillmentStatus');
 const {createShoplineOrderVerifier}=require('./shoplineOrderVerification');
 const {createOneShopOrderVerifier}=require('./oneShopOrderVerification');
 const {safeSettings}=require('./marketplaceSettings');
@@ -11,6 +13,16 @@ const clean=value=>String(value??'').trim();
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=(message,code='MARKETPLACE_INVALID',status=400)=>Object.assign(new Error(message),{status,code});
 const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+// The ERP bridge has a 60s limit for the entire request. Keep space for local
+// validation and, on confirmation, the database transaction.
+const createMarketplaceVerificationScope=()=>({deadline:Date.now()+40000,shopifyReads:new Map()});
+const shopifyTimeout=()=>fail('Shopify 核對逾時，請重試；未使用舊資料','SHOPIFY_TIMEOUT',503);
+async function awaitShopifyRead(promise,deadline){
+ let timer;
+ try{return await Promise.race([promise,new Promise((_,reject)=>{
+  timer=setTimeout(()=>reject(shopifyTimeout()),Math.max(0,deadline-Date.now()));
+ })]);}finally{clearTimeout(timer);}
+}
 
 function deliveryForOrders(source,parsed){
  const headers=source.rows[0],values=new Map();let last='';
@@ -59,17 +71,14 @@ function selectProfile(profiles,platform,input={}){
 function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVerifier(),verifyShopline=createShoplineOrderVerifier(),verifyOneShop=createOneShopOrderVerifier(),resolveProducts=lookupProducts,classifyReimports=classifyMarketplaceReimports}={}){
  // Short-lived preview reuse avoids sending Shopify another request for each
  // settings blur. Saving always performs a new read before committing.
- const cache=new Map();
- async function currentPlatform(platform,rows,context,refresh){
-  const key=digest([platform,context,platform==='Shopify'&&typeof verifyShopify.registryFingerprint==='function'?verifyShopify.registryFingerprint():null,rows]),previous=cache.get(key);
-  if(!refresh&&previous&&previous.expires>Date.now())return previous.promise;
+ const cache=createVerificationCache();
+ function currentPlatform(platform,rows,context,refresh,deadline){
+  const key=digest([platform,context,platform==='Shopify'&&typeof verifyShopify.registryFingerprint==='function'?verifyShopify.registryFingerprint():null,rows]);
   const verifier=platform==='Shopify'?verifyShopify:platform==='SHOPLINE'?verifyShopline:verifyOneShop;
-  const promise=verifier(rows,context);
-  cache.set(key,{expires:Date.now()+15000,promise});
-  if(cache.size>16)cache.delete(cache.keys().next().value);
-  try{return await promise;}catch(e){cache.delete(key);throw e;}
+  return cache(key,{refresh},()=>verifier(rows,deadline===undefined?context:{...context,deadline}));
  }
  return async function prepare(input={},options={}){
+  const scope=options.verificationScope||createMarketplaceVerificationScope();
   const {inspectMarketplaceRows,parseUnifiedMarketplace,prepareUnifiedMarketplace}=await import('./unifiedMarketplace.mjs');
   const source=inspectMarketplaceRows(input.rows);
   const profiles=(await pool.query('SELECT id,platform,store,settings,updated_at FROM marketplace_store_profiles ORDER BY platform,store')).rows;
@@ -80,12 +89,25 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(source.platform==='Shopify'){
    // The built-in verifier always resolves a persisted store binding first.
    // Plain injected functions remain an internal test seam, never a request flag.
-   let context={};
-   if(typeof verifyShopify.listConnections==='function'&&typeof verifyShopify.probe==='function'){
-    const resolved=await resolveShopifyStore({rows:source.rows,profiles,input,verifier:verifyShopify,refresh:options.refresh===true});
-    profile=resolved.profile;context=resolved.context;resolvedShopify=true;
+   let registryFingerprint;
+   try{registryFingerprint=verifyShopify.registryFingerprint?.();}catch{registryFingerprint=null;}
+   const readKey=digest([source.rows,clean(input.profileId),profiles.filter(value=>value.platform==='Shopify'),registryFingerprint]);
+   if(!scope.shopifyReads.has(readKey)){
+    if(Date.now()>=scope.deadline)throw shopifyTimeout();
+    const read=(async()=>{
+     let resolved=null;
+     const refresh=options.refresh===true;
+     if(typeof verifyShopify.listConnections==='function'&&typeof verifyShopify.probe==='function'){
+      resolved=await resolveShopifyStore({rows:source.rows,profiles,input,verifier:verifyShopify,refresh,deadline:scope.deadline});
+     }
+     if(Date.now()>=scope.deadline)throw shopifyTimeout();
+     const result=await currentPlatform(source.platform,source.rows,resolved?.context||{},refresh,scope.deadline);
+     return {resolved,result};
+    })();
+    scope.shopifyReads.set(readKey,awaitShopifyRead(read,scope.deadline));
    }
-   const result=await currentPlatform(source.platform,source.rows,context,options.refresh===true);
+   const {resolved,result}=await scope.shopifyReads.get(readKey);
+   if(resolved){profile=resolved.profile;resolvedShopify=true;}
    verifiedRows=result.rows;verification=result.verification?{...result.verification,mode:'api',platform:source.platform,currentFingerprint:digest([result.verification.shop,result.rows,result.verification.fingerprint||null])}:null;
   }
   if(!profile)profile=selectProfile(profiles,source.platform,{...input,shopifyShop:verification?.shop});
@@ -156,6 +178,12 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(barcodeCurrent)require('./shopifyOrderReview').applyShopifyOrderReviews(barcodeRaw,verification);
   const eligible=prepareUnifiedMarketplace(barcodeRaw,settingsInput).parsed;
   if(eligible.items.length>1000||eligible.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
+  const lineIdentity=(number,id)=>JSON.stringify([number,id]);
+  const eligibleLineCounts=new Map();
+  for(const item of eligible.items){
+   const key=lineIdentity(item.sourceOrderNumber,item.sourceLineId);
+   eligibleLineCounts.set(key,(eligibleLineCounts.get(key)||0)+1);
+  }
   const eligibleIdentity=eligible.items.map(item=>[item.sourceOrderNumber,item.sourceLineId,item.sku,item.quantity]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   if(verification&&source.platform==='Shopify')verification={...verification,currentFingerprint:digest([verification.currentFingerprint,sourceClassification.fingerprint,profile,source.rows,eligibleIdentity])};
   const barcodeScope={version:'uploaded-eligible-v1',fingerprint:digest([verification?.currentFingerprint,profile?.id||null,eligibleIdentity]),orderCount:eligible.orders.length,itemCount:eligible.items.length};
@@ -217,6 +245,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
      barcode:verified?.barcode||'',barcodeMissing:!verified?.barcode,sourceVerified:Boolean(verified||aggregateVerified)};
    });
    const missingBarcode=source.platform==='Shopify'&&relatedOrders.some(value=>value.barcodeMissing);
+   const identityBlocked=source.platform==='Shopify'&&relatedOrders.some(value=>eligibleLineCounts.get(lineIdentity(value.orderNumber,value.sourceLineId))>1);
    const completeVariants=source.platform!=='Shopify'||Boolean(relatedOrders.length&&
     relatedOrders.every(value=>value.sourceVerified&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId)&&
      value.barcode&&value.barcode===apiBarcode)&&
@@ -224,10 +253,10 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    if(source.platform==='Shopify'&&!completeVariants)incompleteSources.add(sku);
    // A scan may supplement only wholly blank, fully identified Shopify
    // versions and one exact active ERP target. It never changes API evidence.
-   const physicalEligible=Boolean(source.platform==='Shopify'&&!catalogBlocked&&p&&targets.length===1&&relatedOrders.length&&
+   const physicalEligible=Boolean(source.platform==='Shopify'&&!identityBlocked&&!catalogBlocked&&p&&targets.length===1&&relatedOrders.length&&
     relatedOrders.every(value=>value.barcodeMissing&&/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId))&&
     new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length);
-   const internalEligible=Boolean(verification?.mode==='api'&&!catalogBlocked&&p&&!p.barcode&&targets.length===1&&relatedOrders.length&&
+   const internalEligible=Boolean(verification?.mode==='api'&&!identityBlocked&&!catalogBlocked&&p&&!p.barcode&&targets.length===1&&relatedOrders.length&&
     relatedOrders.every(value=>value.sourceVerified&&value.barcodeMissing&&(source.platform!=='Shopify'||/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(value.variantId)))&&
     (source.platform!=='Shopify'||new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length)&&
     new Set(relatedOrders.map(value=>JSON.stringify([value.orderNumber,value.sourceLineId]))).size===relatedOrders.length);
@@ -235,18 +264,18 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    // same actual API barcode and one exact, active ERP barcode target.
    const sharedVariants=source.platform==='Shopify'&&variantIds.length>1&&targets.length===1&&
     Boolean(p?.barcode&&p.barcode===apiBarcode);
-   if(!internalEligible&&!physicalEligible&&!missingBarcode&&!catalogBlocked&&targets.length<=1&&!(p?.barcode&&apiBarcode&&p.barcode!==apiBarcode)&&completeVariants&&(variantIds.length<=1||sharedVariants)&&!(targets.length&&!p))continue;
+   if(!identityBlocked&&!internalEligible&&!physicalEligible&&!missingBarcode&&!catalogBlocked&&targets.length<=1&&!(p?.barcode&&apiBarcode&&p.barcode!==apiBarcode)&&completeVariants&&(variantIds.length<=1||sharedVariants)&&!(targets.length&&!p))continue;
    // An ambiguous or inactive original identity remains blocked, even if the
    // other exact string happens to name an active product.
    if(!targets.length&&!p&&!missingBarcode)continue;
    const common={sourceLines:eligible.items.filter(i=>i.sku===sku).map(i=>[i.sourceOrderNumber,i.sourceLineId,i.quantity]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),profileId:profile?.id,platform:source.platform,shop:verification?.shop||profile?.settings?.apiConnectionId||'',sourceSku:sku,sourceBarcode:apiBarcode||'',sourceName:[...new Set(eligible.items.filter(i=>i.sku===sku).map(i=>i.productName))].sort().join(' / '),variantIds};
    const candidates=targets.map(product=>barcodeReviewCandidate({...common,product}));
-   sourceCandidates.push({sku,common,targets,candidates,relatedOrders,catalogBlocked,physicalEligible,internalEligible,
+   sourceCandidates.push({sku,common,targets,candidates,relatedOrders,identityBlocked,catalogBlocked,physicalEligible,internalEligible,
     requestedInternalScanCode:Object.hasOwn(requested,'internalScanCode')?clean(requested.internalScanCode):undefined,
     requestedScanCodeType:requested.scanCodeType,
     requestedPhysicalBarcode:Object.hasOwn(supplied.skuMappings?.[sku]||{},'physicalBarcode')?clean(supplied.skuMappings[sku].physicalBarcode):undefined,
     proposedTarget:clean(supplied.skuMappings?.[sku]?.erpSku),
-    reviewReason:catalogBlocked?'ERP_AMBIGUOUS':missingBarcode?'SOURCE_BARCODE_MISSING':incompleteSources.has(sku)?'SOURCE_VARIANT_MISSING':targets.length>1?'ERP_TARGET_REQUIRED':!p?.barcode?'ERP_BARCODE_MISSING':variantIds.length>1?'MULTIPLE_VARIANTS':'BARCODE_MISMATCH'});
+    reviewReason:identityBlocked?'SOURCE_LINE_ID_COLLISION':catalogBlocked?'ERP_AMBIGUOUS':missingBarcode?'SOURCE_BARCODE_MISSING':incompleteSources.has(sku)?'SOURCE_VARIANT_MISSING':targets.length>1?'ERP_TARGET_REQUIRED':!p?.barcode?'ERP_BARCODE_MISSING':variantIds.length>1?'MULTIPLE_VARIANTS':'BARCODE_MISMATCH'});
   }
   const internalSkus=sourceCandidates.filter(value=>value.internalEligible).map(value=>value.sku);
   const internalReviews=profile&&internalSkus.length?await readInternalScanReviews(pool,profile.id,internalSkus):[];
@@ -284,7 +313,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   // server-verified order + line + SKU + quantity + variant evidence.
   const salesProjections=new Map(),confirmationProjections=new Map();
   for(const value of sourceCandidates)for(const candidate of value.candidates){
-   if(!candidate.canConfirm||source.platform==='Shopify'&&value.relatedOrders.some(line=>!line.sourceVerified||!candidate.variantIds.includes(line.variantId)||line.barcode!==candidate.sourceBarcode))continue;
+   if(value.identityBlocked||!candidate.canConfirm||source.platform==='Shopify'&&value.relatedOrders.some(line=>!line.sourceVerified||!candidate.variantIds.includes(line.variantId)||line.barcode!==candidate.sourceBarcode))continue;
    const projections=new Map();
    for(const scope of [salesEligible,...(draftEligible?[draftEligible]:[])]){
    const lines=scope.items.filter(item=>item.sku===value.sku);
@@ -328,7 +357,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
    const invalidSelection=Boolean(value.proposedTarget&&!value.candidates.some(candidate=>candidate.erpSku===value.proposedTarget));
    const selectedErpSku=selected?.erpSku||'';
    const candidate={...(selected||barcodeReviewCandidate(value.common)),
-    canConfirm:Boolean(selected?.canConfirm&&!invalidSelection&&!value.catalogBlocked&&
+    canConfirm:Boolean(selected?.canConfirm&&!invalidSelection&&!value.catalogBlocked&&!value.identityBlocked&&
      (value.internalMode?value.internalCatalogSafe:value.physicalEligible?value.physicalCatalogSafe:!incompleteSources.has(value.sku))),
     ...(value.internalEligible?{canEnterInternalScanCode:!invalidSelection,requiresInternalScanCode:Boolean(value.internalMode)}:{}),
     ...(value.physicalEligible&&!value.internalMode?{requiresPhysicalBarcode:true,canEnterPhysicalBarcode:!invalidSelection}:{}),
@@ -382,7 +411,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   if(prepared.parsed.items.length>1000||prepared.parsed.summary.totalQuantity>50000)throw fail('本批超過 1,000 商品列或 50,000 件，請分批轉檔');
   if(prepared.parsed.orders.some(o=>!clean(o.sourceOrderNumber)||clean(o.sourceOrderNumber).length>100))throw fail('商城訂單號最多 100 字');
   if(clean(settings.store).length>100||clean(settings.customerCode).length>30||clean(settings.warehouseCode).length>30)throw fail('店鋪、客戶或倉庫欄位過長');
-  return {source,raw,...prepared,...orderReview,reimports,newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,barcodeScope,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,orderReviews:orderReview.orderReviews,...(draftSourceReview?{draftSourceReview}:{})}};
+  return {source,raw,...prepared,...orderReview,reimports,excludedFulfilled:verifiedFulfilledOrderNumbers(verification),newOrderCount:prepared.parsed.orders.length,sourceClassification,settings:prepared.effectiveSettings||settings,verification,barcodeScope,catalog,barcodeConflicts,barcodeReviews,barcodeReviewCandidates:reviewCandidates,profiles:profiles.filter(p=>p.platform===source.platform),profileId:profile?String(profile.id):'',sourceEvidence:{rows:source.rows,verification,orderReviews:orderReview.orderReviews,...(draftSourceReview?{draftSourceReview}:{})}};
  };
 }
-module.exports={createMarketplacePreparation,deliveryForOrders,selectProfile};
+module.exports={createMarketplacePreparation,createMarketplaceVerificationScope,deliveryForOrders,selectProfile,verifiedFulfilledOrderNumbers};

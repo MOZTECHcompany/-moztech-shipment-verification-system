@@ -49,6 +49,53 @@ test('same SKU across live variants requires explicit original line identity',()
  const good=projectDraftSource(table([row(sku,{'Lineitem id':f.a.id})]),f.live,f.verification,[number]);
  expect(good.rows).toHaveLength(2);
 });
+function sameVariantPromotion(){
+ const f=fixture();
+ Object.assign(f.b,{sku,variantId:f.a.variantId,barcode:f.a.barcode});
+ const paid=row(sku,{Subtotal:'971.00',Shipping:'80.00',Total:'1051.00','Discount Amount':'1009.00','Lineitem price':'990.00','Lineitem discount':'0.00'});
+ const gift={...paid,'Lineitem discount':'990.00'};
+ const live=table([
+  {...paid,'Lineitem id':f.a.id,'Lineitem discount':'19.00'},
+  {...gift,'Lineitem id':f.b.id},
+ ]);
+ return {...f,paid,gift,live};
+}
+test('a same-variant promotion without CSV line IDs retains both authoritative lines and their discounts',()=>{
+ const {paid,gift,live,verification}=sameVariantPromotion();
+ for(const [first,second] of [[paid,gift],[gift,paid]]){
+  const continuation=Object.fromEntries(Object.entries(second).map(([field,value])=>[field,field==='Name'||field.startsWith('Lineitem ')?value:'']));
+  const projected=projectDraftSource(table([first,continuation]),live,verification,[number]);
+  expect(projected.rows).toEqual(live);
+ }
+});
+test.each([
+ ['row missing',({paid})=>[paid]],
+ ['changed quantity',({paid,gift})=>[paid,{...gift,'Lineitem quantity':'2'}]],
+ ['changed unit price',({paid,gift})=>[paid,{...gift,'Lineitem price':'989.00'}]],
+ ['changed discount allocation',({paid,gift})=>[{...paid,'Lineitem discount':'20.00'},{...gift,'Lineitem discount':'989.00'}]],
+ ['changed free-item discount',({paid,gift})=>[paid,{...gift,'Lineitem discount':'989.00'}]],
+ ['changed order total',({paid,gift})=>[{...paid,Total:'1050.00'},gift]],
+ ['conflicting continuation totals',({paid,gift})=>[paid,{...gift,Total:'1050.00'}]],
+ ['changed delivery details',({paid,gift})=>[{...paid,'Shipping Method':'另一種物流'},gift]],
+ ['repeated explicit line ID',({paid,gift,a})=>[{...paid,'Lineitem id':a.id},{...gift,'Lineitem id':a.id}]],
+])('a same-variant promotion requires line identities when the upload has %s',(_change,sourceRows)=>{
+ const f=sameVariantPromotion();
+ expect(()=>projectDraftSource(table(sourceRows(f)),f.live,f.verification,[number])).toThrow('無法唯一');
+});
+test('matching quantities and discounts cannot disambiguate distinct Shopify variants',()=>{
+ const f=sameVariantPromotion();
+ f.b.variantId='gid://shopify/ProductVariant/999';
+ expect(()=>projectDraftSource(table([f.paid,f.gift]),f.live,f.verification,[number])).toThrow('無法唯一');
+});
+test('two paid same-variant lines require matching allocations before the live lines are retained',()=>{
+ const f=sameVariantPromotion();
+ const paid={...f.paid,Subtotal:'1461.00',Total:'1541.00','Discount Amount':'519.00'};
+ const other={...paid,'Lineitem discount':'500.00'};
+ const allocated={...paid,'Lineitem discount':'19.00'};
+ const live=table([{...allocated,'Lineitem id':f.a.id},{...other,'Lineitem id':f.b.id}]);
+ expect(()=>projectDraftSource(table([paid,other]),live,f.verification,[number])).toThrow('無法唯一');
+ expect(projectDraftSource(table([other,allocated]),live,f.verification,[number]).rows).toEqual(live);
+});
 test('foreign order ID, unknown SKU, duplicate line and absent variant fail closed',()=>{
  for(const source of [table([row(sku,{Id:'999'})]),table([row('UNKNOWN')]),table([row(),row()])]){
   const f=fixture();expect(()=>projectDraftSource(source,f.live,f.verification,[number])).toThrow();

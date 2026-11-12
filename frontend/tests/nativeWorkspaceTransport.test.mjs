@@ -11,7 +11,7 @@ function fixture({ native = false } = {}) {
     const module = { exports: {} };
     const toasts = [], reports = [];
     const values = new Map([['wms_token', JSON.stringify('token-A')], ['wms_user', JSON.stringify({ id: 7, role: 'dispatcher' })]]);
-    vm.runInNewContext(code, { module, exports: module.exports, AbortController, console, sessionStorage: { getItem: key => values.get(key) },
+    vm.runInNewContext(code, { module, exports: module.exports, AbortController, setTimeout, clearTimeout, console, sessionStorage: { getItem: key => values.get(key) },
         require: name => name === 'axios' ? axios : name === './origin' ? { API_ORIGIN: '' } : name === '../workspace/nativeRuntime' ? { getNativeRuntime: () => native ? {} : null } : name === 'sonner' ? { toast: { error: (...args) => toasts.push(args) } } : { captureException: (...args) => reports.push(args) } });
     return { ...module.exports, toasts, reports };
 }
@@ -63,4 +63,19 @@ test('adapter rejects absolute or outside-WMS paths before calling the host', as
     const restore = configureWorkspaceTransport(async () => { calls++; return { status: 200, data: {} }; });
     for (const path of ['https://elsewhere.test/api/tasks', '/health', '//elsewhere.test/api/tasks']) await assert.rejects(api.get(path), /WMS API path/);
     assert.equal(calls, 0); restore();
+});
+
+test('native adapter enforces the request timeout even when the host does not settle', async () => {
+    const { default: api, configureWorkspaceTransport } = fixture();
+    let signal, calls = 0;
+    const restore = configureWorkspaceTransport(config => {
+        calls++;
+        signal = config.signal;
+        return new Promise(() => {});
+    });
+    try {
+        await assert.rejects(api.post('/api/marketplace-intakes/preview', {}, { timeout: 5 }), error => error.code === 'ECONNABORTED');
+        assert.equal(calls, 1);
+        assert.equal(signal.aborted, true);
+    } finally { restore(); }
 });

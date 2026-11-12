@@ -1,4 +1,5 @@
 const {createHash}=require('node:crypto');
+const {createMarketplaceVerificationScope}=require('./marketplacePreparation');
 const clean=value=>String(value??'').trim();
 const clone=value=>JSON.parse(JSON.stringify(value));
 const fail=(message,code='MARKETPLACE_DRAFT_CHANGED',status=409)=>Object.assign(new Error(message),{status,code});
@@ -124,7 +125,7 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
   return {batches,numbers,ids,identities:batches.flatMap(value=>value.sources.map(source=>[source.source_platform,source.source_store,source.source_order_number])).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))};
  }
  const fingerprint=(context,conversion,body,omittedChecks)=>hash({context,rows:body.rows,settings:{...conversion.settings,batchNumber:undefined,date:undefined},verification:conversion.verification?.orders,sourceReview:conversion.sourceEvidence?.draftSourceReview,omittedChecks});
- async function checkOmitted(context,body){
+ async function checkOmitted(context,body,verificationScope){
   const result={},business=require('./marketplaceShipping').business;
   for(const {batch,sources} of context.batches){
    const numbers=sources.filter(source=>source.draft_active!==false&&!context.numbers.includes(source.source_order_number)).map(source=>source.source_order_number);
@@ -132,7 +133,7 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
    const checks=Object.fromEntries(numbers.map(number=>[number,{canKeep:false,keepBlockedReason:'未能即時核對原訂單，請重新查核或明確移出本批'}]));
    try{
     const rows=mergedRows(batch.snapshot.sourceEvidence?.rows,null,new Set(numbers),new Set(),batch.source_platform);
-    const fresh=await prepareMarketplace({rows,settings:batch.snapshot.settings,profileId:body.profileId},{refresh:true});
+    const fresh=await prepareMarketplace({rows,settings:batch.snapshot.settings,profileId:body.profileId},{refresh:true,verificationScope});
     const previous=batch.snapshot.sourceEvidence?.verification,current=fresh.verification;
     if(batch.source_platform!=='Shopify'||current?.platform!==previous?.platform||current?.shop!==previous?.shop||current?.version!=='shopify-current-v2'||current.orders?.length!==numbers.length)throw fail('原訂單來源身分不完整');
     for(const number of numbers){
@@ -151,12 +152,13 @@ function createMarketplaceDraftOverwriteService({pool,prepareMarketplace,enabled
   return result;
  }
  async function collect(body,refresh){
-  const initial=await prepareMarketplace(body,{refresh});
+  const verificationScope=createMarketplaceVerificationScope();
+  const initial=await prepareMarketplace(body,{refresh,verificationScope});
   const context=await readContext(pool,initial);
-  const conversion=await prepareMarketplace(body,{refresh:false,overwriteOrderNumbers:context.numbers});
+  const conversion=await prepareMarketplace(body,{refresh:false,verificationScope,overwriteOrderNumbers:context.numbers});
   if(conversion.reviewRequired===true)throw fail('請使用整份比對助理核對取消品項與本次轉檔內容','SHOPIFY_REVIEW_REQUIRED',400);
   conversion.uploadedNumbers=new Set(context.numbers);
-  const omittedChecks=await checkOmitted(context,body);
+  const omittedChecks=await checkOmitted(context,body,verificationScope);
   return {context,conversion,omittedChecks,previewFingerprint:fingerprint(context,conversion,body,omittedChecks)};
  }
  async function preview(body,user){

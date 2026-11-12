@@ -1,6 +1,8 @@
 const { createHash } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
 const {createConnectionRegistry}=require('./shopifyStoreRouting');
 const {createShopifyTokenProvider}=require('./shopifyTokenProvider');
+const {createVerificationCache}=require('./marketplaceVerificationCache');
 
 const VERSION = 'shopify-current-v2';
 const STORE_QUERY='query WmsStoreIdentity($ids: [ID!]!) { shop { myshopifyDomain } nodes(ids: $ids) { ... on Order { id name } } }';
@@ -8,9 +10,15 @@ const MAX_SOURCE_ROWS = 1000;
 const MAX_ORDERS = 250;
 const MAX_ORDER_LINES = 1000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const ORDER_PAGE_SIZE = 100;
+const SMALL_ORDER_PAGE_SIZE = 25;
+const ORDER_READ_CONCURRENCY = 4;
+const VERIFICATION_BUDGET_MS = 50000;
+const STORE_PROBE_BUDGET_MS = 10000;
+const THROTTLE_RETRIES = 2;
 const MONEY_FIELDS = ['currentSubtotalPriceSet', 'currentShippingPriceSet', 'currentTotalDiscountsSet', 'currentTotalTaxSet', 'currentTotalPriceSet', 'totalOutstandingSet', 'totalReceivedSet', 'totalRefundedSet'];
 const MONEY_SELECTION = '{ shopMoney { amount currencyCode } }';
-const QUERY = `query WmsCurrentOrder($id: ID!, $after: String) {
+const QUERY = `query WmsCurrentOrder($id: ID!, $after: String, $first: Int!) {
   shop { myshopifyDomain }
   order(id: $id) {
     id name updatedAt createdAt edited cancelledAt currencyCode presentmentCurrencyCode taxesIncluded
@@ -37,7 +45,7 @@ const QUERY = `query WmsCurrentOrder($id: ID!, $after: String) {
         pageInfo { hasNextPage endCursor }
       }
     }
-    lineItems(first: 100, after: $after) {
+    lineItems(first: $first, after: $after) {
       nodes {
         id name sku quantity currentQuantity unfulfilledQuantity requiresShipping taxable
         originalUnitPriceSet ${MONEY_SELECTION}
@@ -65,6 +73,57 @@ const REFUND_QUERY = `query WmsRefundPage($id: ID!, $lineAfter: String, $transac
 const text = value => value == null ? '' : String(value).trim();
 const fail = (code, message, orderNumber, status = 400) => { throw Object.assign(new Error(message), { code, status, ...(orderNumber ? { orderNumber } : {}) }); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const deadlineFor = (deadline, budget) => Math.min(Number.isFinite(deadline) ? deadline : Infinity, Date.now() + budget);
+const timeoutError = () => Object.assign(new Error('Shopify 核對逾時，請重試；未使用舊資料'), { status: 503, code: 'SHOPIFY_TIMEOUT' });
+const throttleError = retryAfterMs => Object.assign(new Error('Shopify 目前讀單繁忙，請稍後重新核對'), { status: 503, code: 'SHOPIFY_THROTTLED', retryAfterMs });
+
+function throttleDelay(response, payload) {
+  const retryAfter = response.headers?.get?.('retry-after');
+  const retrySeconds = /^\d+(?:\.\d+)?$/.test(retryAfter || '') ? Number(retryAfter) : NaN;
+  if (Number.isFinite(retrySeconds) && retrySeconds <= Number.MAX_SAFE_INTEGER / 1000) return Math.max(100, Math.ceil(retrySeconds * 1000));
+  const retryDate = Date.parse(retryAfter);
+  if (Number.isFinite(retryDate)) return Math.max(100, retryDate - Date.now());
+  const cost = payload?.extensions?.cost;
+  const { currentlyAvailable, restoreRate } = cost?.throttleStatus || {};
+  if (Number.isFinite(cost?.requestedQueryCost) && Number.isFinite(currentlyAvailable) && Number.isFinite(restoreRate) && restoreRate > 0) {
+    const restoreDelay = Math.ceil((cost.requestedQueryCost - currentlyAvailable) * 1000 / restoreRate);
+    if (Number.isSafeInteger(restoreDelay)) return Math.max(100, restoreDelay + 100);
+  }
+  return 1000;
+}
+
+function createRequestBudget() {
+  let active = 0;
+  const waiting = new Set();
+  return {
+    until: 0,
+    async acquire(deadline, signal) {
+      signal?.throwIfAborted();
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw timeoutError();
+      if (active < ORDER_READ_CONCURRENCY) { active++; return; }
+      await new Promise((resolve, reject) => {
+        function finish(error) {
+          waiting.delete(takeSlot);
+          signal?.removeEventListener('abort', abort);
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve();
+        }
+        const takeSlot = () => finish();
+        const abort = () => finish(signal.reason);
+        const timer = setTimeout(() => finish(timeoutError()), remaining);
+        waiting.add(takeSlot);
+        signal?.addEventListener('abort', abort, { once: true });
+      });
+    },
+    release() {
+      const next = waiting.values().next().value;
+      if (next) next();
+      else active--;
+    },
+  };
+}
 
 function domain(value) {
   const normalized = text(value).toLowerCase();
@@ -114,25 +173,57 @@ function sourceOrders(rows) {
   return { headers, orders: [...orders.values()] };
 }
 
-async function requestOrder(options, id, after, deadline, document) {
+async function requestOrder(options, deadline, document) {
+  const { budget, signal } = options;
+  await budget.acquire(deadline, signal);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      signal?.throwIfAborted();
+      // All requests using this connection honor a reported bucket cooldown.
+      while (budget.until > Date.now()) {
+        const wait = budget.until - Date.now();
+        if (budget.until >= deadline) throw throttleError(wait);
+        await delay(wait, undefined, { signal });
+      }
+      try { return await requestOrderOnce(options, deadline, document); }
+      catch (error) {
+        if (error.code !== 'SHOPIFY_THROTTLED') throw error;
+        budget.until = Math.max(budget.until, Date.now() + error.retryAfterMs);
+        if (attempt >= THROTTLE_RETRIES || budget.until >= deadline) throw error;
+      }
+    }
+  } finally { budget.release(); }
+}
+
+async function requestOrderOnce(options, deadline, { query, variables, result }) {
   const controller = new AbortController();
-  let timer;
+  let timer, abort;
   const remaining = Math.min(options.timeoutMs, deadline - Date.now());
-  if (remaining <= 0) fail('SHOPIFY_TIMEOUT', 'Shopify 核對逾時，請重試；未使用舊資料', undefined, 503);
-  const timeout = new Promise((resolve, reject) => {
-    timer = setTimeout(() => { controller.abort(); reject(Object.assign(new Error('Shopify 核對逾時，請重試；未使用舊資料'), { status: 503, code: 'SHOPIFY_TIMEOUT' })); }, remaining);
+  if (remaining <= 0) throw timeoutError();
+  options.signal?.throwIfAborted();
+  const interruption = new Promise((_, reject) => {
+    abort = () => { reject(options.signal.reason); controller.abort(); };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    timer = setTimeout(() => { reject(timeoutError()); controller.abort(); }, remaining);
   });
   try {
-    return await Promise.race([timeout, (async () => {
+    return await Promise.race([interruption, (async () => {
       const accessToken=options.getToken?await options.getToken():options.token;
+      controller.signal.throwIfAborted();
       let response;
       try {
         response = await options.fetchImpl(`https://${options.shop}/admin/api/${options.apiVersion}/graphql.json`, {
           method: 'POST', redirect: 'error', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
-          body: JSON.stringify(document ? {query:document.query||REFUND_QUERY,variables:document.variables} : { query: QUERY, variables: { id: `gid://shopify/Order/${id}`, after } }),
+          body: JSON.stringify({ query, variables }),
         });
       } catch { fail('SHOPIFY_UNAVAILABLE', 'Shopify 連線失敗，請重試；未使用舊資料', undefined, 503); }
+      controller.signal.throwIfAborted();
+      if (response.status === 429) {
+        const error = throttleError(throttleDelay(response));
+        controller.abort();
+        throw error;
+      }
       if (!response.ok) {if(response.status===401)options.onAccessDenied?.(accessToken);fail(response.status === 401 || response.status === 403 ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_UNAVAILABLE', response.status === 401 || response.status === 403 ? 'Shopify 訂單讀取權限不足，請檢查連線授權' : 'Shopify 暫時無法核對，請稍後重試', undefined, 503);}
       if (Number(response.headers?.get?.('content-length')) > MAX_RESPONSE_BYTES) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 核對回應超出大小限制', undefined, 503);
       let payload;
@@ -144,23 +235,33 @@ async function requestOrder(options, id, after, deadline, document) {
         if (error.code === 'SHOPIFY_RESPONSE_INVALID') throw error;
         fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 核對回應無效，請重試', undefined, 503);
       }
-      if (payload.errors?.length || !payload.data || typeof payload.data !== 'object') {
-        const denied = payload.errors?.some(error => error.extensions?.code === 'ACCESS_DENIED');
+      const errors = payload?.errors;
+      if (!payload || typeof payload !== 'object' || errors != null && !Array.isArray(errors)) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 核對回應無效，請重試', undefined, 503);
+      if (errors?.length || !payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) {
+        if (errors?.length && errors.every(error => error?.extensions?.code === 'THROTTLED')) throw throttleError(throttleDelay(response, payload));
+        const denied = errors?.some(error => error?.extensions?.code === 'ACCESS_DENIED');
         fail(denied ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_QUERY_FAILED', denied ? 'Shopify 訂單讀取權限不足，請檢查連線授權' : 'Shopify 未完整回傳訂單，請重試；未使用舊資料', undefined, 503);
       }
       if (text(payload.data.shop?.myshopifyDomain).toLowerCase() !== options.shop) fail('SHOPIFY_SHOP_MISMATCH', 'Shopify 回應店鋪與設定不一致', undefined, 503);
-      return document ? payload.data[document.result||'refund'] : payload.data.order;
+      return payload.data[result];
     })()]);
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
+  }
 }
 
 async function readOrder(source, options, deadline) {
   const items = [], seenIds = new Set(), seenCursors = new Set();
   let after = null, first;
-  for (let page = 0; page < MAX_ORDER_LINES / 100 + 1; page++) {
-    const current = await requestOrder(options, source.id, after, deadline);
+  const id = `gid://shopify/Order/${source.id}`;
+  for (let page = 0; page < MAX_ORDER_LINES / ORDER_PAGE_SIZE + 1; page++) {
+    // Requested query cost grows with connection size. Use a smaller first
+    // page for typical orders and still read every current line when it grew.
+    const pageSize = page === 0 ? Math.min(ORDER_PAGE_SIZE, Math.max(SMALL_ORDER_PAGE_SIZE, source.records.length)) : ORDER_PAGE_SIZE;
+    const current = await requestOrder(options, deadline, { query: QUERY, variables: { id, after, first: pageSize }, result: 'order' });
     if (!current) fail('SHOPIFY_ORDER_MISSING', 'Shopify 找不到此訂單，請核對店鋪及訂單權限', source.name);
-    if (current.id !== `gid://shopify/Order/${source.id}` || current.name !== source.name) fail('SHOPIFY_ORDER_MISMATCH', 'Shopify 訂單 ID 或編號與原始檔不一致', source.name);
+    if (current.id !== id || current.name !== source.name) fail('SHOPIFY_ORDER_MISMATCH', 'Shopify 訂單 ID 或編號與原始檔不一致', source.name);
     if (!current.updatedAt || Number.isNaN(Date.parse(current.updatedAt))) fail('SHOPIFY_RESPONSE_INVALID', 'Shopify 缺少訂單更新時間', source.name);
     if (!first) first = current;
     else if (current.updatedAt !== first.updatedAt || hash([MONEY_FIELDS.map(field => current[field]),current.netPaymentSet,current.refunds,current.shippingLines]) !== hash([MONEY_FIELDS.map(field => first[field]),first.netPaymentSet,first.refunds,first.shippingLines])) fail('SHOPIFY_ORDER_CHANGED', 'Shopify 訂單在核對期間已修改，請重試', source.name);
@@ -194,7 +295,7 @@ async function readRefundPages(order,options,deadline,name){
         if(!current.pageInfo.hasNextPage){connections[key]={nodes,pageInfo:{hasNextPage:false}};break;}
         const cursor=current.pageInfo.endCursor;
         if(!cursor||cursors.has(cursor))fail('SHOPIFY_REFUND_REVIEW_REQUIRED','Shopify 退款分頁未完整讀取',name);cursors.add(cursor);
-        const next=await requestOrder(options,null,null,deadline,{variables:{id:refund.id,lineAfter:key==='refundLineItems'?cursor:null,transactionAfter:key==='transactions'?cursor:null}});
+        const next=await requestOrder(options,deadline,{query:REFUND_QUERY,variables:{id:refund.id,lineAfter:key==='refundLineItems'?cursor:null,transactionAfter:key==='transactions'?cursor:null},result:'refund'});
         if(!next||next.id!==refund.id||next.updatedAt!==refund.updatedAt||hash(next.totalRefundedSet)!==hash(refund.totalRefundedSet)||next.order?.id!==order.id||next.order?.updatedAt!==order.updatedAt)fail('SHOPIFY_ORDER_CHANGED','Shopify 退款或訂單在核對期間已更新，請重試',name);
         current=next[key];
       }
@@ -353,20 +454,33 @@ function normalizeOrder(source, order) {
   return { records, evidence };
 }
 
-async function verifyShopifyRows(rows, { shop, token,getToken,onAccessDenied, apiVersion = '2026-07', fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
+async function verifyShopifyRows(rows, { shop, token,getToken,onAccessDenied, apiVersion = '2026-07', fetchImpl = globalThis.fetch, timeoutMs = 15000, deadline, budget = createRequestBudget() } = {}) {
   shop = domain(shop);
   if ((typeof getToken!=='function'&&(!text(token)||typeof token!=='string')) || typeof fetchImpl !== 'function' || !/^20\d{2}-(?:01|04|07|10)$/.test(apiVersion) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) fail('SHOPIFY_CONFIG_INVALID', 'Shopify 訂單即時核對尚未設定完成', undefined, 503);
-  const source = sourceOrders(rows), deadline = Date.now() + 60000, normalized = [], evidence = [];
-  for (const order of source.orders) {
-    const current = await readOrder(order, { shop, token,getToken,onAccessDenied, apiVersion, fetchImpl, timeoutMs }, deadline);
-    const result = normalizeOrder(order, current);
-    if(current.edited===true&&!current.cancelledAt&&result.evidence.fulfillmentStatus==='unfulfilled'&&result.evidence.currentQuantity>0&&result.evidence.removedLineIds.length){
-      result.evidence.editEvidence=await require('./shopifyOrderEdits').readShopifyOrderEdits(current,(query,variables)=>requestOrder({shop,token,getToken,onAccessDenied,apiVersion,fetchImpl,timeoutMs},null,null,deadline,{query,variables,result:'order'}));
-      const {fingerprint,...unsigned}=result.evidence;result.evidence.fingerprint=hash({evidence:unsigned,records:result.records});
+  const source = sourceOrders(rows), end = deadlineFor(deadline, VERIFICATION_BUDGET_MS), controller = new AbortController();
+  const options = { shop, token, getToken, onAccessDenied, apiVersion, fetchImpl, timeoutMs, budget, signal: controller.signal };
+  const results = new Array(source.orders.length);
+  let nextOrder = 0, totalLines = 0;
+  async function readOrders() {
+    while (nextOrder < source.orders.length) {
+      controller.signal.throwIfAborted();
+      const index = nextOrder++, order = source.orders[index];
+      const current = await readOrder(order, options, end);
+      const result = normalizeOrder(order, current);
+      if(current.edited===true&&!current.cancelledAt&&result.evidence.fulfillmentStatus==='unfulfilled'&&result.evidence.currentQuantity>0&&result.evidence.removedLineIds.length){
+        result.evidence.editEvidence=await require('./shopifyOrderEdits').readShopifyOrderEdits(current,(query,variables)=>requestOrder(options,end,{query,variables,result:'order'}));
+        const {fingerprint,...unsigned}=result.evidence;result.evidence.fingerprint=hash({evidence:unsigned,records:result.records});
+      }
+      totalLines += result.records.length;
+      if (totalLines > 5000) fail('SHOPIFY_LIMIT_EXCEEDED', 'Shopify 修改後商品超過 5,000 列，請分批轉檔');
+      results[index] = result;
     }
-    normalized.push(...result.records); evidence.push(result.evidence);
-    if (normalized.length > 5000) fail('SHOPIFY_LIMIT_EXCEEDED', 'Shopify 修改後商品超過 5,000 列，請分批轉檔');
   }
+  try { await Promise.all(Array.from({ length: Math.min(ORDER_READ_CONCURRENCY, source.orders.length) }, () => readOrders())); }
+  catch (error) { controller.abort(error); throw error; }
+  if (Date.now() >= end) throw timeoutError();
+  const normalized = results.flatMap(result => result.records);
+  const evidence = results.map(result => result.evidence);
   const headers = [...new Set([...source.headers, ...normalized.flatMap(Object.keys)])];
   const verification = { version: VERSION, shop, apiVersion, checkedAt: new Date().toISOString(), sourceFingerprint: hash(rows), orders: evidence };
   verification.fingerprint = hash({ version: VERSION, shop, sourceFingerprint: verification.sourceFingerprint, orders: evidence.map(order => order.fingerprint) });
@@ -374,11 +488,20 @@ async function verifyShopifyRows(rows, { shop, token,getToken,onAccessDenied, ap
 }
 
 function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.fetch,connections,now=Date.now } = {}) {
-  const registry=createConnectionRegistry({env,connections}),cache=new Map(),tokens=createShopifyTokenProvider({getConnection:registry.connection,fetchImpl,now});
+  const registry=createConnectionRegistry({env,connections}),cachedProbe=createVerificationCache(),tokens=createShopifyTokenProvider({getConnection:registry.connection,fetchImpl,now});
+  const budgets = new Map();
+  function budgetFor(connection) {
+    const key = hash([connection.id, connection.shop]);
+    if (!budgets.has(key)) {
+      budgets.set(key, createRequestBudget());
+      if (budgets.size > 16) budgets.delete(budgets.keys().next().value);
+    }
+    return budgets.get(key);
+  }
   const credentials=context=>({getToken:()=>tokens.getToken(context),onAccessDenied:token=>tokens.invalidate(context,token)});
   const verifier=async(rows,context={})=>{
     const connection=registry.connection(context);
-    const result=await verifyShopifyRows(rows,{...connection,...credentials(context),fetchImpl});
+    const result=await verifyShopifyRows(rows,{...connection,...credentials(context),fetchImpl,deadline:context.deadline,budget:budgetFor(connection)});
     const verification={...result.verification,apiConnectionId:connection.id};
     verification.fingerprint=hash([result.verification.fingerprint,connection.id,connection.shop]);
     return {...result,verification};
@@ -388,11 +511,11 @@ function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.
   verifier.legacyConnectionId=()=>registry.entries().find(connection=>connection.legacy)?.id||'';
   verifier.probe=async(rows,context={},options={})=>{
     const connection=registry.connection(context),source=sourceOrders(rows);
+    const deadline=deadlineFor(options.deadline, STORE_PROBE_BUDGET_MS);
+    if (Date.now() >= deadline) throw timeoutError();
     const key=hash([registry.fingerprint(),connection.id,connection.shop,source.orders.map(({id,name})=>[id,name])]);
-    const previous=cache.get(key);
-    if(!options.refresh&&previous&&previous.expires>Date.now())return previous.promise;
-    const promise=(async()=>{
-      const nodes=await requestOrder({...connection,...credentials(context),fetchImpl,timeoutMs:5000},null,null,Date.now()+10000,{query:STORE_QUERY,variables:{ids:source.orders.map(order=>`gid://shopify/Order/${order.id}`)},result:'nodes'});
+    const promise=cachedProbe(key,options,async()=>{
+      const nodes=await requestOrder({...connection,...credentials(context),fetchImpl,timeoutMs:5000,budget:budgetFor(connection)},deadline,{query:STORE_QUERY,variables:{ids:source.orders.map(order=>`gid://shopify/Order/${order.id}`)},result:'nodes'});
       if(!Array.isArray(nodes)||nodes.length!==source.orders.length)fail('SHOPIFY_RESPONSE_INVALID','Shopify 店鋪核對回應無效',undefined,503);
       const matchedOrderIds=[];
       for(let i=0;i<nodes.length;i++){
@@ -402,10 +525,12 @@ function createShopifyOrderVerifier({ env = process.env, fetchImpl = globalThis.
         if(node.name===order.name)matchedOrderIds.push(order.id);
       }
       return {shop:connection.shop,complete:matchedOrderIds.length===source.orders.length,matchedOrderIds,orderCount:source.orders.length};
-    })();
-    cache.set(key,{expires:Date.now()+15000,promise});
-    if(cache.size>16)cache.delete(cache.keys().next().value);
-    try{return await promise;}catch(error){cache.delete(key);throw error;}
+    });
+    // A caller sharing a probe keeps its own deadline without canceling it
+    // for callers that still have time left.
+    let timer;
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(timeoutError()),Math.max(0,deadline-Date.now()));});
+    try{return await Promise.race([promise,timeout]);}finally{clearTimeout(timer);}
   };
   return verifier;
 }

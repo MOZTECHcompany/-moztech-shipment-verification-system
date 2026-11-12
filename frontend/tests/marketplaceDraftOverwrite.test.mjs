@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { transform } from 'esbuild';
 import * as draftDiff from '../src/utils/marketplaceDraftDiff.mjs';
+import * as previewErrors from '../src/utils/marketplacePreviewError.mjs';
 
 const source = await readFile(new URL('../src/components/admin/MarketplaceDraftOverwrite.jsx', import.meta.url), 'utf8');
 const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
@@ -30,7 +31,7 @@ const applied = () => { const exportBatch = { id: 90, batchNumber: 'WMS-FULL-90'
 const fail = status => Object.assign(Error('synthetic failure'), { response: { status, data: { message: '合成失敗' } } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function view({ previews = [fixture()], confirms = [applied()], previewWait, confirmWait, downloadResults = [true], native = true, barcodeReview } = {}) {
+async function view({ previews = [fixture()], confirms = [applied()], previewWait, confirmWait, downloadResults = [true], native = true, barcodeReview, replayMountEffect = false } = {}) {
   const hooks = [], effects = [], requests = [], downloads = [], complete = [], busyChanges = [], clicked = [], barcodeReviews = [];
   let cursor = 0, dirty = false, tree, mounted = true, allowed = true, lateUpdates = 0, previewIndex = 0, confirmIndex = 0, downloadIndex = 0, closed = 0;
   const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
@@ -39,22 +40,22 @@ async function view({ previews = [fixture()], confirms = [applied()], previewWai
     useState(initial) { const i = cursor++; if (!(i in hooks)) hooks[i] = { value: typeof initial === 'function' ? initial() : initial }; return [hooks[i].value, value => { if (!mounted) lateUpdates++; const next = typeof value === 'function' ? value(hooks[i].value) : value; if (!Object.is(next, hooks[i].value)) { hooks[i].value = next; dirty = true; } }]; },
     useId() { const i = cursor++; return (hooks[i] ||= { value: `confirmation-${i}` }).value; },
     useRef(initial) { const i = cursor++; return hooks[i] ||= { current: initial }; },
-    useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
+    useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); if (!cleanup && replayMountEffect) { hooks[i].cleanup?.(); hooks[i].cleanup = callback(); } }); } },
   };
-  const api = { post: async (url, body) => {
-    requests.push({ url, body });
+  const api = { post: async (url, body, options) => {
+    requests.push({ url, body, options });
     if (url.endsWith('/preview')) { if (previewWait) await previewWait(); const value = previews[Math.min(previewIndex++, previews.length - 1)]; if (value instanceof Error) throw value; return { data: value }; }
     if (url.endsWith('/confirm')) { if (confirmWait) await confirmWait(); const value = confirms[Math.min(confirmIndex++, confirms.length - 1)]; if (value instanceof Error) throw value; return { data: value }; }
     if (url.endsWith('/download-link')) { const value = downloadResults[Math.min(downloadIndex++, downloadResults.length - 1)]; if (value instanceof Error) throw value; return { data: { url: '/api/marketplace-files/synthetic' } }; }
     throw Error(`Unexpected endpoint ${url}`);
   } };
   const imports = {
-    react, '../../utils/marketplaceDraftDiff.mjs': draftDiff, '../../ui': { Button: 'Button' }, '@/api/api.js': api, '../../api/origin': { API_ORIGIN: 'https://wms.invalid' },
+    react, '../../utils/marketplaceDraftDiff.mjs': draftDiff, '../../utils/marketplacePreviewError.mjs': previewErrors, '../../ui': { Button: 'Button' }, '@/api/api.js': api, '../../api/origin': { API_ORIGIN: 'https://wms.invalid' },
     '../../workspace/nativeRuntime.js': { getNativeRuntime: () => native ? {} : null },
     '../../workspace/downloads.js': { downloadNativeMarketplaceFile: async (args, options) => { if (!options.isCurrent()) return false; downloads.push(args); const value = downloadResults[Math.min(downloadIndex++, downloadResults.length - 1)]; if (value instanceof Error) throw value; return value; } },
   };
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => { if (!(name in imports)) throw Error(`Unexpected import ${name}`); return imports[name]; }, crypto: webcrypto, document: { body: { appendChild() {} }, createElement: () => ({ click() { clicked.push(this.href); }, remove() {} }) } });
+  vm.runInNewContext(code, { module, exports: module.exports, require: name => { if (!(name in imports)) throw Error(`Unexpected import ${name}`); return imports[name]; }, crypto: webcrypto, AbortController, document: { body: { appendChild() {} }, createElement: () => ({ click() { clicked.push(this.href); }, remove() {} }) } });
   const props = { rows: [['order', 'sku'], ['#155116', 'SKU']], settings: { store: 'Synthetic' }, profileId: '9', isCurrent: () => allowed, onClose: () => closed++, onComplete: result => { complete.push(result); }, onBusyChange: value => busyChanges.push(value), onBarcodeReview: () => { barcodeReviews.push(true); return barcodeReview?.(); } };
   const expand = node => {
     if (Array.isArray(node)) return node.map(expand);
@@ -82,6 +83,45 @@ const confirms = state => state.requests.filter(request => request.url.endsWith(
 const previews = state => state.requests.filter(request => request.url.endsWith('/preview'));
 
 const confirmLabel = '確認未匯入並轉檔';
+
+test('fulfilled exclusions are folded and the eligible-only action acknowledges them explicitly', async () => {
+  const data = { ...fixture(), excludedFulfilled: ['#SHIPPED-1', '#SHIPPED-2'] };
+  const state = await view({ previews: [data] });
+  const visible = state.visibleText(state.render());
+  assert.match(visible, /已出貨\s+2\s+筆，不列入銷貨檔/);
+  assert.match(visible, /本次轉檔\s+2\s+筆/);
+  assert.doesNotMatch(visible, /#SHIPPED-1|#SHIPPED-2/);
+  const exclusions = state.all(node => node.props?.['aria-label'] === '已出貨訂單');
+  assert.equal(exclusions.length, 1);
+  assert.match(state.text(exclusions[0]), /#SHIPPED-1、#SHIPPED-2/);
+  assert.equal(state.button(confirmLabel), undefined);
+  assert.equal(confirms(state).length, 0);
+  await state.click('確認只轉檔 2 筆');
+  assert.equal(confirms(state).length, 1);
+  assert.equal(confirms(state)[0].body.excludedFulfilledConfirmed, true);
+  assert.equal(confirms(state)[0].body.notImportedConfirmed, true);
+});
+
+test('all fulfilled orders can be reviewed but produce no conversion action', async () => {
+  const data = {
+    ...fixture(), excludedFulfilled: ['#SHIPPED-1'], affectedBatches: [], newOrders: [], canConfirm: false,
+    summary: { totalOrderCount: 0, newOrderCount: 0, changedOrderCount: 0, unchangedOrderCount: 0, quantity: 0, totalMinor: 0 },
+  };
+  const state = await view({ previews: [data] });
+  assert.match(state.visibleText(state.render()), /本次沒有可轉檔的訂單/);
+  assert.equal(state.button('確認只轉檔 0 筆'), undefined);
+  assert.equal(state.button('重新核對'), undefined);
+  assert.equal(state.button(confirmLabel), undefined);
+  assert.equal(confirms(state).length, 0);
+});
+
+test('an excluded order cannot also appear among the orders approved for conversion', async () => {
+  const state = await view({ previews: [{ ...fixture(), excludedFulfilled: ['#NEW'] }] });
+  assert.match(state.visibleText(state.render()), /整份檔案比對未完成/);
+  assert.equal(state.button(confirmLabel), undefined);
+  assert.equal(state.button('確認只轉檔 2 筆'), undefined);
+  assert.equal(confirms(state).length, 0);
+});
 
 const barcodePrerequisiteFixture = () => ({ ...fixture(), canConfirm:false, blockedReasons:['商品 SYN-BARCODE 的商城與 ECOUNT 對照待核對'], barcodePrerequisites:{ required:true, code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED', count:1, sourceSkus:['SYN-BARCODE'] } });
 
@@ -271,6 +311,17 @@ test('late preview responses after unmount produce no state updates', async () =
   state.unmount(); wait.resolve(); await state.settle();
   assert.equal(state.lateUpdates(), 0); assert.equal(state.complete.length, 0); assert.equal(confirms(state).length, 0);
 });
+test('React strict mount replay aborts the old comparison and lets the new comparison finish', async () => {
+  const pending = deferred(); let calls = 0;
+  const state = await view({ replayMountEffect: true, previewWait: () => ++calls === 1 ? pending.promise : undefined });
+  assert.equal(state.requests.length, 2);
+  assert.equal(state.requests[0].options.signal.aborted, true);
+  assert.equal(state.requests[1].options.signal.aborted, false);
+  assert.equal(state.busyChanges.at(-1), false);
+  pending.resolve(); await state.settle();
+  assert.equal(state.busyChanges.at(-1), false);
+  assert.equal(state.requests.length, 2);
+});
 
 test('a whole-file blocker identifies the order and offers only recheck instead of a disabled conversion', async () => {
   const data = fixture(); data.canConfirm = false; data.blockedReasons = [{ orderNumber: '#NEW', message: '商城訂單已出貨' }];
@@ -373,9 +424,32 @@ test('safe cancel works after current-session predicate becomes false when no co
 
 test('completed preview clears busy after session expiry so safe cancel is available, without accepting data', async () => {
   const wait = deferred(); const state = await view({ previewWait: () => wait.promise });
-  assert.equal(state.button('取消').props.disabled, true); state.invalidate(); wait.resolve(); await state.settle();
+  assert.equal(state.button('停止等待').props.disabled, false); state.invalidate(); wait.resolve(); await state.settle();
   assert.equal(state.button('取消').props.disabled, false); await state.click('取消'); assert.equal(state.closeCount(), 1);
   assert.equal(state.checkbox(), undefined); assert.equal(confirms(state).length, 0); assert.equal(state.downloads.length, 0);
+});
+
+test('stopping a read-only comparison aborts its request and ignores a late success', async () => {
+  const wait = deferred();
+  const state = await view({ previewWait: () => wait.promise });
+  await state.click('停止等待');
+  assert.equal(previews(state)[0].options.signal.aborted, true);
+  assert.equal(state.closeCount(), 1);
+  wait.resolve();
+  await state.settle();
+  assert.equal(state.button(confirmLabel), undefined);
+  assert.equal(confirms(state).length, 0);
+});
+
+test('an ERP timeout in read-only comparison can retry the same file without making a sales command', async () => {
+  const failure = Object.assign(Error('作業結果尚未確認'), { response: { status: 503, data: { code: 'WMS_NATIVE_RESULT_UNKNOWN', message: '作業結果尚未確認' } } });
+  const state = await view({ previews: [failure, fixture()] });
+  assert.match(state.visibleText(state.render()), /檔案已保留/);
+  assert.doesNotMatch(state.visibleText(state.render()), /作業結果尚未確認/);
+  await state.click('重新核對');
+  assert.deepEqual(previews(state).map(request => request.body.rows), [state.props.rows, state.props.rows]);
+  assert.equal(state.button(confirmLabel).props.disabled, false);
+  assert.equal(confirms(state).length, 0);
 });
 
 test('session expiry during a submitted command cannot unlock cancel or issue another command', async () => {

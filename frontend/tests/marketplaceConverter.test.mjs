@@ -11,6 +11,8 @@ import * as intake from '../src/utils/marketplaceIntake.mjs';
 import * as unified from '../src/utils/unifiedMarketplace.mjs';
 import * as workbook from '../src/utils/marketplaceWorkbook.mjs';
 import * as sessions from '../src/utils/importBatches.js';
+import * as previewErrors from '../src/utils/marketplacePreviewError.mjs';
+import * as draftDiff from '../src/utils/marketplaceDraftDiff.mjs';
 
 const source = await readFile(new URL('../src/components/admin/MarketplaceConverter.jsx', import.meta.url), 'utf8');
 const headers = ['訂單編號', '名稱', '產品SKU', '產品', '產品數量', '單價', '小計', '訂單金額(不含金/物流手續費)', '訂單金流手續費', '訂單運費', '總計金額', '金流狀態', '物流狀態'];
@@ -37,7 +39,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -54,8 +56,8 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         useMemo(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { deps, value: callback() }; return hooks[i].value; },
         useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { const cleanup = hooks[i]?.cleanup; hooks[i] = { deps }; effects.push(() => { cleanup?.(); hooks[i].cleanup = callback(); }); } },
     };
-    const api = { get: async url => { if (url === '/api/marketplace-intakes' && recordsWait) await recordsWait(); if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles:profileReadback?profileReadback(persistedProfiles):persistedProfiles, connections } }; }, post: async (url, body) => {
-        requests.push({url,body});
+    const api = { get: async url => { if (url === '/api/marketplace-intakes' && recordsWait) await recordsWait(); if (denied) throw Error('Forbidden'); return { data: { intakes: [], profiles:profileReadback?profileReadback(persistedProfiles):persistedProfiles, connections } }; }, post: async (url, body, options) => {
+        requests.push({url,body,options});
         if(url==='/api/marketplace-intakes/store-profiles'){
             if(profileSaveWait)await profileSaveWait(body);
             if(profileSaveError)throw Object.assign(Error(profileSaveError.message),{response:{status:409,data:profileSaveError}});
@@ -103,14 +105,14 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             latestPrepared = prepared;
             prepared.audit = unified.prepareUnifiedMarketplace(raw,effectiveSettings).audit;
             prepared.choices.push(...activeReimports.map(order => ({number:order.orderNumber,eligible:false,reason:order.message || '已保存'})));
-            return {data:{...prepared,reviewRequired,orderReviews,reimports:activeReimports,source:source.source,raw,effectiveSettings,profiles:currentProfiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            return {data:{...prepared,reviewRequired,orderReviews,reimports:activeReimports,excludedFulfilled,source:source.source,raw,effectiveSettings,profiles:currentProfiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         if (saveResponse) return {data:typeof saveResponse === 'function' ? saveResponse(body) : saveResponse};
         const built=latestPrepared?.parsed.orders.length ? latestPrepared : unified.buildUnifiedConversion(body.rows,body.settings);
         return {data:{id:1,batchNumber:body.settings.batchNumber,headers:built.output.headers,rows:built.output.rows}};
     } };
-    const imports = { '../../workspace/nativeRuntime.js': nativeRuntime, '../../workspace/downloads.js': nativeDownloads, '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate', useSearchParams: () => [query, update => { query = typeof update === 'function' ? update(new URLSearchParams(query)) : new URLSearchParams(update); dirty = true; }] }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager', './MarketplaceDraftOverwrite': 'MarketplaceDraftOverwrite' };
+    const imports = { '../../workspace/nativeRuntime.js': nativeRuntime, '../../workspace/downloads.js': nativeDownloads, '../../api/origin': {API_ORIGIN:''}, '@/api/api.js': api, '../../utils/unifiedMarketplace.mjs': unified, '../../utils/marketplaceWorkbook.mjs': workbook, react, 'react-router-dom': { Link: 'Link', Navigate: 'Navigate', useSearchParams: () => [query, update => { query = typeof update === 'function' ? update(new URLSearchParams(query)) : new URLSearchParams(update); dirty = true; }] }, '../../ui': { Button: 'Button', PageHeader: 'PageHeader' }, '../../utils/importBatches': sessions, '../../utils/marketplacePreviewError.mjs': previewErrors, '../../utils/marketplaceDraftDiff.mjs': draftDiff, '../../utils/marketplaceIntake.mjs': intake, 'lucide-react': {}, './MarketplaceBatchManager': 'MarketplaceBatchManager', './MarketplaceDraftOverwrite': { __esModule: true, default: 'MarketplaceDraftOverwrite', MarketplaceFulfilledExclusions: 'MarketplaceFulfilledExclusions' } };
     const module = { exports: {} };
     vm.runInNewContext(code, {
         module, exports: module.exports, require: name => { if (!(name in imports)) throw new Error(`Unexpected import ${name}`); return imports[name]; },
@@ -119,7 +121,7 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
         window: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) },
         fetch: (...args) => { requests.push(args); throw new Error('Converter must not issue requests'); },
         document:{body:{appendChild(){}},createElement:()=>({href:'',download:'',click(){downloads.push({url:this.href});},remove(){}})},
-        console, crypto: webcrypto, TextDecoder,
+        console, crypto: webcrypto, TextDecoder, AbortController,
     });
     const expand = node => {
         if (Array.isArray(node)) return node.map(expand);
@@ -189,6 +191,28 @@ test('upload uses authoritative server preview and automatically applies the uni
     assert.match(JSON.stringify(view.requests[0].body.rows), /NOT-AUTHORIZED/);
     assert.equal(view.writes.length, 0); assert.equal(view.downloads.length, 0);
     assert.doesNotMatch(view.text(view.render()), /已確認本次金額為 TWD|剩餘折扣按/);
+});
+
+test('stopping marketplace verification retains the source and ignores a late response', async () => {
+    let release, signalStarted;
+    const started = new Promise(resolve => { signalStarted = resolve; });
+    const view = await converter({ previewWait: () => {
+        if (release) return;
+        return new Promise(resolve => { release = resolve; signalStarted(); });
+    } });
+    const pending = view.select(file());
+    await started;
+    assert.match(view.text(view.render()), /正在核對商城訂單/);
+    view.button('停止等待').props.onClick();
+    assert.equal(previewCalls(view)[0].options.signal.aborted, true);
+    assert.match(view.text(view.render()), /檔案已保留/);
+    await view.button('重新核對訂單').props.onClick();
+    release();
+    await pending;
+    assert.deepEqual(previewCalls(view).map(request => request.body), Array(2).fill(previewCalls(view)[0].body));
+    assert.equal(downloadSales(view).props.disabled, false);
+    assert.equal(view.requests.length, 2);
+    assert.equal(view.downloads.length, 0);
 });
 
 test('API preview failure never falls back to a locally exportable CSV', async () => {
@@ -847,6 +871,34 @@ test('zero eligible orders show their cancellation reasons before collapsed deta
     assert.equal(view.downloads.length, 0);
 });
 
+test('fully shipped orders are summarized without opening an assistant or offering conversion', async () => {
+    const excludedFulfilled = ['TST6091550133', 'TST6091550109', 'NOT-AUTHORIZED'];
+    const view = await converter({
+        excludedFulfilled,
+        authoritative: raw => ({ ...raw, orders: raw.orders.map(order => ({ ...order, fulfillmentStatus: 'fulfilled' })) }),
+        reimports: [{ orderNumber: 'TST6091550133', state: 'completed' }],
+    });
+    await view.select(file());
+    const summary = view.all(node => node.type === 'MarketplaceFulfilledExclusions');
+    assert.equal(summary.length, 1);
+    assert.deepEqual(summary[0].props.orderNumbers, excludedFulfilled);
+    assert.match(view.text(view.render()), /本次沒有可轉檔的訂單/);
+    assert.equal(downloadSales(view), undefined);
+    assert.equal(view.all(node => node.type === 'MarketplaceDraftOverwrite').length, 0);
+    assert.equal(view.requests.length, 1);
+});
+
+test('an ordinary new-order preview shows verified exclusions without changing its conversion path', async () => {
+    const view = await converter({ excludedFulfilled: ['NOT-AUTHORIZED'] });
+    await view.select(file());
+    const summary = view.all(node => node.type === 'MarketplaceFulfilledExclusions');
+    assert.equal(summary.length, 1);
+    assert.deepEqual(summary[0].props.orderNumbers, ['NOT-AUTHORIZED']);
+    assert.equal(downloadSales(view).props.disabled, false);
+    assert.equal(view.all(node => node.type === 'MarketplaceDraftOverwrite').length, 0);
+    assert.equal(view.requests.length, 1);
+});
+
 test('preview distinguishes API verification from file-only checks and uses the verified platform', async () => {
     const fromFile = await converter({ verification: { mode: 'file', platform: '1Shop' } }); await fromFile.select(file());
     assert.match(fromFile.text(fromFile.render()), /檔案核對通過/);
@@ -857,6 +909,21 @@ test('preview distinguishes API verification from file-only checks and uses the 
 });
 
 const savedShopifyOrder = {orderNumber:'#REVIEW-1',intakeId:19,workOrderId:null,state:'pending',message:'已保存，收件資料可更新',canUpdateShipping:true};
+
+test('an open mixed comparison owns the exclusion summary and closing it restores one summary', async () => {
+    const view = await converter({
+        profiles: [shopifyProfile],
+        reimports: [savedShopifyOrder],
+        excludedFulfilled: ['#REVIEW-2'],
+    });
+    await view.select(file(shopifyBarcodeRows));
+    assert.equal(view.all(node => node.type === 'MarketplaceDraftOverwrite').length, 1);
+    assert.equal(view.all(node => node.type === 'MarketplaceFulfilledExclusions').length, 0);
+    closeComparison(view);
+    assert.equal(view.all(node => node.type === 'MarketplaceFulfilledExclusions').length, 1);
+    assert.ok(view.button('比對並確認本次轉檔'));
+    assert.equal(view.requests.length, 1);
+});
 const shopifyProfile = {...storeProfile,platform:'Shopify'};
 
 test('all saved Shopify orders provide immediate original-sale continuation links without a new sales file or empty warning', async () => {
@@ -1163,6 +1230,27 @@ test('server store selection appears before a preview and uses only the selected
     assert.equal(downloadSales(view).props.disabled,false,view.text(view.render()));
     assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes/store-profiles'||request.url==='/api/marketplace-intakes'),false);
     assert.equal(view.downloads.length,0);
+});
+
+test('timed out verification keeps the chosen store when retrying the original file', async () => {
+    let selectedAttempts = 0;
+    const view = await converter({
+        profiles: [shopifyProfile, routedStoreProfile],
+        previewError: body => body.profileId === '2'
+            ? ++selectedAttempts === 1 ? { status: 503, code: 'SHOPIFY_TIMEOUT', message: '上游逾時' } : null
+            : storeSelectionError(),
+    });
+    await view.select(file(shopifyBarcodeRows));
+    await view.change('店鋪', '2');
+    assert.match(view.text(view.render()), /訂單核對逾時。檔案已保留/);
+    assert.equal(downloadSales(view), undefined);
+    await view.button('重新核對').props.onClick();
+    const calls = previewCalls(view);
+    assert.deepEqual(calls.map(request => request.body.profileId), [undefined, '2', '2']);
+    assert.deepEqual(calls[1].body.rows, calls[2].body.rows);
+    assert.equal(downloadSales(view).props.disabled, false);
+    assert.equal(view.requests.length, 3);
+    assert.equal(view.downloads.length, 0);
 });
 
 test('server store choice preserves a visible connection prerequisite without making another request', async () => {

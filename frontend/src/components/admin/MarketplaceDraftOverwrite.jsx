@@ -4,7 +4,8 @@ import apiClient from '@/api/api.js';
 import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime } from '../../workspace/nativeRuntime.js';
 import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
-import { comparisonOrders, completeComparison, liveDifferences, orderDifferences, orderReviewState, reviewDecisions, reviewEditGroups, uncoveredReviewCancellations, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
+import { comparisonOrders, completeComparison, liveDifferences, orderDifferences, orderReviewState, readFulfilledExclusions, reviewDecisions, reviewEditGroups, uncoveredReviewCancellations, uniqueBlockedReasons } from '../../utils/marketplaceDraftDiff.mjs';
+import { marketplacePreviewError } from '../../utils/marketplacePreviewError.mjs';
 
 const endpoint = '/api/marketplace-intakes/draft-overwrite';
 const scopeMode = 'uploaded-file-v2';
@@ -23,8 +24,13 @@ const validPreview = data => {
   if (data?.scopeMode !== scopeMode || typeof data.previewFingerprint !== 'string' || !data.previewFingerprint || !Array.isArray(data.affectedBatches) || !Array.isArray(data.newOrders) || !Array.isArray(data.blockedReasons) || typeof data.canConfirm !== 'boolean' || !data.summary) return false;
   const { totalOrderCount, newOrderCount, changedOrderCount, unchangedOrderCount, quantity, totalMinor } = data.summary;
   const uploaded = data.affectedBatches.flatMap(batch => list(batch.uploadedOrders));
+  const excluded = readFulfilledExclusions(data.excludedFulfilled);
+  if (!excluded) return false;
+  const excludedNumbers = new Set(excluded);
+  if ([...data.newOrders, ...uploaded].some(order => excludedNumbers.has(order?.orderNumber))) return false;
+  const allExcluded = excluded.length > 0 && totalOrderCount === 0 && quantity === 0 && totalMinor === 0 && data.canConfirm === false;
   return [totalOrderCount, newOrderCount, changedOrderCount, unchangedOrderCount, quantity, totalMinor].every(validCount)
-    && totalOrderCount > 0 && totalOrderCount === newOrderCount + changedOrderCount + unchangedOrderCount
+    && (totalOrderCount > 0 || allExcluded) && totalOrderCount === newOrderCount + changedOrderCount + unchangedOrderCount
     && data.newOrders.length === newOrderCount && uploaded.length === changedOrderCount + unchangedOrderCount;
 };
 const validBarcodePrerequisites = value => value?.required === true
@@ -163,10 +169,19 @@ function NewOrderReview({ order, review }) {
   </li>;
 }
 
+export function MarketplaceFulfilledExclusions({ orderNumbers }) {
+  if (!orderNumbers.length) return null;
+  return <details className="rounded-lg bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950" aria-label="已出貨訂單">
+    <summary className="cursor-pointer font-medium">已出貨 {orderNumbers.length} 筆，不列入銷貨檔</summary>
+    <p className="mt-1 break-words">{orderNumbers.join('、')}</p>
+  </details>;
+}
+
 export default function MarketplaceDraftOverwrite({ rows, settings, profileId, isCurrent, onClose, onComplete, onBusyChange, onBarcodeReview }) {
   // Parent refreshes cannot replace the source or identity during confirmation.
   const scope = useRef({ rows, settings, profileId, isCurrent, onComplete, onBusyChange, onBarcodeReview });
   const mounted = useRef(false), inFlight = useRef(false), sequence = useRef(0), command = useRef(null), receipt = useRef(null), activePreview = useRef(null);
+  const previewController = useRef(null);
   const handedOff = useRef(false);
   const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false);
   const confirmationId = useId();
@@ -178,27 +193,57 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
   const compare = async (notice = '') => {
     if (!current() || inFlight.current || command.current || receipt.current) return;
     inFlight.current = true; const request = ++sequence.current;
+    const controller = new AbortController();
+    previewController.current = controller;
     markBusy(true); setError(notice); setPreview(null); setResult(null); setFileDelivered(false); setUnknown(false); command.current = null; receipt.current = null;
     try {
-      const response = await apiClient.post(`${endpoint}/preview`, sourceBody(), { timeout: 75000 });
+      const response = await apiClient.post(`${endpoint}/preview`, sourceBody(), { timeout: 75000, signal: controller.signal });
       if (!current() || request !== sequence.current) return;
       if (!validPreview(response.data)) throw Error('整份檔案比對未完成，請重新比對。');
       setPreview(response.data);
     } catch (failure) {
-      if (current() && request === sequence.current) setError(errorText(failure, '無法比對，請重試。'));
+      if (current() && request === sequence.current) setError(marketplacePreviewError(failure) || errorText(failure, '無法比對，請重試。'));
     } finally {
-      inFlight.current = false;
-      if (mounted.current && request === sequence.current) markBusy(false);
+      if (previewController.current === controller) {
+        previewController.current = null;
+        inFlight.current = false;
+        if (mounted.current && request === sequence.current) markBusy(false);
+      }
     }
+  };
+
+  const stopPreview = () => {
+    const controller = previewController.current;
+    if (!controller) return false;
+    previewController.current = null;
+    inFlight.current = false;
+    controller.abort();
+    return true;
   };
 
   useEffect(() => {
     mounted.current = true;
     compare();
-    return () => { mounted.current = false; sequence.current++; scope.current.onBusyChange?.(false); };
+    return () => { mounted.current = false; sequence.current++; stopPreview(); scope.current.onBusyChange?.(false); };
   }, []);
 
+  const close = () => {
+    if (!mounted.current || unknown || (command.current && !receipt.current)) return;
+    const controller = previewController.current;
+    if (inFlight.current && !controller) return;
+    if (controller) {
+      sequence.current++;
+      stopPreview();
+      markBusy(false);
+    }
+    onClose();
+  };
+
   const batches = list(preview?.affectedBatches), newOrders = list(preview?.newOrders);
+  const excludedFulfilled = readFulfilledExclusions(preview?.excludedFulfilled) || [];
+  const hasFulfilledExclusions = excludedFulfilled.length > 0;
+  const allFulfilled = hasFulfilledExclusions && preview.summary.totalOrderCount === 0;
+  const outputLabel = hasFulfilledExclusions ? '本次' : '整份';
   const retainedCount = validCount(preview?.retainedOrderCount) ? preview.retainedOrderCount : batches.reduce((sum, batch) => sum + (validCount(batch.retainedOrderCount) ? batch.retainedOrderCount : list(batch.omittedOrders).length), 0);
   const comparisonComplete = completeComparison(preview);
   const { needsReview: changedOrders, unchanged } = comparisonOrders(preview);
@@ -208,7 +253,7 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
   const reasons = uniqueBlockedReasons([...list(preview?.blockedReasons), ...reviews.reasons]);
   const blocked = !comparisonComplete || !reviews.valid || preview?.canConfirm !== true || list(preview?.blockedReasons).length > 0 || reviews.reviews.some(review => !review.canConfirm || review.blockedReasons.length > 0) || reasons.length > 0;
   const canConfirm = !!preview && !blocked && !busy && !unknown && !result;
-  const barcodePrerequisites = blocked && validBarcodePrerequisites(preview?.barcodePrerequisites) && typeof scope.current.onBarcodeReview === 'function' ? preview.barcodePrerequisites : null;
+  const barcodePrerequisites = !allFulfilled && blocked && validBarcodePrerequisites(preview?.barcodePrerequisites) && typeof scope.current.onBarcodeReview === 'function' ? preview.barcodePrerequisites : null;
   activePreview.current = preview;
 
   const returnToBarcodeReview = async () => {
@@ -239,6 +284,7 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
     if (!command.current) command.current = {
       ...sourceBody(), confirmed: true, notImportedConfirmed: true,
       commandId: crypto.randomUUID(), previewFingerprint: preview.previewFingerprint,
+      ...(hasFulfilledExclusions ? { excludedFulfilledConfirmed: true } : {}),
       ...(reviews.reviews.length ? { reviewDecisions: reviewDecisions(preview) } : {}),
     };
     inFlight.current = true; const request = ++sequence.current;
@@ -287,31 +333,41 @@ export default function MarketplaceDraftOverwrite({ rows, settings, profileId, i
   };
 
   return <section className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-4 text-slate-900 sm:p-5" aria-label="整份訂單比對助理" aria-busy={busy}>
-    <div className="flex min-w-0 items-start justify-between gap-3"><h3 className="min-w-0 text-xl font-semibold leading-7">{preview && !result && comparisonComplete && !blocked ? changedOrders.length + newReviews.length > 0 ? `需核對 ${changedOrders.length + newReviews.length} 筆訂單` : '檔案已核對，可直接轉檔' : '訂單比對'}</h3><Button variant="ghost" className="shrink-0" disabled={busy || unknown || Boolean(command.current && !receipt.current)} onClick={() => { if (mounted.current && !busy && !unknown && !inFlight.current && (!command.current || receipt.current)) onClose(); }}>{result ? '完成' : '取消'}</Button></div>
-    {busy && <p role="status" className="text-sm text-slate-700">{command.current ? '正在核對並準備整份銷貨檔…' : '正在比對整份檔案與已保存的訂單…'}</p>}
+    <div className="flex min-w-0 items-start justify-between gap-3"><h3 className="min-w-0 text-xl font-semibold leading-7">{preview && !result && comparisonComplete && !blocked ? changedOrders.length + newReviews.length > 0 ? `需核對 ${changedOrders.length + newReviews.length} 筆訂單` : '檔案已核對，可直接轉檔' : '訂單比對'}</h3><Button variant="ghost" className="shrink-0" disabled={(busy && !previewController.current) || unknown || Boolean(command.current && !receipt.current)} onClick={close}>{result ? '完成' : busy && previewController.current ? '停止等待' : '取消'}</Button></div>
+    {busy && <p role="status" className="text-sm text-slate-700">{command.current ? `正在核對並準備${outputLabel}銷貨檔…` : '正在比對整份檔案與已保存的訂單…'}</p>}
     {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{error}</p>}
     {!preview && !busy && !unknown && !result && <Button onClick={() => compare()}>重新核對</Button>}
     {preview && !result && <>
+      <MarketplaceFulfilledExclusions orderNumbers={excludedFulfilled} />
       {comparisonComplete && !blocked ? <>
-        <p className="text-sm text-slate-500">整份 {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p>
+        <p className="text-sm text-slate-500">{hasFulfilledExclusions ? '本次轉檔' : '整份'} {preview.summary.totalOrderCount} 筆・{preview.summary.quantity} 件・NT$ {amount(preview.summary.totalMinor)}</p>
         {(changedOrders.length > 0 || newReviews.length > 0) && <ul className="min-w-0 divide-y divide-slate-200" aria-label="需核對訂單">{changedOrders.map(order => <OrderComparison key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}{newReviews.map(order => <NewOrderReview key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul>}
-        {(unchanged.length > 0 || newOrders.length > 0 || retainedCount > 0) && <details className="text-sm leading-6 text-slate-500" aria-label="完整檔案摘要"><summary className="cursor-pointer">整份轉檔內容</summary><div className="mt-3 space-y-3">
+        {(unchanged.length > 0 || newOrders.length > 0 || retainedCount > 0) && <details className="text-sm leading-6 text-slate-500" aria-label="完整檔案摘要"><summary className="cursor-pointer">{`${outputLabel}轉檔內容`}</summary><div className="mt-3 space-y-3">
           {unchanged.length > 0 && <details aria-label="相同訂單單號"><summary className="cursor-pointer">相同 {unchanged.length} 筆，一併轉檔・查看單號</summary><p className="mt-2 break-words">{unchanged.map(numberOf).join('、')}</p></details>}
           {newOrders.length > 0 && <details><summary className="cursor-pointer">新訂單 {newOrders.length} 筆，一併轉檔・查看明細</summary><ul className="mt-3 divide-y divide-slate-100">{newOrders.map(order => <NewOrder key={numberOf(order)} order={order} review={byNumber.get(order.orderNumber)} />)}</ul></details>}
           {retainedCount > 0 && <p>另有 {retainedCount} 筆舊單未上傳，保留原狀，不列入本次銷貨檔。</p>}
         </div></details>}
 
-      </> : <p className="text-sm font-medium">尚無法完成比對</p>}
+      </> : <p className="text-sm font-medium">{allFulfilled ? '本次沒有可轉檔的訂單。' : '尚無法完成比對'}</p>}
       {barcodePrerequisites && <p role="status" className="text-base leading-6 text-slate-700">{barcodePrerequisites.count} 項商品需核對條碼。完成後會重新比對這份訂單。</p>}
-      {reasons.length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-2 pl-7 pr-3 text-sm text-amber-950">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
-      {blocked && reasons.length === 0 && <p role="alert" className="text-sm text-amber-950">訂單資料尚未完成核對，請重新核對。</p>}
-      {!unknown && <div className="flex min-w-0 flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        {blocked ? barcodePrerequisites ? <Button disabled={busy || handedOff.current || Boolean(command.current) || Boolean(receipt.current)} onClick={returnToBarcodeReview}>返回商品條碼核對</Button> : <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <><p id={confirmationId} className="min-w-0 max-w-2xl text-sm leading-6 text-slate-600">{hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}</p><Button className="w-full shrink-0 sm:w-auto" disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>{hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}</Button></>}
+      {!allFulfilled && reasons.length > 0 && <ul role="alert" className="list-disc space-y-1 rounded-lg bg-amber-50 py-2 pl-7 pr-3 text-sm text-amber-950">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+      {!allFulfilled && blocked && reasons.length === 0 && <p role="alert" className="text-sm text-amber-950">訂單資料尚未完成核對，請重新核對。</p>}
+      {!unknown && !allFulfilled && <div className="flex min-w-0 flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        {blocked ? barcodePrerequisites ? <Button disabled={busy || handedOff.current || Boolean(command.current) || Boolean(receipt.current)} onClick={returnToBarcodeReview}>返回商品條碼核對</Button> : <Button disabled={busy} onClick={() => compare()}>重新核對</Button> : <>
+          <p id={confirmationId} className="min-w-0 max-w-2xl text-sm leading-6 text-slate-600">
+            {hasFulfilledExclusions
+              ? `確認本次轉檔的 ${preview.summary.totalOrderCount} 筆尚未匯入 ECOUNT。${hasAllowance ? '依上述取消品項、實收與折讓轉檔。' : ''}`
+              : hasAllowance ? '確認此批尚未匯入 ECOUNT，依上述取消品項、實收與額外折讓轉檔，新檔取代舊檔。' : '確認此批尚未匯入 ECOUNT，新檔取代舊檔。'}
+          </p>
+          <Button className="w-full shrink-0 sm:w-auto" disabled={!canConfirm} aria-describedby={confirmationId} onClick={confirm}>
+            {hasFulfilledExclusions ? `確認只轉檔 ${preview.summary.totalOrderCount} 筆` : hasAllowance ? '確認實收與折讓並轉檔' : '確認未匯入並轉檔'}
+          </Button>
+        </>}
       </div>}
     </>}
     {unknown && <Button disabled={busy} onClick={confirm}>核對同一筆操作結果</Button>}
-    {result && <div className="space-y-3 rounded-lg bg-white p-4" role="status"><p className="font-medium text-emerald-800">整份銷貨檔已準備完成，請只使用這份檔案。</p><p className="text-sm text-slate-700">上一版檔案請停止使用。後續請使用下列批次回匯 ECOUNT 理貨單。</p>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"><div className="min-w-0 text-sm"><strong className="break-all">{result.exportBatch.batchNumber}</strong><p>{result.exportBatch.activeOrderCount} 筆訂單・{result.exportBatch.quantity ?? '—'} 件商品・NT$ {amount(result.exportBatch.totalMinor)}</p></div><Button disabled={busy} onClick={download}>{fileDelivered ? '重新下載整份銷貨檔' : '下載整份銷貨檔'}</Button></div>
+    {result && <div className="space-y-3 rounded-lg bg-white p-4" role="status"><p className="font-medium text-emerald-800">{`${outputLabel}銷貨檔已準備完成，請只使用這份檔案。`}</p><p className="text-sm text-slate-700">上一版檔案請停止使用。後續請使用下列批次回匯 ECOUNT 理貨單。</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"><div className="min-w-0 text-sm"><strong className="break-all">{result.exportBatch.batchNumber}</strong><p>{result.exportBatch.activeOrderCount} 筆訂單・{result.exportBatch.quantity ?? '—'} 件商品・NT$ {amount(result.exportBatch.totalMinor)}</p></div><Button disabled={busy} onClick={download}>{fileDelivered ? `重新下載${outputLabel}銷貨檔` : `下載${outputLabel}銷貨檔`}</Button></div>
     </div>}
   </section>;
 }

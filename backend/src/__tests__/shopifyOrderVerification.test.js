@@ -62,7 +62,7 @@ test('currentQuantity removes edited-away product; current money and exact platf
   const [url, request] = fetchImpl.mock.calls[0];
   expect(url).toBe(`https://${shop}/admin/api/2026-07/graphql.json`);
   expect(request).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'X-Shopify-Access-Token': token } });
-  expect(JSON.parse(request.body).variables).toEqual({ id: 'gid://shopify/Order/7624215101596', after: null });
+  expect(JSON.parse(request.body).variables).toEqual({ id: 'gid://shopify/Order/7624215101596', after: null, first: 25 });
   expect(JSON.parse(request.body).query).toMatch(/^query WmsCurrentOrder/);
   expect(JSON.parse(request.body).query).toMatch(/variant\s*\{\s*id\s+barcode\s*\}/);
   expect(result.verification.orders[0].items[0]).toMatchObject({variantId:'gid://shopify/ProductVariant/123',barcode:'4711299272493',barcodeSource:'shopify-variant'});
@@ -185,7 +185,7 @@ test('paginated line items are fully read and a changed order or repeated cursor
   const fetchImpl = jest.fn().mockResolvedValueOnce(response(page1)).mockResolvedValueOnce(response(page2)).mockResolvedValueOnce(response(current));
   const result = await run(editedRows(), current, { fetchImpl });
   expect(objects(result.rows)).toHaveLength(1);
-  expect(JSON.parse(fetchImpl.mock.calls[1][1].body).variables.after).toBe('CURSOR-A');
+  expect(JSON.parse(fetchImpl.mock.calls[1][1].body).variables).toMatchObject({ after: 'CURSOR-A', first: 100 });
   const changed = jest.fn().mockResolvedValueOnce(response(page1)).mockResolvedValueOnce(response({ ...page2, updatedAt: '2026-10-01T10:00:00Z' }));
   await expect(run(editedRows(), current, { fetchImpl: changed })).rejects.toMatchObject({ code: 'SHOPIFY_ORDER_CHANGED' });
   const repeated = jest.fn().mockResolvedValueOnce(response(page1)).mockResolvedValueOnce(response({ ...page2, lineItems: { ...page2.lineItems, pageInfo: { hasNextPage: true, endCursor: 'CURSOR-A' } } }));
@@ -231,6 +231,121 @@ test('credentials, network failures, HTTP and GraphQL errors never expose secret
 
 test('request timeout is bounded even when fetch never settles', async () => {
   await expect(run(editedRows(), order(), { timeoutMs: 5, fetchImpl: () => new Promise(() => {}) })).rejects.toMatchObject({ code: 'SHOPIFY_TIMEOUT', status: 503 });
+});
+
+const sourceBatch = (size, offset = 0) => Array.from({ length: size }, (_, i) => source({ Name: `#${offset + i + 1}`, Id: String(offset + i + 1) }));
+const batchOrder = id => order({ id, name: `#${id.split('/').pop()}`, edited: false });
+
+test('49 Shopify orders finish within one shared deadline and preserve source order with four active reads', async () => {
+  jest.useFakeTimers();
+  try {
+    const records = sourceBatch(49), completed = [];
+    let active = 0, peak = 0;
+    const fetchImpl = jest.fn(async (_, { body }) => {
+      const id = JSON.parse(body).variables.id, current = batchOrder(id);
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, Number(id.split('/').pop()) % 2 ? 1350 : 1250));
+      active--;
+      completed.push(current.name);
+      return response(current);
+    });
+    const request = run(table(records), order(), { fetchImpl, deadline: Date.now() + 20000 }).then(result => ({ result }), error => ({ error }));
+    await jest.runAllTimersAsync();
+    const { result, error } = await request;
+    expect(error).toBeUndefined();
+    expect(peak).toBe(4);
+    expect(completed[0]).toBe('#2');
+    expect(result.verification.orders.map(current => current.number)).toEqual(records.map(record => record.Name));
+    expect(objects(result.rows).map(record => record.Name)).toEqual(records.map(record => record.Name));
+  } finally { jest.useRealTimers(); }
+});
+
+test('a failed order aborts active reads and never starts queued orders or returns partial evidence', async () => {
+  const pending = [];
+  const fetchImpl = jest.fn(async (_, { body, signal }) => {
+    if (JSON.parse(body).variables.id === 'gid://shopify/Order/1') return response(null);
+    pending.push(signal);
+    return new Promise(() => {});
+  });
+  await expect(run(table(sourceBatch(10)), order(), { fetchImpl })).rejects.toMatchObject({ code: 'SHOPIFY_ORDER_MISSING', orderNumber: '#1' });
+  expect(fetchImpl).toHaveBeenCalledTimes(4);
+  expect(pending).toHaveLength(3);
+  expect(pending.every(signal => signal.aborted)).toBe(true);
+});
+
+test('simultaneous batches share a single Shopify connection request limit', async () => {
+  let active = 0, peak = 0;
+  const fetchImpl = jest.fn(async (_, { body }) => {
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 3));
+    active--;
+    return response(batchOrder(JSON.parse(body).variables.id));
+  });
+  const verify = createShopifyOrderVerifier({ env: { WMS_SHOPIFY_SHOP: shop, WMS_SHOPIFY_ACCESS_TOKEN: token }, fetchImpl });
+  const [first, second] = await Promise.all([verify(table(sourceBatch(6))), verify(table(sourceBatch(6, 100)))]);
+  expect(peak).toBe(4);
+  expect(first.verification.orders.map(current => current.number)).toEqual(sourceBatch(6).map(record => record.Name));
+  expect(second.verification.orders.map(current => current.number)).toEqual(sourceBatch(6, 100).map(record => record.Name));
+});
+
+test('the store probe and order reads honor an exhausted shared deadline', async () => {
+  const fetchImpl = jest.fn();
+  const verify = createShopifyOrderVerifier({ env: { WMS_SHOPIFY_SHOP: shop, WMS_SHOPIFY_ACCESS_TOKEN: token }, fetchImpl });
+  const deadline = Date.now() - 1;
+  await expect(verify.probe(editedRows(), {}, { deadline })).rejects.toMatchObject({ code: 'SHOPIFY_TIMEOUT' });
+  await expect(verify(editedRows(), { deadline })).rejects.toMatchObject({ code: 'SHOPIFY_TIMEOUT' });
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+test('a coalesced store probe preserves each caller deadline without canceling the shared read', async () => {
+  let completeRead;
+  const fetchImpl = jest.fn(() => new Promise(resolve => { completeRead = resolve; }));
+  const verify = createShopifyOrderVerifier({ env: { WMS_SHOPIFY_SHOP: shop, WMS_SHOPIFY_ACCESS_TOKEN: token }, fetchImpl });
+  const first = verify.probe(editedRows());
+  const short = verify.probe(editedRows(), {}, { deadline: Date.now() + 10 });
+  await expect(short).rejects.toMatchObject({ code: 'SHOPIFY_TIMEOUT' });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+  completeRead({ ok: true, text: async () => JSON.stringify({
+    data: { shop: { myshopifyDomain: shop }, nodes: [{ id: 'gid://shopify/Order/7624215101596', name: '#154230' }] },
+  }) });
+  await expect(first).resolves.toMatchObject({ complete: true, orderCount: 1 });
+});
+
+test('Shopify GraphQL and HTTP throttling retry a bounded read without changing order evidence', async () => {
+  const throttled = { ok: true, status: 200, text: async () => JSON.stringify({
+    errors: [{ extensions: { code: 'THROTTLED' } }],
+    extensions: { cost: { requestedQueryCost: 100, throttleStatus: { currentlyAvailable: 99, restoreRate: 1000 } } },
+  }) };
+  const rateLimit = { ok: false, status: 429, headers: { get: key => key === 'retry-after' ? '0' : null } };
+  const current = order({ edited: false });
+  const fetchImpl = jest.fn().mockResolvedValueOnce(throttled).mockResolvedValueOnce(rateLimit).mockResolvedValueOnce(response(current));
+  const result = await run(editedRows(), current, { fetchImpl });
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+  expect(new Set(fetchImpl.mock.calls.map(([, options]) => options.body)).size).toBe(1);
+  expect(result.verification.fingerprint).toBe((await run(editedRows(), current)).verification.fingerprint);
+});
+
+test('a Shopify retry delay beyond the shared deadline returns an actionable rate limit error', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: false, status: 429, headers: { get: key => key === 'retry-after' ? '60' : null } }));
+  await expect(run(editedRows(), order(), { fetchImpl, deadline: Date.now() + 1000 })).rejects.toMatchObject({ code: 'SHOPIFY_THROTTLED' });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+test('persistent Shopify throttling stops after two retries without accepting a partial GraphQL response', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, headers: { get: () => '0' }, text: async () => JSON.stringify({
+    data: { shop: { myshopifyDomain: shop }, order: order() },
+    errors: [{ extensions: { code: 'THROTTLED' } }],
+  }) }));
+  await expect(run(editedRows(), order(), { fetchImpl })).rejects.toMatchObject({ code: 'SHOPIFY_THROTTLED' });
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+});
+
+test('a malformed Shopify error envelope fails safely without entering the throttle retry path', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ errors: { length: 1 } }) }));
+  await expect(run(editedRows(), order(), { fetchImpl })).rejects.toMatchObject({ code: 'SHOPIFY_RESPONSE_INVALID' });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 
 test('source ID conflicts, missing IDs and oversized files are rejected before any network call', async () => {

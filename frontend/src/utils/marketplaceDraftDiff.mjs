@@ -141,6 +141,13 @@ export function orderDifferences(order) {
     otherChanged: order?.changed === true && !order?.restoring && !items.length && !shipping.length && !totalChanged && !quantityChanged };
 }
 
+export function readFulfilledExclusions(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 5000 || new Set(value).size !== value.length ||
+    value.some(number => typeof number !== 'string' || !number || number.length > 100 || number !== number.trim() || /[\u0000-\u001f\u007f]/.test(number))) return null;
+  return value;
+}
+
 export function completeComparison(preview) {
   const selected = [...list(preview?.newOrders), ...list(preview?.affectedBatches).flatMap(batch => list(batch.uploadedOrders))];
   const valid = value => Number.isSafeInteger(value) && value >= 0;

@@ -113,6 +113,8 @@ test('an eligible duplicate order and line identity cannot convert as two shared
  const result=await h.prepare(h.input());
  expect(result.output.ok).toBe(false);expect(result.output.rows).toEqual([]);
  expect(result.output.issues).toEqual(expect.arrayContaining([expect.objectContaining({code:'SOURCE_LINE_ID_COLLISION'})]));
+ expect(result.barcodeConflicts).toEqual([expect.objectContaining({canConfirm:false})]);
+ expect(result.barcodeReviewCandidates).toEqual([expect.objectContaining({canConfirm:false})]);
  expectReadOnly(h);
 });
 

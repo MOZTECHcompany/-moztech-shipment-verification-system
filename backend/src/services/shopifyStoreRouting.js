@@ -66,7 +66,7 @@ function selectionError(reason,choices){
  return Object.assign(new Error(messages[reason]),{status:409,code:'MARKETPLACE_STORE_SELECTION_REQUIRED',storeSelection:publicStoreSelection({reason,choices})});
 }
 
-async function resolveShopifyStore({rows,profiles,input={},verifier,refresh=false}){
+async function resolveShopifyStore({rows,profiles,input={},verifier,refresh=false,deadline}){
  const shops=profiles.filter(profile=>profile.platform==='Shopify');
  let connections;
  try{connections=verifier.listConnections();}catch{throw selectionError('connection_unavailable',shops.map(profile=>({id:profile.id,store:profile.store,shop:profile.settings?.shopifyShop})));}
@@ -85,14 +85,14 @@ async function resolveShopifyStore({rows,profiles,input={},verifier,refresh=fals
  if(clean(input.profileId)&&!selected)throw Object.assign(new Error('店鋪設定不存在或平台不同，請重新選擇店鋪'),{status:400,code:'STORE_PROFILE_INVALID'});
  if(selected){
   if(!selected.connection?.ready)throw selectionError('connection_unavailable',choices);
-  let probe;try{probe=await verifier.probe(rows,selected.context,{refresh});}catch(error){if(error.status&&error.status<500)throw error;throw selectionError('connection_unavailable',choices);}
+  let probe;try{probe=await verifier.probe(rows,selected.context,{refresh,deadline});}catch(error){if(error.status&&error.status<500||['SHOPIFY_TIMEOUT','SHOPIFY_THROTTLED'].includes(error.code))throw error;throw selectionError('connection_unavailable',choices);}
   if(!probe.complete)throw selectionError('not_found',choices);
   return {profile:selected.profile,context:selected.context};
  }
  const unique=new Map(candidates.filter(value=>value.connection?.ready).map(value=>[value.connection.id,value]));
  if(!unique.size)throw selectionError(connections.length?'connection_unavailable':'not_configured',choices);
  const results=await Promise.all([...unique.values()].map(async value=>{
-  try{return {id:value.connection.id,probe:await verifier.probe(rows,value.context,{refresh})};}catch(error){if(error.status&&error.status<500)throw error;return {id:value.connection.id,unknown:true};}
+  try{return {id:value.connection.id,probe:await verifier.probe(rows,value.context,{refresh,deadline})};}catch(error){if(error.status&&error.status<500)throw error;return {id:value.connection.id,unknown:true};}
  }));
  const matches=candidates.filter(value=>results.some(result=>result.id===value.connection?.id&&result.probe?.complete));
  if(matches.length>1)throw selectionError('ambiguous',choices);

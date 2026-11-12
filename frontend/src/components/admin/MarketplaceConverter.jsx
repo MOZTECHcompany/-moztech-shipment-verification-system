@@ -7,8 +7,10 @@ import { API_ORIGIN } from '../../api/origin';
 import { getNativeRuntime, handleWorkspaceAnchor } from '../../workspace/nativeRuntime.js';
 import { downloadNativeMarketplaceFile } from '../../workspace/downloads.js';
 import MarketplaceBatchManager from './MarketplaceBatchManager';
-import MarketplaceDraftOverwrite from './MarketplaceDraftOverwrite';
+import MarketplaceDraftOverwrite, { MarketplaceFulfilledExclusions } from './MarketplaceDraftOverwrite';
 import { batchSessionMatches } from '../../utils/importBatches';
+import { marketplacePreviewError } from '../../utils/marketplacePreviewError.mjs';
+import { readFulfilledExclusions } from '../../utils/marketplaceDraftDiff.mjs';
 import { formatMinor, ECOUNT_GROUPED_MODE } from '../../utils/marketplaceIntake.mjs';
 import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS } from '../../utils/unifiedMarketplace.mjs';
 import { marketplaceOrderSheets, parseMarketplaceWorksheet } from '../../utils/marketplaceWorkbook.mjs';
@@ -97,6 +99,7 @@ function ConverterPage({ user }) {
   const [input, setInput] = useState(null), [settings, setSettings] = useState(initialSettings), [name, setName] = useState('');
   const [prepared, setPrepared] = useState(null), [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false), [access, setAccess] = useState('loading');
+  const [checkingPreview, setCheckingPreview] = useState(false);
   const [message, setMessage] = useState(''), [messageKind, setMessageKind] = useState('status');
   const [existingOrderLink, setExistingOrderLink] = useState(null);
   const [records, setRecords] = useState([]), [saved, setSaved] = useState(null);
@@ -115,6 +118,7 @@ function ConverterPage({ user }) {
   const closeDraftOverwrite = () => { draftInstance.current++; setDraftOverwriteOpen(false); };
   const currentDraftInstance = draftInstance.current;
   const fileRef = useRef(null), request = useRef(0), mounted = useRef(true), token = useRef(null);
+  const previewController = useRef(null), previewRetry = useRef(null);
   const currentPreviewSequence = request.current;
   const actor = useRef({ id: user.id, role: user.role }), inFlight = useRef(false), targetSelectionInFlight = useRef(false);
   const storeSelectionInFlight = useRef(false), sourceRevision = useRef(0);
@@ -147,6 +151,9 @@ function ConverterPage({ user }) {
       if (currentSession()) return;
       request.current++;
       sourceRevision.current++;
+      previewController.current?.abort();
+      previewRetry.current = null;
+      setCheckingPreview(false); setBusy(false);
       setInput(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
       setBarcodeChecks({});
@@ -156,7 +163,7 @@ function ConverterPage({ user }) {
       setAccess('denied'); showMessage('登入人員已變更，請重新登入。', 'error');
     };
     window.addEventListener('storage', check);
-    return () => { mounted.current = false; request.current++; window.removeEventListener('storage', check); };
+    return () => { mounted.current = false; request.current++; previewController.current?.abort(); window.removeEventListener('storage', check); };
   }, []);
   useEffect(() => { closeDraftOverwrite(); setStoreSelection(null); clearStoreDraft(); }, [routeContextKey]);
   const locked = busy || access !== 'ready' || draftOverwriteOpen || !!storeDraft;
@@ -164,17 +171,20 @@ function ConverterPage({ user }) {
   const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
   const matchingProfiles = profiles.filter(profile => profile.platform === input?.parsed.platform);
-  const reimports = prepared?.reimports || [];
+  const excludedFulfilled = readFulfilledExclusions(prepared?.excludedFulfilled) || [];
+  const fulfilledNumbers = new Set(excludedFulfilled);
+  const allFulfilled = excludedFulfilled.length > 0 && excludedFulfilled.length === prepared.raw?.orders.length;
+  const reimports = (prepared?.reimports || []).filter(order => !fulfilledNumbers.has(order.orderNumber));
   const reviewRequired = prepared?.reviewRequired === true;
   const reimportNumbers = new Set(reimports.map(order => order.orderNumber));
   const onlyReimports = reimports.length > 0 && prepared.parsed.summary.orderCount === 0;
-  const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason && !reimportNumbers.has(choice.number)) : [];
+  const emptyExclusions = prepared?.parsed?.summary?.orderCount === 0 ? (prepared.choices || []).filter(choice => !choice.eligible && choice.reason && !reimportNumbers.has(choice.number) && !fulfilledNumbers.has(choice.number)) : [];
   const catalogMappingIssues = (catalog?.mappingIssues || []).filter(issue => issue.severity === 'error');
   const catalogMappingIssueSkus = new Set(catalogMappingIssues.map(issue => issue.sku));
   const issueGroups = useMemo(() => {
     const groups = new Map();
     for (const issue of prepared?.output?.issues || []) {
-      if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && (emptyExclusions.length || reimports.length))) continue;
+      if (issue.severity === 'warning' || (issue.code === 'EMPTY_INTAKE' && (emptyExclusions.length || reimports.length || allFulfilled))) continue;
       if (issue.code === 'BARCODE_MISMATCH' && barcodeBlocked) continue;
       if (issue.code === 'PRODUCT_MAPPING_REQUIRED' && catalogMappingIssueSkus.has(issue.sku)) continue;
       if (catalogMappingIssues.some(value => value.code === issue.code && value.sku === issue.sku)) continue;
@@ -207,21 +217,36 @@ function ConverterPage({ user }) {
   const fetchPreview = async (rows, nextSettings, nextProfile, sequence, openComparison = false) => {
     const requestRoute = routeRevision.current;
     const isCurrent = () => mounted.current && sequence === request.current && currentSession() && routeRevision.current === requestRoute;
+    const controller = new AbortController();
+    previewController.current?.abort();
+    previewController.current = controller;
+    previewRetry.current = { settings: nextSettings, profileId: nextProfile, openComparison };
+    setCheckingPreview(true);
     try {
-      const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000 });
+      const response = await apiClient.post('/api/marketplace-intakes/preview', { rows, settings: nextSettings, ...(nextProfile ? { profileId: nextProfile } : {}) }, { timeout: 75000, signal: controller.signal });
       if (!isCurrent()) return false;
       applyPreview(response.data);
+      previewRetry.current = null;
+      const excluded = new Set(readFulfilledExclusions(response.data.excludedFulfilled) || []);
+      const allExcluded = excluded.size > 0 && excluded.size === response.data.raw?.orders.length;
+      const savedEligible = response.data.reimports?.some(order => !excluded.has(order.orderNumber));
       if (response.data.barcodeConflicts?.length > 0) closeDraftOverwrite();
-      else if (openComparison && (response.data.reviewRequired === true || response.data.reimports?.length > 0)) openDraftOverwrite();
+      else if (openComparison && !allExcluded && (response.data.reviewRequired === true || savedEligible)) openDraftOverwrite();
       return true;
     } catch (error) {
       if (!isCurrent()) return false;
       const selection = storeSelectionFrom(error);
       if (!selection) throw error;
+      previewRetry.current = null;
       closeDraftOverwrite(); setPrepared(null); setSaved(null); setCatalog(null); setProfileId('');
       setSettings(initialSettings()); setBarcodeChecks({}); setChoosingStore(false); setStoreSetupOpen(false);
       setPreviewDirty(true); setStoreSelection(selection); showMessage('');
       return false;
+    } finally {
+      if (previewController.current === controller) {
+        previewController.current = null;
+        if (mounted.current) setCheckingPreview(false);
+      }
     }
   };
   const refreshPreview = async (nextSettings = settings, nextProfile = profileId, openComparison = false) => {
@@ -231,8 +256,21 @@ function ConverterPage({ user }) {
     setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
     try { await fetchPreview(input.source.rows, nextSettings, nextProfile, sequence, openComparison); }
     catch (error) {
-      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || '訂單核對失敗，請重試。'), 'error');
+      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, marketplacePreviewError(error) || error.response?.data?.message || '訂單核對失敗，請重試。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
+  };
+  const retryPreview = (nextSettings = settings, nextProfile = profileId, openComparison = false) => {
+    const pending = previewRetry.current;
+    return pending ? refreshPreview(pending.settings, pending.profileId, pending.openComparison)
+      : refreshPreview(nextSettings, nextProfile, openComparison);
+  };
+  const cancelPreview = () => {
+    if (!currentPreviewContext() || currentPreviewSequence !== request.current || !previewController.current || inFlight.current || storeSetupInFlight.current) return;
+    request.current++;
+    previewController.current.abort();
+    previewController.current = null;
+    setCheckingPreview(false); setBusy(false);
+    showMessage('已停止等待核對。檔案已保留，可重新核對。');
   };
   const returnToBarcodeReview = async instance => {
     if (instance !== draftInstance.current || !draftOverwriteOpen || !currentPreview() || access !== 'ready' || inFlight.current || !input || originalOrderFlow) return false;
@@ -302,13 +340,13 @@ function ConverterPage({ user }) {
   const update = (key, value) => {
     if (locked || inFlight.current || !currentPreview()) return;
     clearReimportFocus();
-    request.current++; setSaved(null); setPreviewDirty(true);
+    request.current++; previewRetry.current = null; setSaved(null); setPreviewDirty(true);
     setSettings(current => ({ ...current, [key]: value, ...(['erpStaffCode', 'erpProjectCode'].includes(key) ? { erpResponsibilityConfirmed: false } : {}) }));
   };
   const mapping = (sku, key, value) => {
     if (locked || inFlight.current || !currentPreview()) return;
     clearReimportFocus();
-    request.current++; setSaved(null); setPreviewDirty(true);
+    request.current++; previewRetry.current = null; setSaved(null); setPreviewDirty(true);
     setSettings(current => ({ ...current, skuMappings: { ...current.skuMappings, [sku]: {
       ...current.skuMappings[sku], [key]: value,
       ...(['erpSku', 'erpName'].includes(key) ? { confirmed: false } : {}),
@@ -320,7 +358,10 @@ function ConverterPage({ user }) {
     if (locked || inFlight.current || !currentPreview()) return;
     const profile = (storeSelection?.choices || matchingProfiles).find(value => String(value.id) === id);
     if (!profile) return;
-    if (storeSelection && !profile.connectionReady) { setStoreSelection({ ...storeSelection, selectedId: id }); return; }
+    if (storeSelection) {
+      setStoreSelection({ ...storeSelection, selectedId: id });
+      if (!profile.connectionReady) return;
+    }
     storeSelectionInFlight.current = true;
     closeDraftOverwrite(); setPrepared(null); setSaved(null); setCatalog(null); setProfileId('');
     setSettings(initialSettings()); setBarcodeChecks({}); setChoosingStore(false); setStoreSetupOpen(false);
@@ -329,6 +370,7 @@ function ConverterPage({ user }) {
   };
   const resetSource = () => {
     sourceRevision.current++;
+    previewRetry.current = null;
     clearStoreDraft();
     clearReimportFocus();
     showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
@@ -364,7 +406,7 @@ function ConverterPage({ user }) {
       if (!sheets.length && book.SheetNames.length !== 1) throw Error('找不到商城訂單工作表，請選擇平台原始訂單檔。');
       await loadWorksheet(XLSX, book, sheets[0] || book.SheetNames[0], file.name, sequence);
     } catch (error) {
-      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || error.message || '無法讀取來源檔。'), 'error');
+      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, marketplacePreviewError(error) || error.response?.data?.message || error.message || '無法讀取來源檔。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
   };
   const chooseSheet = async sheetName => {
@@ -375,7 +417,7 @@ function ConverterPage({ user }) {
     setBusy(true);
     try { await loadWorksheet(await import('xlsx'), workbook.book, sheetName, workbook.fileName, sequence); }
     catch (error) {
-      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, error.response?.data?.message || error.message || '無法讀取訂單工作表。'), 'error');
+      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, marketplacePreviewError(error) || error.response?.data?.message || error.message || '無法讀取訂單工作表。'), 'error');
     } finally { if (mounted.current && sequence === request.current) setBusy(false); }
   };
   const openStoreSetup = async () => {
@@ -454,6 +496,7 @@ function ConverterPage({ user }) {
   };
   const download = async kind => {
     if (locked || inFlight.current || !input || !prepared || previewDirty || !currentPreview() || originalOrderFlow) return;
+    if (kind === 'ecount' && allFulfilled) return;
     if (kind === 'ecount' && barcodeBlocked) { showMessage('請先完成商品條碼核對，再比對訂單。'); return; }
     // A file containing saved orders is confirmed and exported as one file.
     // The new-order-only save route remains for files with no saved orders.
@@ -524,7 +567,10 @@ function ConverterPage({ user }) {
     {message && (!originalOrderFlow || access === 'denied') && <div role={messageKind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${messageKind === 'error' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-800'}`}><p>{message}</p>{existingOrderLink && <Button as={Link} to={existingOrderLink} variant="secondary" className="mt-3" disabled={locked} onClick={event => { if (locked || !currentSession()) event.preventDefault(); }}>查看原訂單</Button>}</div>}
     {!originalOrderFlow && <>{draftOverwriteOpen ? <p className="break-words text-sm text-slate-500" aria-label="本次檔案">{name}{settings.store && ` · ${settings.store}`}</p> : <section className={`${sectionClass} border-2 border-dashed transition-colors ${dragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300'}`} onDragOver={event => { event.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); selectFiles(Array.from(event.dataTransfer.files || [])); }} aria-label="商城訂單檔案區">
       <div className="flex flex-col items-center py-3 text-center"><UploadCloud size={32} className="mb-3 text-blue-600" /><h2 className="text-lg font-semibold">{dragging ? '放開檔案，開始核對' : '拖曳商城訂單到這裡'}</h2><p className="mt-2 text-sm text-slate-600">Shopify、1Shop、SHOPLINE · Excel／CSV</p>
-        <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={() => fileRef.current?.click()}>{busy ? <Loader2 className="mr-2 animate-spin" size={18} /> : <FileSpreadsheet className="mr-2" size={18} />}{busy ? '核對中…' : name ? '更換訂單檔' : '選擇訂單檔'}</Button>
+        {checkingPreview ? <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+          <p role="status" className="flex items-center gap-2 text-sm text-slate-700"><Loader2 className="animate-spin" size={18} />正在核對商城訂單…</p>
+          {!inFlight.current && !storeSetupInFlight.current && <Button type="button" variant="secondary" onClick={cancelPreview}>停止等待</Button>}
+        </div> : <Button type="button" variant="secondary" className="mt-4" disabled={locked} onClick={() => fileRef.current?.click()}>{busy ? <Loader2 className="mr-2 animate-spin" size={18} /> : <FileSpreadsheet className="mr-2" size={18} />}{busy ? (name ? '處理中…' : '正在讀取訂單檔…') : name ? '更換訂單檔' : '選擇訂單檔'}</Button>}
       </div>
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={locked} onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; return selectFiles(files); }} aria-label="商城原始訂單檔" />
       {workbook && <div className="mt-3 max-w-xl"><p className="mb-2 text-sm text-slate-600">{workbook.fileName}</p><Field label="訂單工作表"><select className={inputClass} disabled={locked} value={selectedSheet} onChange={event => chooseSheet(event.target.value)}><option value="">請選擇工作表</option>{workbook.sheets.map(sheet => <option key={sheet} value={sheet}>{sheet}</option>)}</select></Field></div>}
@@ -554,24 +600,25 @@ function ConverterPage({ user }) {
       <div><h2 className="text-lg font-semibold">{storeSelection.choices.length ? '確認店鋪' : '店鋪尚未設定'}</h2><p className="mt-1 text-sm text-slate-600">{!storeSelection.choices.length ? '請聯絡管理員完成店鋪設定，再重新核對。' : storeSelection.reason === 'mixed_stores' ? '這份檔案含不同店鋪的訂單，請分別提供各店鋪的訂單檔。' : '尚無法確認訂單所屬店鋪，請選擇匯出訂單的店鋪。'}</p></div>
       {storeSelection.choices.length > 0 && <div className="max-w-md"><Field label="店鋪"><select className={inputClass} disabled={locked} value={storeSelection.selectedId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{storeSelection.choices.map(choice => <option key={choice.id} value={choice.id}>{choice.store}{!choice.connectionReady ? '（待串接）' : ''}</option>)}</select></Field></div>}
       {storeSelection.choices.length > 0 && (storeSelection.choices.every(choice => !choice.connectionReady) || storeSelection.choices.some(choice => choice.id === storeSelection.selectedId && !choice.connectionReady)) && <p className="text-sm text-amber-950">此店鋪連線尚未完成，請聯絡管理員</p>}
-      <Button variant="secondary" disabled={locked} onClick={() => refreshPreview({ skuMappings: {} }, '', true)}>{busy ? '核對中…' : '重新核對'}</Button>
+      <Button variant="secondary" disabled={locked} onClick={() => retryPreview({ skuMappings: {} }, '', true)}>重新核對</Button>
       {!storeDraft && <Button variant="secondary" disabled={locked} onClick={openStoreSetup}>店鋪設定</Button>}
     </section>}
-    {input && !prepared && !storeSelection && !busy && <div className={sectionClass}><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對訂單</Button></div>}
+    {input && !prepared && !storeSelection && !busy && <div className={sectionClass}><Button variant="secondary" disabled={locked} onClick={() => retryPreview()}>重新核對訂單</Button></div>}
     {input && prepared && <>
       {!draftOverwriteOpen && <section className={`${sectionClass} border-blue-200`} aria-label="轉檔與下載">
         {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store}</option>)}</select></Field></div>
           : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><h2 className="text-lg font-semibold">{reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length} 筆` : reviewRequired ? `本次檔案 ${raw.orders.length} 筆・取消與退款待核對` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{reviewRequired ? <p className="mt-2 text-sm text-slate-700">核對取消品項與剩餘出貨內容後，產生整份銷貨檔。</p> : reimports.length ? <p className="mt-2 text-sm text-slate-700">比對整份檔案的新增與異動，確認後下載同一份銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>}
+          <div><h2 className="text-lg font-semibold">{allFulfilled ? '本次沒有可轉檔的訂單' : reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length - excludedFulfilled.length} 筆` : reviewRequired ? `本次檔案 ${raw.orders.length} 筆・取消與退款待核對` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{!allFulfilled && (reviewRequired ? <p className="mt-2 text-sm text-slate-700">核對取消品項與剩餘出貨內容後，產生銷貨檔。</p> : reimports.length ? <p className="mt-2 text-sm text-slate-700">比對檔案的新增與異動，確認後下載銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>)}
             {!reimports.length && prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
             {!reimports.length && prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
           </div>
-          {reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>}
+          {!allFulfilled && (reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : excludedFulfilled.length ? '比對並確認本次轉檔' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>)}
         </div>
+        {!previewDirty && excludedFulfilled.length > 0 && <div className="mt-4"><MarketplaceFulfilledExclusions orderNumbers={excludedFulfilled} /></div>}
         {barcodeBlocked && (reimports.length > 0 || reviewRequired) && <p className="mt-3 text-sm text-amber-950">請先完成下方商品條碼核對，保存後會接續訂單比對。</p>}
-        {busy ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-slate-600"><Loader2 size={16} className="animate-spin" />核對中…</p>
-          : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button></div>
+        {busy ? null
+          : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => retryPreview()}>重新核對</Button></div>
           : !reviewRequired && prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
         {!previewDirty && (issueGroups.length > 0 || catalogBlocked || emptyExclusions.length > 0) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">{issueGroups.length || catalogBlocked ? '待處理' : '本批無可銷貨訂單'}</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
           {emptyExclusions.map(choice => <li key={choice.number}>{choice.number}：{choice.reason}</li>)}
@@ -631,7 +678,7 @@ function ConverterPage({ user }) {
             <Check checked={barcodeChecks[key]} onChange={value => { if (!locked && !previewDirty && currentPreview()) setBarcodeChecks(current => ({ ...current, [key]: value })); }}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
           </fieldset>
-          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{internal ? '請填寫並核對內部掃描碼' : canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
+          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{conflict.reviewReason === 'SOURCE_LINE_ID_COLLISION' ? '商城商品明細識別重複，請重新匯出原始訂單檔。' : internal ? '請填寫並核對內部掃描碼' : canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}

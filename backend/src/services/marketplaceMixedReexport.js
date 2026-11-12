@@ -1,5 +1,6 @@
 const {draftOverwriteTools:{hash,summary,changes,oldRaw,mergedRows,blockedReasons}}=require('./marketplaceDraftOverwrite');
 const {captureHandler}=require('./marketplaceHandler');
+const {createMarketplaceVerificationScope,verifiedFulfilledOrderNumbers}=require('./marketplacePreparation');
 const clean=value=>String(value??'').trim();
 const clone=value=>JSON.parse(JSON.stringify(value));
 const fail=(message,code='MARKETPLACE_DRAFT_CHANGED',status=409)=>Object.assign(new Error(message),{status,code});
@@ -15,6 +16,10 @@ function uploadedNumbers(conversion){
  return numbers.sort();
 }
 function afterSummary(conversion,number){return summary({orders:conversion.parsed.orders.map(order=>({...order,sourceFinancial:conversion.raw.orders.find(raw=>raw.sourceOrderNumber===order.sourceOrderNumber)?.financial})),items:conversion.parsed.items},number);}
+function selectedRaw(conversion){
+ const raw=conversion.raw,selected=conversion.uploadedNumbers;
+ return {...raw,orders:raw.orders.filter(order=>selected.has(order.sourceOrderNumber)),items:raw.items.filter(item=>selected.has(item.sourceOrderNumber)),issues:(raw.issues||[]).filter(issue=>!issue.orderNumber||selected.has(issue.orderNumber))};
+}
 function makeSnapshot(conversion,raw,settings,user){
  return import('./unifiedMarketplace.mjs').then(({prepareUnifiedMarketplace})=>{
   const prepared=prepareUnifiedMarketplace(raw,settings);
@@ -100,7 +105,8 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
  const scopes=()=>require('./marketplaceUploadScopes');
  async function command(db,userId,commandId,requestHash){const row=(await db.query('SELECT request_hash,response FROM marketplace_draft_commands WHERE actor_id=$1 AND command_id=$2',[userId,commandId])).rows[0];if(row&&row.request_hash!==requestHash)throw fail('同一操作識別不能使用不同內容','MARKETPLACE_DRAFT_COMMAND_CHANGED');return row?{...row.response,replayed:true}:null;}
  async function readContext(db,conversion,{lock=false,expectedIds}={}){
-  const numbers=uploadedNumbers(conversion),platform='Shopify',store=clean(conversion.settings.store);
+  const fullNumbers=uploadedNumbers(conversion),excludedFulfilled=verifiedFulfilledOrderNumbers(conversion.verification),excluded=new Set(excludedFulfilled);
+  const numbers=fullNumbers.filter(number=>!excluded.has(number)),platform='Shopify',store=clean(conversion.settings.store);
   if(!store)throw fail('請選擇已設定的店鋪','STORE_PROFILE_REQUIRED',400);
   const sources=(await db.query('SELECT * FROM marketplace_intake_orders WHERE source_platform=$1 AND source_store=$2 AND source_order_number=ANY($3::text[]) ORDER BY id',[platform,store,numbers])).rows;
   if(sources.some(source=>!positive(source.id)||!positive(source.intake_id)||!numbers.includes(source.source_order_number)||source.source_platform!==platform||source.source_store!==store)||new Set(sources.map(source=>source.source_order_number)).size!==sources.length)throw fail('原來源訂單紀錄不完整');
@@ -120,23 +126,39 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
   const tasks=(await db.query('SELECT id,source_platform,source_store,source_order_number FROM orders WHERE source_platform=$1 AND source_store=$2 AND source_order_number=ANY($3::text[]) ORDER BY id',[platform,store,numbers])).rows;
   const profiles=(await db.query('SELECT id,platform,store,settings,updated_at FROM marketplace_store_profiles WHERE id=$1'+(lock?' FOR SHARE':''),[conversion.profileId||0])).rows;
   if(!profiles[0]||profiles[0].platform!==platform||profiles[0].store!==store)throw fail('店鋪設定已變更，請重新核對');
-  return {numbers,sources,newNumbers,owners,scopeActivity:activity,tasks,profile:profiles[0],ids,identities:[...new Map([...numbers.map(number=>[platform,store,number]),...owners.flatMap(value=>value.sources.map(source=>[source.source_platform,source.source_store,source.source_order_number]))].map(identity=>[JSON.stringify(identity),identity])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))};
+  return {fullNumbers,excludedFulfilled,numbers,sources,newNumbers,owners,scopeActivity:activity,tasks,profile:profiles[0],ids,identities:[...new Map([...numbers.map(number=>[platform,store,number]),...owners.flatMap(value=>value.sources.map(source=>[source.source_platform,source.source_store,source.source_order_number]))].map(identity=>[JSON.stringify(identity),identity])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))};
  }
  const fingerprint=(context,conversion,body)=>hash({context,rows:body.rows,settings:{...conversion.settings,date:undefined,batchNumber:undefined},verification:conversion.verification?.orders,sourceReview:conversion.sourceEvidence?.draftSourceReview});
  async function collect(body,refresh){
-  const initial=await prepareMarketplace(body,{refresh}),context=await readContext(pool,initial);
-  let conversion,projectionError=null;
-  try{conversion=await prepareMarketplace(body,{refresh:false,overwriteOrderNumbers:context.numbers});}catch(error){if(error.code!=='MARKETPLACE_DRAFT_SOURCE_INVALID')throw error;conversion=initial;projectionError=error;}
+  const verificationScope=createMarketplaceVerificationScope();
+  const initial=await prepareMarketplace(body,{refresh,verificationScope}),context=await readContext(pool,initial);
+  let conversion=initial,projectionError=null;
+  if(context.numbers.length){
+   try{conversion=await prepareMarketplace(body,{refresh:false,verificationScope,overwriteOrderNumbers:context.numbers});}
+   catch(error){if(error.code!=='MARKETPLACE_DRAFT_SOURCE_INVALID')throw error;projectionError=error;}
+  }else projectionError=fail('本檔訂單皆已出貨，沒有可轉檔的訂單','MARKETPLACE_DRAFT_SOURCE_INVALID',400);
   conversion.uploadedNumbers=new Set(context.numbers);
-  if(hash(uploadedNumbers(conversion))!==hash(context.numbers))throw fail('商城來源範圍已變更');
-  if(!projectionError&&hash(conversion.parsed.orders.map(order=>order.sourceOrderNumber).sort())!==hash(context.numbers))projectionError=fail('本次訂單含不符合銷貨條件的訂單，未產生部分轉檔','MARKETPLACE_DRAFT_SOURCE_INVALID',400);
+  if(hash(uploadedNumbers(conversion))!==hash(context.fullNumbers)||hash(conversion.verification.orders)!==hash(initial.verification.orders))throw fail('商城來源範圍已變更');
+  if(context.excludedFulfilled.length){
+   conversion.orderReviews=(conversion.orderReviews||[]).filter(review=>conversion.uploadedNumbers.has(review.orderNumber));
+   conversion.reviewRequired=conversion.orderReviews.length>0;
+   conversion.sourceEvidence={...conversion.sourceEvidence,orderReviews:conversion.orderReviews};
+  }
+  if(!projectionError){
+   const prepared=conversion.parsed.orders.map(order=>order.sourceOrderNumber).sort();
+   if(hash(prepared)!==hash(context.numbers)){
+    const missing=context.numbers.filter(number=>!prepared.includes(number));
+    const label=missing.length?`${missing.slice(0,5).join('、')}${missing.length>5?` 等 ${missing.length} 筆`:''}：`:'';
+    projectionError=fail(`${label}有訂單尚未符合銷貨條件，請先核對`,'MARKETPLACE_DRAFT_SOURCE_INVALID',400);
+   }
+  }
   return {context,conversion,projectionError,previewFingerprint:fingerprint(context,conversion,body)};
  }
  function reasons(data){
   const errors=[];
   if(enabled()!==true)errors.push('混合訂單轉檔發布檢查中，尚未開放確認');
-  if(data.projectionError)errors.push(data.projectionError.message);
-  if(data.conversion.output?.ok!==true){const issues=(data.conversion.output?.issues||[]).filter(issue=>issue.severity==='error').map(issue=>issue.message);errors.push(...(issues.length?issues:['新版訂單商品、折扣或金額尚未核對完成']));}
+  if(data.projectionError)errors.push(`${data.projectionError.orderNumber?`${data.projectionError.orderNumber}：`:''}${data.projectionError.message}`);
+  if(data.context.numbers.length&&data.conversion.output?.ok!==true){const issues=(data.conversion.output?.issues||[]).filter(issue=>issue.severity==='error').map(issue=>issue.message);errors.push(...(issues.length?issues:['新版訂單商品、折扣或金額尚未核對完成']));}
   for(const value of data.context.scopeActivity)errors.push(...blockedReasons(value.batch,value.flow,value.activity));
   for(const {batch} of data.context.owners)if(protectedSettings.some(key=>clean(batch.snapshot.settings?.[key])!==clean(data.conversion.settings[key])))errors.push('店鋪、客戶、倉庫或計價設定不同，不能覆蓋原批次');
   if(data.context.tasks.length)errors.push('選入訂單已有工作單，不能重新轉銷貨');
@@ -144,13 +166,14 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
  }
  async function preview(body,user){
   actor(user);const data=await collect(body,true),{context,conversion}=data,blocked=reasons(data),newOrders=context.newNumbers.map(number=>{const current=conversion.verification.orders.find(order=>order.number===number);return {orderNumber:number,after:afterSummary(conversion,number),live:{totalMinor:current.totalMinor,receivedMinor:current.receivedMinor,outstandingMinor:current.outstandingMinor,quantity:current.currentQuantity}};});
-  const affectedBatches=context.owners.map(({batch,sources})=>({id:Number(batch.id),batchNumber:batch.batch_number,revision:Number(batch.snapshot.draftRevision||0),retainedOrderCount:batch.snapshot.orders.filter(order=>!conversion.uploadedNumbers.has(order.sourceOrderNumber)).length,
+  const uploaded=new Set(context.fullNumbers);
+  const affectedBatches=context.owners.map(({batch,sources})=>({id:Number(batch.id),batchNumber:batch.batch_number,revision:Number(batch.snapshot.draftRevision||0),retainedOrderCount:batch.snapshot.orders.filter(order=>!uploaded.has(order.sourceOrderNumber)).length,
    uploadedOrders:sources.filter(source=>conversion.uploadedNumbers.has(source.source_order_number)).map(source=>{const number=source.source_order_number,before=summary(batch.snapshot,number,source),after=afterSummary(conversion,number),diff=changes(before,after),current=conversion.verification.orders.find(order=>order.number===number),live={totalMinor:current.totalMinor,receivedMinor:current.receivedMinor,outstandingMinor:current.outstandingMinor,quantity:current.currentQuantity};return {orderNumber:number,changed:diff.length>0||source.draft_active===false,restoring:source.draft_active===false,before,after,changes:diff,live,diffAPI:live.totalMinor!==after.totalMinor||live.quantity!==after.quantity};}),
-   omittedOrders:batch.snapshot.orders.filter(order=>!conversion.uploadedNumbers.has(order.sourceOrderNumber)).map(order=>({orderNumber:order.sourceOrderNumber,before:summary(batch.snapshot,order.sourceOrderNumber),preserved:true}))}));
+   omittedOrders:batch.snapshot.orders.filter(order=>!uploaded.has(order.sourceOrderNumber)).map(order=>({orderNumber:order.sourceOrderNumber,before:summary(batch.snapshot,order.sourceOrderNumber),preserved:true}))}));
   const existing=affectedBatches.flatMap(batch=>batch.uploadedOrders),selected=context.numbers.map(number=>afterSummary(conversion,number));
   const sourceSkus=[...new Set((conversion.barcodeConflicts||[]).map(conflict=>conflict.sourceSku))].sort();
   const barcodePrerequisites=sourceSkus.length?{required:true,code:'MARKETPLACE_BARCODE_REVIEW_REQUIRED',count:sourceSkus.length,sourceSkus}:undefined;
-  return {scopeMode:'uploaded-file-v2',reviewRequired:conversion.reviewRequired===true,orderReviews:conversion.orderReviews||[],...(barcodePrerequisites?{barcodePrerequisites}:{}),previewFingerprint:data.previewFingerprint,summary:{totalOrderCount:context.numbers.length,newOrderCount:newOrders.length,changedOrderCount:existing.filter(order=>order.changed).length,unchangedOrderCount:existing.filter(order=>!order.changed).length,quantity:selected.reduce((sum,order)=>sum+order.quantity,0),totalMinor:selected.reduce((sum,order)=>sum+(order.totalMinor||0),0)},newOrders,affectedBatches,canConfirm:blocked.length===0,blockedReasons:blocked,confirmationRequired:true};
+  return {scopeMode:'uploaded-file-v2',reviewRequired:conversion.reviewRequired===true,orderReviews:conversion.orderReviews||[],...(barcodePrerequisites?{barcodePrerequisites}:{}),previewFingerprint:data.previewFingerprint,summary:{totalOrderCount:context.numbers.length,newOrderCount:newOrders.length,changedOrderCount:existing.filter(order=>order.changed).length,unchangedOrderCount:existing.filter(order=>!order.changed).length,quantity:selected.reduce((sum,order)=>sum+order.quantity,0),totalMinor:selected.reduce((sum,order)=>sum+(order.totalMinor||0),0)},newOrders,affectedBatches,excludedFulfilled:context.excludedFulfilled,canConfirm:blocked.length===0,blockedReasons:blocked,confirmationRequired:true};
  }
  async function apply(body,user){
   const userId=actor(user);
@@ -160,6 +183,8 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
   const data=await collect(body,true);
   if(data.previewFingerprint!==body.previewFingerprint)throw fail('原訂單、新單範圍或商城資料已更新，請重新核對');
   if(data.projectionError)throw data.projectionError;
+  const excludedFulfilled=data.context.excludedFulfilled;
+  if(excludedFulfilled.length&&body.excludedFulfilledConfirmed!==true)throw fail('請確認本次僅轉檔尚未出貨的訂單','MARKETPLACE_FULFILLED_EXCLUSION_CONFIRMATION_REQUIRED',400);
   if(data.conversion.output?.ok!==true)throw Object.assign(fail('新版訂單商品、折扣或金額尚未核對完成','MARKETPLACE_DRAFT_NOT_READY'),{issues:data.conversion.output?.issues||[]});
   const blocked=reasons(data);if(blocked.length)throw fail(blocked.join('；'),'MARKETPLACE_DRAFT_ALREADY_STARTED');
   require('./shopifyOrderReview').authorizeShopifyOrderReviews(data.conversion,body.reviewDecisions,{actorId:userId,commandId:body.commandId});
@@ -167,7 +192,9 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
   const reason=clean(body.reason)||'尚未匯入 ECOUNT，依本次完整訂單檔建立新版轉檔';
   const snapshots=new Map();for(const owner of data.context.owners)snapshots.set(Number(owner.batch.id),await patchOwner(owner.batch,owner.sources,data.conversion,user));
   const batchNumber=`WMS-${data.conversion.settings.date.replaceAll('-','')}-${hash([userId,body.commandId]).slice(0,6).toUpperCase()}`;
-  const snapshot=await makeSnapshot(data.conversion,data.conversion.raw,{...clone(data.conversion.settings),batchNumber},user);await validateSnapshot(snapshot);
+  const snapshot=await makeSnapshot(data.conversion,selectedRaw(data.conversion),{...clone(data.conversion.settings),batchNumber},user);
+  if(excludedFulfilled.length)snapshot.sourceEvidence.fulfilledExclusion={orderNumbers:excludedFulfilled,actorId:userId,commandId:body.commandId,previewFingerprint:data.previewFingerprint,verifiedUploadFingerprint:hash({rows:snapshot.sourceEvidence.rows,orders:data.conversion.verification.orders})};
+  await validateSnapshot(snapshot);
   (await import('./marketplaceIntake.mjs')).prepareEcountFinancials(snapshot);
   const db=await pool.connect();let open=false,commitAttempted=false,tainted=false;
   try{
@@ -207,7 +234,7 @@ function createMarketplaceMixedReexportService({pool,prepareMarketplace,enabled=
    await db.query('UPDATE marketplace_intakes SET snapshot=$2 WHERE id=$1',[created.id,JSON.stringify(snapshot)]);
    await require('./warehouseRelease').enableFlow(db,created.id,userId);
    const exportBatch={id:Number(created.id),batchNumber,orderCount:snapshot.orders.length,activeOrderCount:snapshot.orders.length,draftRevision:0,quantity:snapshot.items.reduce((sum,item)=>sum+item.quantity,0),totalMinor:snapshot.summary.ecountTotalMinor,scopeFingerprint:snapshot.uploadScope.fingerprint};
-   const response={applied:true,scopeMode:'uploaded-file-v2',commandId:body.commandId,exportBatch,batches:[exportBatch],newOrderCount:current.newNumbers.length,updatedOrderCount:current.sources.length,replayed:false};
+   const response={applied:true,scopeMode:'uploaded-file-v2',commandId:body.commandId,exportBatch,batches:[exportBatch],newOrderCount:current.newNumbers.length,updatedOrderCount:current.sources.length,excludedFulfilled,replayed:false};
    await db.query('INSERT INTO marketplace_draft_commands(actor_id,command_id,request_hash,response) VALUES($1,$2,$3,$4)',[userId,body.commandId,requestHash,JSON.stringify(response)]);
    commitAttempted=true;await db.query('COMMIT');open=false;return response;
   }catch(error){if(open)try{await db.query('ROLLBACK');}catch{tainted=true;}if(commitAttempted)throw fail('轉檔保存結果尚未確認，請保留同一操作識別重試讀取結果','MARKETPLACE_DRAFT_RESULT_UNKNOWN',503);if(['55P03','57014','23505'].includes(error.code))throw fail('來源訂單正在處理或已保存，請重新核對','MARKETPLACE_DRAFT_CHANGED');throw error;}finally{db.release(tainted);}

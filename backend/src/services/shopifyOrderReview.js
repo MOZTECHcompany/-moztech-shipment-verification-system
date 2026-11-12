@@ -1,6 +1,7 @@
 // This evidence is attached only after the server's live Shopify read. Neither
 // CSV columns nor store settings can create a refund eligibility proof.
 const {createHash}=require('node:crypto');
+const {isVerifiedFulfilledOrder}=require('./shopifyFulfillmentStatus');
 const clone=value=>JSON.parse(JSON.stringify(value));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=message=>Object.assign(new Error(message),{status:400,code:'SHOPIFY_REVIEW_REQUIRED'});
@@ -12,7 +13,7 @@ function applyShopifyOrderReviews(raw,verification,draftSourceReview=null){
  for(const order of raw.orders){
   const evidence=verification.orders.find(value=>value.number===order.sourceOrderNumber);
   if(!evidence)continue;
-  if(evidence.cancelled||evidence.currentQuantity===0)continue;
+  if(evidence.cancelled||evidence.currentQuantity===0||isVerifiedFulfilledOrder(evidence))continue;
   const proof=evidence.refundEvidence;
   const editChanges=require('./shopifyOrderEdits').reviewEditChanges(evidence);
   const cancelledItems=(evidence.allItems||[]).filter(item=>item.originalQuantity>item.currentQuantity&&(item.currentQuantity===0&&evidence.removedLineIds?.includes(item.id)||proof?.refunds?.some(refund=>refund.lines.some(line=>line.lineId===item.id)))).map(item=>({id:item.id,name:item.name,sku:item.sku,quantity:item.originalQuantity-item.currentQuantity,reason:'商城已取消／移除，非本次出貨品項'}));

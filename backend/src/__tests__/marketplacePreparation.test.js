@@ -1,4 +1,4 @@
-const {createMarketplacePreparation,selectProfile}=require('../services/marketplacePreparation');
+const {createMarketplacePreparation,createMarketplaceVerificationScope,selectProfile}=require('../services/marketplacePreparation');
 const {reviewEvidence}=require('../services/marketplaceBarcodeReviews');
 const table=rows=>{const headers=[...new Set(rows.flatMap(Object.keys))];return [headers,...rows.map(r=>headers.map(h=>r[h]??''))];};
 const order=extra=>({Name:'#154230',Id:'7624215101596','Financial Status':'pending','Fulfillment Status':'unfulfilled',Currency:'TWD',Subtotal:'890',Shipping:'0',Taxes:'0',Total:'890','Discount Amount':'0','Refunded Amount':'0','Outstanding Balance':'890','Payment Method':'custom','Lineitem quantity':'1','Lineitem name':'來源商品','Lineitem price':'890','Lineitem sku':'4711299272493','Lineitem discount':'0','Lineitem id':'16493014253724','Shipping Name':'收件人','Shipping Address1':'配送地址',...extra});
@@ -28,6 +28,43 @@ test('API failure has no CSV fallback; preview cache is short lived and saving a
  const h=harness();const body={rows:table([order()])};await h.prepare(body);await h.prepare(body);expect(h.verifyShopify).toHaveBeenCalledTimes(1);
  await h.prepare(body,{refresh:true});expect(h.verifyShopify).toHaveBeenCalledTimes(2);
  h.verifyShopify.mockRejectedValueOnce(Object.assign(new Error('未使用舊資料'),{status:503,code:'SHOPIFY_UNAVAILABLE'}));await expect(h.prepare(body,{refresh:true})).rejects.toMatchObject({code:'SHOPIFY_UNAVAILABLE'});expect(h.pool.connect).not.toHaveBeenCalled();
+});
+test('a slow Shopify read is shared while pending and remains reusable after it settles',async()=>{
+ const start=Date.now(),clock=jest.spyOn(Date,'now').mockReturnValue(start);
+ try{
+  const h=harness(),body={rows:table([order()])},verify=h.verifyShopify.getMockImplementation();
+  let started,release;
+  const reading=new Promise(resolve=>{started=resolve;});
+  h.verifyShopify.mockImplementationOnce(async rows=>{
+   await new Promise(resolve=>{release=resolve;started();});
+   return verify(rows);
+  });
+  const first=h.prepare(body);
+  await reading;
+  clock.mockReturnValue(start+20000);
+  const overlapping=h.prepare(body);
+  release();
+  const [a,b]=await Promise.all([first,overlapping]);
+  clock.mockReturnValue(start+25000);
+  const after=await h.prepare(body);
+  expect([a,b,after].map(value=>value.verification.currentFingerprint)).toEqual(Array(3).fill(a.verification.currentFingerprint));
+  expect(h.verifyShopify).toHaveBeenCalledTimes(1);
+  clock.mockReturnValue(start+36000);
+  await h.prepare(body);
+  expect(h.verifyShopify).toHaveBeenCalledTimes(2);
+ }finally{clock.mockRestore();}
+});
+test('the second projection reuses the same verified source after the remote-read deadline',async()=>{
+ const start=Date.now(),clock=jest.spyOn(Date,'now').mockReturnValue(start);
+ try{
+  const h=harness(),body={rows:table([order()])},verificationScope=createMarketplaceVerificationScope();
+  const initial=await h.prepare(body,{refresh:true,verificationScope});
+  clock.mockReturnValue(start+41000);
+  const compared=await h.prepare(body,{verificationScope});
+  expect(compared.verification.currentFingerprint).toBe(initial.verification.currentFingerprint);
+  await expect(h.prepare({rows:table([order({Name:'#OTHER'})])},{refresh:true,verificationScope})).rejects.toMatchObject({code:'SHOPIFY_TIMEOUT'});
+  expect(h.verifyShopify).toHaveBeenCalledTimes(1);
+ }finally{clock.mockRestore();}
 });
 test('removed historical items are not catalog-resolved; original source evidence is retained',async()=>{
  const source=table([order({'Lineitem sku':'4711299274749',Total:'1880',Subtotal:'1880'}),order({'Lineitem sku':'4711299272493',Total:'1880',Subtotal:'1880'})]);
@@ -136,8 +173,9 @@ test('a saved review cannot cover another eligible same-SKU line whose API barco
 test('an excluded fulfilled order cannot add a different barcode or variant to the eligible same-SKU shipment',async()=>{
  const h=barcodeHarness(),rows=table([order(),order({Name:'#FULFILLED',Id:'7624215101597','Lineitem id':'16493014253725','Fulfillment Status':'fulfilled'})]);
  h.product.barcode='4711299272493';
- h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,orders:[{number:'#154230',currentQuantity:1,items:[{id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'}]},{number:'#FULFILLED',currentQuantity:1,items:[{id:'16493014253725',sku:'4711299272493',barcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/124'}]}]}});
+ h.verifyShopify.mockResolvedValueOnce({rows,verification:{shop:h.identity.shop,version:'shopify-current-v2',orders:[{number:'#154230',currentQuantity:1,items:[{id:'16493014253724',sku:'4711299272493',barcode:'4711299272493',variantId:'gid://shopify/ProductVariant/123'}]},{number:'#FULFILLED',currentQuantity:1,remainingQuantity:0,cancelled:false,fulfillmentStatus:'fulfilled',items:[{id:'16493014253725',sku:'4711299272493',barcode:'NEW4711299272493',variantId:'gid://shopify/ProductVariant/124'}],removedLineIds:['synthetic-removed'],allItems:[{id:'synthetic-removed',sku:'OLD',name:'已移除贈品',originalQuantity:1,currentQuantity:0}]}]}});
  const r=await h.prepare({rows});expect(r.output.ok).toBe(true);expect(r.prepick.ok).toBe(true);expect(r.barcodeConflicts).toEqual([]);expect(r.parsed.summary.totalQuantity).toBe(1);expect(r.choices).toEqual(expect.arrayContaining([expect.objectContaining({number:'#FULFILLED',eligible:false})]));
+ expect(r.excludedFulfilled).toEqual(['#FULFILLED']);expect(r.reviewRequired).toBe(false);
 });
 test('conflicting shipping details block the batch and repeated blank continuation values remain valid',async()=>{
  const h=harness();const body={rows:table([order(),order({'Lineitem id':'16493014253725',Subtotal:'1780',Total:'1780','Shipping Address1':'不同地址'})])};

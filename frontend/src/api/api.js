@@ -30,8 +30,17 @@ export function configureWorkspaceTransport(transport, { isCurrentSession = () =
         config.signal?.addEventListener('abort', abort, { once: true });
         if (config.signal?.aborted) controller.abort();
         requests.add(controller);
+        let timer;
         try {
-            const response = await transport({ ...config, signal: controller.signal });
+            const responsePromise = transport({ ...config, signal: controller.signal });
+            const response = config.timeout > 0
+                ? await Promise.race([responsePromise, new Promise((_, reject) => {
+                    timer = setTimeout(() => {
+                        reject(new axios.AxiosError(`timeout of ${config.timeout}ms exceeded`, 'ECONNABORTED', config));
+                        controller.abort();
+                    }, config.timeout);
+                })])
+                : await responsePromise;
             if (!active || !isCurrentSession()) throw new axios.CanceledError('Workspace session changed', config);
             const result = { ...response, config, headers: response?.headers || {}, statusText: response?.statusText || '' };
             if (!Number.isInteger(result.status)) throw new TypeError('Workspace transport returned no HTTP status');
@@ -48,6 +57,7 @@ export function configureWorkspaceTransport(transport, { isCurrentSession = () =
             if (active && isCurrentSession() && expired) onAuthRequired?.(data);
             throw error;
         } finally {
+            clearTimeout(timer);
             requests.delete(controller);
             config.signal?.removeEventListener('abort', abort);
         }
@@ -99,11 +109,12 @@ export default apiClient;
 apiClient.interceptors.response.use(
     (response) => response,
     (error) => {
+        if (axios.isCancel(error)) return Promise.reject(error);
         const { response } = error || {};
         const requestId = response?.headers?.['x-request-id'] || response?.headers?.['X-Request-Id'];
         const status = response?.status;
         const data = response?.data || {};
-        const code = data.code || (status === 401 ? 'AUTH_REQUIRED' : status === 403 ? 'FORBIDDEN' : undefined);
+        const code = data.code || (status === 401 ? 'AUTH_REQUIRED' : status === 403 ? 'FORBIDDEN' : error.code);
         const message = data.message || error.message || '發生未知錯誤';
 
         // 視情況提示（避免對某些頁面重複彈出可在呼叫端關閉）

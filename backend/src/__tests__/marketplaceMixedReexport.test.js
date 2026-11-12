@@ -7,6 +7,7 @@ const user={id:1,role:'dispatcher',name:'Synthetic operator'},sku='4711299273094
 const settings={store:'測試店',customerCode:'00063',customerName:'測試店',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true,date:'2026-10-29',batchSequence:'1',salesExportMode:'product-200-v1',skuMappings:{[sku]:{erpSku:sku,erpName:'測試商品',barcode:sku,confirmed:true,barcodeConfirmed:true}}};
 const row=(number,extra={})=>({Name:number,Id:String(1000+number.charCodeAt(1)),'Financial Status':'paid','Fulfillment Status':'unfulfilled',Currency:'TWD',Subtotal:'200',Shipping:'0',Taxes:'0',Total:'200','Discount Amount':'0','Refunded Amount':'0','Outstanding Balance':'0','Payment Method':'credit_card','Lineitem quantity':'2','Lineitem name':'測試商品','Lineitem price':'100','Lineitem sku':sku,'Lineitem discount':'0','Lineitem id':`gid://shopify/LineItem/${number.charCodeAt(1)}`,...extra});
 const changed=number=>row(number,{'Lineitem quantity':'1',Subtotal:'100',Total:'100'});
+const fulfilled={fulfillmentStatus:'fulfilled',remainingQuantity:0};
 const table=records=>{const headers=[...new Set(records.flatMap(Object.keys))];return [headers,...records.map(record=>headers.map(key=>record[key]??''))];};
 const objects=rows=>rows.slice(1).map(values=>Object.fromEntries(rows[0].map((key,index)=>[key,values[index]])));
 async function setup(){
@@ -36,10 +37,17 @@ async function setup(){
  };
  h.prepare=jest.fn(async(body,options={})=>{
   h.prepareCount++;const uploaded=objects(body.rows);for(const record of uploaded)if(!h.api.has(record.Name))h.api.set(record.Name,record);
-  const liveRecords=uploaded.map(record=>h.api.get(record.Name)),live=await h.convert(liveRecords,{sourceRows:body.rows});
+  const liveRecords=uploaded.map(record=>{
+   const api=h.api.get(record.Name),status=h.live[record.Name]?.fulfillmentStatus;
+   return status?{...api,'Fulfillment Status':status}:api;
+  }),live=await h.convert(liveRecords,{sourceRows:body.rows});
   if(!options.overwriteOrderNumbers)return live;
   const projected=require('../services/marketplaceDraftSource').projectDraftSource(body.rows,table(liveRecords),live.verification,options.overwriteOrderNumbers);
-  const result=await h.convert(objects(projected.rows),{sourceRows:body.rows,evidenceRecords:liveRecords});result.sourceEvidence.draftSourceReview=projected.review;return result;
+  const result=await h.convert(objects(projected.rows),{sourceRows:body.rows,evidenceRecords:liveRecords});
+  const numbers=new Set(options.overwriteOrderNumbers),raw=result.raw;
+  const sales={...raw,orders:raw.orders.filter(order=>numbers.has(order.sourceOrderNumber)),items:raw.items.filter(item=>numbers.has(item.sourceOrderNumber)),issues:raw.issues.filter(issue=>!issue.orderNumber||numbers.has(issue.orderNumber))};
+  result.sourceEvidence.draftSourceReview=projected.review;
+  return {...result,...unified.prepareUnifiedMarketplace(sales,result.settings)};
  });
  h.service=createMarketplaceDraftOverwriteService({pool:h.pool,prepareMarketplace:h.prepare,enabled:()=>true,mixedEnabled:()=>h.enabled,validateSnapshot:async snapshot=>(await import('../services/marketplaceIntake.mjs')).prepareEcountFinancials(snapshot)});
  h.addBatch=async(records,batchNumber='WMS-OLD-A')=>{
@@ -51,7 +59,7 @@ async function setup(){
  };
  h.batch=await h.addBatch([row('#A'),row('#B')]);
  h.body=async(records=[changed('#A'),row('#C')])=>{const body={scopeMode:'uploaded-file-v2',rows:table(records),settings,profileId:'1'},preview=await h.service.preview(body,user);return {...body,commandId:randomUUID(),previewFingerprint:preview.previewFingerprint,confirmed:true,notImportedConfirmed:true};};
- h.state=async()=>{const state={};for(const name of ['marketplace_intakes','marketplace_intake_orders','marketplace_warehouse_flows','marketplace_intake_scope_orders','marketplace_draft_revisions','marketplace_draft_commands','orders','marketplace_warehouse_events'])state[name]=(await db.query('SELECT * FROM '+name+' ORDER BY 1')).rows;return state;};
+ h.state=async()=>{const state={};for(const name of ['marketplace_intakes','marketplace_intake_orders','marketplace_warehouse_flows','marketplace_intake_scope_orders','marketplace_draft_revisions','marketplace_draft_commands','orders','marketplace_warehouse_events','marketplace_work_order_links'])state[name]=(await db.query('SELECT * FROM '+name+' ORDER BY 1')).rows;return state;};
  return h;
 }
 describe('one reviewed mixed upload using real PGlite SQL, advisory locks stubbed (no native concurrency claim)',()=>{
@@ -159,9 +167,61 @@ describe('one reviewed mixed upload using real PGlite SQL, advisory locks stubbe
   const preview=await h.service.preview({scopeMode:'uploaded-file-v2',rows:table([changed('#A'),row('#D')]),settings,profileId:'1'},user);expect(preview.canConfirm).toBe(false);expect(preview.blockedReasons.join('')).toMatch(/列印|作業/);
   await expect(h.service.apply(await h.body([changed('#A'),row('#D')]),user)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_ALREADY_STARTED'});
  });
- test.each([['fulfilled',{fulfillmentStatus:'fulfilled',remainingQuantity:0}],['cancelled',{cancelled:true,cancelledAt:'2026-10-29T00:00:00Z'}],['partial',{remainingQuantity:1}]])('%s uploaded orders are visible as blocked and cannot revive the original',async(label,live)=>{
-  h.live['#A']=live;const before=await h.state(),preview=await h.service.preview({scopeMode:'uploaded-file-v2',rows:table([changed('#A'),row('#C')]),settings,profileId:'1'},user);expect(preview.canConfirm).toBe(false);
+ test.each([['inconsistent fulfilled',{...fulfilled,remainingQuantity:1}],['cancelled',{...fulfilled,cancelled:true,cancelledAt:'2026-10-29T00:00:00Z'}],['partial',{remainingQuantity:1}]])('%s uploaded orders are visible as blocked and cannot revive the original',async(label,live)=>{
+  h.live['#A']=live;const before=await h.state(),preview=await h.service.preview({scopeMode:'uploaded-file-v2',rows:table([changed('#A'),row('#C')]),settings,profileId:'1'},user);expect(preview.canConfirm).toBe(false);expect(preview.excludedFulfilled).toEqual([]);expect(preview.blockedReasons.join(' ')).toContain('#A');
   await expect(h.service.apply(await h.body(),user)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_SOURCE_INVALID'});expect(await h.state()).toEqual(before);
+ });
+ test('explicit confirmation exports only unfulfilled orders and preserves fulfilled sources and tasks',async()=>{
+  const untouched=await h.addBatch([row('#D')],'WMS-OLD-D');
+  await h.db.query('UPDATE marketplace_warehouse_flows SET printed_at=NOW() WHERE intake_id=$1',[untouched.id]);
+  const task=(await h.db.query('INSERT INTO orders(source_platform,source_store,source_order_number) VALUES($1,$2,$3) RETURNING id',['Shopify',settings.store,'#D'])).rows[0];
+  await h.db.query("INSERT INTO marketplace_work_order_links(intake_order_id,order_id) SELECT id,$1 FROM marketplace_intake_orders WHERE source_order_number='#D'",[task.id]);
+  for(const number of ['#B','#D','#E'])h.live[number]=fulfilled;
+  const records=[changed('#A'),row('#B'),row('#C'),row('#D'),row('#E')],before=await h.state(),body=await h.body(records),preview=await h.service.preview(body,user);
+  expect(preview).toMatchObject({canConfirm:true,excludedFulfilled:['#B','#D','#E'],summary:{totalOrderCount:2,newOrderCount:1,changedOrderCount:1,quantity:3,totalMinor:30000},newOrders:[{orderNumber:'#C'}],affectedBatches:[{id:h.batch.id,retainedOrderCount:0,omittedOrders:[],uploadedOrders:[{orderNumber:'#A'}]}]});
+  await expect(h.service.apply({...body,excludedFulfilledConfirmed:'true'},user)).rejects.toMatchObject({code:'MARKETPLACE_FULFILLED_EXCLUSION_CONFIRMATION_REQUIRED'});
+  expect(await h.state()).toEqual(before);
+  const result=await h.service.apply({...body,excludedFulfilledConfirmed:true},user),after=await h.state();
+  expect(result).toMatchObject({applied:true,newOrderCount:1,updatedOrderCount:1,excludedFulfilled:['#B','#D','#E'],exportBatch:{orderCount:2,quantity:3,totalMinor:30000}});
+  const exportBatch=after.marketplace_intakes.find(batch=>batch.id===result.exportBatch.id),snapshot=exportBatch.snapshot;
+  expect(snapshot.orders.map(order=>order.sourceOrderNumber).sort()).toEqual(['#A','#C']);
+  expect(snapshot.items.map(item=>item.sourceOrderNumber).sort()).toEqual(['#A','#C']);
+  expect(snapshot.uploadScope.sourceManifest.map(source=>source.orderNumber)).toEqual(['#A','#C']);
+  expect((await assertUploadScope(h.pool,exportBatch)).map(source=>source.source_order_number)).toEqual(['#A','#C']);
+  expect(snapshot.sourceEvidence.fulfilledExclusion).toMatchObject({orderNumbers:['#B','#D','#E'],actorId:user.id,commandId:body.commandId,previewFingerprint:preview.previewFingerprint,verifiedUploadFingerprint:expect.stringMatching(/^[a-f0-9]{64}$/)});
+  expect(snapshot.sourceEvidence.verification.orders.map(order=>order.number)).toEqual(records.map(record=>record.Name));
+  expect(objects(snapshot.sourceEvidence.rows).map(record=>record.Name)).toEqual(records.map(record=>record.Name));
+  for(const number of ['#B','#D','#E'])expect(after.marketplace_intake_orders.find(source=>source.source_order_number===number)).toEqual(before.marketplace_intake_orders.find(source=>source.source_order_number===number));
+  expect(after.orders).toEqual(before.orders);expect(after.marketplace_work_order_links).toEqual(before.marketplace_work_order_links);
+  expect(after.marketplace_intakes.find(batch=>batch.id===untouched.id)).toEqual(before.marketplace_intakes.find(batch=>batch.id===untouched.id));
+  expect(after.marketplace_warehouse_flows.find(flow=>flow.intake_id===untouched.id)).toEqual(before.marketplace_warehouse_flows.find(flow=>flow.intake_id===untouched.id));
+  const owner=after.marketplace_intakes.find(batch=>batch.id===h.batch.id).snapshot;
+  expect(owner.orders.find(order=>order.sourceOrderNumber==='#B')).toEqual(h.batch.snapshot.orders.find(order=>order.sourceOrderNumber==='#B'));
+  expect(owner.items.filter(item=>item.sourceOrderNumber==='#B')).toEqual(h.batch.snapshot.items.filter(item=>item.sourceOrderNumber==='#B'));
+  expect(after.marketplace_draft_revisions.map(revision=>revision.intake_id)).toEqual([h.batch.id]);
+ });
+ test('the exclusion cannot bypass a shared original batch that already started warehouse work',async()=>{
+  h.live['#B']=fulfilled;
+  await h.db.query('UPDATE marketplace_warehouse_flows SET printed_at=NOW() WHERE intake_id=$1',[h.batch.id]);
+  const before=await h.state(),body=await h.body([changed('#A'),row('#B'),row('#C')]),preview=await h.service.preview(body,user);
+  expect(preview).toMatchObject({canConfirm:false,excludedFulfilled:['#B']});
+  expect(preview.blockedReasons.join(' ')).toMatch(/列印|作業/);
+  await expect(h.service.apply({...body,excludedFulfilledConfirmed:true},user)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_ALREADY_STARTED'});
+  expect(await h.state()).toEqual(before);
+ });
+ test('all fulfilled uploads have no conversion action and never touch an existing batch',async()=>{
+  h.live['#A']=fulfilled;h.live['#B']=fulfilled;
+  const before=await h.state(),body=await h.body([row('#A'),row('#B')]),preview=await h.service.preview(body,user);
+  expect(preview).toMatchObject({canConfirm:false,excludedFulfilled:['#A','#B'],summary:{totalOrderCount:0,quantity:0,totalMinor:0},newOrders:[],affectedBatches:[],blockedReasons:['本檔訂單皆已出貨，沒有可轉檔的訂單']});
+  await expect(h.service.apply({...body,excludedFulfilledConfirmed:true},user)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_SOURCE_INVALID'});
+  expect(await h.state()).toEqual(before);
+ });
+ test('a change to live evidence for an excluded order invalidates the whole review',async()=>{
+  h.live['#B']=fulfilled;
+  const before=await h.state(),body=await h.body([changed('#A'),row('#B')]);
+  h.live['#B']={...fulfilled,updatedAt:'2026-11-12T03:50:00Z'};
+  await expect(h.service.apply({...body,excludedFulfilledConfirmed:true},user)).rejects.toMatchObject({code:'MARKETPLACE_DRAFT_CHANGED'});
+  expect(await h.state()).toEqual(before);
  });
  test('unrelated omitted live orders are neither re-read nor silently excluded',async()=>{
   h.live['#B']={fulfillmentStatus:'fulfilled',remainingQuantity:0};const before=(await h.db.query("SELECT * FROM marketplace_intake_orders WHERE source_order_number='#B'")).rows[0];await h.service.apply(await h.body(),user);

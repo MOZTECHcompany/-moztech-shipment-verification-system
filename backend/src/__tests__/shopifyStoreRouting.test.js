@@ -98,6 +98,17 @@ test('probe deadline is bounded and failure is not cached as an empty shop',asyn
   expect((await h.resolve()).profile.id).toBe(2);expect(h.fetchImpl).toHaveBeenCalledTimes(2);
  }finally{jest.useRealTimers();}
 });
+test('an explicitly selected store surfaces its lookup timeout as retryable, without probing other stores',async()=>{
+ const h=harness({},[profile(2,'second')]);
+ h.fetchImpl.mockImplementation(()=>new Promise(()=>{}));
+ jest.useFakeTimers();
+ try{
+  const result=resolveShopifyStore({rows,profiles:[profile(2,'second')],input:{profileId:'2'},verifier:h.verifier,deadline:Date.now()+100}).catch(error=>error);
+  await jest.advanceTimersByTimeAsync(101);
+  expect(await result).toMatchObject({status:503,code:'SHOPIFY_TIMEOUT'});
+  expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+ }finally{jest.useRealTimers();}
+});
 test('source ID errors remain input errors and do not trigger an API request',async()=>{
  const h=harness({},[profile(2,'second')]),invalid=rows.map(row=>[...row]);invalid[1][1]='not-an-id';
  await expect(resolveShopifyStore({rows:invalid,profiles:[profile(2,'second')],input:{profileId:'2'},verifier:h.verifier})).rejects.toMatchObject({code:'SHOPIFY_SOURCE_ID_INVALID',status:400});expect(h.fetchImpl).not.toHaveBeenCalled();
