@@ -229,3 +229,148 @@ test('unbound SHOPLINE store remains explicitly file mode without pretending API
  const h=harness([sl]);const result=await h.prepare({rows});
  expect(result.verification).toBeNull();expect(result.output.ok).toBe(true);expect(h.verifyShopify).not.toHaveBeenCalled();
 });
+
+function historicalBarcodeHarness(){
+ const h=barcodeHarness(),sku=h.product.erp_sku,code=h.product.barcode;
+ const historical=order({'Lineitem id':'gid://shopify/LineItem/111','Lineitem name':'歷史促銷品項'});
+ const regular=order({Name:'#CURRENT',Id:'7624215101597','Lineitem id':'gid://shopify/LineItem/222','Lineitem name':'目前商品'});
+ const hEvidence={};
+ h.verifyShopify.mockImplementation(async rows=>{
+  const entries=rows.slice(1).map(row=>Object.fromEntries(rows[0].map((header,index)=>[header,row[index]])));
+  const orders=entries.map(entry=>{
+   const quantity=Number(entry['Lineitem quantity']);
+   const items=[{id:entry['Lineitem id'],sku:entry['Lineitem sku'],name:entry['Lineitem name'],quantity,unfulfilledQuantity:quantity,
+    ...(entry.Name==='#CURRENT'?{variantId:'gid://shopify/ProductVariant/123',barcode:h.identity.barcode}:{})}];
+   return {number:entry.Name,id:entry.Id,cancelled:false,fulfillmentStatus:'unfulfilled',paymentStatus:'pending',
+    currentQuantity:quantity,remainingQuantity:quantity,items,...hEvidence[entry.Name]};
+  });
+  return {rows,verification:{shop:h.identity.shop,version:'shopify-current-v2',orders}};
+ });
+ h.identity.barcode=code;
+ h.resolveProducts.mockImplementation(async skus=>({products:require('../services/marketplaceProductCatalog').resolveProducts(skus,[h.product,...(h.extraProducts||[])])}));
+ h.pool.query.mockImplementation(async(sql,params)=>{
+  if(sql.includes('marketplace_store_profiles'))return {rows:h.profiles};
+  if(sql.startsWith('INSERT INTO marketplace_product_mapping_reviews')){
+   const [store_profile_id,fingerprint,evidence,confirmed_by]=params;
+   const record={id:17+h.reviews.length,store_profile_id,fingerprint,evidence:JSON.parse(evidence),confirmed_by};
+   h.reviews.push(record);
+   return {rows:[record]};
+  }
+  if(sql.includes('marketplace_product_mapping_reviews')){
+   const rows=h.reviews.filter(r=>!r.revoked_at&&(sql.includes('fingerprint=ANY')?
+    r.store_profile_id===params[0]&&params[1].includes(r.fingerprint):params[0].includes(r.id)));
+   return {rows};
+  }
+  return {rows:[]};
+ });
+ const body=(scan,orders=[historical,regular])=>({rows:table(orders),settings:{skuMappings:{[sku]:{
+  erpSku:sku,barcode:code,barcodeConfirmed:true,...(scan===undefined?{}:{physicalBarcode:scan})
+ }}}});
+ const toSnapshot=result=>({sourceEvidence:result.sourceEvidence,barcodeReviews:result.barcodeReviews,settings:result.settings,items:result.parsed.items});
+ return {...h,historical,regular,sku,code,body,toSnapshot,evidence:hEvidence,reader:async()=>({products:[h.product,...(h.extraProducts||[])]}),
+  setExtraProducts:products=>{h.extraProducts=products;}};
+}
+
+test('historical SKU is held despite a matching live sibling and client checkbox, until exact physical scan and admin attestation',async()=>{
+ const {confirmBarcodeReview,verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
+ const h=historicalBarcodeHarness(),unknown=await h.prepare(h.body());
+ expect(unknown.output.ok).toBe(false);
+ expect(unknown.barcodeConflicts[0]).toMatchObject({sourceSku:h.sku,sourceBarcode:'',canConfirm:false,
+  requiresPhysicalBarcode:true,requiresHistoricalLineAttestation:true,canEnterPhysicalBarcode:true,physicalBarcode:'',
+  historicalAffectedOrders:[{orderNumber:'#154230',sourceLineId:'gid://shopify/LineItem/111',quantity:1}]});
+ expect(unknown.barcodeConflicts[0].relatedOrders).toEqual(expect.arrayContaining([
+  expect.objectContaining({orderNumber:'#CURRENT',variantId:'gid://shopify/ProductVariant/123',barcode:h.code,barcodeMissing:false}),
+ ]));
+ expect(unknown.barcodeReviewCandidates).toHaveLength(0);
+ const wrong=await h.prepare(h.body('9990000000000'),{refresh:true});
+ expect(wrong.barcodeConflicts[0]).toMatchObject({canConfirm:false,physicalBarcode:'9990000000000'});
+ const scanned=await h.prepare(h.body(h.code),{refresh:true});
+ const candidate=scanned.barcodeReviewCandidates[0];
+ expect(candidate).toMatchObject({sourceBarcode:'',variantIds:[],physicalBarcode:h.code,canConfirm:true,
+  historicalLine:{orderNumber:'#154230',orderId:'7624215101596',sourceLineId:'gid://shopify/LineItem/111',quantity:1}});
+ await expect(confirmBarcodeReview(h.pool,candidate,{id:4,role:'dispatcher'},{historicalLineAttested:true})).rejects.toMatchObject({status:403});
+ await expect(confirmBarcodeReview(h.pool,candidate,{id:4,role:'admin'})).rejects.toMatchObject({code:'BARCODE_HISTORICAL_ATTESTATION_REQUIRED'});
+ expect(h.reviews).toHaveLength(0);
+ await expect(confirmBarcodeReview(h.pool,candidate,{id:4,role:'admin'},{historicalLineAttested:true})).resolves.toMatchObject({confirmed_by:4});
+ const approved=await h.prepare(h.body(),{refresh:true});
+ expect(approved.output.ok).toBe(true);
+ expect(approved.prepick.ok).toBe(true);
+ expect(approved.parsed.orders.map(order=>order.sourceOrderNumber)).toEqual(['#154230','#CURRENT']);
+ expect(approved.barcodeConflicts).toHaveLength(0);
+ expect(approved.barcodeReviews).toHaveLength(1);
+ expect(approved.sourceEvidence.verification.orders[0].items[0]).not.toHaveProperty('variantId');
+ await expect(verifySavedBarcodeReviews(h.pool,h.toSnapshot(approved),h.reader,{returnContext:true})).resolves.toEqual({});
+});
+
+test('one approved historical line never covers a different order, a new orphan line or a changed quantity',async()=>{
+ const {confirmBarcodeReview}=require('../services/marketplaceBarcodeReviews');
+ const h=historicalBarcodeHarness();
+ const scanned=await h.prepare(h.body(h.code),{refresh:true});
+ await confirmBarcodeReview(h.pool,scanned.barcodeReviewCandidates[0],{id:4,role:'admin'},{historicalLineAttested:true});
+ const moved={...h.historical,Name:'#OTHER',Id:'7624215101598'};
+ const changed={...h.historical,'Lineitem quantity':'2',Subtotal:'1780',Total:'1780','Outstanding Balance':'1780'};
+ for(const orders of [[moved,h.regular],[changed,h.regular],[{...h.historical,'Lineitem id':'gid://shopify/LineItem/333'},h.regular]]){
+  const result=await h.prepare(h.body(undefined,orders),{refresh:true});
+  expect(result.output.ok).toBe(false);
+  expect(result.barcodeConflicts[0].historicalAffectedOrders).toHaveLength(1);
+  expect(result.barcodeReviews).toHaveLength(0);
+ }
+ const newHistorical={...moved,'Lineitem id':'gid://shopify/LineItem/333'};
+ const together=await h.prepare(h.body(undefined,[h.historical,h.regular,newHistorical]),{refresh:true});
+ expect(together.barcodeConflicts[0].relatedOrders).toEqual(expect.arrayContaining([
+  expect.objectContaining({orderNumber:'#154230',historicalLineConfirmed:true}),
+  expect.objectContaining({orderNumber:'#OTHER',historicalLineConfirmed:false}),
+ ]));
+ expect(together.barcodeConflicts[0].historicalAffectedOrders.map(row=>row.orderNumber)).toEqual(['#OTHER']);
+ expect(together.barcodeReviews).toHaveLength(1);
+});
+
+test('historical proof fails closed for a live sibling barcode conflict or ambiguous catalog scan',async()=>{
+ const h=historicalBarcodeHarness();
+ h.identity.barcode='NEW4711299272493';
+ const conflicting=await h.prepare(h.body(h.code),{refresh:true});
+ expect(conflicting.output.ok).toBe(false);
+ expect(conflicting.barcodeReviewCandidates.every(candidate=>!candidate.canConfirm)).toBe(true);
+ expect(conflicting.barcodeConflicts[0].requiresHistoricalLineAttestation).toBeUndefined();
+ h.identity.barcode=h.code;
+ h.setExtraProducts([{...h.product,erp_sku:'ALTERNATE'}]);
+ const ambiguous=await h.prepare(h.body(h.code),{refresh:true});
+ expect(ambiguous.output.ok).toBe(false);
+ expect(ambiguous.barcodeReviewCandidates.every(candidate=>!candidate.canConfirm)).toBe(true);
+ expect(ambiguous.barcodeConflicts[0].requiresHistoricalLineAttestation).toBeUndefined();
+});
+
+test('saved historical proof must retain its active record and exact verified snapshot identity',async()=>{
+ const {confirmBarcodeReview,verifySavedBarcodeReviews,lockSavedHistoricalBarcodeReviews,requiresStrictBarcodeReview}=require('../services/marketplaceBarcodeReviews');
+ const h=historicalBarcodeHarness(),scanned=await h.prepare(h.body(h.code),{refresh:true});
+ await confirmBarcodeReview(h.pool,scanned.barcodeReviewCandidates[0],{id:4,role:'admin'},{historicalLineAttested:true});
+ const approved=await h.prepare(h.body(),{refresh:true});
+ const snapshot=()=>JSON.parse(JSON.stringify(h.toSnapshot(approved)));
+ const edits=[
+  value=>{delete value.sourceEvidence.historicalLineProofProfileId;delete value.barcodeReviews;},
+  value=>{value.sourceEvidence.verification.orders[0].id='123456';},
+  value=>{value.sourceEvidence.verification.orders[0].items[0].quantity=2;},
+  value=>{value.sourceEvidence.verification.orders[1].items[0].barcode='DIFFERENT';},
+  value=>{value.items[0].quantity=2;},
+ ];
+ for(const edit of edits){
+  const value=snapshot();edit(value);
+  expect(requiresStrictBarcodeReview(value)).toBe(true);
+  await expect(verifySavedBarcodeReviews(h.pool,value,h.reader)).rejects.toMatchObject({code:'BARCODE_REVIEW_CHANGED'});
+ }
+ await expect(verifySavedBarcodeReviews(h.pool,snapshot(),async()=>({products:[{...h.product,active:false}]}))).rejects.toMatchObject({code:'BARCODE_REVIEW_CHANGED'});
+ await expect(lockSavedHistoricalBarcodeReviews(h.pool,snapshot())).resolves.toBeUndefined();
+ expect(h.pool.query).toHaveBeenLastCalledWith(expect.stringContaining('FOR SHARE'),[[17]]);
+ h.reviews[0].revoked_at='2026-11-12T12:00:00Z';
+ await expect(verifySavedBarcodeReviews(h.pool,snapshot(),h.reader)).rejects.toMatchObject({code:'BARCODE_REVIEW_CHANGED'});
+ await expect(lockSavedHistoricalBarcodeReviews(h.pool,snapshot())).rejects.toMatchObject({code:'BARCODE_REVIEW_CHANGED'});
+});
+
+test('legacy draft projection does not turn a current removed-item branch into authority for an orphan variant',async()=>{
+ const h=historicalBarcodeHarness();
+ h.evidence['#154230']={allItems:[{id:'gid://shopify/LineItem/999',sku:'REMOVED',originalQuantity:1,currentQuantity:0,unfulfilledQuantity:0}],
+  removedLineIds:['gid://shopify/LineItem/999']};
+ await expect(h.prepare(h.body(h.code),{refresh:true,overwriteOrderNumbers:['#154230']})).rejects.toMatchObject({
+  code:'MARKETPLACE_DRAFT_SOURCE_INVALID',orderNumber:'#154230',message:expect.stringContaining('歷史商品'),
+ });
+});

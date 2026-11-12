@@ -37,6 +37,7 @@ async function patchOwner(batch,sources,conversion,user){
  const retained=new Set(snapshot.orders.filter(order=>!selected.has(order.sourceOrderNumber)).map(order=>order.sourceOrderNumber)),old=oldRaw(snapshot,retained);
  const raw={...old,orders:[...old.orders,...clone(conversion.raw.orders.filter(order=>selected.has(order.sourceOrderNumber)))],items:[...old.items,...clone(conversion.raw.items.filter(item=>selected.has(item.sourceOrderNumber)))],issues:clone((conversion.raw.issues||[]).filter(issue=>!issue.orderNumber||selected.has(issue.orderNumber)))};
  const selectedSkus=new Set(conversion.raw.items.filter(item=>selected.has(item.sourceOrderNumber)).map(item=>item.sku)),retainedSkus=new Set(old.items.map(item=>item.sku));
+ require('./marketplaceDraftSource').assertRetainedHistoricalReviews(snapshot,old.items,selectedSkus);
  for(const sku of selectedSkus)if(retainedSkus.has(sku)&&hash(snapshot.settings.skuMappings[sku])!==hash(conversion.settings.skuMappings[sku]))throw fail('同批保留訂單與新版商品對照不同，請先統一核對');
  const settings={...clone(snapshot.settings),skuMappings:{...clone(snapshot.settings.skuMappings),...Object.fromEntries([...selectedSkus].map(sku=>[sku,clone(conversion.settings.skuMappings[sku])]))}};
  const previous=snapshot.sourceEvidence?.verification,current=conversion.verification;

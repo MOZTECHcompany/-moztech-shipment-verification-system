@@ -1,6 +1,7 @@
 const jwt=require('jsonwebtoken');
 const {validId,batchLinks}=require('./marketplaceBatchManagement');
 const {assertUploadScope}=require('./marketplaceUploadScopes');
+const {requiresStrictBarcodeReview}=require('./marketplaceBarcodeReviews');
 const COOKIE='wms_marketplace_download';
 const path=(id,kind)=>`/api/marketplace-files/${id}/${kind}`;
 const allowed=kind=>['ecount','ecount-grouped','prepick'].includes(kind);
@@ -27,8 +28,8 @@ function downloadFile({pool}){return async(req,res,next)=>{
   await assertUploadScope(pool,r);
   if(claims.uploadScopeFingerprint!==r.snapshot.uploadScope?.fingerprint)return res.status(409).send('本次訂單版本已更新，請重新核對並產檔。');
   let reviewWarning='';
-  const physicalReview=r.snapshot.barcodeReviews?.some(review=>review?.evidence?.barcodeProof==='physical-scan-v1');
-  try{const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,r.snapshot,undefined,{returnContext:true});await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))],undefined,reviewed,{...r.snapshot,platform:r.source_platform});}catch(e){if(req.params.kind==='prepick'&&e.status===400&&!physicalReview)reviewWarning=e.message;else throw e;}
+  const strictReview=requiresStrictBarcodeReview(r.snapshot);
+  try{const reviewed=await require('./marketplaceBarcodeReviews').verifySavedBarcodeReviews(pool,r.snapshot,undefined,{returnContext:true});await require('./marketplaceProductCatalog').verifyCatalogMappings(pool,r.snapshot.settings,[...new Set(r.snapshot.items.map(i=>i.sku))],undefined,reviewed,{...r.snapshot,platform:r.source_platform});}catch(e){if(req.params.kind==='prepick'&&e.status===400&&!strictReview)reviewWarning=e.message;else throw e;}
   const record={reviewWarning,...r.snapshot,handler:await require('./marketplaceHandler').batchHandler(pool,r),id:r.id,batchNumber:r.batch_number,platform:r.source_platform,store:r.source_store,links:await batchLinks(pool,r.id)};
   const {savedBatchTables}=await import('./marketplaceBatchFiles.mjs'),XLSX=require('xlsx');
   const {formatEcountProductColumn}=await import('./marketplaceIntake.mjs');

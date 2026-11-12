@@ -1,6 +1,6 @@
 const express=require('express'),request=require('supertest'),jwt=require('jsonwebtoken'),XLSX=require('xlsx');
-jest.mock('../services/marketplaceBarcodeReviews',()=>({verifySavedBarcodeReviews:jest.fn(async()=>({}))}));
-jest.mock('../services/marketplaceProductCatalog',()=>({verifyCatalogMappings:jest.fn(async()=>{})}));
+jest.mock('../services/marketplaceBarcodeReviews',()=>({...jest.requireActual('../services/marketplaceBarcodeReviews'),verifySavedBarcodeReviews:jest.fn(async()=>({}))}));
+jest.mock('../services/marketplaceProductCatalog',()=>({...jest.requireActual('../services/marketplaceProductCatalog'),verifyCatalogMappings:jest.fn(async()=>{})}));
 const {issueDownload,downloadFile}=require('../services/marketplaceDownloads');
 const {createUploadScope}=require('../services/marketplaceUploadScopes');
 async function harness(){
@@ -20,7 +20,7 @@ async function harness(){
   if(sql.startsWith('SELECT EXISTS('))return {rows:[{borrowed:false}]};
   return {rows:[]};
  })};
- const app=express();app.use(express.json());app.post('/link',(req,res)=>issueDownload(res,19,'ecount',7,record.snapshot.draftRevision??0,record.snapshot.uploadScope?.fingerprint));app.get('/api/marketplace-files/:id/:kind',downloadFile({pool}));
+ const app=express();app.use(express.json());app.post('/link',(req,res)=>issueDownload(res,19,'ecount',7,record.snapshot.draftRevision??0,record.snapshot.uploadScope?.fingerprint));app.post('/prepick-link',(req,res)=>issueDownload(res,19,'prepick',7));app.get('/api/marketplace-files/:id/:kind',downloadFile({pool}));
  return {app,record,pool,state};
 }
 beforeEach(()=>{process.env.JWT_SECRET='synthetic-draft-download-test-only';});
@@ -65,4 +65,20 @@ test('an unscoped cookie cannot be reused for a new complete-file scope',async()
  const h=await harness(),link=await request(h.app).post('/link'),cookie=link.headers['set-cookie'][0].split(';')[0];
  const scoped=await scopedHarness();Object.assign(h.state,scoped.state);h.record.snapshot.uploadScope=scoped.record.snapshot.uploadScope;
  expect((await request(h.app).get(link.body.url).set('Cookie',cookie)).status).toBe(409);
+});
+
+test('historical barcode revocation blocks both already issued sales and prepick downloads',async()=>{
+ const h=await harness();
+ h.record.snapshot.sourceEvidence={historicalLineProofProfileId:2};
+ const sales=await request(h.app).post('/link'),prepick=await request(h.app).post('/prepick-link');
+ const {verifySavedBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
+ const error=Object.assign(new Error('歷史商品核對已撤銷'),{status:400,code:'BARCODE_REVIEW_CHANGED'});
+ verifySavedBarcodeReviews.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+ for(const link of [sales,prepick]){
+  const cookie=link.headers['set-cookie'][0].split(';')[0];
+  const result=await request(h.app).get(link.body.url).set('Cookie',cookie);
+  expect(result.status).toBe(400);
+  expect(result.text).toBe(error.message);
+  expect(result.headers['content-type']).not.toContain('spreadsheet');
+ }
 });

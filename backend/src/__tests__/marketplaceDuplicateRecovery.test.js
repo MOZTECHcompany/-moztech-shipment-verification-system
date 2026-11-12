@@ -1,9 +1,12 @@
 const express=require('express'),request=require('supertest');
 
 jest.mock('../services/marketplaceBarcodeReviews',()=>({
+ ...jest.requireActual('../services/marketplaceBarcodeReviews'),
  confirmBarcodeReview:jest.fn(),verifySavedBarcodeReviews:jest.fn(async()=>({})),
 }));
-jest.mock('../services/marketplaceProductCatalog',()=>({verifyCatalogMappings:jest.fn(async()=>{})}));
+jest.mock('../services/marketplaceProductCatalog',()=>({
+ ...jest.requireActual('../services/marketplaceProductCatalog'),verifyCatalogMappings:jest.fn(async()=>{}),
+}));
 
 const {createMarketplaceRouter}=require('../routes/marketplaceRoutes');
 

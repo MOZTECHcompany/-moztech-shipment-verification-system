@@ -39,7 +39,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled } = {}) {
+async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled, readyScope = null, readyPreview = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { id: 7, role };
@@ -72,7 +72,9 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             confirmedBarcodes.add(body.confirmation.fingerprint);
             return {data:{confirmed:true}};
         }
-        if (url === '/api/marketplace-intakes/preview') {
+        if (url === '/api/marketplace-intakes/preview' || url === '/api/marketplace-intakes/ready-preview') {
+            const scoped = url.endsWith('/ready-preview') ? await readyPreview(body) : null;
+            if (scoped) body = { ...body, rows: scoped.rows };
             if (previewWait) await previewWait(body);
             const failure = typeof previewError === 'function' ? previewError(body) : previewError;
             if (failure) throw typeof failure === 'string' ? Error(failure) : Object.assign(Error(failure.message), {response:{status:failure.status || 409,data:failure}});
@@ -105,7 +107,8 @@ async function converter({ flag = 'dev', role = 'admin', denied = false, resolve
             latestPrepared = prepared;
             prepared.audit = unified.prepareUnifiedMarketplace(raw,effectiveSettings).audit;
             prepared.choices.push(...activeReimports.map(order => ({number:order.orderNumber,eligible:false,reason:order.message || '已保存'})));
-            return {data:{...prepared,reviewRequired,orderReviews,reimports:activeReimports,excludedFulfilled,source:source.source,raw,effectiveSettings,profiles:currentProfiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint))}};
+            const preview = {...prepared,reviewRequired,orderReviews,reimports:activeReimports,excludedFulfilled,source:source.source,raw,effectiveSettings,profiles:currentProfiles,profileId:profile?.id,catalog:{sync:resolvedCatalog?.sync || null,products,mappingIssues:resolvedCatalog?.mappingIssues || []},verification:{currentFingerprint:'verified-current-order-v1',...verification},barcodeConflicts:activeConflicts.filter(conflict=>!confirmedBarcodes.has(conflict.fingerprint)),readyScope:typeof readyScope === 'function' ? readyScope(body) : readyScope};
+            return {data:scoped ? {rows:scoped.rows,readyScope:scoped.readyScope,preview:{...preview,...scoped.previewOverrides}} : preview};
         }
         if (saveError) throw Object.assign(Error(saveError.message), { response: { data: saveError } });
         if (saveResponse) return {data:typeof saveResponse === 'function' ? saveResponse(body) : saveResponse};
@@ -315,6 +318,137 @@ const shopifyBarcodeConflict = {
         {orderNumber:'#REVIEW-2',orderId:'gid://shopify/Order/9002',sourceLineId:'line-2',variantId:'gid://shopify/ProductVariant/1002',productName:'iPhone 18 Pro 抗藍光保護貼',barcode:'4711299274732',quantity:2},
     ],
 };
+
+const readyRows = [shopifyBarcodeRows[0],
+    ['#REVIEW-1',1,'4711299274732','First item',100,'paid','unfulfilled','TWD',140,0,0,140,0,0],
+    ['',2,'4711299274733','Second item',20,'','','','','','','','',''],
+    shopifyBarcodeRows[2],
+    ['#FULFILLED',1,'4711299274734','Fulfilled item',100,'paid','fulfilled','TWD',100,0,0,100,0,0],
+];
+const readyPlan = {fingerprint:'a'.repeat(64),candidateNumbers:['#REVIEW-1'],
+    heldOrders:[{orderNumber:'#REVIEW-2',reasons:['商品 4711299274732 的商城與 ECOUNT 對照待核對']}],
+    excludedFulfilled:['#FULFILLED']};
+const containsHeldOrder = body => body.rows.some(row => row.includes('#REVIEW-2'));
+const readyOptions = { profiles:[{...storeProfile,platform:'Shopify'}],
+    readyScope:body => containsHeldOrder(body) ? readyPlan : null,
+    barcodeConflicts:body => containsHeldOrder(body) ? [shopifyBarcodeConflict] : [],
+    readyPreview:body => ({rows:body.rows.slice(0,3),readyScope:readyPlan}),
+};
+const readyAction = view => view.button('只預覽可轉檔的');
+const saveCalls = view => view.requests.filter(request => request.url === '/api/marketplace-intakes');
+
+test('one upload shows held orders and uses complete scoped rows only after explicit preview and download', async () => {
+    const view = await converter(readyOptions); await view.select(file(readyRows,'original.csv'));
+    const full = previewCalls(view)[0].body.rows;
+    const held = view.find(view.render(), node => node.props['aria-label'] === '待核對訂單及原因');
+    assert.match(view.text(held), /#REVIEW-2.*4711299274732.*對照待核對/);
+    assert.doesNotMatch(view.text(held), /#REVIEW-1|#FULFILLED/);
+    assert.equal(downloadSales(view), undefined);
+    await readyAction(view).props.onClick(); view.render();
+    const request = view.requests.find(item => item.url.endsWith('/ready-preview'));
+    assert.deepEqual(request.body.rows, full);
+    assert.equal(request.body.readyScopeFingerprint, readyPlan.fingerprint);
+    assert.match(view.text(view.render()), /本次只轉檔 1 筆/);
+    assert.equal(saveCalls(view).length, 0);
+    assert.equal(downloadSales(view).props.disabled, false);
+    await downloadSales(view).props.onClick(); view.render();
+    assert.deepEqual(saveCalls(view)[0].body.rows, full.slice(0,3));
+    assert.equal(view.downloads.length, 1);
+    await view.button('返回原檔核對').props.onClick(); view.render();
+    assert.deepEqual(previewCalls(view).at(-1).body.rows, full);
+    assert.match(view.text(view.render()), /original\.csv/);
+    assert.ok(readyAction(view));
+    assert.equal(saveCalls(view).length, 1);
+});
+
+test('ready-only scope checks the returned order identities and rechecks the original on a mismatch', async () => {
+    const view = await converter({...readyOptions,readyPreview:body=>({rows:body.rows,readyScope:readyPlan})});
+    await view.select(file(readyRows));
+    await readyAction(view).props.onClick(); view.render();
+    assert.match(view.text(view.render()), /可轉檔的訂單核對結果已變更/);
+    assert.equal(view.button('返回原檔核對'), undefined);
+    assert.equal(downloadSales(view), undefined);
+    assert.equal(saveCalls(view).length, 0);
+    await view.button('重新核對').props.onClick(); view.render();
+    assert.deepEqual(previewCalls(view)[1].body.rows, previewCalls(view)[0].body.rows);
+    assert.equal(readyAction(view).props.disabled, false);
+});
+
+test('a ready preview of an already-saved order waits for the usual draft comparison', async () => {
+    const view = await converter({...readyOptions,reimports:[{orderNumber:'#REVIEW-1',intakeId:12,state:'pending'}]});
+    await view.select(file(readyRows));
+    await readyAction(view).props.onClick(); view.render();
+    assert.equal(comparison(view), undefined);
+    assert.equal(saveCalls(view).length, 0);
+    await view.button('比對並確認本次轉檔').props.onClick(); view.render();
+    assert.deepEqual(comparison(view).props.rows, previewCalls(view)[0].body.rows.slice(0,3));
+    assert.equal(saveCalls(view).length, 0);
+});
+
+test('a new result within a scoped preview cannot silently shrink the orders for export', async () => {
+    let shipped = false;
+    const view = await converter({...readyOptions,reimports:() => shipped ? [{orderNumber:'#REVIEW-1',intakeId:12,state:'completed'}] : []});
+    await view.select(file(readyRows));
+    await readyAction(view).props.onClick(); view.render();
+    const oldDownload = downloadSales(view).props.onClick;
+    shipped = true;
+    await view.change('銷貨日期','2026-11-13');
+    assert.match(view.text(view.render()), /轉檔範圍已變更/);
+    assert.equal(downloadSales(view), undefined);
+    await oldDownload();
+    assert.equal(saveCalls(view).length, 0);
+    await view.button('返回原檔核對').props.onClick(); view.render();
+    assert.deepEqual(previewCalls(view).at(-1).body.rows, previewCalls(view)[0].body.rows);
+});
+
+test('stopping a ready preview keeps the original and cannot apply a late scoped response', async () => {
+    let finish;
+    const view = await converter({...readyOptions,readyPreview:body => new Promise(resolve => {
+        finish = () => resolve({rows:body.rows.slice(0,3),readyScope:readyPlan});
+    })});
+    await view.select(file(readyRows));
+    const checking = readyAction(view).props.onClick(); view.render();
+    view.button('停止等待').props.onClick(); view.render();
+    finish(); await checking; view.render();
+    assert.equal(view.button('返回原檔核對'), undefined);
+    assert.match(view.text(view.render()), /檔案已保留/);
+    assert.equal(saveCalls(view).length, 0);
+    await view.button('重新核對').props.onClick(); view.render();
+    assert.deepEqual(previewCalls(view).at(-1).body.rows, previewCalls(view)[0].body.rows);
+});
+
+test('historical Shopify lines require an admin, matching package barcode and explicit original-line attestation', async () => {
+    const historicalAffectedOrders = [{...shopifyBarcodeConflict.relatedOrders[0],productName:'原促銷品',barcode:'',variantId:''}];
+    const conflicts = body => {
+        const physicalBarcode = body.settings.skuMappings?.['4711299274732']?.physicalBarcode || '';
+        return [{...shopifyBarcodeConflict,sourceBarcode:'',erpBarcode:'4711299274732',physicalBarcode,
+            reviewReason:'SOURCE_VARIANT_MISSING',requiresPhysicalBarcode:true,canEnterPhysicalBarcode:true,
+            requiresHistoricalLineAttestation:true,historicalAffectedOrders,
+            canConfirm:physicalBarcode==='4711299274732',fingerprint:`historical-${physicalBarcode}`}];
+    };
+    const options = {profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:conflicts};
+    const dispatcher = await converter({...options,role:'dispatcher'}); await dispatcher.select(file(shopifyBarcodeRows));
+    assert.match(dispatcher.text(dispatcher.render()), /請由管理員核對原訂單及包裝條碼/);
+    assert.equal(physicalScanner(dispatcher), undefined);
+    assert.equal(dispatcher.button('保存商品對照'), undefined);
+    const view = await converter(options); await view.select(file(shopifyBarcodeRows));
+    const evidence = view.all(node => node.type === 'details').find(node => /原促銷明細/.test(view.text(node.props.children[0])));
+    assert.equal(evidence.props.open, true);
+    assert.match(view.text(evidence), /#REVIEW-1.*原促銷品/);
+    assert.doesNotMatch(view.text(evidence), /#REVIEW-2/);
+    assert.equal(physicalScanner(view).props.value, '');
+    await view.change('實物條碼','4711299274733');
+    assert.match(view.text(view.render()), /包裝條碼須與上方 ECOUNT 條碼相同/);
+    assert.equal(view.button('保存商品對照').props.disabled, true);
+    await view.change('實物條碼','4711299274732');
+    assert.equal(view.button('保存商品對照').props.disabled, true);
+    await view.change('我已核對上列每筆原促銷商品',true);
+    await view.button('保存商品對照').props.onClick(); view.render();
+    const saved = view.requests.find(request => request.url.endsWith('/barcode-confirmations'));
+    assert.deepEqual(JSON.parse(JSON.stringify(saved.body.confirmation)),{fingerprint:'historical-4711299274732',confirmed:true,historicalLineAttested:true});
+    assert.equal(saved.body.settings.skuMappings['4711299274732'].physicalBarcode,'4711299274732');
+    assert.equal(saveCalls(view).length, 0);
+});
 
 test('valid multiple Shopify variants with a blank ERP barcode allow explicit review and show the exact related orders', async () => {
     const profile = {...storeProfile,platform:'Shopify'};

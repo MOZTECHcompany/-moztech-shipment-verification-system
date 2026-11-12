@@ -12,7 +12,7 @@ import { batchSessionMatches } from '../../utils/importBatches';
 import { marketplacePreviewError } from '../../utils/marketplacePreviewError.mjs';
 import { readFulfilledExclusions } from '../../utils/marketplaceDraftDiff.mjs';
 import { formatMinor, ECOUNT_GROUPED_MODE } from '../../utils/marketplaceIntake.mjs';
-import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS } from '../../utils/unifiedMarketplace.mjs';
+import { MARKETPLACE_ROLES, TEST_ORDER_NUMBERS, parseUnifiedMarketplace } from '../../utils/unifiedMarketplace.mjs';
 import { marketplaceOrderSheets, parseMarketplaceWorksheet } from '../../utils/marketplaceWorkbook.mjs';
 
 const inputClass = 'mt-1 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 disabled:bg-slate-100';
@@ -60,6 +60,25 @@ const reimportStates = { pending: '待出貨', completed: '已出貨', warehouse
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const batchNumber = () => `WMS-${today().replaceAll('-', '')}-${Array.from(crypto.getRandomValues(new Uint8Array(2)), value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 const barcodeConflictKey = conflict => conflict.fingerprint;
+const needsHistoricalAttestation = conflict => conflict.requiresHistoricalLineAttestation === true;
+const changedScopeMessage = '可轉檔的訂單核對結果已變更，請重新核對原檔。';
+const readyOrderScope = value => Array.isArray(value?.candidateNumbers) && value.candidateNumbers.length > 0 &&
+  Array.isArray(value.heldOrders) && value.heldOrders.length > 0 && /^[a-f0-9]{64}$/.test(value.fingerprint) ? value : null;
+const matchesReadyOrders = (orders, numbers) => {
+  if (!Array.isArray(orders) || orders.length !== numbers.length) return false;
+  const expected = new Set(numbers);
+  return expected.size === numbers.length && orders.every(order => expected.delete(order.sourceOrderNumber));
+};
+const preparedReadyScopeMatches = (preview, plan, profileId) => {
+  if (!matchesReadyOrders(preview?.raw?.orders, plan.candidateNumbers) || String(preview.profileId) !== profileId ||
+      !preview.verification?.currentFingerprint || preview.barcodeConflicts?.length || readyOrderScope(preview.readyScope) ||
+      (Array.isArray(preview.excludedFulfilled) && preview.excludedFulfilled.length)) return false;
+  const newOrders = preview.parsed?.orders || [];
+  const savedOrders = (preview.reimports || []).filter(order => ['pending', 'excluded'].includes(order.state))
+    .map(order => ({ sourceOrderNumber: order.orderNumber }));
+  return matchesReadyOrders([...newOrders, ...savedOrders], plan.candidateNumbers) &&
+    (preview.output?.ok || (!newOrders.length && savedOrders.length > 0));
+};
 const shopifyOrderUrl = (conflict, order) => {
   if (conflict.platform !== 'Shopify') return null;
   const shop = String(conflict.shop || '').trim().toLowerCase();
@@ -84,6 +103,28 @@ function Field({ label, children, ...props }) {
 function Check({ children, checked, onChange, disabled = false }) {
   return <label className="flex min-h-11 cursor-pointer items-start gap-3 py-2 text-sm leading-6 text-slate-800"><input type="checkbox" checked={!!checked} disabled={disabled} onChange={event => { if (!disabled) onChange(event.target.checked); }} className="mt-1 h-4 w-4 shrink-0" /><span>{children}</span></label>;
 }
+function ReadyOrderReview({ plan, scoped, scopeChanged, disabled, onPreview, onReturn }) {
+  const fulfilledCount = plan.excludedFulfilled?.length || 0;
+  const scopedSummary = `另有 ${plan.heldOrders.length} 筆待核對${fulfilledCount ? `、${fulfilledCount} 筆已出貨` : ''}。原檔已保留。`;
+  return <section className={`${sectionClass} border-blue-200`} aria-label="本次轉檔範圍">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 className="text-lg font-semibold">{scopeChanged ? '轉檔範圍已變更' : scoped ? `本次只轉檔 ${plan.candidateNumbers.length} 筆` : `${plan.heldOrders.length} 筆待核對`}</h2>
+        <p className="mt-1 text-sm text-slate-600">{scopeChanged ? '請返回原檔重新核對可轉檔的訂單。' : scoped ? scopedSummary : `可先預覽其餘 ${plan.candidateNumbers.length} 筆，待核對的訂單整筆保留在原檔。`}</p>
+      </div>
+      {scoped ? <Button variant="secondary" disabled={disabled} onClick={onReturn}>返回原檔核對</Button>
+        : <Button disabled={disabled} onClick={onPreview}>只預覽可轉檔的 {plan.candidateNumbers.length} 筆</Button>}
+    </div>
+    <details className="mt-3" open={!scoped}>
+      <summary className="cursor-pointer py-2 text-sm font-medium text-slate-700">待核對訂單</summary>
+      <ul className="divide-y divide-slate-100 text-sm" aria-label="待核對訂單及原因">
+        {plan.heldOrders.map(order => <li key={order.orderNumber} className="grid gap-1 py-2 sm:grid-cols-[minmax(5rem,8rem)_1fr] sm:gap-3">
+          <strong className="break-all">{order.orderNumber}</strong><span className="break-words text-slate-700">{order.reasons.join('；')}</span>
+        </li>)}
+      </ul>
+    </details>
+  </section>;
+}
 export function MarketplaceConverter({ user }) {
   if (!MARKETPLACE_ROLES.includes(user?.role)) return <Navigate to="/tasks" replace />;
   return <ConverterPage user={user} />;
@@ -97,6 +138,7 @@ function ConverterPage({ user }) {
   routeContext.current = routeContextKey;
   const currentRouteRevision = routeRevision.current;
   const [input, setInput] = useState(null), [settings, setSettings] = useState(initialSettings), [name, setName] = useState('');
+  const [readySelection, setReadySelection] = useState(null);
   const [prepared, setPrepared] = useState(null), [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false), [access, setAccess] = useState('loading');
   const [checkingPreview, setCheckingPreview] = useState(false);
@@ -154,7 +196,7 @@ function ConverterPage({ user }) {
       previewController.current?.abort();
       previewRetry.current = null;
       setCheckingPreview(false); setBusy(false);
-      setInput(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
+      setInput(null); setReadySelection(null); setPrepared(null); setName(''); setSaved(null); setWorkbook(null); setSelectedSheet('');
       setRecords([]); setProfiles([]); setProfileId(''); setCatalog(null); setSettings(initialSettings());
       setBarcodeChecks({});
       setStoreSelection(null); setChoosingStore(false); setStoreSetupOpen(false);
@@ -167,6 +209,9 @@ function ConverterPage({ user }) {
   }, []);
   useEffect(() => { closeDraftOverwrite(); setStoreSelection(null); clearStoreDraft(); }, [routeContextKey]);
   const locked = busy || access !== 'ready' || draftOverwriteOpen || !!storeDraft;
+  const readyPlan = readyOrderScope(prepared?.readyScope);
+  const readySelectionChanged = !!readySelection && !preparedReadyScopeMatches(prepared, readySelection.plan, readySelection.profileId);
+  const canAttestHistoricalLine = ['admin', 'superadmin'].includes(user.role);
   const barcodeConflicts = prepared?.barcodeConflicts || [];
   const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
@@ -230,7 +275,8 @@ function ConverterPage({ user }) {
       const excluded = new Set(readFulfilledExclusions(response.data.excludedFulfilled) || []);
       const allExcluded = excluded.size > 0 && excluded.size === response.data.raw?.orders.length;
       const savedEligible = response.data.reimports?.some(order => !excluded.has(order.orderNumber));
-      if (response.data.barcodeConflicts?.length > 0) closeDraftOverwrite();
+      if (response.data.barcodeConflicts?.length > 0 || readyOrderScope(response.data.readyScope) ||
+          (readySelection && !preparedReadyScopeMatches(response.data, readySelection.plan, readySelection.profileId))) closeDraftOverwrite();
       else if (openComparison && !allExcluded && (response.data.reviewRequired === true || savedEligible)) openDraftOverwrite();
       return true;
     } catch (error) {
@@ -272,6 +318,54 @@ function ConverterPage({ user }) {
     setCheckingPreview(false); setBusy(false);
     showMessage('已停止等待核對。檔案已保留，可重新核對。');
   };
+  const previewReadyOrders = async () => {
+    if (locked || inFlight.current || previewDirty || readySelection || !input || !readyPlan || !profileId || !currentPreview()) return;
+    const sequence = ++request.current;
+    const isCurrent = () => currentPreviewContext() && sequence === request.current;
+    const controller = new AbortController();
+    previewController.current?.abort();
+    previewController.current = controller;
+    setBusy(true); setCheckingPreview(true); setPreviewDirty(true); setSaved(null); showMessage('');
+    try {
+      const { data } = await apiClient.post('/api/marketplace-intakes/ready-preview', {
+        rows: input.source.rows, settings, profileId, readyScopeFingerprint: readyPlan.fingerprint,
+      }, { timeout: 75000, signal: controller.signal });
+      if (!isCurrent()) return;
+      if (!Array.isArray(data?.rows)) throw Error(changedScopeMessage);
+      const scoped = parseUnifiedMarketplace(data.rows);
+      const preview = data.preview;
+      if (data.readyScope?.fingerprint !== readyPlan.fingerprint || scoped.parsed.platform !== 'Shopify' ||
+          !matchesReadyOrders(scoped.parsed.orders, readyPlan.candidateNumbers) || !preparedReadyScopeMatches(preview, readyPlan, profileId)) {
+        throw Error(changedScopeMessage);
+      }
+      applyPreview(preview);
+      sourceRevision.current++;
+      setInput(scoped); setReadySelection({ input, settings, profileId, plan: readyPlan });
+      setChoosingStore(false); previewRetry.current = null;
+    } catch (error) {
+      if (isCurrent()) showMessage(orderMessage(error, marketplacePreviewError(error) || error.response?.data?.message ||
+        (error.message === changedScopeMessage ? changedScopeMessage : '可轉檔訂單核對失敗，請重新核對原檔。')), 'error');
+    } finally {
+      if (previewController.current === controller) {
+        previewController.current = null;
+        if (mounted.current) setCheckingPreview(false);
+      }
+      if (mounted.current && sequence === request.current) setBusy(false);
+    }
+  };
+  const returnToOriginal = async () => {
+    if (locked || inFlight.current || !readySelection || !currentPreview()) return;
+    const original = readySelection;
+    const sequence = ++request.current;
+    sourceRevision.current++;
+    setReadySelection(null); setInput(original.input); setPrepared(null); setCatalog(null);
+    setSettings(original.settings); setProfileId(original.profileId); setBarcodeChecks({});
+    setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
+    try { await fetchPreview(original.input.source.rows, original.settings, original.profileId, sequence); }
+    catch (error) {
+      if (mounted.current && sequence === request.current && currentSession()) showMessage(orderMessage(error, marketplacePreviewError(error) || error.response?.data?.message || '原檔核對失敗，請重試。'), 'error');
+    } finally { if (mounted.current && sequence === request.current) setBusy(false); }
+  };
   const returnToBarcodeReview = async instance => {
     if (instance !== draftInstance.current || !draftOverwriteOpen || !currentPreview() || access !== 'ready' || inFlight.current || !input || originalOrderFlow) return false;
     // Destroy the frozen comparison before changing mappings. The next review
@@ -298,7 +392,8 @@ function ConverterPage({ user }) {
     finally { targetSelectionInFlight.current = false; }
   };
   const confirmBarcode = async conflict => {
-    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentPreview()) return;
+    if (locked || inFlight.current || targetSelectionInFlight.current || previewDirty || readySelectionChanged || !input || !profileId || conflict.canConfirm !== true || !barcodeChecks[barcodeConflictKey(conflict)] || !currentPreview()) return;
+    if (needsHistoricalAttestation(conflict) && (!canAttestHistoricalLine || !conflict.historicalAffectedOrders?.length)) return;
     clearReimportFocus();
     const sequence = ++request.current;
     inFlight.current = true; setBusy(true); setPreviewDirty(true); setSaved(null); showMessage('');
@@ -306,7 +401,7 @@ function ConverterPage({ user }) {
       const response = await apiClient.post('/api/marketplace-intakes/barcode-confirmations', {
         rows: input.source.rows, profileId, settings,
         verificationFingerprint: prepared.verification?.currentFingerprint,
-        confirmation: { fingerprint: conflict.fingerprint, confirmed: true },
+        confirmation: { fingerprint: conflict.fingerprint, confirmed: true, ...(needsHistoricalAttestation(conflict) ? { historicalLineAttested: true } : {}) },
       }, { timeout: 75000 });
       if (!currentPreviewContext() || sequence !== request.current) return;
       if (response.data?.confirmed !== true) throw Error('商品對照未保存');
@@ -320,6 +415,7 @@ function ConverterPage({ user }) {
   };
   const checkPhysicalBarcode = async (conflict, value) => {
     if (locked || inFlight.current || !input || !profileId || !currentPreview()) return;
+    if (needsHistoricalAttestation(conflict) && !canAttestHistoricalLine) return;
     const physicalBarcode = String(value || '').trim();
     const nextSettings = { ...settings, skuMappings: { ...settings.skuMappings, [conflict.sourceSku]: {
       ...settings.skuMappings?.[conflict.sourceSku], physicalBarcode,
@@ -373,7 +469,7 @@ function ConverterPage({ user }) {
     previewRetry.current = null;
     clearStoreDraft();
     clearReimportFocus();
-    showMessage(''); setInput(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
+    showMessage(''); setInput(null); setReadySelection(null); setPrepared(null); setPreviewDirty(false); setSaved(null); setName('');
     setProfileId(''); setChoosingStore(false); setStoreSetupOpen(false); setCatalog(null); setSettings(initialSettings());
     setBarcodeChecks({}); setStoreSelection(null);
     closeDraftOverwrite();
@@ -495,7 +591,8 @@ function ConverterPage({ user }) {
     XLSX.writeFile(book, `預揀與金額核對_${settings.batchNumber}.xlsx`);
   };
   const download = async kind => {
-    if (locked || inFlight.current || !input || !prepared || previewDirty || !currentPreview() || originalOrderFlow) return;
+    if (locked || inFlight.current || !input || !prepared || previewDirty || readySelectionChanged || !currentPreview() || originalOrderFlow) return;
+    if (kind === 'ecount' && readyPlan) return;
     if (kind === 'ecount' && allFulfilled) return;
     if (kind === 'ecount' && barcodeBlocked) { showMessage('請先完成商品條碼核對，再比對訂單。'); return; }
     // A file containing saved orders is confirmed and exported as one file.
@@ -604,22 +701,24 @@ function ConverterPage({ user }) {
       {!storeDraft && <Button variant="secondary" disabled={locked} onClick={openStoreSetup}>店鋪設定</Button>}
     </section>}
     {input && !prepared && !storeSelection && !busy && <div className={sectionClass}><Button variant="secondary" disabled={locked} onClick={() => retryPreview()}>重新核對訂單</Button></div>}
+    {(readySelection || readyPlan) && <ReadyOrderReview plan={readySelection?.plan || readyPlan} scoped={!!readySelection} scopeChanged={readySelectionChanged}
+      disabled={locked || (!readySelection && (previewDirty || !profileId))} onPreview={previewReadyOrders} onReturn={returnToOriginal} />}
     {input && prepared && <>
       {!draftOverwriteOpen && <section className={`${sectionClass} border-blue-200`} aria-label="轉檔與下載">
-        {(choosingStore || !profileId && matchingProfiles.length > 1) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store}</option>)}</select></Field></div>
-          : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
+        {(!readySelection && (choosingStore || !profileId && matchingProfiles.length > 1)) ? <div className="mb-5 max-w-xl"><Field label="店鋪"><select className={inputClass} disabled={locked} value={profileId} onChange={event => useProfile(event.target.value)}><option value="">選擇店鋪</option>{matchingProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.store}</option>)}</select></Field></div>
+          : settings.store && <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><strong>{settings.store}</strong><span className="text-slate-600">{settings.customerCode} {settings.customerName}</span>{!readySelection && matchingProfiles.length > 1 && <button type="button" className="min-h-10 font-medium text-blue-700" disabled={locked} onClick={() => setChoosingStore(true)}>更換店鋪</button>}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div><h2 className="text-lg font-semibold">{allFulfilled ? '本次沒有可轉檔的訂單' : reimports.length ? `本次檔案 ${raw.orders.length} 筆 · 已保存 ${reimports.length} 筆 · 新單 ${raw.orders.length - reimports.length - excludedFulfilled.length} 筆` : reviewRequired ? `本次檔案 ${raw.orders.length} 筆・取消與退款待核對` : emptyExclusions.length ? `已讀取 ${raw.orders.length} 筆・可銷貨 0 筆` : `${prepared.parsed.summary.orderCount} 筆訂單 · ${prepared.parsed.summary.totalQuantity} 件商品`}</h2>{!allFulfilled && (reviewRequired ? <p className="mt-2 text-sm text-slate-700">核對取消品項與剩餘出貨內容後，產生銷貨檔。</p> : reimports.length ? <p className="mt-2 text-sm text-slate-700">比對檔案的新增與異動，確認後下載銷貨檔。</p> : !onlyReimports && <p className="mt-2 text-sm text-slate-700">含稅 {settings.currency} {money(prepared.parsed.summary.totalMinor)}</p>)}
             {!reimports.length && prepared.output.ok && <p className="mt-1 text-sm text-slate-600">稅前 {money(prepared.output.summary.ecountNetMinor)} · 營業稅 {money(prepared.output.summary.ecountTaxMinor)} · 銷貨 {prepared.output.summary.ecountRowCount} 列</p>}
             {!reimports.length && prepared.output.ok && !!prepared.output.summary.roundingDeltaMinor && <p className="mt-1 text-sm text-slate-600">ERP 含稅 {money(prepared.output.summary.ecountTotalMinor)} · 整元尾差 {money(prepared.output.summary.roundingDeltaMinor)}</p>}
           </div>
-          {!allFulfilled && (reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : excludedFulfilled.length ? '比對並確認本次轉檔' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>)}
+          {!readyPlan && !readySelectionChanged && !allFulfilled && (reimports.length > 0 || reviewRequired ? <Button disabled={locked || previewDirty || originalOrderFlow || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />{reviewRequired ? '核對取消與退款' : excludedFulfilled.length || readySelection ? '比對並確認本次轉檔' : '比對並產生整份銷貨檔'}</Button> : !onlyReimports && <Button disabled={locked || previewDirty || !prepared.output.ok || catalogBlocked || barcodeBlocked} onClick={() => download('ecount')}><Download size={16} className="mr-2" />下載銷貨檔</Button>)}
         </div>
         {!previewDirty && excludedFulfilled.length > 0 && <div className="mt-4"><MarketplaceFulfilledExclusions orderNumbers={excludedFulfilled} /></div>}
-        {barcodeBlocked && (reimports.length > 0 || reviewRequired) && <p className="mt-3 text-sm text-amber-950">請先完成下方商品條碼核對，保存後會接續訂單比對。</p>}
+        {!readyPlan && barcodeBlocked && (reimports.length > 0 || reviewRequired) && <p className="mt-3 text-sm text-amber-950">請先完成下方商品條碼核對，保存後會接續訂單比對。</p>}
         {busy ? null
           : previewDirty ? <div className="mt-4"><Button variant="secondary" disabled={locked} onClick={() => retryPreview()}>重新核對</Button></div>
-          : !reviewRequired && prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
+          : !readyPlan && !readySelectionChanged && !reviewRequired && prepared.output.ok && !catalogBlocked && !barcodeBlocked && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16} />{prepared.verification?.mode === 'api' ? `${prepared.verification.platform || 'Shopify'} API 已核對` : '檔案核對通過'}・下載後上傳 ECOUNT</p>}
         {!previewDirty && (issueGroups.length > 0 || catalogBlocked || emptyExclusions.length > 0) && <div className="mt-4 rounded-lg bg-amber-50 p-4" role="region" aria-label="待處理問題"><p className="text-sm font-semibold text-amber-950">{issueGroups.length || catalogBlocked ? '待處理' : '本批無可銷貨訂單'}</p><ul className="mt-2 space-y-2 text-sm text-amber-950" aria-label="轉檔檢查結果">
           {emptyExclusions.map(choice => <li key={choice.number}>{choice.number}：{choice.reason}</li>)}
           {catalogIssues.map(value => <li key={value}>{value}</li>)}
@@ -645,13 +744,15 @@ function ConverterPage({ user }) {
         return <div key={order.orderNumber} className="flex flex-wrap items-center justify-between gap-3 py-3" aria-label={`已保存訂單 ${order.orderNumber}`}><div className="min-w-0"><p className="flex flex-wrap gap-x-3 gap-y-1 text-sm"><strong className="break-all">{order.orderNumber}</strong><span className="text-slate-600">{reimportStates[order.state] || '已保存'}</span></p>{order.message && (!resume || !order.canUpdateShipping) && <p className="mt-1 break-words text-sm text-slate-600">{order.message}</p>}</div>{link && <Button as={Link} to={link} variant="secondary" disabled={locked} onClick={event => { if (locked || !currentSession() || routeContext.current !== routeContextKey) event.preventDefault(); }}>{resume ? '接續原銷貨單' : '查看原訂單'}</Button>}</div>;
       })}</div></section>}
       <details open={!draftOverwriteOpen} className={draftOverwriteOpen ? "min-w-0 border-t border-slate-200 py-2" : "contents"}><summary className={draftOverwriteOpen ? "min-h-10 cursor-pointer py-2 text-sm font-medium text-slate-600" : "hidden"}>其他資料</summary>
-      {barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
+      {!readySelectionChanged && barcodeBlocked && <section className={`${sectionClass} border-amber-200`} aria-label="商品條碼核對"><h2 className="font-semibold">商品條碼待核對（{barcodeConflicts.length} 項）</h2><div className="mt-4 space-y-4">{barcodeConflicts.map(conflict => {
         const key = barcodeConflictKey(conflict);
-        const canConfirm = conflict.canConfirm === true;
-        const chooseTarget = conflict.targetOptions?.length > 1;
+        const historical = needsHistoricalAttestation(conflict);
+        const evidenceOrders = (historical ? conflict.historicalAffectedOrders : conflict.relatedOrders) || [];
+        const canConfirm = conflict.canConfirm === true && (!historical || canAttestHistoricalLine && evidenceOrders.length > 0);
+        const chooseTarget = !historical && conflict.targetOptions?.length > 1;
         const sourceBarcodeMissing = conflict.platform === 'Shopify' && conflict.reviewReason === 'SOURCE_BARCODE_MISSING';
-        const canScanPhysicalBarcode = conflict.canEnterPhysicalBarcode === true;
-        const internal = conflict.requiresInternalScanCode === true;
+        const canScanPhysicalBarcode = conflict.canEnterPhysicalBarcode === true && (!historical || canAttestHistoricalLine);
+        const internal = !historical && conflict.requiresInternalScanCode === true;
         return <div key={key} className="rounded-lg border border-slate-200 p-4">
           <p className="font-medium">{conflict.sourceName || products.find(item => item.sku === conflict.sourceSku)?.productName || conflict.erpName}</p>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -666,19 +767,20 @@ function ConverterPage({ user }) {
               {conflict.spec && <div><dt className="inline text-slate-600">規格：</dt><dd className="inline">{conflict.spec}</dd></div>}
             </dl></div>
           </div>
-          {conflict.relatedOrders?.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-slate-800">相關訂單（{new Set(conflict.relatedOrders.map(order => order.orderNumber)).size} 筆）</summary><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>訂單</th><th className={cell}>商品</th><th className={cell}>條碼</th><th className={cell}>數量</th></tr></thead><tbody>{conflict.relatedOrders.map((order, index) => {
+          {historical && <p className="mt-3 text-sm leading-6 text-slate-700">Shopify 缺少原促銷商品的規格。{canAttestHistoricalLine ? '請核對下列訂單原始商品，再輸入包裝上的實物條碼。' : '請由管理員核對原訂單及包裝條碼。'}</p>}
+          {evidenceOrders.length > 0 && <details className="mt-3" open={historical || undefined}><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-slate-800">{`${historical ? '原促銷明細' : '相關訂單'}（${new Set(evidenceOrders.map(order => order.orderNumber)).size} 筆）`}</summary><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className={cell}>訂單</th><th className={cell}>商品</th><th className={cell}>條碼</th><th className={cell}>數量</th></tr></thead><tbody>{evidenceOrders.map((order, index) => {
             const url = shopifyOrderUrl(conflict, order);
             return <tr key={`${order.orderNumber}:${order.sourceLineId || index}`} className="border-t border-slate-100"><td className={`${cell} whitespace-nowrap`}>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 underline">{order.orderNumber}</a> : order.orderNumber}</td><td className={cell}>{order.productName}</td><td className={`${cell} whitespace-nowrap`}>{order.barcode || '未填條碼'}</td><td className={`${cell} whitespace-nowrap`}>{order.quantity}</td></tr>;
           })}</tbody></table></div></details>}
-          {conflict.canEnterInternalScanCode && <div className="mt-3 max-w-md"><Field label="商品識別方式"><select className={inputClass} disabled={locked||!profileId} value={internal?'internal':'international'} onChange={event=>chooseScanCodeType(conflict,event.target.value)}><option value="international">掃描實物條碼</option><option value="internal">無國條：自建內部掃描碼</option></select></Field></div>}
+          {!historical && conflict.canEnterInternalScanCode && <div className="mt-3 max-w-md"><Field label="商品識別方式"><select className={inputClass} disabled={locked||!profileId} value={internal?'internal':'international'} onChange={event=>chooseScanCodeType(conflict,event.target.value)}><option value="international">掃描實物條碼</option><option value="internal">無國條：自建內部掃描碼</option></select></Field></div>}
           {internal && <div className="mt-3 max-w-md"><Field label="內部掃描碼" value={settings.skuMappings?.[conflict.sourceSku]?.internalScanCode || conflict.internalScanCode || ''} maxLength={100} disabled={locked||!profileId} placeholder="ITM- 開頭的自建商品識別碼" onChange={event=>{setBarcodeChecks({});mapping(conflict.sourceSku,'internalScanCode',event.target.value);}} onBlur={event=>{if(previewDirty)return checkInternalScanCode(conflict,event.target.value);}} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();return checkInternalScanCode(conflict,event.currentTarget.value);}}}/><p className="mt-2 text-sm text-slate-600">確認此商品沒有國際條碼，將此內碼印在商品標籤；同一內碼只對應一個 ECOUNT 品項。</p></div>}
           {canScanPhysicalBarcode && <div className="mt-3 max-w-md"><Field label="實物條碼" value={settings.skuMappings?.[conflict.sourceSku]?.physicalBarcode || conflict.physicalBarcode || ''} maxLength={100} disabled={locked || !profileId} placeholder="掃描商品包裝條碼" onChange={event => { setBarcodeChecks({}); mapping(conflict.sourceSku, 'physicalBarcode', event.target.value); }} onBlur={event => { if (previewDirty) return checkPhysicalBarcode(conflict, event.target.value); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); return checkPhysicalBarcode(conflict, event.currentTarget.value); } }} /></div>}
           {canConfirm && conflict.reviewReason === 'ERP_BARCODE_MISSING' && !canScanPhysicalBarcode && !internal && <p className="mt-3 text-sm leading-6 text-slate-700">商城已提供條碼。請核對上方兩邊是否為同一商品，確認後勾選並保存對照。</p>}
-          <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
-            <Check checked={barcodeChecks[key]} onChange={value => { if (!locked && !previewDirty && currentPreview()) setBarcodeChecks(current => ({ ...current, [key]: value })); }}>已核對實物與 ERP，此商城商品對應此 ECOUNT 品項</Check>
+          {(!historical || canAttestHistoricalLine) && <fieldset disabled={locked || previewDirty || !profileId || !canConfirm}>
+            <Check checked={barcodeChecks[key]} disabled={historical && (!canConfirm || locked || previewDirty || !profileId)} onChange={value => { if (!locked && !previewDirty && currentPreview()) setBarcodeChecks(current => ({ ...current, [key]: value })); }}>{historical ? '我已核對上列每筆原促銷商品，確認和包裝實物及此 ECOUNT 品項一致' : '已核對實物與 ERP，此商城商品對應此 ECOUNT 品項'}</Check>
             <Button variant="secondary" disabled={!barcodeChecks[key] || !conflict.fingerprint || locked || previewDirty || !profileId || !canConfirm} onClick={() => confirmBarcode(conflict)}>保存商品對照</Button>
-          </fieldset>
-          {!canConfirm && profileId && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{conflict.reviewReason === 'SOURCE_LINE_ID_COLLISION' ? '商城商品明細識別重複，請重新匯出原始訂單檔。' : internal ? '請填寫並核對內部掃描碼' : canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
+          </fieldset>}
+          {!canConfirm && profileId && (!historical || canAttestHistoricalLine) && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2"><p className="text-sm text-amber-950">{conflict.reviewReason === 'SOURCE_LINE_ID_COLLISION' ? '商城商品明細識別重複，請重新匯出原始訂單檔。' : historical && canScanPhysicalBarcode && conflict.physicalBarcode ? '包裝條碼須與上方 ECOUNT 條碼相同' : internal ? '請填寫並核對內部掃描碼' : canScanPhysicalBarcode ? '請掃描實物條碼' : sourceBarcodeMissing ? 'Shopify 商品條碼未填，請補上後重新核對' : chooseTarget && !conflict.selectedErpSku ? '請選擇 ECOUNT 品項' : '商品版本或條碼資料不完整，請核對商城商品設定'}</p>{!canScanPhysicalBarcode && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>重新核對</Button>}</div>}
           {!profileId && <p className="mt-2 text-sm text-amber-950">請先選擇店鋪</p>}
         </div>;
       })}</div></section>}
@@ -714,7 +816,7 @@ function ConverterPage({ user }) {
           const barcodeTrusted = !!mapped.barcode && (masterBarcode === mapped.barcode || apiBarcodeVerified);
           return <div key={item.sku} className="rounded-lg border border-slate-200 p-4"><p className="font-medium">{item.productName}</p><p className="mt-1 text-sm text-slate-600">ECOUNT {mapped.erpSku || item.sku}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label={mapped.scanCodeType==='internal'?'內部掃描碼':'商品掃描條碼'}>{(barcodeTrusted||mapped.scanCodeType==='internal'&&mapped.internalScanConfirmed) ? <span className="mt-1 flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-950">{mapped.scanCodeType==='internal'?mapped.internalScanCode:mapped.barcode}</span> : <input className={inputClass} value={mapped.barcode || ''} placeholder="待核對" onChange={event => mapping(item.sku, 'barcode', event.target.value)} />}</Field><Field label="商品分類" value={mapped.category || ''} onChange={event => mapping(item.sku, 'category', event.target.value)} /></div>{mapped.scanCodeType!=='internal' && mapped.barcode && !barcodeTrusted && <Check checked={mapped.barcodeConfirmed} onChange={value => mapping(item.sku, 'barcodeConfirmed', value)}>確認實物條碼</Check>}</div>;
         })}</div></details>
-      </fieldset><div className="mt-4 flex flex-wrap gap-3">{previewDirty && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>套用設定</Button>}<Button variant="secondary" disabled={locked || previewDirty || !prepared.audit.ok || !prepared.prepick.ok} onClick={() => download('audit')}>下載金額核對表</Button></div>
+      </fieldset><div className="mt-4 flex flex-wrap gap-3">{previewDirty && <Button variant="secondary" disabled={locked} onClick={() => refreshPreview()}>套用設定</Button>}<Button variant="secondary" disabled={locked || previewDirty || readySelectionChanged || !prepared.audit.ok || !prepared.prepick.ok} onClick={() => download('audit')}>下載金額核對表</Button></div>
         {warnings.length > 0 && <details className="mt-4 text-sm text-slate-600"><summary className="cursor-pointer">提醒（{warnings.length}）</summary><ul className="mt-2 space-y-1">{warnings.map((issue, index) => <li key={index}>{issue.orderNumber ? `${issue.orderNumber}：` : ''}{issue.message}</li>)}</ul></details>}
         {catalog?.sync && !unresolvedProducts.length && <p className="mt-4 text-xs text-slate-500">商品對照更新：{new Date(catalog.sync.created_at).toLocaleString('zh-TW')}</p>}
       </details>}

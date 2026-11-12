@@ -111,6 +111,8 @@ function projectDraftSource(sourceRows,verifiedRows,verification,orderNumbers){
   const current=evidence[0];
   const verifiedRefund=current.paymentStatus==='partially_refunded'&&current.refundEvidence?.version==='shopify-refund-remainder-v1';
   if(current.cancelled!==false||current.cancelledAt||current.fulfillmentStatus!=='unfulfilled'||current.currentQuantity!==current.remainingQuantity||!['paid','pending'].includes(current.paymentStatus)&&!verifiedRefund)throw fail('已出貨、取消或狀態待核對的訂單不能覆蓋草稿',number);
+  if(current.items.some(item=>!clean(item.variantId)&&!clean(item.barcode)))
+   throw fail('此訂單含缺少商城規格的歷史商品，原草稿無法在此流程覆蓋',number);
   const bases=source.get(number),ids=[...new Set(bases.map(r=>clean(r.Id)).filter(Boolean))];
   if(ids.length!==1||ids[0]!==String(current.id).replace('gid://shopify/Order/',''))throw fail('上傳檔訂單 ID 與 Shopify 不同',number);
   // Standard exports retain canceled historical lines without line IDs. Only
@@ -168,4 +170,15 @@ function projectDraftSource(sourceRows,verifiedRows,verification,orderNumbers){
  const rows=[headers,...projected.map(r=>headers.map(h=>r[h]??''))];
  return {rows,review:{mode:currentOrders.length?'shopify-current-after-removal-v1':'operator-reviewed-csv-v1',currentOrderNumbers:currentOrders.sort(),orderNumbers:[...selected].sort(),sourceFingerprint:hash(sourceRows),effectiveRowsFingerprint:hash(rows)}};
 }
-module.exports={projectDraftSource};
+function assertRetainedHistoricalReviews(snapshot,retainedItems,selectedSkus){
+ const {historicalProof}=require('./marketplaceBarcodeReviews');
+ const selectedIdentities=new Set(retainedItems.map(item=>JSON.stringify([item.sourceOrderNumber,item.sourceLineId,item.sku,item.quantity])));
+ const changed=(snapshot.barcodeReviews||[]).find(({evidence})=>{
+  if(evidence?.barcodeProof!==historicalProof)return false;
+  const scoped=evidence.historicalLine;
+  return !scoped||selectedSkus.has(evidence.sourceSku)||
+   !selectedIdentities.has(JSON.stringify([scoped.orderNumber,scoped.sourceLineId,evidence.sourceSku,scoped.quantity]));
+ });
+ if(changed)throw fail(`商品 ${changed.evidence.sourceSku} 含已核對的歷史 Shopify 明細，不能由原草稿流程變更`,changed.evidence.historicalLine?.orderNumber);
+}
+module.exports={projectDraftSource,assertRetainedHistoricalReviews};

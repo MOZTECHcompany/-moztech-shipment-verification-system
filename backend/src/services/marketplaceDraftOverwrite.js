@@ -70,6 +70,7 @@ async function buildSnapshot(batch,sources,conversion,decisions,user,omittedChec
  const prepared=prepareUnifiedMarketplace(raw,settings);
  if(!prepared.output.ok)throw fail('覆蓋後商品或金額尚未核對完成','MARKETPLACE_DRAFT_NOT_READY');
  const retainedSkus=new Set(old.items.map(item=>item.sku)),selectedSkus=new Set(raw.items.filter(item=>uploaded.has(item.sourceOrderNumber)).map(item=>item.sku));
+ require('./marketplaceDraftSource').assertRetainedHistoricalReviews(snapshot,old.items,selectedSkus);
  for(const sku of retainedSkus)if(selectedSkus.has(sku)&&hash(snapshot.settings.skuMappings[sku])!==hash(settings.skuMappings[sku]))throw fail('同批保留訂單與新版商品對照不同，請先統一核對');
  const evidence=snapshot.sourceEvidence||{},latest=conversion.sourceEvidence||{};
  const oldVerification=evidence.verification,newVerification=latest.verification||conversion.verification;

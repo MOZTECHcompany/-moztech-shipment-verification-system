@@ -6,15 +6,27 @@ const {validId,listBatches,batchLinks,changeBatch}=require('../services/marketpl
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clean=value=>String(value??'').trim();
 const {safeSettings}=require('../services/marketplaceSettings');
-const {createMarketplacePreparation}=require('../services/marketplacePreparation');
+const {createMarketplacePreparation,createMarketplaceVerificationScope}=require('../services/marketplacePreparation');
+const {buildMarketplaceReadyScope,projectMarketplaceReadyRows}=require('../services/marketplaceReadyScope');
 const {publicStoreSelection,createConnectionRegistry}=require('../services/shopifyStoreRouting');
 const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
-const {confirmBarcodeReview,verifySavedBarcodeReviews,reviewMatchesCandidate}=require('../services/marketplaceBarcodeReviews');
+const {confirmBarcodeReview,verifySavedBarcodeReviews,reviewMatchesCandidate,lockSavedHistoricalBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
 const {assertUploadScope}=require('../services/marketplaceUploadScopes');
 const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
+function publicPreview(result){
+ const {sourceEvidence,sourceClassification,barcodeReviewCandidates,...preview}=result;
+ return preview;
+}
+
+function readySelectionChanged(){
+ return Object.assign(new Error('可轉檔的訂單範圍已變更，請重新核對整份檔案'),{
+  status:409,code:'MARKETPLACE_READY_SCOPE_CHANGED',
+ });
+}
+
 function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePreparation({pool}),shippingService=require('../services/marketplaceShipping').createMarketplaceShippingService({pool}),draftOverwriteService=require('../services/marketplaceDraftOverwrite').createMarketplaceDraftOverwriteService({pool,prepareMarketplace}),connectionRegistry=createConnectionRegistry()}){
  const router=express.Router();
  router.use(authorizeRoles('admin','dispatcher'));
@@ -28,9 +40,51 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
  }
  router.post('/preview',async(req,res,next)=>{try{
   const result=await prepareMarketplace(req.body||{});
-  const {sourceEvidence,sourceClassification,barcodeReviewCandidates,...preview}=result;
-  res.set('Cache-Control','private, no-store').json(preview);
+  const readyScope=await buildMarketplaceReadyScope(result);
+  res.set('Cache-Control','private, no-store').json({...publicPreview(result),...(readyScope?{readyScope}:{})});
  }catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber,...(e.code==='MARKETPLACE_STORE_SELECTION_REQUIRED'?{storeSelection:publicStoreSelection(e.storeSelection)}:{})});next(e);}});
+ router.post('/ready-preview',async(req,res,next)=>{
+  try{
+   const {rows:originalRows,settings,profileId,readyScopeFingerprint}=req.body||{};
+   if(typeof readyScopeFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(readyScopeFingerprint))throw readySelectionChanged();
+   const verificationScope=createMarketplaceVerificationScope();
+   const full=await prepareMarketplace({rows:originalRows,settings,profileId},{refresh:true,verificationScope});
+   const {rows,readyScope}=await projectMarketplaceReadyRows(full,readyScopeFingerprint);
+   // Re-run the normal conversion checks on complete selected orders. The
+   // subset remains a preview and goes through the usual save/draft endpoints.
+   const selected=await prepareMarketplace({rows,settings:full.settings,profileId:full.profileId},{refresh:true,verificationScope});
+   const expected=new Set(readyScope.candidateNumbers);
+   const actual=(selected.raw?.orders||[]).map(order=>order.sourceOrderNumber);
+   const parsedOrders=(selected.parsed?.orders||[]).map(order=>order.sourceOrderNumber);
+   const fullOwners=new Map((full.reimports||[]).map(order=>[order.orderNumber,order]));
+   const reviewable=(selected.reimports||[]).filter(order=>{
+    const original=fullOwners.get(order.orderNumber);
+    return original&&original.state===order.state&&original.intakeId===order.intakeId&&
+     ['pending','excluded'].includes(order.state)&&Number.isSafeInteger(order.intakeId)&&order.intakeId>0&&order.workOrderId==null;
+   }).map(order=>order.orderNumber);
+   const readyOrders=[...parsedOrders,...reviewable];
+   const allReimports=reviewable.length===expected.size&&!parsedOrders.length;
+   if(String(selected.profileId)!==String(full.profileId)||selected.verification?.shop!==full.verification?.shop||
+      actual.length!==expected.size||new Set(actual).size!==expected.size||actual.some(number=>!expected.has(number))||
+      readyOrders.length!==expected.size||new Set(readyOrders).size!==expected.size||readyOrders.some(number=>!expected.has(number))||
+      parsedOrders.some(number=>fullOwners.has(number))||
+      selected.excludedFulfilled?.length){
+    throw readySelectionChanged();
+   }
+   if(selected.barcodeConflicts?.length||(!selected.output?.ok&&!allReimports)){
+    throw Object.assign(new Error('這些訂單仍有轉檔資料待核對，請返回整份檔案查看'),{
+     status:409,code:'MARKETPLACE_READY_SCOPE_NOT_READY',issues:selected.output?.issues,
+    });
+   }
+   res.set('Cache-Control','private, no-store').json({rows,preview:publicPreview(selected),readyScope});
+  }catch(error){
+   if(error.status)return res.status(error.status).set('Cache-Control','private, no-store').json({
+    code:error.code,message:error.message,issues:error.issues,orderNumber:error.orderNumber,
+    ...(error.code==='MARKETPLACE_STORE_SELECTION_REQUIRED'?{storeSelection:publicStoreSelection(error.storeSelection)}:{}),
+   });
+   next(error);
+  }
+ });
  router.post('/barcode-confirmations',async(req,res,next)=>{try{
   const requested=req.body?.confirmation;
   if(requested?.confirmed!==true||typeof requested.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(requested.fingerprint))throw Object.assign(new Error('請先核對實物與 ECOUNT 品項'),{status:400,code:'BARCODE_CONFIRMATION_REQUIRED'});
@@ -39,11 +93,15 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   if(!conversion.verification?.currentFingerprint||req.body.verificationFingerprint!==conversion.verification.currentFingerprint)throw Object.assign(new Error('商城訂單已更新，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
   const candidate=conversion.barcodeReviewCandidates?.find(c=>c.fingerprint===requested.fingerprint);
   if(!candidate)throw Object.assign(new Error('商品資料已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
+  if(candidate.requiresHistoricalLineAttestation===true){
+   if(!['admin','superadmin'].includes(req.user.role))throw Object.assign(new Error('缺少商城規格的明細須由管理員核對'),{status:403,code:'BARCODE_REVIEW_FORBIDDEN'});
+   if(requested.historicalLineAttested!==true)throw Object.assign(new Error('請確認原活動品項、規格及實物包裝條碼'),{status:400,code:'BARCODE_CONFIRMATION_REQUIRED'});
+  }
   // Only preparation may provide contained, exact sales-snapshot proofs. The
   // caller selects one complete-upload fingerprint, never a scope/variant list.
   const candidates=candidate.confirmationCandidates||[candidate];
   const confirm=async(db,current)=>{
-   const record=await confirmBarcodeReview(db,current,req.user);
+   const record=await confirmBarcodeReview(db,current,req.user,{historicalLineAttested:requested.historicalLineAttested===true});
    if(!reviewMatchesCandidate(current,record))throw Object.assign(new Error('商品核對紀錄已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
    return record;
   };
@@ -129,6 +187,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
     if(current.fingerprint!==conversion.sourceClassification.fingerprint)throw Object.assign(new Error('原訂單或新單範圍已更新，請重新核對後下載'),{status:409,code:'SHOPIFY_PREVIEW_CHANGED'});
    }
    if(allReimports){await db.query('ROLLBACK');open=false;return res.status(200).set('Cache-Control','private, no-store').json({newOrderCount:0,reimports:conversion.reimports,salesDownloadAllowed:false});}
+   await lockSavedHistoricalBarcodeReviews(db,snapshot);
    const existing=(await db.query('SELECT * FROM marketplace_intakes WHERE fingerprint=$1',[fingerprint])).rows[0];
    if(existing){
     if(source.platform==='Shopify'&&conversion.sourceClassification)throw Object.assign(new Error('已保存批次與原訂單關聯待核對，未再次提供銷貨檔'),{status:409,code:'MARKETPLACE_REIMPORT_UNAVAILABLE'});
