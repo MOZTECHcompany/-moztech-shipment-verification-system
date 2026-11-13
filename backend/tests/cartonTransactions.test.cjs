@@ -296,7 +296,7 @@ async function suite(t, postgres) {
         assert.equal(matchesItem({ ...line, ean: 'WRONG' }, { product_code: 'P', barcode: 'REAL' }), false);
         assert.equal(matchesItem(line, { product_code: 'OTHER' }), false);
     });
-    await t.test('a 6-of-40 registered SN label opens source-carton split and records the exact preassigned SNs', async () => {
+    await t.test('a 6-of-40 legacy sticker is blocked, explicit repeats append, and each SN packs once', async () => {
         const sns = Array.from({ length: 40 }, (_, index) => `Source-SN-${String(index + 1).padStart(2, '0')}`);
         const selected = sns.slice(0, 6);
         const barcode = '4711299271052';
@@ -313,26 +313,55 @@ async function suite(t, postgres) {
         assert.equal((await lookup([sns[0], 'Unknown-Source-SN'].join(','))).body.code, 'CARTON_SN_SOURCE_MIXED');
         assert.equal((await lookup('Loose-A,Loose-B')).body.code, 'CARTON_NOT_FOUND');
 
-        const review = await preview(order.id, { type: 'pick', scanValue: sticker, matchSerialSubset: true });
-        assert.equal(review.carton.cartonId, carton.cartonId);
-        assert.deepEqual(review.carton.matchedSerials, selected);
-        assert.equal(review.selection, undefined);
-        assert.equal(review.carton.lines[0].remainingQuantity, 40);
-        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, scanBody({
-            ...review, expectedCartonRevision: carton.stateRevision
-        }, { type: 'pick', scanValue: sticker, matchSerialSubset: true }))).body.code, 'CARTON_NOT_FOUND');
+        const orderPath = `/api/orders/${order.id}`;
+        const rejected = (user, input) => api(user, 'post', orderPath + '/carton-preview', input);
+        assert.equal((await rejected(2, { type: 'pick', scanValue: sticker, matchSerialSubset: true })).body.code, 'CARTON_SPLIT_SERIAL_REQUIRED');
+        const getSingle = (scanValue, type = 'pick') => ({ scanValue, type, mode: 'serial', orderItemId: item.id });
+        assert.equal((await rejected(2, getSingle(sns[0].toLowerCase()))).body.code, 'CARTON_SERIAL_NOT_REGISTERED');
 
         const split = { scanValue: `CARTON:${carton.cartonId}`, type: 'pick', mode: 'split', serialPolicy: 'from-carton',
-            selections: [{ lineId: carton.lines[0].lineId, quantity: 6, actualSN: selected }] };
+            selections: [{ lineId: carton.lines[0].lineId, quantity: 3, actualSN: selected.slice(0, 3) }] };
         await f.db.query('UPDATE order_items SET expected_carton_id=$1 WHERE id=$2', [other.cartonId, item.id]);
         assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-preview`, split)).body.code, 'CARTON_EXPECTED_MISMATCH');
         await f.db.query('UPDATE order_items SET expected_carton_id=$1 WHERE id=$2', [carton.cartonId, item.id]);
-        const picked = await scan(order.id, split);
+        const first = await scan(order.id, split);
+        assert.equal(first.carton.lines[0].remainingQuantity, 37);
+        assert.equal((await rejected(2, getSingle(sns[0]))).body.code, 'CARTON_SN_UNAVAILABLE');
+        assert.equal((await rejected(2, { scanValue: carton.cartonId, type: 'pick' })).body.code, 'CARTON_ALREADY_ALLOCATED');
+        const one = await scan(order.id, getSingle(sns[3]));
+        assert.equal(one.allocation.allocationId, first.allocation.allocationId);
+        assert.deepEqual(one.appliedSelection[0].actualSN, [sns[3]]);
+        const picked = await scan(order.id, { ...split, selections: [{ ...split.selections[0], quantity: 2, actualSN: selected.slice(4) }] });
         assert.equal(picked.carton.lines[0].remainingQuantity, 34);
         assert.equal(picked.allocation.cartonId, carton.cartonId);
+        assert.equal(picked.allocation.allocationId, first.allocation.allocationId);
         assert.deepEqual(picked.allocation.lines[0].actualSN, selected);
         assert.equal(picked.items[0].product_code, '測試-不出貨');
-        const packed = await scan(order.id, { scanValue: `CARTON:${carton.cartonId}`, type: 'pack' }, 3);
+        ok(await api(3, 'post', orderPath + '/claim', { stage: 'pack' }));
+        for (const scanValue of [carton.cartonId, sticker, sns.join(',')]) {
+            assert.equal((await rejected(3, { scanValue, type: 'pack', matchSerialSubset: true })).body.code, 'CARTON_PACK_SERIAL_REQUIRED');
+        }
+        assert.equal((await rejected(3, getSingle(sns[6], 'pack'))).body.code, 'CARTON_SN_NOT_IN_ALLOCATION');
+        const single = getSingle(sns[0], 'pack');
+        const firstPackCommand = scanBody(await preview(order.id, single, 3), single);
+        const sendPack = () => api(3, 'post', orderPath + '/carton-scan', firstPackCommand);
+        const packedFirst = ok(await sendPack());
+        assert.deepEqual(ok(await sendPack()), packedFirst);
+        assert.equal(packedFirst.packMode, 'serial');
+        assert.equal(packedFirst.packComplete, false);
+        assert.equal(packedFirst.allocation.status, 'picked');
+        assert.equal(packedFirst.instances.filter(row => row.status === 'packed').length, 1);
+        assert.equal((await rejected(3, single)).body.code, 'CARTON_SN_ALREADY_PACKED');
+        const release = await api(1, 'post', `/api/cartons/allocations/${first.allocation.allocationId}/release`, {
+            reason: 'Already partially packed', commandId: randomUUID(),
+            expectedState: packedFirst.stateToken, expectedCartonRevision: packedFirst.carton.stateRevision
+        });
+        assert.equal(release.body.code, 'CARTON_RELEASE_BLOCKED');
+        let packed;
+        for (const sn of selected.slice(1)) packed = await scan(order.id, getSingle(sn, 'pack'), 3);
+        assert.equal(packed.packComplete, true);
+        assert.equal(packed.order.status, 'completed');
+        assert.equal((await rejected(3, getSingle(sns[5], 'pack'))).body.code, 'CARTON_SN_ALREADY_PACKED');
         assert.equal(packed.carton.lines[0].remainingQuantity, 34);
         assert.equal(packed.allocation.cartonId, carton.cartonId);
         assert.deepEqual(packed.allocation.lines[0].actualSN, selected);
@@ -348,6 +377,89 @@ async function suite(t, postgres) {
         const packed = await scan(order.id, { scanValue: 'CARTON:SERIAL', type: 'pack' }, 3);
         assert.ok(packed.instances.every(unit => unit.status === 'packed'));
         assert.equal(packed.order.status, 'completed'); assert.equal(packed.items[0].picked_quantity, 0);
+    });
+    await t.test('an original intact carton becomes serial-only once individual packing begins', async () => {
+        const sns = ['Intact-SN-01', 'Intact-SN-02'];
+        const carton = await create(box('CTN-INTACT-START-SERIAL', 2, sns));
+        const { order } = await f.seedOrder({ quantity: 2, actualSN: sns });
+        const picked = await scan(order.id, { scanValue: carton.cartonId, type: 'pick' });
+        assert.equal(picked.allocation.lines[0].wholeCarton, true);
+        const first = await scan(order.id, { scanValue: sns[0], mode: 'serial', type: 'pack' }, 3);
+        assert.equal(first.packComplete, false);
+        const bulk = await api(3, 'post', `/api/orders/${order.id}/carton-preview`, { scanValue: carton.cartonId, type: 'pack' });
+        assert.equal(bulk.body.code, 'CARTON_PACK_SERIAL_REQUIRED');
+        assert.equal((await scan(order.id, { scanValue: sns[1], mode: 'serial', type: 'pack' }, 3)).packComplete, true);
+    });
+    await t.test('all remaining units after an earlier split cannot use whole pack, even if all were picked in one scan', async () => {
+        const sns = ['Leftovers-SN-01', 'Leftovers-SN-02', 'Leftovers-SN-03'];
+        const carton = await create(box('CTN-LEFTOVERS', 3, sns));
+        const first = await f.seedOrder({ quantity: 1, actualSN: sns.slice(0, 1) });
+        const next = await f.seedOrder({ quantity: 2, actualSN: sns.slice(1) });
+        await scan(first.order.id, { scanValue: sns[0], mode: 'serial', type: 'pick' });
+        const picked = await scan(next.order.id, { scanValue: carton.cartonId, type: 'pick' });
+        assert.equal(picked.carton.lines[0].remainingQuantity, 0);
+        assert.equal(picked.allocation.lines[0].wholeCarton, false);
+        ok(await api(3, 'post', `/api/orders/${next.order.id}/claim`, { stage: 'pack' }));
+        assert.equal((await api(3, 'post', `/api/orders/${next.order.id}/carton-preview`, {
+            scanValue: carton.cartonId, type: 'pack'
+        })).body.code, 'CARTON_PACK_SERIAL_REQUIRED');
+    });
+    await t.test('explicit selections and old allocations without intact proof only permit individual SN packing', async () => {
+        for (const legacy of [false, true]) {
+            const sns = [`Full-Proof-${legacy}-01`, `Full-Proof-${legacy}-02`];
+            const carton = await create(box(`CTN-FULL-PROOF-${legacy}`, 2, sns));
+            const { order } = await f.seedOrder({ quantity: 2, actualSN: sns });
+            const pick = { scanValue: carton.cartonId, type: 'pick', mode: 'whole',
+                ...(legacy ? {} : { selections: [{ lineId: carton.lines[0].lineId, quantity: 2, actualSN: sns }] }) };
+            const picked = await scan(order.id, pick);
+            assert.equal(picked.allocation.lines[0].wholeCarton, legacy);
+            if (legacy) {
+                const lines = picked.allocation.lines.map(({ wholeCarton, ...line }) => line);
+                await f.db.query('UPDATE wms_carton_allocations SET lines=$2 WHERE id=$1',
+                    [picked.allocation.allocationId, JSON.stringify(lines)]);
+            }
+            const orderPath = `/api/orders/${order.id}`;
+            ok(await api(3, 'post', orderPath + '/claim', { stage: 'pack' }));
+            assert.equal((await api(3, 'post', orderPath + '/carton-preview', {
+                scanValue: carton.cartonId, type: 'pack'
+            })).body.code, 'CARTON_PACK_SERIAL_REQUIRED');
+            const commands = await Promise.all(sns.map(async scanValue => {
+                const input = { scanValue, type: 'pack', mode: 'serial' };
+                return scanBody(await preview(order.id, input, 3), input);
+            }));
+            const results = await Promise.all(commands.map(command => api(3, 'post', orderPath + '/carton-scan', command)));
+            const winner = results.findIndex(response => response.status === 200);
+            assert.notEqual(winner, -1);
+            const first = results[winner].body;
+            assert.equal(first.instances.filter(row => row.status === 'packed').length, 1);
+            assert.equal(results[1 - winner].body.code, 'STATE_CHANGED');
+            assert.equal((await scan(order.id, { scanValue: sns[1 - winner], type: 'pack', mode: 'serial' }, 3)).packComplete, true);
+        }
+    });
+    await t.test('partial mixed box confirms its stored no-SN quantities only after individual serial packing', async () => {
+        const sns = ['Mixed-SN-01', 'Mixed-SN-02'];
+        const plain = { itemCode: 'PLAIN', ean: '4710000000020', quantity: 3, actualSN: [] };
+        const carton = await create({ ...box('CTN-MIXED-V6', 2, sns), lines: [...box('CTN-MIXED-V6', 2, sns).lines, plain] });
+        const { order } = await f.seedOrder({ quantity: 1, actualSN: sns.slice(0, 1) });
+        const plainOrderItem = (await f.db.query("INSERT INTO order_items(order_id,product_code,barcode,quantity) VALUES($1,'PLAIN',$2,2) RETURNING id",
+            [order.id, plain.ean])).rows[0];
+        const split = { scanValue: carton.cartonId, type: 'pick', mode: 'split', selections: [
+            { lineId: carton.lines[0].lineId, quantity: 1, actualSN: sns.slice(0, 1) },
+            { lineId: carton.lines[1].lineId, quantity: 2 },
+        ] };
+        await scan(order.id, split);
+        const pack = { scanValue: carton.cartonId, type: 'pack' };
+        ok(await api(3, 'post', `/api/orders/${order.id}/claim`, { stage: 'pack' }));
+        assert.equal((await api(3, 'post', `/api/orders/${order.id}/carton-preview`, pack)).body.code, 'CARTON_PACK_SERIAL_REQUIRED');
+        const first = await scan(order.id, { scanValue: sns[0], mode: 'serial', type: 'pack' }, 3);
+        assert.equal(first.packComplete, false);
+        assert.equal(first.items.find(item => item.id === plainOrderItem.id).packed_quantity, 0);
+        const packed = await scan(order.id, pack, 3);
+        assert.equal(packed.packMode, 'nonserial');
+        assert.equal(packed.packComplete, true);
+        assert.deepEqual(packed.appliedSelection.map(line => [line.orderItemId, line.quantity]), [[plainOrderItem.id, 2]]);
+        assert.equal(packed.order.status, 'completed');
+        assert.deepEqual(packed.carton.lines.map(line => line.remainingQuantity), [1, 1]);
     });
     await t.test('an unregistered SN sticker verifies only selected order SNs and replays without a carton allocation', async () => {
         const orderSNs = ['Loose-01', 'Loose-02', 'Loose-03'];
@@ -369,9 +481,13 @@ async function suite(t, postgres) {
         assert.deepEqual(ok(await submit(2, qr)), picked);
         ok(await api(3, 'post', `/api/orders/${order.id}/claim`, { stage: 'pack' }));
         const packing = ok(await api(3, 'get', path));
-        const packed = ok(await submit(3, {
+        const rejectedPack = await submit(3, {
             ...qr, type: 'pack', commandId: randomUUID(), expectedState: packing.stateToken, selectedSerials: orderSNs
-        }));
+        });
+        assert.equal(rejectedPack.status, 409);
+        assert.deepEqual(ok(await api(3, 'get', path)).instances, packing.instances);
+        let packed;
+        for (const scanValue of orderSNs) packed = ok(await submit(3, { scanValue, type: 'pack' }));
         assert.equal(packed.order.status, 'completed');
         assert.ok(packed.instances.every(instance => instance.status === 'packed'));
         assert.deepEqual(ok(await api(3, 'get', `/api/orders/${order.id}/carton-shipments`)).allocations, []);
@@ -519,7 +635,7 @@ async function suite(t, postgres) {
         assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-preview`, { ...input, expectedActorId: 6 })).body.code, 'CARTON_ACTOR_CHANGED');
         assert.equal((await api(1, 'post', '/api/cartons', { ...box('ACTOR-MANAGEMENT'), expectedActorId: 2 })).body.code, 'CARTON_ACTOR_CHANGED');
     });
-    await t.test('request retries replay exactly once, while fresh IDs cannot physically rescan the same allocation', async () => {
+    await t.test('request retries replay once, while only a new explicit split can add more quantity', async () => {
         const carton = await create(box('RETRY'));
         const { order } = await f.seedOrder();
         const input = { scanValue: 'RETRY', type: 'pick', mode: 'split', selections: [{ lineId: carton.lines[0].lineId, quantity: 3 }] };
@@ -529,7 +645,14 @@ async function suite(t, postgres) {
         const current = results[0].body;
         assert.equal(current.items[0].picked_quantity, 3); assert.equal(current.carton.lines[0].remainingQuantity, 7);
         const newBody = { ...body, commandId: randomUUID(), expectedState: current.stateToken, expectedCartonRevision: current.carton.stateRevision };
-        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, newBody)).body.code, 'CARTON_ALREADY_ALLOCATED');
+        const whole = { ...newBody, mode: 'whole', selections: undefined };
+        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, whole)).body.code, 'CARTON_ALREADY_ALLOCATED');
+        const added = ok(await api(2, 'post', `/api/orders/${order.id}/carton-scan`, newBody));
+        assert.equal(added.allocation.allocationId, current.allocation.allocationId);
+        assert.equal(added.allocation.lines[0].quantity, 6);
+        assert.equal(added.appliedSelection[0].quantity, 3);
+        assert.equal(added.carton.lines[0].remainingQuantity, 4);
+        assert.deepEqual(ok(await api(2, 'post', `/api/orders/${order.id}/carton-scan`, newBody)), added);
         assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, { ...body, mode: 'whole' })).body.code, 'CARTON_COMMAND_CONFLICT');
     });
     await t.test('two operators on different orders competing for one box produce one pick and one version conflict', async () => {

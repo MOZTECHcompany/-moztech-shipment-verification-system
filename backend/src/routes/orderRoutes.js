@@ -686,6 +686,9 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 return res.json(receipt.response);
             }
         }
+        if (serialQr && type === 'pack') {
+            throw Object.assign(new Error('請逐件掃描本次出貨的 SN；完整箱貼請使用箱號掃描'), { status: 409 });
+        }
         const orderResult = await trackedQuery(client, 'load_order', 'SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
@@ -1060,7 +1063,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
             err.message = '掃描作業暫時忙碌（鎖等待逾時），請重試';
         } else {
             scanOutcome = 'error';
-            err.message = `更新品项状态失败: ${err.message}`;
+            err.message = `更新品項狀態失敗：${err.message}`;
         }
         err.scanNotApplied = true;
         next(err);

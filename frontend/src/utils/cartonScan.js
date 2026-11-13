@@ -1,6 +1,31 @@
 export const isCartonScan = value => /^(?:CARTON:|CTN-)/i.test(String(value).trim()) || String(value).includes(',');
 export const cartonSessionKey = (api, user) => JSON.stringify([user?.id, user?.role, user?.management_scope, api.getSessionIdentity?.() ?? api.defaults?.headers?.common?.Authorization ?? '']);
 
+export function cartonSerialScanTarget(value, snapshot) {
+    const exact = snapshot.instances.find(unit => unit.serial_number === value);
+    if (exact) {
+        return Number(snapshot.items.find(item => item.id === exact.order_item_id)?.quantity_sign ?? 1) === 1;
+    }
+    return !snapshot.items.some(item => [item.barcode, item.international_barcode, item.internal_scan_code].includes(value));
+}
+
+export function cartonSplitOrderItems(line, items, instances, carton) {
+    const usable = items.filter(item => Number(item.quantity_sign ?? 1) === 1
+        && (!item.expected_carton_id || item.expected_carton_id === carton.cartonId));
+    const exact = items.filter(item => item.product_code === line.itemCode);
+    if (exact.length) return usable.filter(item => item.product_code === line.itemCode);
+    const ean = line.ean;
+    if (line.actualSN.length || line.internalScanCode || !/^(?:\d{8}|\d{12,14})$/.test(ean || '')
+        || carton.lines.some(other => other.ean === ean && other.itemCode !== line.itemCode)) return [];
+    const matches = items.filter(item => [item.barcode, item.international_barcode].includes(ean));
+    if (matches.length !== 1) return [];
+    const item = matches[0];
+    return usable.includes(item) && (item.code_type ?? 'legacy') === 'legacy' && item.product_code === ean && item.barcode === ean
+        && !item.internal_scan_code && !item.source_sku && !item.carton_serial_binding && item.serial_identity_mode !== 'exact'
+        && (!item.international_barcode || item.international_barcode === ean)
+        && !instances.some(unit => unit.order_item_id === item.id) ? [item] : [];
+}
+
 export function parseSerialInput(value) {
     return String(value || '').split(/[\r\n,]+/).map(v => v.trim()).filter(Boolean);
 }
@@ -30,7 +55,7 @@ export function addCartonSplitSerial(carton, selections, instances, value) {
 }
 
 export function getStickerSerialReview(value, type, snapshot) {
-    if (!value.includes(',') || /^(?:CARTON:|CTN-)/i.test(value.trim()) || !['pick', 'pack'].includes(type)) return null;
+    if (!value.includes(',') || /^(?:CARTON:|CTN-)/i.test(value.trim()) || type !== 'pick') return null;
     const serials = value.split(',').map(serial => serial.trim());
     if (serials.some(serial => !serial) || new Set(serials).size !== serials.length) return null;
     const items = new Map(snapshot.items.map(item => [item.id, item]));
@@ -39,12 +64,11 @@ export function getStickerSerialReview(value, type, snapshot) {
         instances.set(unit.serial_number, instances.has(unit.serial_number) ? null : unit);
         assignedCounts.set(unit.order_item_id, (assignedCounts.get(unit.order_item_id) ?? 0) + 1);
     }
-    const requiredStatus = type === 'pick' ? 'pending' : 'picked';
     const candidates = [];
     for (const serial of serials) {
         const unit = instances.get(serial);
         const item = items.get(unit?.order_item_id);
-        if (unit?.status === requiredStatus && item && Number(item.quantity_sign ?? 1) === 1
+        if (unit?.status === 'pending' && item && Number(item.quantity_sign ?? 1) === 1
             && assignedCounts.get(item.id) === Number(item.quantity) && !item.expected_carton_id && !item.carton_serial_binding) {
             candidates.push({ serial, productName: item.product_name });
         }

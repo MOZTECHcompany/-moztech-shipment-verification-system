@@ -22,7 +22,7 @@ import { socket } from '@/api/socket';
 import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
-import { isCartonScan } from '@/utils/cartonScan';
+import { cartonSerialScanTarget, isCartonScan } from '@/utils/cartonScan';
 import { CartonWorkControls } from './CartonWorkControls';
 import SerialList from './SerialList';
 import { buildWorkItems, filterWorkItems, workStage, managerTakeover, canOperateWorkStage as canOperateAssignedStage } from '@/utils/orderWorkProgress';
@@ -1612,16 +1612,16 @@ function AuthenticatedOrderWorkView({ user }) {
                 setRejectedScan({ value: scanValue, retryable: false });
                 return false;
             }
-            if (isCartonScan(scanValue)) {
-                if (scanSubmissionRef.current.isBusy()) {
-                    cartonRejectedRef.current = scanValue;
-                    setRejectedScan({ value: scanValue, retryable: true });
-                    setScanError('這個箱號尚未處理，請等候上一筆完成後再送出。');
-                    soundNotification.play('error');
-                    return false;
-                }
-                return cartonScannerRef.current?.scan(scanValue, operationType) || false;
+            const cartonCode = isCartonScan(scanValue);
+            const probeSerial = !cartonCode && cartonScannerRef.current && cartonSerialScanTarget(scanValue, currentOrderData);
+            if ((cartonCode || probeSerial) && scanSubmissionRef.current.isBusy()) {
+                cartonRejectedRef.current = scanValue;
+                setRejectedScan({ value: scanValue, retryable: true, sourceKey: selectedSourceKey });
+                setScanError('這筆掃描尚未處理，請等候上一筆完成後再送出。');
+                soundNotification.play('error');
+                return false;
             }
+            if (cartonCode) return cartonScannerRef.current?.scan(scanValue, operationType) || false;
             const target = resolveSourceScanTarget({
                 items: currentOrderData.items, instances: currentOrderData.instances,
                 selectedKey: selectedSourceKey, unresolved: sourceSelectionUnresolved,
@@ -1633,8 +1633,13 @@ function AuthenticatedOrderWorkView({ user }) {
                 soundNotification.play('error');
                 return false;
             }
-            const accepted = updateItemState(scanValue, operationType, 1, target.orderItemId);
-            return accepted;
+            const scanLoose = () => updateItemState(scanValue, operationType, 1, target.orderItemId);
+            if (probeSerial) {
+                return cartonScannerRef.current.scan(scanValue, operationType,
+                    { mode: 'serial', knownSerial: currentOrderData.instances.some(unit => unit.serial_number === scanValue),
+                        ...(target.orderItemId ? { orderItemId: target.orderItemId } : {}) }, scanLoose);
+            }
+            return scanLoose();
         } else {
             const errorMsg = '請先在任務看板認領目前階段；已由他人認領時，需由管理員轉交後才能核對商品。';
             setScanError(errorMsg);
@@ -1930,7 +1935,9 @@ function AuthenticatedOrderWorkView({ user }) {
                                     <ScanLine size={20} className="text-blue-600"/>
                                     掃描作業
                                 </h3>
-                                <p id="scan-instructions" className="text-slate-500 text-sm mb-3">掃描商品、SN 或箱號，按 Enter 送出</p>
+                                <p id="scan-instructions" className="text-slate-500 text-sm mb-3">{orderStatus === 'packing'
+                                    ? '拆箱件逐件掃 SN，完整原箱可掃箱號。按 Enter 送出。'
+                                    : '掃描商品、單件 SN 或箱號，按 Enter 送出。'}</p>
                                 {!canScanNow && canOperate && !['completed', 'voided'].includes(orderStatus) && (takeover
                                     ? <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-800">
                                         <span>目前負責人 {takeover.ownerName || '其他作業人員'}</span>
@@ -2025,6 +2032,7 @@ function AuthenticatedOrderWorkView({ user }) {
                             stage={canScanNow ? (orderStatus === 'picking' ? 'pick' : 'pack') : null}
                             blocked={loading || isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions || !canOperate || !canScanNow}
                             submissionRef={scanSubmissionRef} onResponse={handleCartonResponse} onError={handleCartonError}
+                            onFocusScanner={() => barcodeInputRef.current?.focus()}
                             onBusy={(busy, value) => { setIsUpdating(busy); if (busy) { orderDataVersionRef.current++; setPendingScan(value); } }} />}
 
                         {/* 例外處理（可追蹤狀態：open/ack/resolved） */}

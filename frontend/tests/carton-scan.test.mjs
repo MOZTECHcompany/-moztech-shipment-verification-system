@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addCartonSplitSerial, isCartonScan, applyCartonResponse, applyStickerSerialResponse, getStickerSerialReview, sendCartonCommand, makeCartonCommand } from '../src/utils/cartonScan.js';
+import { addCartonSplitSerial, cartonSerialScanTarget, cartonSplitOrderItems, isCartonScan, applyCartonResponse, applyStickerSerialResponse, getStickerSerialReview, sendCartonCommand, makeCartonCommand } from '../src/utils/cartonScan.js';
 
 const previous = 'a'.repeat(64), next = 'b'.repeat(64);
 const snapshot = { order: { id: 7 }, items: [], instances: [], stateToken: previous };
@@ -52,9 +52,7 @@ test('unregistered sticker offers only the exact SNs eligible at this order stag
     const pick = getStickerSerialReview(scanValue, 'pick', order);
     assert.deepEqual(pick.candidates.map(row => row.serial), serials.slice(1, 15));
     assert.equal(pick.excluded, 18);
-    const pack = getStickerSerialReview(scanValue, 'pack', order);
-    assert.deepEqual(pack.candidates.map(row => row.serial), serials.slice(0, 1));
-    assert.equal(pack.excluded, 31);
+    assert.equal(getStickerSerialReview(scanValue, 'pack', order), null);
     assert.deepEqual(getStickerSerialReview('syn-02,SYN-03', 'pick', order).candidates.map(row => row.serial), ['SYN-03']);
     assert.deepEqual(getStickerSerialReview('SYN-02,SYN-03', 'pick', {
         items: [...order.items, { id: 4, quantity: 1 }],
@@ -62,6 +60,25 @@ test('unregistered sticker offers only the exact SNs eligible at this order stag
     }).candidates.map(row => row.serial), ['SYN-03']);
     assert.equal(getStickerSerialReview('SYN-01,SYN-01', 'pick', order), null);
     assert.equal(getStickerSerialReview('CARTON:ABC,DEF', 'pick', order), null);
+});
+
+test('registered-SN lookup keeps positive serial work separate from quantity barcodes and returns', () => {
+    const items = [{ id: 1, barcode: '000123' }, { id: 2, quantity_sign: -1 }];
+    const instances = [{ order_item_id: 1, serial_number: '000123' }, { order_item_id: 2, serial_number: 'RETURN-1' }];
+    assert.equal(cartonSerialScanTarget('000123', { items, instances }), true);
+    assert.equal(cartonSerialScanTarget('000123', { items, instances: [] }), false);
+    assert.equal(cartonSerialScanTarget('NEW-SN', { items, instances }), true);
+    assert.equal(cartonSerialScanTarget('RETURN-1', { items, instances }), false);
+});
+
+test('the split dialog offers the one legacy barcode line and respects the order remainder', () => {
+    const line = { itemCode: 'OF-W1', ean: '4711299270741', actualSN: [] };
+    const carton = { cartonId: 'CTN-OF-W1', lines: [line] };
+    const item = { id: 1, product_code: line.ean, barcode: line.ean, quantity: 5, picked_quantity: 0 };
+    assert.deepEqual(cartonSplitOrderItems(line, [item], [], carton), [item]);
+    assert.deepEqual(cartonSplitOrderItems(line, [{ ...item, expected_carton_id: 'OTHER' }], [], carton), []);
+    assert.deepEqual(cartonSplitOrderItems(line, [item, { ...item, id: 2 }], [], carton), []);
+    assert.deepEqual(cartonSplitOrderItems(line, [item], [{ order_item_id: 1 }], carton), []);
 });
 
 test('sticker confirmation applies only the full snapshot from the same command and exact selected SNs', () => {

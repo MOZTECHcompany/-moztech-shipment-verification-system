@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import api from '@/api/api';
 import { Button } from '@/ui';
 import { isWarehouseAdmin } from '@/utils/managementScope';
-import { addCartonSplitSerial, applyCartonResponse, applyStickerSerialResponse, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey, getStickerSerialReview } from '@/utils/cartonScan';
+import { addCartonSplitSerial, applyCartonResponse, applyStickerSerialResponse, cartonSplitOrderItems, makeCartonCommand, sendCartonCommand, sendCartonMutation, cartonSessionKey, getStickerSerialReview } from '@/utils/cartonScan';
 import { makeScanCommand } from '@/utils/scanDelta';
 import { CartonDialog } from './CartonDialog';
 import { buildCartonShipmentTrace } from '@/utils/cartonShipmentTrace.mjs';
@@ -12,12 +12,12 @@ import { buildCartonShipmentTrace } from '@/utils/cartonShipmentTrace.mjs';
 const message = err => err.response?.data?.message || err.message || '箱號作業失敗';
 const field = 'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm';
 
-function SplitLine({ line, selections, setSelections, items, stage }) {
+function SplitLine({ line, selections, setSelections, items, instances, carton, stage }) {
     const groups = selections.map((value, index) => ({ value, index })).filter(group => group.value.lineId === line.lineId);
     const update = (index, patch) => setSelections(old => old.map((s,i)=>i===index?{...s,...patch}:s));
     return <fieldset className="mt-3 rounded-lg border p-3"><legend className="px-1 text-sm">{line.productName || line.itemCode} · 剩餘 {line.remainingQuantity} 件</legend>{stage === 'pick' && <>
         {groups.map(({value,index}) => <div key={index} className="mb-3 rounded-lg bg-slate-50 p-3">
-            <label className="text-sm">理貨單品項<select value={value.orderItemId || ''} className={field} onChange={e=>update(index,{orderItemId:e.target.value})}><option value="">自動比對</option>{items.filter(item=>item.product_code===line.itemCode&&Number(item.quantity_sign??1)===1).map(item=><option key={item.id} value={item.id}>{item.product_name} · {item.product_code}{item.source_order_number ? ` · ${item.source_order_number}` : ` · 列 ${item.id}`} · 尚餘 {item.quantity - item.picked_quantity}</option>)}</select></label>
+            <label className="text-sm">理貨單品項<select value={value.orderItemId || ''} className={field} onChange={e=>update(index,{orderItemId:e.target.value})}><option value="">自動比對</option>{cartonSplitOrderItems(line, items, instances, carton).map(item=><option key={item.id} value={item.id}>{item.product_name} · {item.product_code}{item.source_order_number ? ` · ${item.source_order_number}` : ` · 列 ${item.id}`} · 尚餘 {item.quantity - item.picked_quantity}</option>)}</select></label>
             {line.actualSN.length ? <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-48 overflow-y-auto">{line.remainingSN.map(sn=><label key={sn} className="flex items-center gap-2 text-sm break-all"><input type="checkbox" checked={value.actualSN.includes(sn)} disabled={selections.some((s,i)=>i!==index&&s.actualSN.includes(sn))} onChange={e=>{const actualSN=e.target.checked?[...value.actualSN,sn]:value.actualSN.filter(v=>v!==sn);update(index,{actualSN,quantity:actualSN.length});}} />{sn}</label>)}</div> : <label className="mt-2 block text-sm">本次取出數量<input type="number" min="0" max={line.remainingQuantity} step="1" value={value.quantity} onChange={e=>update(index,{quantity:Number(e.target.value)})} className={field} /></label>}
             {groups.length>1 && <button type="button" className="mt-2 text-sm text-red-700" onClick={()=>setSelections(old=>old.filter((_,i)=>i!==index))}>移除此分配</button>}
         </div>)}
@@ -25,7 +25,7 @@ function SplitLine({ line, selections, setSelections, items, stage }) {
     </>}</fieldset>;
 }
 
-export const CartonWorkControls = forwardRef(function CartonWorkControls({ orderData, user, stage, blocked, submissionRef, onBusy, onResponse, onError }, ref) {
+export const CartonWorkControls = forwardRef(function CartonWorkControls({ orderData, user, stage, blocked, submissionRef, onBusy, onResponse, onError, onFocusScanner }, ref) {
     const [open, setOpen] = useState(false), [scanValue, setScanValue] = useState(''), [box, setBox] = useState(null);
     const [selections, setSelections] = useState([]), [error, setError] = useState(''), [reading, setReading] = useState(false);
     const [shipments, setShipments] = useState(null), [detailsOpen, setDetailsOpen] = useState(false);
@@ -46,20 +46,16 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
     }, [orderId, user]);
     useEffect(() => { setShipments(null); setBox(null); setOpen(false); setSerialReview(null); }, [orderId]);
     const showCarton = carton => {
-        const matchedSerials = carton.matchedSerials || [];
-        const available = new Set(carton.lines.flatMap(line => line.remainingSN));
-        const selected = new Set(matchedSerials.every(sn => available.has(sn)) ? matchedSerials : []);
         setBox(carton);
         setSplitSerialValue('');
         setSelections(carton.lines.map(line => {
-            const matches = orderData.items.filter(item => item.product_code === line.itemCode && Number(item.quantity_sign ?? 1) === 1);
+            const matches = cartonSplitOrderItems(line, orderData.items, orderData.instances, carton);
             const item = matches.length === 1 ? matches[0] : null;
             const remaining = item ? Number(item.quantity) - Number(item.picked_quantity || 0) : line.remainingQuantity;
-            const actualSN = line.remainingSN.filter(sn => selected.has(sn));
-            const quantity = line.actualSN.length || matchedSerials.length ? actualSN.length : Math.max(0, Math.min(line.remainingQuantity, remaining));
-            return { lineId: line.lineId, orderItemId: item?.id || '', quantity, actualSN };
+            const quantity = line.actualSN.length || carton.matchedSerials?.length ? 0 : Math.max(0, Math.min(line.remainingQuantity, remaining));
+            return { lineId: line.lineId, orderItemId: item?.id || '', quantity, actualSN: [] };
         }));
-        if (matchedSerials.length && !selected.size && stage === 'pick') setError('貼紙含已分配的 SN，請逐件掃描本次要揀的 SN');
+        if (carton.matchedSerials?.length && stage === 'pick') setError('這張貼紙只包含部分箱內 SN，請逐件掃描本次要揀的實物 SN');
     };
     useEffect(() => {
         if (!open || blocked) return;
@@ -68,17 +64,34 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
     }, [open, box, stage, blocked]);
     const reviewStale = serialReview && (serialReview.expectedState !== orderData.stateToken || serialReview.type !== stage
         || serialReview.session !== cartonSessionKey(api, user) || !/^[0-9a-f]{64}$/.test(serialReview.expectedState || ''));
-    const submit = (value, type, options = {}) => {
+    const submit = (value, type, options = {}, onLooseScan) => {
         if (blocked || !type) return false;
         const snapshot = orderData;
         const session = cartonSessionKey(api, user);
         const current = () => alive.current && session === cartonSessionKey(api, user);
+        const { knownSerial, ...scanOptions } = options;
+        let useLooseScan = false;
         const result = submissionRef.current.submit(value, async () => {
             let sent = false;
             try {
-                const body = { scanValue: value, type, serialPolicy: 'from-carton', expectedActorId: user.id, ...options };
-                const { data: preview } = await api.post(`/api/orders/${orderId}/carton-preview`,
-                    { ...body, matchSerialSubset: options.mode !== 'split' }, { timeout: 15000 });
+                let body = { scanValue: value, type, serialPolicy: 'from-carton', expectedActorId: user.id, ...scanOptions };
+                const previewCarton = async input => (await api.post(`/api/orders/${orderId}/carton-preview`,
+                    { ...input, matchSerialSubset: !['serial', 'split'].includes(input.mode) }, { timeout: 15000 })).data;
+                let preview;
+                try {
+                    preview = await previewCarton(body);
+                } catch (err) {
+                    if (!onLooseScan || err.response?.data?.code !== 'CARTON_SERIAL_NOT_REGISTERED') throw err;
+                    if (!current()) return;
+                    if (knownSerial || options.orderItemId) { useLooseScan = true; return; }
+                    body = { scanValue: value, type, serialPolicy: 'from-carton', expectedActorId: user.id };
+                    try { preview = await previewCarton(body); }
+                    catch (cartonError) {
+                        if (cartonError.response?.data?.code !== 'CARTON_NOT_FOUND') throw cartonError;
+                        useLooseScan = true;
+                        return;
+                    }
+                }
                 if (!current()) return;
                 if ((preview.expectedState || preview.stateToken) !== snapshot.stateToken) throw new Error('訂單已更新，請重新載入後再掃箱號');
                 if (preview.carton?.matchedSerials?.length) {
@@ -90,14 +103,22 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
                 const { data } = await sendCartonCommand(api, orderId, command);
                 const updated = applyCartonResponse(snapshot, data);
                 if (!current()) return;
-                const amount = (data.allocation?.lines || preview.selection || []).reduce((sum, l) => sum + Number(l.quantity || 0), 0);
-                onResponse(updated, { value: data.carton?.cartonId || value, type, amount, allocation: data.allocation });
+                const amount = (data.appliedSelection || preview.selection || data.allocation?.lines || [])
+                    .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+                onResponse(updated, { value: body.mode === 'serial' ? value : data.carton?.cartonId || value, type, amount, allocation: data.allocation });
                 setOpen(false); clearLookup(); setError('');
                 loadShipments().catch(() => {});
-                toast.success(`箱號${type === 'pick' ? '揀貨' : '裝箱'}已確認`);
+                toast.success(body.mode === 'serial'
+                    ? `${type === 'pick' ? '已拆箱揀貨' : '已核對 SN'} · ${value}`
+                    : `箱號${type === 'pick' ? '揀貨' : '裝箱'}已確認`);
             } catch (err) {
                 if (!alive.current) return;
                 if (!sent && current() && err.response?.status === 404 && err.response.data?.code === 'CARTON_NOT_FOUND') {
+                    if (type === 'pack' && value.includes(',')) {
+                        const packError = new Error('找不到可整箱核對的箱號，請逐件掃描本次出貨的 SN');
+                        setError(packError.message); onError(value, packError, false);
+                        return;
+                    }
                     const review = getStickerSerialReview(value, type, snapshot);
                     if (review) {
                         setOpen(false); clearLookup(); setError('');
@@ -111,9 +132,11 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
             } finally { if (alive.current) { if (!current()) onError(value, new Error('登入已更新，請重新載入訂單'), sent); onBusy(false); } }
         });
         if (!result.accepted) { toast.warning(result.reason === 'review' ? '請先核對上一筆掃描結果' : '請等候上一筆掃描完成'); return false; }
-        onBusy(true, value); void result.completion; return true;
+        onBusy(true, value);
+        void result.completion.then(() => { if (useLooseScan && current()) onLooseScan(); });
+        return true;
     };
-    useImperativeHandle(ref, () => ({ scan: (value, type) => submit(value, type) }));
+    useImperativeHandle(ref, () => ({ scan: submit }));
     const confirmSerialReview = () => {
         if (blocked || reviewStale || !serialReview?.selectedSerials.length) return;
         const { value, type, session, selectedSerials } = serialReview;
@@ -213,13 +236,17 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
     };
     const showSerialScanner = stage === 'pick' && box?.lines.some(line => line.actualSN.length);
     const selectedSerialCount = selections.reduce((count, selection) => count + selection.actualSN.length, 0);
+    const returnToScanner = () => {
+        clearLookup(); setError(''); setOpen(false);
+        requestAnimationFrame(() => onFocusScanner?.());
+    };
     return <section className="rounded-xl border bg-white p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold flex items-center gap-2"><Box size={18} />箱號作業</h3><Button size="sm" variant="secondary" disabled={blocked || !stage} onClick={() => { setScanValue(''); clearLookup(); setError(''); setOpen(true); }}>掃箱／拆箱</Button></div>
         <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" disabled={reading} onClick={() => { setError(''); setDetailsOpen(true); loadShipments().catch(err => setError(message(err))); }}>箱號明細</Button><Button size="sm" variant="secondary" disabled={reading} onClick={exportFile}><FileDown size={14} />匯出對照</Button></div>
-        <CartonDialog open={open} title={stage === 'pack' ? '箱號裝箱核對' : '箱號揀貨'} onClose={() => { if (!blocked) { clearLookup(); setOpen(false); } }} footer={<><Button variant="secondary" disabled={blocked || !scanValue.trim() || !!box?.matchedSerials?.length} onClick={() => submit(scanValue.trim(), stage)}>整箱{stage === 'pack' ? '裝箱' : '揀貨'}</Button>{stage === 'pick' && box && !showSerialScanner && <Button disabled={blocked} onClick={split}>確認拆箱揀貨</Button>}</>}>
+        <CartonDialog open={open} title={stage === 'pack' ? '箱號裝箱核對' : '箱號揀貨'} onClose={() => { if (!blocked) { clearLookup(); setOpen(false); } }} footer={<><Button variant="secondary" disabled={blocked || !scanValue.trim() || !!box?.matchedSerials?.length} onClick={() => submit(scanValue.trim(), stage)}>{stage === 'pack' ? '按箱號核對' : '整箱揀貨'}</Button>{stage === 'pick' && box && !showSerialScanner && <Button disabled={blocked} onClick={split}>確認拆箱揀貨</Button>}</>}>
             <div className="flex gap-2"><input ref={cartonInput} aria-label="箱號" value={scanValue} disabled={blocked} onChange={e => { setScanValue(e.target.value); clearLookup(); }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); if (!reading && !blocked) void lookup(); } }} className={field} /><Button variant="secondary" disabled={reading || blocked} onClick={lookup}>查詢</Button></div>
             {box && <p className="mt-3 text-sm font-medium">來源箱號 {box.cartonId}</p>}
-            {box?.matchedSerials?.length > 0 && stage === 'pack' && <p className="mt-2 text-sm">請掃描來源箱號做裝箱核對</p>}
+            {stage === 'pack' && <p className="mt-2 text-sm">有 SN 的拆箱件，請<button type="button" className="mx-1 text-blue-700 underline" disabled={blocked} onClick={returnToScanner}>回到掃描欄</button>逐件核對。</p>}
             {showSerialScanner && <div className="mt-3">
                 <div className="flex flex-wrap items-end gap-2">
                     <label className="min-w-48 flex-1 text-sm">掃描箱內 SN
@@ -232,7 +259,7 @@ export const CartonWorkControls = forwardRef(function CartonWorkControls({ order
                 <p aria-live="polite" className="mt-1 text-sm">已選 {selectedSerialCount} 個 SN</p>
             </div>}
             {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
-            {box?.lines.map(line => <SplitLine key={line.lineId} line={line} selections={selections} setSelections={setSelections} items={orderData.items} stage={stage} />)}
+            {box?.lines.map(line => <SplitLine key={line.lineId} line={line} selections={selections} setSelections={setSelections} items={orderData.items} instances={orderData.instances} carton={box} stage={stage} />)}
         </CartonDialog>
         <CartonDialog open={!!serialReview} title="舊箱貼 SN 核對" onClose={() => { if (!submissionRef.current.isBusy()) { setSerialReview(null); setError(''); } }}
             footer={<Button disabled={blocked || reviewStale || !serialReview?.selectedSerials.length} onClick={confirmSerialReview}>確認{serialReview?.type === 'pack' ? '裝箱' : '揀貨'}（{serialReview?.selectedSerials.length ?? 0}）</Button>}>

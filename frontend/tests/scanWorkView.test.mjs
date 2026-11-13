@@ -19,7 +19,7 @@ const { code } = await transform(source, { loader: 'jsx', format: 'cjs' });
 // Execute the real component event handlers with controlled hooks and transport.
 // Child components and DOM rendering are omitted; no application server is started.
 function workView({ role = 'picker', deferRead = false, initialData, managementScope: userManagementScope,
-    exceptions = [], userFields = {}, showDialog = () => Promise.resolve({}), scheduleTimeout } = {}) {
+    exceptions = [], userFields = {}, showDialog = () => Promise.resolve({}), scheduleTimeout, cartonScanner } = {}) {
     const order = { id: 1, status: role === 'picker' ? 'picking' : 'packing', picker_id: 1, packer_id: 1 };
     const fixture = initialData || { order, items: [{ id: 11, quantity: 100, picked_quantity: 0, packed_quantity: 0, barcode: 'ITEM' }], instances: [] };
     const states = [fixture, false, ''];
@@ -108,12 +108,40 @@ function workView({ role = 'picker', deferRead = false, initialData, managementS
             if (found) return found;
         }
     }
-    const input = () => find(render(), node => node.props?.id === 'order-scan-input');
+    const input = () => {
+        const tree = render();
+        const controls = find(tree, node => node.type === 'CartonWorkControls');
+        if (controls && cartonScanner) controls.props.ref.current = cartonScanner;
+        return find(tree, node => node.props?.id === 'order-scan-input');
+    };
     const type = text => input().props.onChange({ target: { value: text } });
     const enter = () => input().props.onKeyDown({ key: 'Enter', preventDefault: noop });
     const camera = () => find(render(), node => node.type === 'CameraScanner');
     return { boundary: user => module.exports.OrderWorkView({ user }), find, fixture, posts, reads, sounds, spoken, warnings, type, enter, input, render, camera, effects, listeners, offCalls, currentData: () => states[0] };
 }
+
+test('the main scanner sends a single SN to carton pick or pack and keeps quantity barcodes on the unit path', async () => {
+    for (const [role, type] of [['picker', 'pick'], ['packer', 'pack']]) {
+        const calls = [];
+        const view = workView({ role, cartonScanner: { scan: (...args) => { calls.push(args); return true; } }, initialData: {
+            order: { id: 1, status: role === 'picker' ? 'picking' : 'packing', picker_id: 1, packer_id: 1 },
+            items: [{ id: 11, quantity: 2, barcode: 'UNIT-BARCODE' }],
+            instances: [{ id: 21, order_item_id: 11, serial_number: 'EXACT-SN', status: role === 'picker' ? 'pending' : 'picked' }]
+        } });
+        view.type('EXACT-SN'); view.enter();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][0], 'EXACT-SN');
+        assert.equal(calls[0][1], type);
+        assert.equal(calls[0][2].mode, 'serial');
+        assert.equal(calls[0][2].knownSerial, true);
+        assert.equal(typeof calls[0][3], 'function');
+        assert.equal(view.posts.length, 0);
+        view.type('UNIT-BARCODE'); view.enter();
+        await Promise.resolve();
+        assert.equal(calls.length, 1);
+        assert.equal(view.posts[0]?.body.scanValue, 'UNIT-BARCODE');
+    }
+});
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 

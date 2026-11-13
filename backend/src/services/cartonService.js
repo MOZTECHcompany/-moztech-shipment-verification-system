@@ -25,13 +25,18 @@ function command(body, orderId, operation) {
     revision(body.expectedCartonRevision);
     return { id: body.commandId.toLowerCase(), hash: digest(['carton-v1', operation, orderId, body.scanValue ?? null,
         body.type ?? null, body.mode ?? 'whole', body.selections ?? null, body.allocationId ?? null, body.serialPolicy ?? 'preassigned',
-        body.expectedState, body.expectedCartonRevision, body.reason ?? null, body.expectedActorId]) };
+        body.expectedState, body.expectedCartonRevision, body.reason ?? null, body.expectedActorId,
+        ...(body.orderItemId === undefined ? [] : [body.orderItemId])]) };
 }
 function expectedActor(body, user, required = false) {
     if (!required && body.expectedActorId === undefined) return;
     if (!Number.isSafeInteger(body.expectedActorId) || body.expectedActorId !== user.id) {
         throw fail('CARTON_ACTOR_CHANGED', '登入人員已變更，請重新載入核對後再操作');
     }
+}
+function isSerialSticker(carton, scanValue) {
+    const raw = scanValue.trim();
+    return raw !== carton.cartonId && !/^CARTON:/i.test(raw) && raw.includes(',');
 }
 function createCartonService({ pool }) {
     async function transaction(work, { readOnly = false, io } = {}) {
@@ -111,6 +116,20 @@ function createCartonService({ pool }) {
             const carton = assertCartonNotVoided(await readCarton(db, sourceCartons[0]));
             return { ...carton, matchedSerials };
         }
+    }
+    async function resolveSerial(db, body) {
+        const serial = text(body.scanValue, 'SN', { max: 102000 });
+        if (body.selections !== undefined) throw fail('CARTON_INVALID_INPUT', '逐件掃描每次只能核對一個 SN', 400);
+        if (body.orderItemId !== undefined && (!Number.isSafeInteger(body.orderItemId) || body.orderItemId < 1 || body.orderItemId > 2147483647)) {
+            throw fail('CARTON_INVALID_INPUT', '訂單品項列無效', 400);
+        }
+        const unregistered = () => fail('CARTON_SERIAL_NOT_REGISTERED', '此 SN 未登記在已確認的箱內', 404);
+        if (serial.length > 100 || !/^[!-~]+$/.test(serial) || serial.includes(',')) throw unregistered();
+        const row = (await db.query(`SELECT c.carton_id,s.line_id FROM wms_carton_serials s
+            JOIN wms_carton_lines l ON l.id=s.line_id JOIN wms_cartons c ON c.carton_id=l.carton_id
+            WHERE s.serial_number=$1 AND c.status IN ('sealed','void')`, [serial])).rows[0];
+        if (!row) throw unregistered();
+        return { cartonId: row.carton_id, lineId: row.line_id, serial };
     }
     async function history(db, cartonId, eventType, actor, details) {
         await db.query(`INSERT INTO wms_carton_history(carton_id,event_type,content_revision,state_revision,actor_id,details)
@@ -321,14 +340,15 @@ function createCartonService({ pool }) {
         const lines = await readLines(db, orderId);
         return { order, ...lines, stateToken: stateToken(order, lines.items, lines.instances) };
     }
-    async function checkStation(db, snapshot, user, type) {
+    async function checkStation(db, snapshot, user, type, mode) {
         const { order } = snapshot;
         if (order.warehouse_hold === true) throw fail('WAREHOUSE_HOLD', '此工作單尚未完成 ERP 回執核對，請先完成原批次放行');
         const admin = user.role === 'superadmin' || (user.role === 'admin' && user.management_scope !== 'orders');
         if (!admin && !['picker','packer'].includes(user.role)) throw fail('CARTON_FORBIDDEN', '箱掃描需倉儲作業權限', 403);
-        if (order.status === 'voided' || order.status === 'completed') throw fail('CARTON_ORDER_CLOSED', '此訂單已作廢或完成，不能箱掃描');
+        const checkCompletedSerial = order.status === 'completed' && type === 'pack' && mode === 'serial';
+        if (order.status === 'voided' || (order.status === 'completed' && !checkCompletedSerial)) throw fail('CARTON_ORDER_CLOSED', '此訂單已作廢或完成，不能箱掃描');
         if (type === 'pick' && order.status !== 'picking') throw fail('CARTON_WRONG_STAGE', '此訂單不在揀貨階段');
-        if (type === 'pack' && order.status !== 'packing') throw fail('CARTON_WRONG_STAGE', '此訂單尚未揀貨完成');
+        if (type === 'pack' && order.status !== 'packing' && !checkCompletedSerial) throw fail('CARTON_WRONG_STAGE', '此訂單尚未揀貨完成');
         if ((type === 'pick' && order.picker_id !== user.id) || (type === 'pack' && order.packer_id !== user.id)) {
             throw fail('CARTON_NOT_ASSIGNED', '您不是此任務的指定操作員，請先完成原工作站認領或轉交', 403);
         }
@@ -337,37 +357,93 @@ function createCartonService({ pool }) {
             throw fail('CARTON_ORDER_EXCEPTION', '訂單有待核可異動或例外，請先處理');
         }
     }
-    async function plan(db, snapshot, carton, body) {
+    function appendSelection(previous, selection) {
+        const key = line => `${line.lineId}:${line.orderItemId}`;
+        const merged = new Map(previous.map(line => [key(line), line]));
+        for (const line of selection) {
+            const existing = merged.get(key(line));
+            merged.set(key(line), existing ? { ...existing, wholeCarton: false,
+                quantity: existing.quantity + line.quantity, actualSN: [...existing.actualSN, ...line.actualSN],
+                newSN: [...(existing.newSN || []), ...(line.newSN || [])] } : line);
+        }
+        return [...merged.values()];
+    }
+    function planPack(snapshot, carton, allocation, body, scannedSerial) {
+        if (body.selections !== undefined || !['whole', 'serial'].includes(body.mode ?? 'whole')) {
+            throw fail('CARTON_PACK_SELECTION_LOCKED', '裝箱須核對原揀貨分配', 400);
+        }
+        if (!allocation || (body.allocationId && body.allocationId !== allocation.allocationId)) throw fail('CARTON_ALLOCATION_NOT_FOUND', '此箱沒有此訂單的已揀分配');
+        const loose = allocation.lines.filter(line => !line.actualSN.length);
+        const instances = new Map();
+        for (const instance of snapshot.instances) {
+            const key = `${instance.order_item_id}:${instance.serial_number}`;
+            instances.set(key, instances.has(key) ? null : instance);
+        }
+        const serialStatus = (line, sn) => instances.get(`${line.orderItemId}:${sn}`)?.status;
+        const scopedLine = scannedSerial && allocation.lines.find(line => line.lineId === scannedSerial.lineId
+            && line.actualSN.includes(scannedSerial.serial)
+            && (body.orderItemId === undefined || line.orderItemId === body.orderItemId));
+        if (scannedSerial && !scopedLine) throw fail('CARTON_SN_NOT_IN_ALLOCATION', '此 SN 不在本單的已揀箱號分配內');
+        if (scopedLine && serialStatus(scopedLine, scannedSerial.serial) === 'packed') {
+            throw fail('CARTON_SN_ALREADY_PACKED', '此 SN 已完成裝箱核對');
+        }
+        if (allocation.status === 'packed') throw fail('CARTON_ALREADY_PACKED', '此箱分配已裝箱，重掃不會再次計數');
+        if (snapshot.order.status === 'completed') throw fail('CARTON_ORDER_CLOSED', '此訂單已完成，不能箱掃描');
+        const itemById = new Map(snapshot.items.map(item => [item.id, item]));
+        let pendingSN = 0, alreadyPackedSN = 0;
+        for (const line of allocation.lines) {
+            const item = itemById.get(line.orderItemId);
+            if (!item || Number(item.quantity_sign ?? 1) !== 1) throw fail('SIGNED_CARTON_REVIEW_REQUIRED', '負向或已變動箱分配需主管核對');
+            for (const sn of line.actualSN) {
+                const status = serialStatus(line, sn);
+                if (status === 'picked') pendingSN++;
+                else if (status === 'packed') alreadyPackedSN++;
+                else throw fail('CARTON_ALLOCATION_CHANGED', '箱內 SN 的揀貨狀態已變更，請重新核對');
+            }
+        }
+        if (scopedLine) return { allocation, selection: [{ ...scopedLine, quantity: 1, actualSN: [scannedSerial.serial], newSN: [] }],
+            packMode: 'serial', packComplete: pendingSN === 1 && loose.length === 0 };
+        const hasSN = pendingSN + alreadyPackedSN > 0;
+        const wholeAllowed = hasSN && alreadyPackedSN === 0 && allocation.lines.every(line => line.wholeCarton === true);
+        const serialLabel = isSerialSticker(carton, body.scanValue);
+        if ((hasSN && !wholeAllowed && pendingSN > 0) || (serialLabel && !wholeAllowed)) {
+            throw fail('CARTON_PACK_SERIAL_REQUIRED', '此分配須逐件掃描實物 SN 裝箱');
+        }
+        const selection = wholeAllowed ? allocation.lines : loose;
+        if (!selection.length) throw fail('CARTON_ALREADY_PACKED', '此箱分配已完成裝箱核對');
+        for (const item of snapshot.items) {
+            const quantity = loose.filter(line => line.orderItemId === item.id).reduce((sum, line) => sum + line.quantity, 0);
+            if (quantity > Number(item.picked_quantity) - Number(item.packed_quantity)) throw fail('CARTON_ALLOCATION_CHANGED', '箱分配超過尚未裝箱的已揀數量');
+        }
+        return { selection, allocation, packMode: hasSN && !wholeAllowed ? 'nonserial' : 'whole', packComplete: true };
+    }
+    async function plan(db, snapshot, carton, body, scannedSerial) {
         if (!['pick','pack'].includes(body.type)) throw fail('CARTON_INVALID_INPUT', '箱掃描類型無效', 400);
         assertCartonNotVoided(carton);
         if (carton.status !== 'sealed') throw fail('CARTON_NOT_SEALED', '此箱尚未封箱核對，不能出貨');
         const allocation = carton.allocations.find(row => row.orderId === snapshot.order.id && row.status !== 'released');
         if (body.type === 'pick') {
-            if (allocation) throw fail('CARTON_ALREADY_ALLOCATED', '此箱已分配給此訂單，重掃不會再次計數');
-            return { selection: choosePickLines(carton, body, snapshot.items, snapshot.instances).map(line => ({ ...line,
+            const mode = scannedSerial ? 'split' : body.mode ?? 'whole';
+            if (allocation && (mode !== 'split' || allocation.status !== 'picked')) {
+                throw fail('CARTON_ALREADY_ALLOCATED', '此箱已分配給此訂單，請明確選擇本次取出的剩餘品項');
+            }
+            const wholeCarton = mode === 'whole' && body.selections === undefined && !carton.allocations.length
+                && carton.lines.every(line => line.remainingQuantity === line.quantity && line.remainingSN.length === line.actualSN.length);
+            if (!wholeCarton && isSerialSticker(carton, body.scanValue)) {
+                throw fail('CARTON_SPLIT_SERIAL_REQUIRED', '此箱已有拆箱紀錄，請逐件掃描實物 SN 或核對來源箱後拆箱');
+            }
+            const effectiveBody = scannedSerial ? { ...body, mode, selections: [{
+                lineId: scannedSerial.lineId, quantity: 1, actualSN: [scannedSerial.serial],
+                ...(body.orderItemId === undefined ? {} : { orderItemId: body.orderItemId }),
+            }] } : body;
+            return { selection: choosePickLines(carton, effectiveBody, snapshot.items, snapshot.instances).map(line => ({ ...line, wholeCarton,
                 sourcePlatform: line.sourcePlatform ?? snapshot.order.source_platform ?? null,
                 sourceStore: line.sourceStore ?? snapshot.order.source_store ?? null,
                 sourceOrderNumber: line.sourceOrderNumber ?? snapshot.order.source_order_number ?? null,
                 sourceImportBatchId: snapshot.order.import_batch_id ?? null,
-                sourceSystem: carton.sourceSystem, sourceReference: carton.sourceReference })), allocation: null };
+                sourceSystem: carton.sourceSystem, sourceReference: carton.sourceReference })), allocation };
         }
-        if (!allocation || (body.allocationId && body.allocationId !== allocation.allocationId)) throw fail('CARTON_ALLOCATION_NOT_FOUND', '此箱沒有此訂單的已揀分配');
-        if (allocation.status === 'packed') throw fail('CARTON_ALREADY_PACKED', '此箱分配已装箱，重掃不會再次計數');
-        if (body.selections !== undefined) throw fail('CARTON_PACK_SELECTION_LOCKED', '裝箱必須核對原揀貨分配，不能改數量或 SN', 400);
-        for (const line of allocation.lines) {
-            const item = snapshot.items.find(row => row.id === line.orderItemId);
-            if (!item || Number(item.quantity_sign ?? 1) !== 1) throw fail('SIGNED_CARTON_REVIEW_REQUIRED', '負向或已變動箱分配需主管核對');
-            if (line.actualSN.length) {
-                if (line.actualSN.some(sn => snapshot.instances.filter(row => row.order_item_id === item.id && row.serial_number === sn && row.status === 'picked').length !== 1)) {
-                    throw fail('CARTON_ALLOCATION_CHANGED', '箱內 SN 的揀貨狀態已變更，整箱未套用');
-                }
-            }
-        }
-        for (const item of snapshot.items) {
-            const quantity = allocation.lines.filter(line => line.orderItemId === item.id && !line.actualSN.length).reduce((sum, line) => sum + line.quantity, 0);
-            if (quantity > Number(item.picked_quantity) - Number(item.packed_quantity)) throw fail('CARTON_ALLOCATION_CHANGED', '箱分配超過尚未裝箱的已揀數量');
-        }
-        return { selection: allocation.lines, allocation };
+        return planPack(snapshot, carton, allocation, body, scannedSerial);
     }
     async function checkSerialOwnership(db, snapshot, selection) {
         const sns = selection.flatMap(line => line.actualSN);
@@ -386,10 +462,14 @@ function createCartonService({ pool }) {
         return transaction(async db => {
             const user = await staff(db, actor), snapshot = await orderSnapshot(db, orderId);
             expectedActor(body, user, true);
-            await checkStation(db, snapshot, user, body.type);
-            const carton = await lookupCarton(db, body.scanValue, body.matchSerialSubset === true);
-            if (carton.matchedSerials) return { carton, expectedState: snapshot.stateToken, expectedActorId: user.id };
-            const result = await plan(db, snapshot, carton, body);
+            await checkStation(db, snapshot, user, body.type, body.mode);
+            const scannedSerial = body.mode === 'serial' ? await resolveSerial(db, body) : null;
+            const carton = scannedSerial
+                ? await readCarton(db, scannedSerial.cartonId)
+                : await lookupCarton(db, body.scanValue, body.matchSerialSubset === true);
+            if (carton.matchedSerials) throw fail(body.type === 'pack' ? 'CARTON_PACK_SERIAL_REQUIRED' : 'CARTON_SPLIT_SERIAL_REQUIRED',
+                '這張貼紙只包含部分箱內 SN，請逐件掃描實物 SN');
+            const result = await plan(db, snapshot, carton, body, scannedSerial);
             if (body.type === 'pick') await checkSerialOwnership(db, snapshot, result.selection);
             return { ...snapshot, ...result, carton, expectedState: snapshot.stateToken, expectedCartonRevision: carton.stateRevision, expectedActorId: user.id };
         }, { readOnly: true });
@@ -456,10 +536,11 @@ function createCartonService({ pool }) {
             if (replay) return replay;
             const before = await orderSnapshot(db, orderId, true);
             if (before.stateToken !== body.expectedState) throw fail('STATE_CHANGED', '訂單已更新，請重新載入核對');
-            await checkStation(db, before, user, body.type);
-            const carton = await readCarton(db, await resolve(db, body.scanValue), true);
+            await checkStation(db, before, user, body.type, body.mode);
+            const scannedSerial = body.mode === 'serial' ? await resolveSerial(db, body) : null;
+            const carton = await readCarton(db, scannedSerial?.cartonId ?? await resolve(db, body.scanValue), true);
             if (carton.stateRevision !== body.expectedCartonRevision) throw fail('CARTON_STATE_CHANGED', '箱內容或分配已更新，請重新載入核對');
-            const { selection, allocation } = await plan(db, before, carton, body);
+            const { selection, allocation, packMode, packComplete } = await plan(db, before, carton, body, scannedSerial);
             if (body.type === 'pick') {
                 await lockCartonSerials(db, selection.flatMap(line => line.actualSN));
                 await checkSerialOwnership(db, before, selection);
@@ -471,9 +552,14 @@ function createCartonService({ pool }) {
             await applyLines(db, selection, body.type);
             let allocationId = allocation?.allocationId;
             if (body.type === 'pick') {
-                allocationId = randomUUID();
-                await db.query(`INSERT INTO wms_carton_allocations(id,carton_id,order_id,content_revision,status,lines,picked_by)
-                    VALUES($1,$2,$3,$4,'picked',$5,$6)`, [allocationId, carton.cartonId, orderId, carton.contentRevision, JSON.stringify(selection), user.id]);
+                if (allocation) {
+                    await db.query("UPDATE wms_carton_allocations SET lines=$2 WHERE id=$1 AND status='picked'",
+                        [allocationId, JSON.stringify(appendSelection(allocation.lines, selection))]);
+                } else {
+                    allocationId = randomUUID();
+                    await db.query(`INSERT INTO wms_carton_allocations(id,carton_id,order_id,content_revision,status,lines,picked_by)
+                        VALUES($1,$2,$3,$4,'picked',$5,$6)`, [allocationId, carton.cartonId, orderId, carton.contentRevision, JSON.stringify(selection), user.id]);
+                }
                 for (const line of selection) {
                     const updated = await db.query('UPDATE wms_carton_lines SET remaining_quantity=remaining_quantity-$2 WHERE id=$1 AND remaining_quantity>=$2 RETURNING id', [line.lineId, line.quantity]);
                     if (updated.rowCount !== 1) throw fail('CARTON_QUANTITY_EXCEEDED', '箱內剩餘已被其他作業分配');
@@ -482,15 +568,17 @@ function createCartonService({ pool }) {
                         if (units.rowCount !== line.quantity) throw fail('CARTON_SN_UNAVAILABLE', 'SN 已被其他作業分配');
                     }
                 }
-            } else {
+            } else if (packComplete) {
                 await db.query("UPDATE wms_carton_allocations SET status='packed',packed_at=NOW(),packed_by=$2 WHERE id=$1 AND status='picked'", [allocationId, user.id]);
             }
             await db.query('UPDATE wms_cartons SET state_revision=state_revision+1,updated_by=$2,updated_at=NOW() WHERE carton_id=$1', [carton.cartonId, user.id]);
-            await history(db, carton.cartonId, body.type === 'pick' ? 'allocated' : 'packed', user, { orderId, allocationId, lines: selection });
+            await history(db, carton.cartonId, body.type === 'pick' ? 'allocated' : packComplete ? 'packed' : 'pack_verified',
+                user, { orderId, allocationId, lines: selection });
             await auditOrder(db, events, user, before.order, body.type, { cartonId: carton.cartonId, allocationId, lines: selection, commandId: request.id });
             const snapshot = await complete(db, events, orderId, user), after = await readCarton(db, carton.cartonId);
             const response = { format: 'snapshot-v1', commandId: request.id, baseState: body.expectedState, ...snapshot,
-                carton: after, allocation: after.allocations.find(row => row.allocationId === allocationId) };
+                carton: after, allocation: after.allocations.find(row => row.allocationId === allocationId),
+                appliedSelection: selection, ...(packMode ? { packMode, packComplete } : {}) };
             await saveReceipt(db, user, orderId, request, response);
             return response;
         }, { io });
@@ -511,6 +599,10 @@ function createCartonService({ pool }) {
             if (carton.stateRevision !== body.expectedCartonRevision) throw fail('CARTON_STATE_CHANGED', '箱分配已更新，請重新載入核對');
             const allocation = carton.allocations.find(row => row.allocationId === allocationId);
             if (allocation.status !== 'picked' || snapshot.order.status === 'completed') throw fail('CARTON_RELEASE_BLOCKED', '只能退回尚未裝箱的分配；已裝箱需獨立退貨流程');
+            if (allocation.lines.some(line => snapshot.instances.some(unit =>
+                unit.order_item_id === line.orderItemId && unit.status === 'packed' && line.actualSN.includes(unit.serial_number)))) {
+                throw fail('CARTON_RELEASE_BLOCKED', '此分配已開始逐件裝箱，不能直接解除分配');
+            }
             await lockCartonSerials(db, allocation.lines.flatMap(line => line.actualSN));
             for (const line of allocation.lines) {
                 if (line.actualSN.length) {
