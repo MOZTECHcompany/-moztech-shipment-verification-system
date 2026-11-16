@@ -1,0 +1,2893 @@
+{
+  "sourceCommit": "ab835f44ef2d9e855360aa6b01fb9216cd70afed",
+  "mode": "Local Express route registration with NODE_ENV=test and isolated fake settings. No server listener, database request, or external request.",
+  "registrationCount": 138,
+  "uniqueMethodAndPathCount": 134,
+  "cloudDevDeclaredNodeEnv": "production",
+  "requestFieldsNotice": "Direct properties in the registration body are observations, not a complete schema. Consult the handler and the contract chapters for forwarded req.body, SQL projections and domain checks.",
+  "duplicates": [
+    "PATCH /api/orders/:orderId/exceptions/:exceptionId/ack",
+    "PATCH /api/orders/:orderId/exceptions/:exceptionId/propose",
+    "PATCH /api/orders/:orderId/exceptions/:exceptionId/reject",
+    "POST /api/orders/:orderId/exceptions"
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/",
+      "group": "系統與檔案",
+      "source": "backend/src/app.js",
+      "line": 150,
+      "access": "系統公開路由或短效下載 Cookie，依該路由",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "name",
+        "version",
+        "status",
+        "timestamp"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "group": "系統與檔案",
+      "source": "backend/src/app.js",
+      "line": 159,
+      "access": "系統公開路由或短效下載 Cookie，依該路由",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "status",
+        "timestamp"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/ready",
+      "group": "系統與檔案",
+      "source": "backend/src/app.js",
+      "line": 163,
+      "access": "系統公開路由或短效下載 Cookie，依該路由",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "status"
+      ],
+      "literalHttpStatuses": [
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/marketplace-files/:id/:kind",
+      "group": "系統與檔案",
+      "source": "backend/src/app.js",
+      "line": 182,
+      "access": "系統公開路由或短效下載 Cookie，依該路由",
+      "handlerReference": "require('./services/marketplaceDownloads').downloadFile({pool})",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 6,
+      "access": "依登入／交換／登出路由驗證",
+      "handlerReference": "(req,res) => res.json({user:req.user})",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "user"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/erp/staff",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 36,
+      "access": "依登入／交換／登出路由驗證",
+      "literalRouteGuards": [
+        "loginLimiter"
+      ],
+      "requestFieldsObserved": {
+        "headers": [
+          "x-erp-service-key"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/erp/bind",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 36,
+      "access": "依登入／交換／登出路由驗證",
+      "literalRouteGuards": [
+        "loginLimiter"
+      ],
+      "requestFieldsObserved": {
+        "headers": [
+          "x-erp-service-key"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/erp/config",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 44,
+      "access": "依登入／交換／登出路由驗證",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "erpOnly",
+        "origin",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        503
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/erp/exchange",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 49,
+      "access": "依登入／交換／登出路由驗證",
+      "literalRouteGuards": [
+        "loginLimiter"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "ticket",
+          "nonce"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/erp/logout",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 55,
+      "access": "依登入／交換／登出路由驗證",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "ok",
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 66,
+      "access": "依登入／交換／登出路由驗證",
+      "literalRouteGuards": [
+        "loginLimiter"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "username",
+          "password"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        400
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "group": "身分",
+      "source": "backend/src/routes/authRoutes.js",
+      "line": 89,
+      "access": "依登入／交換／登出路由驗證",
+      "literalRouteGuards": [
+        "refreshLimiter"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "token"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "accessToken"
+      ],
+      "literalHttpStatuses": [
+        400,
+        401
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/marketplace-intakes/store-connections",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 33,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "connections",
+        "code",
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/draft-overwrite/preview",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 36,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "issues",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/draft-overwrite/confirm",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 36,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "issues",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/preview",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 41,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "issues",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/ready-preview",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 46,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "rows",
+          "settings",
+          "profileId",
+          "readyScopeFingerprint"
+        ]
+      },
+      "jsonKeysObserved": [
+        "rows",
+        "preview",
+        "readyScope",
+        "code",
+        "message",
+        "issues",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/barcode-confirmations",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 88,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "confirmation",
+          "verificationFingerprint"
+        ]
+      },
+      "jsonKeysObserved": [
+        "confirmed",
+        "id",
+        "confirmedAt",
+        "code",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        201
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/:id/orders/shipping-preview",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 128,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "orderNumber"
+        ],
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/:id/orders/shipping-update",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 128,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "orderNumber"
+        ],
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/marketplace-intakes",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 133,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/marketplace-intakes/:id",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 136,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "financials",
+        "financialWarning",
+        "superseded",
+        "handler",
+        "reviewWarning",
+        "links"
+      ],
+      "literalHttpStatuses": [
+        400,
+        404
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/:id/download-link",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 147,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "kind"
+        ],
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        400,
+        404
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/marketplace-intakes/:id/archive",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 160,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/marketplace-intakes/:id/restore",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 160,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/marketplace-intakes/:id",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 160,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceRoutes.js",
+      "line": 164,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "previewFingerprint"
+        ]
+      },
+      "jsonKeysObserved": [
+        "newOrderCount",
+        "reimports",
+        "salesDownloadAllowed",
+        "reused",
+        "code",
+        "message",
+        "issues",
+        "orderNumber"
+      ],
+      "literalHttpStatuses": [
+        200,
+        201,
+        409,
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/marketplace-intakes/store-profiles",
+      "group": "商城轉檔",
+      "source": "backend/src/services/marketplaceStoreProfiles.js",
+      "line": 32,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "profiles"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-intakes/store-profiles",
+      "group": "商城轉檔",
+      "source": "backend/src/services/marketplaceStoreProfiles.js",
+      "line": 36,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "platform",
+          "settings"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-products/resolve",
+      "group": "商城轉檔",
+      "source": "backend/src/services/marketplaceProductCatalog.js",
+      "line": 88,
+      "access": "JWT＋admin／dispatcher，superadmin 通過；個別操作另有限制",
+      "requestFieldsObserved": {
+        "body": [
+          "skus"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/marketplace-batch-notices",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceBatchNoticeRoutes.js",
+      "line": 13,
+      "access": "JWT；依路由及服務的額外授權",
+      "handlerReference": "handle(async (req, res) => res.json(await listMarketplaceBatchNotices(pool, req.user)))",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/marketplace-batch-notices/:noticeId/seen",
+      "group": "商城轉檔",
+      "source": "backend/src/routes/marketplaceBatchNoticeRoutes.js",
+      "line": 14,
+      "access": "JWT；依路由及服務的額外授權",
+      "handlerReference": "handle(async (req, res) => res.json(await markMarketplaceBatchNoticeSeen(pool, req.user, req.params.noticeId)))",
+      "requestFieldsObserved": {
+        "params": [
+          "noticeId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/warehouse-intakes",
+      "group": "ECOUNT 回匯與預揀",
+      "source": "backend/src/routes/warehouseReleaseRoutes.js",
+      "line": 22,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "requestFieldsObserved": {
+        "query": [
+          "ready"
+        ]
+      },
+      "jsonKeysObserved": [
+        "batches"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/warehouse-intakes/staff",
+      "group": "ECOUNT 回匯與預揀",
+      "source": "backend/src/routes/warehouseReleaseRoutes.js",
+      "line": 31,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "message",
+        "staff"
+      ],
+      "literalHttpStatuses": [
+        403
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/warehouse-intakes/receipt-format",
+      "group": "ECOUNT 回匯與預揀",
+      "source": "backend/src/routes/warehouseReleaseRoutes.js",
+      "line": 35,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        403
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/warehouse-intakes/:id",
+      "group": "ECOUNT 回匯與預揀",
+      "source": "backend/src/routes/warehouseReleaseRoutes.js",
+      "line": 40,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "requestFieldsObserved": {
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        400,
+        403
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/warehouse-intakes/:id/:action",
+      "group": "ECOUNT 回匯與預揀",
+      "source": "backend/src/routes/warehouseReleaseRoutes.js",
+      "line": 47,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "requestFieldsObserved": {
+        "params": [
+          "id",
+          "action"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/cartons",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 19,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.list(req.query, req.user))",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/cartons",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 20,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.create(req.body, req.user), 201)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/cartons/import",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 21,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.importManifest(req.body, req.user))",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/cartons/seal-batch",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 22,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.sealBatch(req.body, req.user))",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/cartons/lookup",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 23,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.lookup(req.query.scanValue, req.user, req.query.matchSerialSubset === 'true'))",
+      "requestFieldsObserved": {
+        "query": [
+          "scanValue",
+          "matchSerialSubset"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/cartons/allocations/:allocationId/release",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 24,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.release(req.params.allocationId, req.body, req.user, req.app.get('io')))",
+      "requestFieldsObserved": {
+        "params": [
+          "allocationId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/cartons/:cartonId",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 25,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.get(req.params.cartonId, req.user))",
+      "requestFieldsObserved": {
+        "params": [
+          "cartonId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/cartons/:cartonId",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 26,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.edit(req.params.cartonId, req.body, req.user))",
+      "requestFieldsObserved": {
+        "params": [
+          "cartonId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/cartons/:cartonId/seal",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 27,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.seal(req.params.cartonId, req.body, req.user))",
+      "requestFieldsObserved": {
+        "params": [
+          "cartonId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/cartons/:cartonId/void",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 28,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.voidDraft(req.params.cartonId, req.body, req.user))",
+      "requestFieldsObserved": {
+        "params": [
+          "cartonId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/carton-preview",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 33,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.preview(Number(req.params.orderId), req.body, req.user))",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/carton-scan",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 34,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.scan(Number(req.params.orderId), req.body, req.user, req.app.get('io')))",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/:orderId/carton-shipments",
+      "group": "箱號與 SN",
+      "source": "backend/src/routes/cartonRoutes.js",
+      "line": 35,
+      "access": "JWT＋服務端操作角色、指派與狀態",
+      "handlerReference": "handler(req => service.shipments(Number(req.params.orderId), req.user))",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/logistics/accounts",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 22,
+      "access": "JWT＋服務端倉儲／角色檢查及流量限制",
+      "handlerReference": "handle(async(req,res)=>res.json({accounts:loadAccounts(env).map(publicAccount)}))",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "accounts"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/logistics/accounts/:accountId/query",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 23,
+      "access": "JWT＋服務端倉儲／角色檢查及流量限制",
+      "requestFieldsObserved": {
+        "params": [
+          "accountId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/logistics/accounts/:accountId/import",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 28,
+      "access": "JWT＋服務端倉儲／角色檢查及流量限制",
+      "requestFieldsObserved": {
+        "body": [
+          "query",
+          "orderId"
+        ],
+        "params": [
+          "accountId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "result"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/logistics/shipments",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 36,
+      "access": "JWT＋服務端倉儲／角色檢查及流量限制",
+      "requestFieldsObserved": {
+        "query": [
+          "offset"
+        ]
+      },
+      "jsonKeysObserved": [
+        "items",
+        "nextOffset"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/logistics/shipments/print-form",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 43,
+      "access": "JWT＋服務端倉儲／角色檢查及流量限制",
+      "requestFieldsObserved": {
+        "body": [
+          "shipmentIds"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/logistics/shipments/:id/sync",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 51,
+      "access": "JWT＋服務端倉儲／角色檢查及流量限制",
+      "requestFieldsObserved": {
+        "params": [
+          "id"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/logistics-callbacks/ecpay/:accountId",
+      "group": "綠界物流",
+      "source": "backend/src/routes/logisticsRoutes.js",
+      "line": 66,
+      "access": "第三方回呼簽章及開關",
+      "requestFieldsObserved": {
+        "params": [
+          "accountId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": [
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/order-change-notices",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 27,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "items",
+        "total"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/order-change-notices/:noticeId/acknowledge",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 38,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "noticeId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "acknowledged"
+      ],
+      "literalHttpStatuses": [
+        400,
+        404
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/order-reviews",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 49,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "items",
+        "total",
+        "canReview"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/:orderId/work-snapshot",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 63,
+      "access": "JWT；依路由及服務的額外授權",
+      "handlerReference": "createWorkSnapshot(pool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/order-import-batches/:batchId",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 64,
+      "access": "JWT；依路由及服務的額外授權",
+      "handlerReference": "require('../services/importBatchSnapshot').createImportBatchSnapshot(pool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/claim-by-barcode",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 66,
+      "access": "JWT；依路由及服務的額外授權",
+      "handlerReference": "barcodeClaims.claim",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/claim-commands/:commandId",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 67,
+      "access": "JWT；依路由及服務的額外授權",
+      "handlerReference": "barcodeClaims.receipt",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/reconcile-picking",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 69,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin"
+      ],
+      "handlerReference": "createReconcilePicking(pool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/batch-claim",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 279,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly"
+      ],
+      "handlerReference": "(req, res, next) => claimBatch(req, res, next, true)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/batch/claim",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 280,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly"
+      ],
+      "handlerReference": "(req, res, next) => claimBatch(req, res, next, false)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/claim",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 283,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly"
+      ],
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        200,
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/:orderId",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 294,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "order",
+        "items",
+        "instances"
+      ],
+      "literalHttpStatuses": [
+        404
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/void",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 379,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "reason"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        404,
+        409,
+        503
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/urgent",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 408,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin', 'dispatcher')"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "isUrgent"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "order"
+      ],
+      "literalHttpStatuses": [
+        400,
+        403,
+        404,
+        500
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/orders/:orderId",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 472,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin','dispatcher')"
+      ],
+      "handlerReference": "deletionRequestHandler(pool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/deletion-requests",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 473,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin','dispatcher')"
+      ],
+      "handlerReference": "deletionRequestHandler(pool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/import",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 477,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin', 'dispatcher')",
+        "importLimiter",
+        "uploadImport"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "marketplaceIntakeId"
+        ],
+        "file": [
+          "buffer"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "code",
+        "voucherNumber",
+        "batchNumber",
+        "batchId",
+        "workOrderCount",
+        "orders",
+        "orderId"
+      ],
+      "literalHttpStatuses": [
+        201,
+        409,
+        503
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/update_item",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 609,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "orderId",
+          "scanValue",
+          "type",
+          "amount",
+          "orderItemId",
+          "expectedState"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        400,
+        403,
+        409,
+        503
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/batch/delete",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 1082,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "orderIds",
+          "reason"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requested",
+        "failed"
+      ],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/defect",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 1097,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeRoles('admin', 'dispatcher')"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "oldSn",
+          "newSn",
+          "reason"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        400,
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/defects/stats",
+      "group": "工作單、理貨匯入與掃碼",
+      "source": "backend/src/routes/orderRoutes.js",
+      "line": 1149,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/exceptions",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 18,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "type",
+          "reasonText",
+          "snapshot"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": [
+        201
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/ack",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 26,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin",
+        "deletionReviewMiddleware(pool,'approve')"
+      ],
+      "handlerReference": "deletionReviewMiddleware(pool,'approve')",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/reject",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 27,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin",
+        "deletionReviewMiddleware(pool,'reject')"
+      ],
+      "handlerReference": "deletionReviewMiddleware(pool,'reject')",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/propose",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 28,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "deletionReviewMiddleware(pool)"
+      ],
+      "handlerReference": "deletionReviewMiddleware(pool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/:orderId/exceptions",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 103,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "status"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "items",
+        "meta",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        400,
+        500
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/reject",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 164,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "note"
+        ],
+        "params": [
+          "orderId",
+          "exceptionId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "item"
+      ],
+      "literalHttpStatuses": [
+        404,
+        409,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/exceptions",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 241,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "type",
+          "reasonCode",
+          "reasonText",
+          "orderItemId",
+          "instanceId",
+          "snapshot"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "id",
+        "created_at",
+        "errorCode",
+        "constraint",
+        "missingColumn",
+        "relation"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        404,
+        500,
+        503
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/propose",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 442,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin', 'dispatcher')"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "resolutionAction",
+          "note",
+          "newSn",
+          "correctBarcode"
+        ],
+        "params": [
+          "orderId",
+          "exceptionId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "allowed",
+        "requestId",
+        "item"
+      ],
+      "literalHttpStatuses": [
+        400,
+        403,
+        404,
+        409,
+        500
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/ack",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 554,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "note"
+        ],
+        "params": [
+          "orderId",
+          "exceptionId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "item",
+        "errorCode",
+        "constraint",
+        "missingColumn",
+        "relation"
+      ],
+      "literalHttpStatuses": [
+        400,
+        404,
+        409,
+        503
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/resolve",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 691,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly",
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "note",
+          "resolutionAction"
+        ],
+        "params": [
+          "orderId",
+          "exceptionId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "allowed",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        400
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/attachments",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 717,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId",
+          "exceptionId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "items"
+      ],
+      "literalHttpStatuses": [
+        404,
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/attachments/:attachmentId/download",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 745,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "inline"
+        ],
+        "params": [
+          "orderId",
+          "exceptionId",
+          "attachmentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        404,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/:orderId/exceptions/:exceptionId/attachments",
+      "group": "工作單異常",
+      "source": "backend/src/routes/exceptionRoutes.js",
+      "line": 773,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "attachmentUpload.array('files', 5)"
+      ],
+      "requestFieldsObserved": {
+        "params": [
+          "orderId",
+          "exceptionId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "items",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        404,
+        500,
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/exceptions",
+      "group": "工作單異常",
+      "source": "backend/src/routes/adminExceptionRoutes.js",
+      "line": 26,
+      "access": "JWT＋管理員，特定 ERP 檢視權限例外",
+      "requestFieldsObserved": {
+        "query": [
+          "status",
+          "q",
+          "overdue",
+          "createdBy",
+          "ackBy",
+          "resolvedBy",
+          "type",
+          "orderStatus",
+          "page",
+          "limit"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "items",
+        "meta"
+      ],
+      "literalHttpStatuses": [
+        400,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/users",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/userRoutes.js",
+      "line": 17,
+      "access": "JWT＋管理員＋倉儲管理範圍",
+      "requestFieldsObserved": {
+        "body": [
+          "username",
+          "password",
+          "name",
+          "role",
+          "management_scope"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "user"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        403,
+        409
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/userRoutes.js",
+      "line": 52,
+      "access": "JWT＋管理員＋倉儲管理範圍",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users/:userId",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/userRoutes.js",
+      "line": 65,
+      "access": "JWT＋管理員＋倉儲管理範圍",
+      "requestFieldsObserved": {
+        "params": [
+          "userId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        404
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/:userId",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/userRoutes.js",
+      "line": 81,
+      "access": "JWT＋管理員＋倉儲管理範圍",
+      "requestFieldsObserved": {
+        "body": [
+          "name",
+          "role",
+          "password",
+          "management_scope"
+        ],
+        "params": [
+          "userId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "user"
+      ],
+      "literalHttpStatuses": [
+        403,
+        404
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/users/:userId",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/userRoutes.js",
+      "line": 126,
+      "access": "JWT＋管理員＋倉儲管理範圍",
+      "requestFieldsObserved": {
+        "params": [
+          "userId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        403,
+        404
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/bootstrap/superadmin",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/adminRoutes.js",
+      "line": 19,
+      "access": "JWT＋管理員，特定 ERP 檢視權限例外",
+      "literalRouteGuards": [
+        "localMaintenanceOnly"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "secret",
+          "bootstrapSecret"
+        ],
+        "headers": [
+          "x-superadmin-bootstrap",
+          "x-superadmin-bootstrap-secret"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "accessToken",
+        "user",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/create-user",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/adminRoutes.js",
+      "line": 75,
+      "access": "JWT＋管理員，特定 ERP 檢視權限例外",
+      "requestFieldsObserved": {
+        "body": [
+          "username",
+          "password",
+          "name",
+          "role",
+          "management_scope"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "user",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        403,
+        409,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/maintenance/retention/run",
+      "group": "帳號與管理",
+      "source": "backend/src/routes/adminRoutes.js",
+      "line": 107,
+      "access": "JWT＋管理員，特定 ERP 檢視權限例外",
+      "literalRouteGuards": [
+        "localMaintenanceOnly"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "logsDays",
+          "mentionsDays",
+          "readsDays",
+          "idleMinutes"
+        ]
+      },
+      "jsonKeysObserved": [
+        "success",
+        "params",
+        "result",
+        "message",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks",
+      "group": "任務與留言",
+      "source": "backend/src/routes/taskRoutes.js",
+      "line": 12,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "pagination"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "error",
+        "hint"
+      ],
+      "literalHttpStatuses": [
+        403,
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/basic",
+      "group": "任務與留言",
+      "source": "backend/src/routes/taskRoutes.js",
+      "line": 101,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/completed",
+      "group": "任務與留言",
+      "source": "backend/src/routes/taskRoutes.js",
+      "line": 113,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "pagination",
+          "limit",
+          "date"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/:orderId/comments",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 31,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "after",
+          "before",
+          "latest",
+          "limit"
+        ],
+        "params": [
+          "orderId"
+        ],
+        "headers": [
+          "if-none-match"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        304,
+        400
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:orderId/comments/mark-read",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 115,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "commentIds"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "count",
+        "commentIds",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        400,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:orderId/comments",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 143,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "content",
+          "parent_id",
+          "priority"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "requestId",
+        "id",
+        "created_at",
+        "hint"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        404,
+        413,
+        429,
+        500
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tasks/:orderId/comments/:commentId/retract",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 247,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId",
+          "commentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        403,
+        404,
+        429,
+        500
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tasks/:orderId/mentions/:commentId/read",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 272,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId",
+          "commentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "requestId",
+        "updated"
+      ],
+      "literalHttpStatuses": [
+        404,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:orderId/comments/:commentId/read",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 290,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId",
+          "commentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        404,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:orderId/comments/mark-all-read",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 314,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "count"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/comments/unread-summary",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 351,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "total_unread",
+        "total_urgent",
+        "orders",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/:orderId/mentions",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 392,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "status",
+          "limit"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "items",
+        "total",
+        "code",
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/pins",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 437,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "pinned",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/tasks/pins/:orderId",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 452,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin', 'dispatcher')"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "pinned"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "success"
+      ],
+      "literalHttpStatuses": [
+        403,
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/:orderId/pins",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 493,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "pinned",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/tasks/:orderId/pins/:commentId",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 515,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "pinned"
+        ],
+        "params": [
+          "orderId",
+          "commentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "success",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tasks/:orderId/comments/:commentId",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 534,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId",
+          "commentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "code",
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        403,
+        404,
+        429,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:orderId/session",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 559,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "session_type"
+        ],
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/:orderId/sessions",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 598,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/:orderId/transfer",
+      "group": "任務與留言",
+      "source": "backend/src/routes/commentRoutes.js",
+      "line": 623,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "warehouseOnly"
+      ],
+      "requestFieldsObserved": {
+        "params": [
+          "orderId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        400,
+        403,
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/team/channels",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 80,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "items",
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/team/posts",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 91,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "q",
+          "status",
+          "type",
+          "limit",
+          "page",
+          "channelId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "items",
+        "meta"
+      ],
+      "literalHttpStatuses": [
+        400,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/team/posts",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 165,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeRoles('admin', 'dispatcher')"
+      ],
+      "requestFieldsObserved": {
+        "body": [
+          "postType",
+          "title",
+          "content",
+          "priority",
+          "dueAt",
+          "assigneeUserIds",
+          "channelId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "id",
+        "created_at"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/team/posts/:postId",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 225,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "postId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "item"
+      ],
+      "literalHttpStatuses": [
+        400,
+        404,
+        500
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/team/posts/:postId/status",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 297,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "status"
+        ],
+        "params": [
+          "postId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "item"
+      ],
+      "literalHttpStatuses": [
+        400,
+        403,
+        404,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/team/posts/:postId/comments",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 330,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "body": [
+          "content"
+        ],
+        "params": [
+          "postId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "id",
+        "created_at"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        404,
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/team/posts/:postId/attachments",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 361,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "params": [
+          "postId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "items"
+      ],
+      "literalHttpStatuses": [
+        400,
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/team/posts/:postId/attachments/:attachmentId/download",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 382,
+      "access": "JWT；依路由及服務的額外授權",
+      "requestFieldsObserved": {
+        "query": [
+          "inline"
+        ],
+        "params": [
+          "postId",
+          "attachmentId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId"
+      ],
+      "literalHttpStatuses": [
+        400,
+        404,
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/team/posts/:postId/attachments",
+      "group": "團隊看板",
+      "source": "backend/src/routes/teamBoardRoutes.js",
+      "line": 413,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "attachmentUpload.array('files', 5)"
+      ],
+      "requestFieldsObserved": {
+        "params": [
+          "postId"
+        ]
+      },
+      "jsonKeysObserved": [
+        "message",
+        "requestId",
+        "items",
+        "code"
+      ],
+      "literalHttpStatuses": [
+        201,
+        400,
+        404,
+        500,
+        503
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/operation-logs",
+      "group": "監控與報表",
+      "source": "backend/src/routes/analyticsRoutes.js",
+      "line": 22,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "query": [
+          "orderId",
+          "userId",
+          "startDate",
+          "endDate",
+          "actionType",
+          "limit"
+        ]
+      },
+      "jsonKeysObserved": [
+        "total",
+        "logs",
+        "message",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/operation-logs/stats",
+      "group": "監控與報表",
+      "source": "backend/src/routes/analyticsRoutes.js",
+      "line": 113,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "query": [
+          "startDate",
+          "endDate"
+        ]
+      },
+      "jsonKeysObserved": [
+        "total",
+        "byActionType",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/export",
+      "group": "監控與報表",
+      "source": "backend/src/routes/analyticsRoutes.js",
+      "line": 166,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "handlerReference": "createReportExporter(reportPool)",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [],
+      "literalHttpStatuses": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics",
+      "group": "監控與報表",
+      "source": "backend/src/routes/analyticsRoutes.js",
+      "line": 169,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "query": [
+          "range"
+        ]
+      },
+      "jsonKeysObserved": [
+        "overview",
+        "userPerformance",
+        "topProducts",
+        "orderTrends",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/scan-errors",
+      "group": "監控與報表",
+      "source": "backend/src/routes/analyticsRoutes.js",
+      "line": 256,
+      "access": "JWT；依路由及服務的額外授權",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {
+        "query": [
+          "startDate",
+          "endDate",
+          "limit"
+        ]
+      },
+      "jsonKeysObserved": [
+        "total",
+        "errors",
+        "message"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/migrate/add-priority-test",
+      "group": "開發工具",
+      "source": "backend/src/routes/maintenanceRoutes.js",
+      "line": 11,
+      "access": "JWT；NODE_ENV 非 production 才掛載",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "success",
+        "message",
+        "alreadyExists",
+        "totalComments",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/migrate/add-priority",
+      "group": "開發工具",
+      "source": "backend/src/routes/maintenanceRoutes.js",
+      "line": 90,
+      "access": "JWT；NODE_ENV 非 production 才掛載",
+      "literalRouteGuards": [
+        "authorizeAdmin"
+      ],
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "success",
+        "message",
+        "alreadyExists",
+        "totalComments",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/tables",
+      "group": "開發工具",
+      "source": "backend/src/routes/maintenanceRoutes.js",
+      "line": 169,
+      "access": "JWT；NODE_ENV 非 production 才掛載",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "tables",
+        "count",
+        "message",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/check-comment-reads",
+      "group": "開發工具",
+      "source": "backend/src/routes/maintenanceRoutes.js",
+      "line": 187,
+      "access": "JWT；NODE_ENV 非 production 才掛載",
+      "requestFieldsObserved": {},
+      "jsonKeysObserved": [
+        "tableExists",
+        "recordCount",
+        "status",
+        "message",
+        "error"
+      ],
+      "literalHttpStatuses": [
+        500
+      ]
+    }
+  ],
+  "validatedRegistration": {
+    "localTestMode": {
+      "registrations": 138,
+      "uniqueMethodAndPath": 134
+    },
+    "localProductionMode": {
+      "registrations": 134,
+      "uniqueMethodAndPath": 130
+    },
+    "comparison": "Exact multiset match against local Express in both modes."
+  }
+}
