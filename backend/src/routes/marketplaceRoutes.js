@@ -12,7 +12,7 @@ const {publicStoreSelection,createConnectionRegistry}=require('../services/shopi
 const {classifyMarketplaceReimports}=require('../services/marketplaceReimports');
 const {deferredEvents}=require('../utils/transactionEvents');
 const {notifyMarketplaceBatch}=require('../services/marketplaceBatchNotifications');
-const {confirmBarcodeReview,verifySavedBarcodeReviews,reviewMatchesCandidate,lockSavedHistoricalBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
+const {allowsHistoricalBarcodeReview,confirmBarcodeReview,verifySavedBarcodeReviews,reviewMatchesCandidate,lockSavedHistoricalBarcodeReviews}=require('../services/marketplaceBarcodeReviews');
 const {assertUploadScope}=require('../services/marketplaceUploadScopes');
 const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
@@ -93,15 +93,17 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
   if(!conversion.verification?.currentFingerprint||req.body.verificationFingerprint!==conversion.verification.currentFingerprint)throw Object.assign(new Error('商城訂單已更新，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
   const candidate=conversion.barcodeReviewCandidates?.find(c=>c.fingerprint===requested.fingerprint);
   if(!candidate)throw Object.assign(new Error('商品資料已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
+  // ERP managers keep their verified grant while using the dispatch station.
+  const verifiedErpSession=Boolean(req.erpSession);
   if(candidate.requiresHistoricalLineAttestation===true){
-   if(!['admin','superadmin'].includes(req.user.role))throw Object.assign(new Error('缺少商城規格的明細須由管理員核對'),{status:403,code:'BARCODE_REVIEW_FORBIDDEN'});
+   if(!allowsHistoricalBarcodeReview(req.user,verifiedErpSession))throw Object.assign(new Error('缺少商城規格的明細須由管理員核對'),{status:403,code:'BARCODE_REVIEW_FORBIDDEN'});
    if(requested.historicalLineAttested!==true)throw Object.assign(new Error('請確認原活動品項、規格及實物包裝條碼'),{status:400,code:'BARCODE_CONFIRMATION_REQUIRED'});
   }
   // Only preparation may provide contained, exact sales-snapshot proofs. The
   // caller selects one complete-upload fingerprint, never a scope/variant list.
   const candidates=candidate.confirmationCandidates||[candidate];
   const confirm=async(db,current)=>{
-   const record=await confirmBarcodeReview(db,current,req.user,{historicalLineAttested:requested.historicalLineAttested===true});
+   const record=await confirmBarcodeReview(db,current,req.user,{historicalLineAttested:requested.historicalLineAttested===true,verifiedErpSession});
    if(!reviewMatchesCandidate(current,record))throw Object.assign(new Error('商品核對紀錄已變更，請重新核對'),{status:409,code:'BARCODE_REVIEW_CHANGED'});
    return record;
   };

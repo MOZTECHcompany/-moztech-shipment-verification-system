@@ -39,10 +39,10 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled, readyScope = null, readyPreview = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', erpSessionUser = {}, denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled, readyScope = null, readyPreview = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
-    const user = { id: 7, role };
+    const user = { ...erpSessionUser, id: 7, role };
     const storage = new Map([['wms_token', JSON.stringify('synthetic-token')], ['wms_user', JSON.stringify(user)]]);
     let cursor = 0, dirty = false, tree, mounted = true, lateUpdates = 0, latestPrepared;
     let query = new URLSearchParams(params);
@@ -417,7 +417,7 @@ test('stopping a ready preview keeps the original and cannot apply a late scoped
     assert.deepEqual(previewCalls(view).at(-1).body.rows, previewCalls(view)[0].body.rows);
 });
 
-test('historical Shopify lines require an admin, matching package barcode and explicit original-line attestation', async () => {
+function historicalReviewOptions() {
     const historicalAffectedOrders = [{...shopifyBarcodeConflict.relatedOrders[0],productName:'原促銷品',barcode:'',variantId:''}];
     const conflicts = body => {
         const physicalBarcode = body.settings.skuMappings?.['4711299274732']?.physicalBarcode || '';
@@ -426,12 +426,11 @@ test('historical Shopify lines require an admin, matching package barcode and ex
             requiresHistoricalLineAttestation:true,historicalAffectedOrders,
             canConfirm:physicalBarcode==='4711299274732',fingerprint:`historical-${physicalBarcode}`}];
     };
-    const options = {profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:conflicts};
-    const dispatcher = await converter({...options,role:'dispatcher'}); await dispatcher.select(file(shopifyBarcodeRows));
-    assert.match(dispatcher.text(dispatcher.render()), /請由管理員核對原訂單及包裝條碼/);
-    assert.equal(physicalScanner(dispatcher), undefined);
-    assert.equal(dispatcher.button('保存商品對照'), undefined);
-    const view = await converter(options); await view.select(file(shopifyBarcodeRows));
+    return {profiles:[{...storeProfile,platform:'Shopify'}],barcodeConflicts:conflicts};
+}
+
+test('historical Shopify lines require an admin, matching package barcode and explicit original-line attestation', async () => {
+    const view = await converter(historicalReviewOptions()); await view.select(file(shopifyBarcodeRows));
     const evidence = view.all(node => node.type === 'details').find(node => /原促銷明細/.test(view.text(node.props.children[0])));
     assert.equal(evidence.props.open, true);
     assert.match(view.text(evidence), /#REVIEW-1.*原促銷品/);
@@ -448,6 +447,32 @@ test('historical Shopify lines require an admin, matching package barcode and ex
     assert.deepEqual(JSON.parse(JSON.stringify(saved.body.confirmation)),{fingerprint:'historical-4711299274732',confirmed:true,historicalLineAttested:true});
     assert.equal(saved.body.settings.skuMappings['4711299274732'].physicalBarcode,'4711299274732');
     assert.equal(saveCalls(view).length, 0);
+});
+
+test('an ERP administrator can review historical Shopify barcodes in the dispatcher station', async () => {
+    const dispose = nativeRuntime.installNativeRuntime({ portalTarget: { appendChild() {} } });
+    try {
+        const options = historicalReviewOptions();
+        const view = await converter({...options,role:'dispatcher',erpSessionUser:{erpSubject:'erp-admin',permissions:['wms_admin']}});
+        await view.select(file(shopifyBarcodeRows));
+        assert.equal(physicalScanner(view).props.disabled, false);
+        await view.change('實物條碼','4711299274732');
+        assert.equal(view.button('保存商品對照').props.disabled, true);
+        await view.change('我已核對上列每筆原促銷商品',true);
+        assert.equal(view.button('保存商品對照').props.disabled, false);
+        await view.button('保存商品對照').props.onClick();
+        const saved = view.requests.find(request => request.url.endsWith('/barcode-confirmations'));
+        assert.equal(saved.body.confirmation.historicalLineAttested, true);
+        assert.equal(saveCalls(view).length, 0);
+
+        for (const erpSessionUser of [{erpSubject:'erp-dispatcher',permissions:['wms_orders:create']}, {permissions:['wms_admin']}, {erpSubject:'erp-dispatcher',permissions:'wms_admin'}]) {
+            const dispatcher = await converter({...options,role:'dispatcher',erpSessionUser});
+            await dispatcher.select(file(shopifyBarcodeRows));
+            assert.match(dispatcher.text(dispatcher.render()), /請由管理員核對原訂單及包裝條碼/);
+            assert.equal(physicalScanner(dispatcher), undefined);
+            assert.equal(dispatcher.button('保存商品對照'), undefined);
+        }
+    } finally { dispose(); }
 });
 
 test('valid multiple Shopify variants with a blank ERP barcode allow explicit review and show the exact related orders', async () => {

@@ -1,6 +1,7 @@
 const express=require('express'),request=require('supertest');
 const {createMarketplaceRouter}=require('../routes/marketplaceRoutes');
-const appFor=(prepareMarketplace,user={id:1,role:'dispatcher'})=>{const pool={query:jest.fn(),connect:jest.fn()};const app=express();app.use(express.json());app.use((req,res,next)=>{req.user=user;next();});app.use('/api/marketplace-intakes',createMarketplaceRouter({pool,prepareMarketplace}));return {app,pool};};
+const {barcodeReviewCandidate,historicalProof}=require('../services/marketplaceBarcodeReviews');
+const appFor=(prepareMarketplace,user={id:1,role:'dispatcher'},erpSession)=>{const pool={query:jest.fn(),connect:jest.fn()};const app=express();app.use(express.json());app.use((req,res,next)=>{req.user=user;if(erpSession)req.erpSession=erpSession;next();});app.use('/api/marketplace-intakes',createMarketplaceRouter({pool,prepareMarketplace}));return {app,pool};};
 test('store selection response whitelists safe choices without copying private fields',async()=>{
  const error=Object.assign(new Error('請選擇店鋪'),{status:409,code:'MARKETPLACE_STORE_SELECTION_REQUIRED',storeSelection:{reason:'ambiguous',token:'SECRET',choices:[{id:2,store:'匿名店',shop:'second.myshopify.com',connectionReady:true,token:'SECRET',tokenEnv:'PRIVATE'}]}});
  const h=appFor(async()=>{throw error;});const result=await request(h.app).post('/api/marketplace-intakes/preview').send({rows:[]});
@@ -39,6 +40,50 @@ test.each([
  expect(response.body.code).toBe(code);
  expect(pool.query).not.toHaveBeenCalled();
  expect(pool.connect).not.toHaveBeenCalled();
+});
+
+test('historical barcode review recognizes the verified ERP manager at the marketplace dispatcher station',async()=>{
+ const user={id:7,role:'dispatcher',erpSubject:'erp-manager',permissions:['wms_admin']};
+ const barcode='4711299274572';
+ const candidate={...barcodeReviewCandidate({
+  profileId:12,platform:'Shopify',shop:'example.myshopify.com',sourceSku:barcode,sourceName:'活動極簡黑',
+  product:{erp_sku:barcode,barcode,product_name:'極簡黑',active:true},
+  barcodeProof:historicalProof,physicalBarcode:barcode,
+  historicalLine:{orderNumber:'#101',orderId:'101',sourceLineId:'gid://shopify/LineItem/8001',quantity:1},
+ }),requiresHistoricalLineAttestation:true};
+ expect(candidate.canConfirm).toBe(true);
+ const prepare=jest.fn(async()=>({
+  profileId:12,verification:{currentFingerprint:'current'},barcodeReviewCandidates:[candidate],
+ }));
+ const body={
+  verifiedErpSession:true,permissions:['wms_admin'],verificationFingerprint:'current',
+  confirmation:{fingerprint:candidate.fingerprint,confirmed:true,historicalLineAttested:true},
+ };
+ for(const [actor,session] of [[user,undefined],[{...user,permissions:['wms_orders:create']},'verified'],[{...user,erpSubject:''},'verified']]){
+  const {app,pool}=appFor(prepare,actor,session);
+  const response=await request(app).post('/api/marketplace-intakes/barcode-confirmations').send(body);
+  expect(response.status).toBe(403);
+  expect(response.body.code).toBe('BARCODE_REVIEW_FORBIDDEN');
+  expect(pool.query).not.toHaveBeenCalled();
+  expect(pool.connect).not.toHaveBeenCalled();
+ }
+ const {app,pool}=appFor(prepare,user,'verified');
+ const missing=await request(app).post('/api/marketplace-intakes/barcode-confirmations').send({
+  ...body,confirmation:{...body.confirmation,historicalLineAttested:false},
+ });
+ expect(missing.status).toBe(400);
+ expect(pool.query).not.toHaveBeenCalled();
+ pool.query.mockImplementation(async(_sql,[store_profile_id,fingerprint,evidence,confirmed_by])=>({rows:[{
+  id:37,store_profile_id,fingerprint,evidence:JSON.parse(evidence),confirmed_by,confirmed_at:'2026-11-16T00:00:00Z',
+ }]}));
+ const response=await request(app).post('/api/marketplace-intakes/barcode-confirmations').send(body);
+ expect(response.status).toBe(201);
+ expect(response.body).toMatchObject({confirmed:true,id:37});
+ expect(pool.query).toHaveBeenCalledTimes(1);
+ const [sql,bindings]=pool.query.mock.calls[0];
+ expect(sql).toContain('INSERT INTO marketplace_product_mapping_reviews');
+ expect(bindings[3]).toBe(user.id);
+ expect(JSON.parse(bindings[2]).historicalLine).toEqual(candidate.historicalLine);
 });
 
 function mixedUpload() {

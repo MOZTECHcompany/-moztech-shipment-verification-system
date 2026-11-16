@@ -122,11 +122,17 @@ function currentReviewTargets(evidence,products){
  return current;
 }
 
-async function confirmBarcodeReview(pool,candidate,user,{historicalLineAttested=false}={}){
+function allowsHistoricalBarcodeReview(user,verifiedErpSession=false){
+ return ['admin','superadmin'].includes(user?.role)||
+  (verifiedErpSession===true&&user?.role==='dispatcher'&&Boolean(user.erpSubject)&&
+   Array.isArray(user.permissions)&&user.permissions.includes('wms_admin'));
+}
+
+async function confirmBarcodeReview(pool,candidate,user,{historicalLineAttested=false,verifiedErpSession=false}={}){
  const actor=actorId(user),evidence=reviewEvidence(candidate||{});
  if(candidate?.canConfirm!==true||!validEvidence(evidence)||!validFingerprint(candidate.fingerprint)||fingerprint(evidence)!==candidate.fingerprint)throw fail('請先核對目前店鋪、商品版本及 ECOUNT 條碼');
  if(hasHistoricalProof(evidence)){
-  if(!['admin','superadmin'].includes(user.role))throw fail('僅管理員可核對 Shopify 歷史商品明細','BARCODE_REVIEW_FORBIDDEN',403);
+  if(!allowsHistoricalBarcodeReview(user,verifiedErpSession))throw fail('僅管理員可核對 Shopify 歷史商品明細','BARCODE_REVIEW_FORBIDDEN',403);
   if(historicalLineAttested!==true)throw fail('請確認歷史商品明細與實物身分','BARCODE_HISTORICAL_ATTESTATION_REQUIRED');
  }
  if(hasInternalProof(evidence)){
@@ -294,4 +300,4 @@ async function verifySavedBarcodeReviews(pool,snapshot,reader=readReference,{ret
   return context;
  }
 }
-module.exports={historicalProof,requiresStrictBarcodeReview,lockSavedHistoricalBarcodeReviews,historicalShopifyLineEvidence,shopifyVariantId,barcodeReviewCandidate,reviewEvidence,reviewMatchesCandidate,readBarcodeReviews,readPhysicalBarcodeReviews,readInternalScanReviews,confirmBarcodeReview,revokeBarcodeReview,verifySavedBarcodeReviews,verifiedReviewTarget,validatedCatalogContext};
+module.exports={historicalProof,requiresStrictBarcodeReview,lockSavedHistoricalBarcodeReviews,historicalShopifyLineEvidence,shopifyVariantId,barcodeReviewCandidate,reviewEvidence,reviewMatchesCandidate,readBarcodeReviews,readPhysicalBarcodeReviews,readInternalScanReviews,allowsHistoricalBarcodeReview,confirmBarcodeReview,revokeBarcodeReview,verifySavedBarcodeReviews,verifiedReviewTarget,validatedCatalogContext};

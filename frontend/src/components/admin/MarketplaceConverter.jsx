@@ -211,7 +211,11 @@ function ConverterPage({ user }) {
   const locked = busy || access !== 'ready' || draftOverwriteOpen || !!storeDraft;
   const readyPlan = readyOrderScope(prepared?.readyScope);
   const readySelectionChanged = !!readySelection && !preparedReadyScopeMatches(prepared, readySelection.plan, readySelection.profileId);
-  const canAttestHistoricalLine = ['admin', 'superadmin'].includes(user.role);
+  // The ERP marketplace entry supplies a dispatcher station role even to administrators.
+  const canAttestHistoricalLine = ['admin', 'superadmin'].includes(user.role) || (
+    user.role === 'dispatcher' && typeof user.erpSubject === 'string' && !!user.erpSubject &&
+    Array.isArray(user.permissions) && user.permissions.includes('wms_admin')
+  );
   const barcodeConflicts = prepared?.barcodeConflicts || [];
   const barcodeBlocked = barcodeConflicts.length > 0;
   const products = useMemo(() => [...new Map((prepared?.parsed?.items || []).map(item => [item.sku, item])).values()], [prepared]);
