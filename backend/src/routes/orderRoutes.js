@@ -16,7 +16,7 @@ const { normalizeSerialScanInput, pickExactSerial } = require('../utils/serialNu
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { PICKING_FREIGHT_CODE, projectPickingItems } = require('../services/pickingFreight');
 const { deferredEvents } = require('../utils/transactionEvents');
-const { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
+const { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues, requireLooseSource } = require('../services/cartonGuards');
 const { readSerialQrSelection, applySerialQrSelection } = require('../services/serialQrScan');
 
 const router = express.Router();
@@ -607,7 +607,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 
 // POST /api/orders/update_item
 router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
-    const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
+    const { orderId, scanValue, type, amount = 1, orderItemId, scanSource } = req.body;
     const { id: userId, role } = req.user;
     const isAdminLike = role === 'admin' || role === 'superadmin';
     const io = req.app.get('io');
@@ -638,6 +638,9 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
 
     if (!['pick', 'pack'].includes(type) || !Number.isSafeInteger(Number(amount)) || Number(amount) === 0) {
         return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '掃碼類型或數量無效' });
+    }
+    if (scanSource !== undefined && (scanSource !== 'loose' || type !== 'pick' || Number(amount) !== 1)) {
+        return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: '無箱號散件請逐件掃描揀貨' });
     }
     if (!isAdminLike && role !== (type === 'pick' ? 'picker' : 'packer')) {
         return res.status(403).json({ code: 'SCAN_NOT_APPLIED', message: '此角色不能執行該揀貨／裝箱操作' });
@@ -934,6 +937,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
             }
             const item = itemResult.rows[0];
             assertExpectedCartonScan(item.expected_carton_id);
+            if (type === 'pick') await requireLooseSource(client, item.id, amountNum, scanSource);
             cartonUnitContext = await guardUnitScan(client, orderId, { orderItemId: item.id, type, amount: amountNum });
             changedItemId = item.id;
             if (type === 'pick') { 
@@ -949,7 +953,7 @@ router.post('/orders/update_item', warehouseOnly, async (req, res, next) => {
                 userId,
                 orderId,
                 operationType: type,
-                details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id },
+                details: { barcode: scanRaw, amount: amountNum, orderItemId: item.id, ...(scanSource ? { scanSource } : {}) },
                 io: events,
                 db: client,
                 userRole: req.user?.role,

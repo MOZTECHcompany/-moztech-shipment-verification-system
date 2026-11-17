@@ -24,6 +24,7 @@ import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
 import { cartonSerialScanTarget, isCartonScan } from '@/utils/cartonScan';
 import { CartonWorkControls } from './CartonWorkControls';
+import { CartonDialog } from './CartonDialog';
 import SerialList from './SerialList';
 import { buildWorkItems, filterWorkItems, workStage, managerTakeover, canOperateWorkStage as canOperateAssignedStage } from '@/utils/orderWorkProgress';
 import { sourceOrderKey, sourceOrderLabel, groupSourceOrders, findSourceOrders, filterSourceWorkItems, resolveSourceScanTarget, orderChangeItemIdentity } from '@/utils/sourceOrders';
@@ -294,6 +295,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const [barcodeInput, setBarcodeInput] = useState('');
     const [scanError, setScanError] = useState(null);
     const [rejectedScan, setRejectedScan] = useState(null);
+    const [looseScan, setLooseScan] = useState(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const scanSubmissionRef = useRef(null);
     const takeoverPendingRef = useRef(false);
@@ -1427,7 +1429,7 @@ function AuthenticatedOrderWorkView({ user }) {
         }
     };
 
-    const updateItemState = (scanValue, type, amount = 1, orderItemId) => {
+    const updateItemState = (scanValue, type, amount = 1, orderItemId, scanSource) => {
         if (!canOperateWorkStage(user, currentOrderData.order, type)) {
             setScanError('請先認領目前階段；已由他人認領時，請管理員轉交給你。');
             setRejectedScan({ value: scanValue, retryable: false });
@@ -1438,7 +1440,8 @@ function AuthenticatedOrderWorkView({ user }) {
             try {
                 const command = makeScanCommand(currentOrderData, {
                     orderId: currentOrderData.order.id, scanValue, type, amount,
-                    ...(orderItemId ? { orderItemId } : {})
+                    ...(orderItemId ? { orderItemId } : {}),
+                    ...(scanSource ? { scanSource } : {})
                 });
                 const response = await sendScanCommand(apiClient, command);
                 const updatedSnapshot = applyScanResponse(currentOrderData, response.data);
@@ -1491,6 +1494,11 @@ function AuthenticatedOrderWorkView({ user }) {
                 if (!mountedRef.current) return;
                 orderDataVersionRef.current++;
                 const statusCode = err.response?.status;
+                if (amount === 1 && err.response?.data?.reason === 'CARTON_SOURCE_REQUIRED') {
+                    setLooseScan({ value: scanValue, orderItemId, orderId: currentOrderData.order.id,
+                        stateToken: currentOrderData.stateToken, sourceKey: selectedSourceKey });
+                    return;
+                }
 
                 const serverMsg = err.response?.data?.message;
                 const isUnknownResult = !err.response
@@ -1730,6 +1738,17 @@ function AuthenticatedOrderWorkView({ user }) {
     
     // 相機掃描處理
     const handleCameraScan = (code) => handleScan(code);
+
+    const chooseLoose = () => {
+        if (!looseScan) return;
+        setLooseScan(null);
+        if (looseScan.stateToken !== currentOrderData.stateToken || looseScan.sourceKey !== selectedSourceKey) {
+            setScanError('理貨單已更新，請重新掃描');
+        } else {
+            updateItemState(looseScan.value, 'pick', 1, looseScan.orderItemId, 'loose');
+        }
+        requestAnimationFrame(() => barcodeInputRef.current?.focus());
+    };
 
     const handleCartonResponse = (snapshot, scan) => {
         if (!mountedRef.current || String(snapshot.order.id) !== String(activeOrderIdRef.current)) return;
@@ -2034,6 +2053,18 @@ function AuthenticatedOrderWorkView({ user }) {
                             submissionRef={scanSubmissionRef} onResponse={handleCartonResponse} onError={handleCartonError}
                             onFocusScanner={() => barcodeInputRef.current?.focus()}
                             onBusy={(busy, value) => { setIsUpdating(busy); if (busy) { orderDataVersionRef.current++; setPendingScan(value); } }} />}
+                        <CartonDialog open={!!looseScan && looseScan.orderId === currentOrderData.order?.id && orderStatus === 'picking'}
+                            title="選擇揀貨來源" onClose={() => {
+                                setLooseScan(null); requestAnimationFrame(() => barcodeInputRef.current?.focus());
+                            }}
+                            footer={<>
+                                <Button variant="secondary" disabled={isUpdating} onClick={() => {
+                                    setLooseScan(null); cartonScannerRef.current?.openScanner();
+                                }}>掃箱號</Button>
+                                <Button disabled={isUpdating} onClick={chooseLoose}>確認無箱號散件</Button>
+                            </>}>
+                            <p className="break-all text-sm">此品項有登記箱號 · {looseScan?.value}</p>
+                        </CartonDialog>
 
                         {/* 例外處理（可追蹤狀態：open/ack/resolved） */}
                         <Card className="border-0 shadow-sm">

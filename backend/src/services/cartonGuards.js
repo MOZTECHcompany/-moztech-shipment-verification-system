@@ -54,6 +54,19 @@ function assertExpectedCartonScan(expectedCartonId) {
     if (expectedCartonId) throw Object.assign(new Error(`理貨明細指定箱號 ${expectedCartonId}，請掃描對應實體箱或拆箱揀貨`),
         { status: 409, code: 'CARTON_EXPECTED_REQUIRED' });
 }
+async function requireLooseSource(db, orderItemId, amount, scanSource) {
+    if (amount <= 0 || scanSource === 'loose') return;
+    const registered = await db.query(`SELECT 1 FROM order_items oi JOIN wms_carton_lines l
+        ON (l.item_code=oi.product_code OR
+            (oi.code_type='legacy' AND oi.product_code=oi.barcode AND l.international_barcode=oi.barcode))
+        JOIN wms_cartons c ON c.carton_id=l.carton_id
+        WHERE oi.id=$1 AND COALESCE((to_jsonb(oi)->>'quantity_sign')::int,1)=1
+            AND c.status='sealed' AND l.actual_sns='[]'::jsonb LIMIT 1`, [orderItemId]);
+    if (registered.rows.length) {
+        throw Object.assign(new Error('此品項有登記箱號，請掃來源箱號或確認為無箱號散件'),
+            { status: 409, scanReason: 'CARTON_SOURCE_REQUIRED' });
+    }
+}
 async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumber, quantitySign, type, amount }) {
     let unit;
     if (instanceId) {
@@ -86,7 +99,7 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     const item = (await db.query('SELECT picked_quantity,packed_quantity FROM order_items WHERE id=$1', [orderItemId])).rows[0];
     if (!item) throw blocked();
     const boxedPicked = lines.reduce((n, line) => n + line.quantity, 0);
-    const boxedPacked = lines.filter(line => line.allocationStatus === 'packed').reduce((n, line) => n + line.quantity, 0);
+    const boxedPacked = lines.reduce((n, line) => n + (line.allocationStatus === 'packed' ? line.quantity : (line.packedQuantity ?? 0)), 0);
     // Undo only loose units. A picked carton reserves its units until carton
     // pack/release, while a packed carton must retain both picked and packed.
     if (amount < 0) {
@@ -101,4 +114,4 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     return context;
 }
 module.exports = { activeAllocations, assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, lockCartonSerials, guardSerialImport,
-    assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing };
+    assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing, requireLooseSource };

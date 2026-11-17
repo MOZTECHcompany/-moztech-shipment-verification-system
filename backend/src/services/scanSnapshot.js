@@ -25,7 +25,8 @@ function parseCommand(body, userId) {
         throw Object.assign(new Error('掃碼識別無效，請重新載入訂單'),{status:400});
     }
     return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState,
-        ...(body.selectedSerials ? [[...body.selectedSerials].sort()] : [])])};
+        ...(body.selectedSerials ? [[...body.selectedSerials].sort()] : []),
+        ...(body.scanSource ? [body.scanSource] : [])])};
 }
 function createWorkSnapshot(pool) {
     return async (req,res,next) => {

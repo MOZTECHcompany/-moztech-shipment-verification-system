@@ -112,7 +112,7 @@ async function createCartonFixture({ postgres = false } = {}) {
                 delete require.cache[require.resolve('../src/routes/commentRoutes')];
                 app.use('/api', require('../src/routes/commentRoutes'));
             }
-            app.use((error, req, res, next) => res.status(error.status ?? 500).json({ code: error.code, message: error.message }));
+            app.use((error, req, res, next) => res.status(error.status ?? 500).json({ code: error.code, message: error.message, reason: error.scanReason }));
         } finally { if (prior) require.cache[databasePath] = prior; else delete require.cache[databasePath]; }
     }
     return { db, pool, app, service, seedOrder, supportsSigned, attachLegacyRoutes, failNext: predicate => { failQuery = predicate; },
