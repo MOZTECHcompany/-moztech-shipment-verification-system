@@ -25,6 +25,8 @@ async function suite(t, postgres) {
     const create = async body => ok(await api(1, 'post', '/api/cartons', body), 201);
     const preview = async (id, input, user = 2) => ok(await api(user, 'post', `/api/orders/${id}/carton-preview`, input));
     const scanBody = (data, input) => ({ ...input, commandId: randomUUID(), expectedState: data.expectedState, expectedCartonRevision: data.expectedCartonRevision, expectedActorId: data.expectedActorId });
+    const cartonUnit = (cartonId, type = 'pick', scanValue = '4710000000010', orderItemId) =>
+        ({ cartonId, type, mode: 'unit', scanValue, ...(orderItemId === undefined ? {} : { orderItemId }) });
     const scan = async (id, input, user = 2) => {
         if (input.type === 'pack') {
             const order = (await f.db.query('SELECT status FROM orders WHERE id=$1', [id])).rows[0];
@@ -55,8 +57,7 @@ async function suite(t, postgres) {
         assert.equal(replay.items[0].carton.history.length, 1);
         ok(await api(1, 'post', '/api/cartons/MANIFEST/seal', { expectedContentRevision: 1 }));
         const { order } = await f.seedOrder({ quantity: 3 });
-        const lineId = first.items[0].carton.lines[0].lineId;
-        await scan(order.id, { scanValue: 'MANIFEST', type: 'pick', mode: 'split', selections: [{ lineId, quantity: 3 }] });
+        for (let index = 0; index < 3; index++) await scan(order.id, cartonUnit('MANIFEST'));
         const again = ok(await api(1, 'post', '/api/cartons/import', manifest));
         assert.equal(again.items[0].carton.lines[0].remainingQuantity, 7);
         assert.equal(again.items[0].carton.status, 'sealed');
@@ -242,7 +243,7 @@ async function suite(t, postgres) {
             orderId, responseMode: 'delta-v1', commandId: randomUUID(), expectedState: state.stateToken, ...body
         });
 
-        const { order, item } = await f.seedOrder({ quantity: 1 });
+        const { order, item } = await f.seedOrder({ quantity: 1, itemCode: 'FREIGHT-PHYSICAL', barcode: '4710000000040' });
         const freightId = await addFreight(order);
         const picking = await snapshot(2, order.id);
         assert.deepEqual(picking.items.map(row => row.id), [item.id]);
@@ -436,28 +437,29 @@ async function suite(t, postgres) {
             assert.equal((await scan(order.id, { scanValue: sns[1 - winner], type: 'pack', mode: 'serial' }, 3)).packComplete, true);
         }
     });
-    await t.test('partial mixed box confirms its stored no-SN quantities only after individual serial packing', async () => {
+    await t.test('partial mixed box needs both individual SN and quantity verifications before completion', async () => {
         const sns = ['Mixed-SN-01', 'Mixed-SN-02'];
         const plain = { itemCode: 'PLAIN', ean: '4710000000020', quantity: 3, actualSN: [] };
         const carton = await create({ ...box('CTN-MIXED-V6', 2, sns), lines: [...box('CTN-MIXED-V6', 2, sns).lines, plain] });
         const { order } = await f.seedOrder({ quantity: 1, actualSN: sns.slice(0, 1) });
         const plainOrderItem = (await f.db.query("INSERT INTO order_items(order_id,product_code,barcode,quantity) VALUES($1,'PLAIN',$2,2) RETURNING id",
             [order.id, plain.ean])).rows[0];
-        const split = { scanValue: carton.cartonId, type: 'pick', mode: 'split', selections: [
-            { lineId: carton.lines[0].lineId, quantity: 1, actualSN: sns.slice(0, 1) },
-            { lineId: carton.lines[1].lineId, quantity: 2 },
-        ] };
-        await scan(order.id, split);
+        await scan(order.id, { scanValue: sns[0], mode: 'serial', type: 'pick' });
+        for (let index = 0; index < 2; index++) await scan(order.id, cartonUnit(carton.cartonId, 'pick', plain.ean, plainOrderItem.id));
         const pack = { scanValue: carton.cartonId, type: 'pack' };
         ok(await api(3, 'post', `/api/orders/${order.id}/claim`, { stage: 'pack' }));
         assert.equal((await api(3, 'post', `/api/orders/${order.id}/carton-preview`, pack)).body.code, 'CARTON_PACK_SERIAL_REQUIRED');
-        const first = await scan(order.id, { scanValue: sns[0], mode: 'serial', type: 'pack' }, 3);
+        const plainPack = cartonUnit(carton.cartonId, 'pack', plain.ean, plainOrderItem.id);
+        const first = await scan(order.id, plainPack, 3);
         assert.equal(first.packComplete, false);
-        assert.equal(first.items.find(item => item.id === plainOrderItem.id).packed_quantity, 0);
-        const packed = await scan(order.id, pack, 3);
-        assert.equal(packed.packMode, 'nonserial');
+        assert.equal(first.items.find(item => item.id === plainOrderItem.id).packed_quantity, 1);
+        const second = await scan(order.id, { scanValue: sns[0], mode: 'serial', type: 'pack' }, 3);
+        assert.equal(second.packComplete, false);
+        assert.equal((await api(3, 'post', `/api/orders/${order.id}/carton-preview`, pack)).body.code, 'CARTON_PACK_UNIT_REQUIRED');
+        const packed = await scan(order.id, plainPack, 3);
+        assert.equal(packed.packMode, 'unit');
         assert.equal(packed.packComplete, true);
-        assert.deepEqual(packed.appliedSelection.map(line => [line.orderItemId, line.quantity]), [[plainOrderItem.id, 2]]);
+        assert.deepEqual(packed.appliedSelection.map(line => [line.orderItemId, line.quantity]), [[plainOrderItem.id, 1]]);
         assert.equal(packed.order.status, 'completed');
         assert.deepEqual(packed.carton.lines.map(line => line.remainingQuantity), [1, 1]);
     });
@@ -498,23 +500,96 @@ async function suite(t, postgres) {
         assert.equal((await api(1, 'get', '/api/cartons/DUP-SN')).status, 404);
         assert.equal((await api(1, 'post', '/api/cartons', box('BAD-SN-QTY', 2, ['Only-one']))).status, 400);
     });
-    await t.test('overfill requires explicit split, leaves actual remainder and same-carton pack uses selected quantity', async () => {
+    await t.test('picking two of ten leaves eight, and both the split and all remaining pieces require individual packing', async () => {
         const carton = await create(box('SPLIT'));
-        const first = await f.seedOrder({ quantity: 3 }), second = await f.seedOrder({ quantity: 7 });
-        assert.equal((await api(2, 'post', `/api/orders/${first.order.id}/carton-preview`, { scanValue: 'SPLIT', type: 'pick' })).body.code, 'CARTON_ORDER_QUANTITY_EXCEEDED');
-        const input = { scanValue: 'SPLIT', type: 'pick', mode: 'split', selections: [{ lineId: carton.lines[0].lineId, quantity: 3 }] };
-        const a = await scan(first.order.id, input);
-        assert.equal(a.carton.lines[0].remainingQuantity, 7);
-        await scan(second.order.id, { scanValue: 'SPLIT', type: 'pick' });
-        const packed = await scan(first.order.id, { scanValue: 'SPLIT', type: 'pack' }, 3);
-        assert.equal(packed.items[0].packed_quantity, 3); assert.equal(packed.carton.lines[0].remainingQuantity, 0);
+        const first = await f.seedOrder({ quantity: 2 }), second = await f.seedOrder({ quantity: 8 });
+        const firstPath = `/api/orders/${first.order.id}`;
+        const whole = { scanValue: carton.cartonId, type: 'pick' };
+        assert.equal((await api(2, 'post', firstPath + '/carton-preview', whole)).body.code, 'CARTON_ORDER_QUANTITY_EXCEEDED');
+        const bulk = { ...whole, mode: 'split', selections: [{ lineId: carton.lines[0].lineId, quantity: 2 }] };
+        assert.equal((await api(2, 'post', firstPath + '/carton-preview', bulk)).body.code, 'CARTON_SPLIT_UNIT_REQUIRED');
+        const input = cartonUnit(carton.cartonId);
+        assert.equal((await api(2, 'post', firstPath + '/carton-preview', { ...input, scanValue: 'wrong' })).body.code, 'CARTON_UNIT_NOT_IN_CARTON');
+        await scan(first.order.id, input);
+        const picked = await scan(first.order.id, input);
+        assert.equal(picked.carton.lines[0].remainingQuantity, 8);
+        ok(await api(3, 'post', firstPath + '/claim', { stage: 'pack' }));
+        assert.equal((await api(3, 'post', firstPath + '/carton-preview', { ...whole, type: 'pack' })).body.code, 'CARTON_PACK_UNIT_REQUIRED');
+        const pack = cartonUnit(carton.cartonId, 'pack');
+        const command = scanBody(await preview(first.order.id, pack, 3), pack);
+        const competing = { ...command, commandId: randomUUID() };
+        const results = await Promise.all([command, competing].map(body => api(3, 'post', firstPath + '/carton-scan', body)));
+        const winner = results.findIndex(result => result.status === 200);
+        assert.notEqual(winner, -1);
+        assert.equal(results[1 - winner].body.code, 'STATE_CHANGED');
+        const packedOnce = ok(results[winner]);
+        assert.deepEqual(ok(await api(3, 'post', firstPath + '/carton-scan', [command, competing][winner])), packedOnce);
+        assert.equal(packedOnce.items[0].packed_quantity, 1);
+        assert.equal(packedOnce.allocation.lines[0].packedQuantity, 1);
+        assert.equal(packedOnce.packComplete, false);
+        assert.equal(packedOnce.carton.lines[0].remainingQuantity, 8);
+        const release = await api(1, 'post', `/api/cartons/allocations/${picked.allocation.allocationId}/release`, {
+            reason: 'Partial pack', commandId: randomUUID(), expectedState: packedOnce.stateToken,
+            expectedCartonRevision: packedOnce.carton.stateRevision
+        });
+        assert.equal(release.body.code, 'CARTON_RELEASE_BLOCKED');
+        const packed = await scan(first.order.id, pack, 3);
+        assert.equal(packed.order.status, 'completed');
+        assert.equal(packed.items[0].packed_quantity, 2);
+        assert.equal(packed.carton.lines[0].remainingQuantity, 8);
+
+        const secondPath = `/api/orders/${second.order.id}`;
+        assert.equal((await api(2, 'post', secondPath + '/carton-preview', whole)).body.code, 'CARTON_SPLIT_UNIT_REQUIRED');
+        for (let index = 0; index < 8; index++) await scan(second.order.id, input);
+        ok(await api(3, 'post', secondPath + '/claim', { stage: 'pack' }));
+        assert.equal((await api(3, 'post', secondPath + '/carton-preview', { ...whole, type: 'pack' })).body.code, 'CARTON_PACK_UNIT_REQUIRED');
+        let packedRemainder;
+        for (let index = 0; index < 8; index++) packedRemainder = await scan(second.order.id, pack, 3);
+        assert.equal(packedRemainder.order.status, 'completed');
+        assert.equal(packedRemainder.items[0].packed_quantity, 8);
+        assert.equal(packedRemainder.carton.lines[0].remainingQuantity, 0);
+    });
+    await t.test('legacy allocation without original-carton proof requires its exact internal label and starts at zero verified pieces', async () => {
+        const internalScanCode = 'ITM-LEGACY-UNIT';
+        const carton = await create(box('OLD-UNIT-ALLOCATION', 2, [], { itemCode: 'LEGACY-UNIT', ean: null, internalScanCode }));
+        const { order, item } = await f.seedOrder({ quantity: 2, itemCode: 'LEGACY-UNIT', barcode: internalScanCode });
+        const picked = await scan(order.id, { scanValue: carton.cartonId, type: 'pick' });
+        const oldLines = picked.allocation.lines.map(({ wholeCarton, ...line }) => line);
+        await f.db.query('UPDATE wms_carton_allocations SET lines=$2 WHERE id=$1',
+            [picked.allocation.allocationId, JSON.stringify(oldLines)]);
+        const path = `/api/orders/${order.id}`;
+        ok(await api(3, 'post', path + '/claim', { stage: 'pack' }));
+        assert.equal((await api(3, 'post', path + '/carton-preview', { scanValue: carton.cartonId, type: 'pack' })).body.code, 'CARTON_PACK_UNIT_REQUIRED');
+        assert.equal((await api(3, 'post', path + '/carton-preview', cartonUnit(carton.cartonId, 'pack', 'LEGACY-UNIT', item.id))).body.code,
+            'CARTON_UNIT_NOT_IN_CARTON');
+        const unit = cartonUnit(carton.cartonId, 'pack', internalScanCode, item.id);
+        assert.equal((await scan(order.id, unit, 3)).allocation.lines[0].packedQuantity, 1);
+        const packed = await scan(order.id, unit, 3);
+        assert.equal(packed.allocation.lines[0].packedQuantity, 2);
+        assert.equal(packed.carton.lines[0].remainingQuantity, 0);
+        assert.equal(packed.order.status, 'completed');
+    });
+    await t.test('an older carton without any scan code accepts only the explicit internal scan code on its exact order SKU', async () => {
+        const internalScanCode = 'ITM-MISSING-BOX-UNIT';
+        const carton = await create(box('MISSING-BOX-UNIT', 2, [], { itemCode: 'MISSING-UNIT', ean: null }));
+        const { order, item } = await f.seedOrder({ quantity: 1, itemCode: 'MISSING-UNIT', barcode: internalScanCode });
+        const unit = cartonUnit(carton.cartonId, 'pick', internalScanCode, item.id);
+        const path = `/api/orders/${order.id}`;
+        assert.equal((await api(2, 'post', path + '/carton-preview', unit)).body.code, 'CARTON_UNIT_NOT_IN_CARTON');
+        await f.db.query("UPDATE order_items SET internal_scan_code=$1,code_type='internal' WHERE id=$2", [internalScanCode, item.id]);
+        assert.equal((await api(2, 'post', path + '/carton-preview', { ...unit, scanValue: 'ITM-OTHER' })).body.code, 'CARTON_UNIT_NOT_IN_CARTON');
+        const picked = await scan(order.id, unit);
+        assert.equal(picked.allocation.lines[0].internalScanCode, internalScanCode);
+        assert.equal(picked.carton.lines[0].remainingQuantity, 1);
+        const packed = await scan(order.id, { ...unit, type: 'pack' }, 3);
+        assert.equal(packed.order.status, 'completed');
+        assert.equal(packed.carton.lines[0].remainingQuantity, 1);
     });
     await t.test('ECOUNT expected carton rejects the wrong box and ordinary scan before applying a split', async () => {
         const expected = await create(box('EXPECTED-N1')), other = await create(box('EXPECTED-N2'));
         const { order, item } = await f.seedOrder({ quantity: 2 });
         const path = `/api/orders/${order.id}`;
-        const split = carton => ({ scanValue: `CARTON:${carton.cartonId}`, type: 'pick', mode: 'split',
-            selections: [{ lineId: carton.lines[0].lineId, orderItemId: item.id, quantity: 2 }] });
+        const split = carton => cartonUnit(carton.cartonId, 'pick', item.barcode, item.id);
         const unbound = await preview(order.id, split(expected));
         await f.db.query('UPDATE order_items SET expected_carton_id=$1 WHERE id=$2', [expected.cartonId, item.id]);
         const correct = await preview(order.id, split(expected));
@@ -528,10 +603,12 @@ async function suite(t, postgres) {
             assert.equal(response.status, 409);
             assert.equal(response.body.code, 'CARTON_EXPECTED_MISMATCH');
         }
-        const ordinary = await api(2, 'post', '/api/orders/update_item',
-            { orderId: order.id, orderItemId: item.id, scanValue: item.barcode, type: 'pick', amount: 1 });
-        assert.equal(ordinary.status, 409);
-        assert.match(ordinary.body.message, /EXPECTED-N1/);
+        for (const source of [{}, { scanSource: 'loose' }]) {
+            const ordinary = await api(2, 'post', '/api/orders/update_item',
+                { orderId: order.id, orderItemId: item.id, scanValue: item.barcode, type: 'pick', amount: 1, ...source });
+            assert.equal(ordinary.status, 409);
+            assert.match(ordinary.body.message, /EXPECTED-N1/);
+        }
         const client = await f.pool.connect();
         try {
             await client.query('BEGIN');
@@ -544,10 +621,12 @@ async function suite(t, postgres) {
         }
         assert.equal((await f.db.query('SELECT picked_quantity FROM order_items WHERE id=$1', [item.id])).rows[0].picked_quantity, 0);
         assert.equal(ok(await api(2, 'get', '/api/cartons/EXPECTED-N2')).lines[0].remainingQuantity, 10);
-        const picked = ok(await api(2, 'post', `${path}/carton-scan`, scanBody(correct, split(expected))));
+        ok(await api(2, 'post', `${path}/carton-scan`, scanBody(correct, split(expected))));
+        const picked = await scan(order.id, split(expected));
         assert.equal(picked.items[0].picked_quantity, 2);
         assert.equal(picked.carton.lines[0].remainingQuantity, 8);
-        const packed = await scan(order.id, { scanValue: `CARTON:${expected.cartonId}`, type: 'pack' }, 3);
+        await scan(order.id, cartonUnit(expected.cartonId, 'pack', item.barcode, item.id), 3);
+        const packed = await scan(order.id, cartonUnit(expected.cartonId, 'pack', item.barcode, item.id), 3);
         assert.equal(packed.items[0].packed_quantity, 2);
         assert.equal(packed.carton.lines[0].remainingQuantity, 8);
     });
@@ -561,7 +640,7 @@ async function suite(t, postgres) {
         const picked = await scan(order.id, input);
         assert.deepEqual(picked.carton.lines[0].remainingSN, ['Split-SN-03']);
     });
-    await t.test('one SN carton spans two source rows using exact owners, and no-SN groups require explicit per-row quantities', async () => {
+    await t.test('an SN carton spans source rows using exact owners, and no-SN scans require the matching order row', async () => {
         const sns = Array.from({ length: 10 }, (_, index) => `Multi-SN-${index}`);
         await create(box('MULTI-SN', 10, sns));
         const { order, item } = await f.seedOrder({ quantity: 5, actualSN: sns.slice(0, 5) });
@@ -572,10 +651,14 @@ async function suite(t, postgres) {
         assert.equal((await scan(order.id, { scanValue: 'MULTI-SN', type: 'pack' }, 3)).order.status, 'completed');
         const carton = await create(box('MULTI-QTY', 5)), quantityOrder = await f.seedOrder({ quantity: 3 });
         const other = (await f.db.query('INSERT INTO order_items(order_id,product_code,barcode,quantity) VALUES($1,$2,$3,2) RETURNING id', [quantityOrder.order.id, quantityOrder.item.product_code, quantityOrder.item.barcode])).rows[0];
-        const result = await scan(quantityOrder.order.id, { scanValue: 'MULTI-QTY', type: 'pick', selections: [
-            { lineId: carton.lines[0].lineId, orderItemId: quantityOrder.item.id, quantity: 3 },
-            { lineId: carton.lines[0].lineId, orderItemId: other.id, quantity: 2 }
-        ] });
+        const quantityPath = `/api/orders/${quantityOrder.order.id}/carton-preview`;
+        assert.equal((await api(2, 'post', quantityPath, cartonUnit(carton.cartonId))).body.code, 'CARTON_ORDER_LINE_REQUIRED');
+        for (let index = 0; index < 3; index++) {
+            await scan(quantityOrder.order.id, cartonUnit(carton.cartonId, 'pick', quantityOrder.item.barcode, quantityOrder.item.id));
+        }
+        const secondRow = cartonUnit(carton.cartonId, 'pick', quantityOrder.item.barcode, other.id);
+        await scan(quantityOrder.order.id, secondRow);
+        const result = await scan(quantityOrder.order.id, secondRow);
         assert.equal(result.carton.lines[0].remainingQuantity, 0); assert.equal(result.order.status, 'picked');
     });
     await t.test('explicit from-carton binds all 10 real SNs onto an untouched quantity-only order and completes normally', async () => {
@@ -638,22 +721,22 @@ async function suite(t, postgres) {
     await t.test('request retries replay once, while only a new explicit split can add more quantity', async () => {
         const carton = await create(box('RETRY'));
         const { order } = await f.seedOrder();
-        const input = { scanValue: 'RETRY', type: 'pick', mode: 'split', selections: [{ lineId: carton.lines[0].lineId, quantity: 3 }] };
+        const input = cartonUnit(carton.cartonId);
         const body = scanBody(await preview(order.id, input), input);
         const results = await Promise.all([api(2, 'post', `/api/orders/${order.id}/carton-scan`, body), api(2, 'post', `/api/orders/${order.id}/carton-scan`, body)]);
         assert.deepEqual(ok(results[0]), ok(results[1]));
         const current = results[0].body;
-        assert.equal(current.items[0].picked_quantity, 3); assert.equal(current.carton.lines[0].remainingQuantity, 7);
+        assert.equal(current.items[0].picked_quantity, 1); assert.equal(current.carton.lines[0].remainingQuantity, 9);
         const newBody = { ...body, commandId: randomUUID(), expectedState: current.stateToken, expectedCartonRevision: current.carton.stateRevision };
-        const whole = { ...newBody, mode: 'whole', selections: undefined };
+        const whole = { ...newBody, mode: 'whole', scanValue: carton.cartonId };
         assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, whole)).body.code, 'CARTON_ALREADY_ALLOCATED');
         const added = ok(await api(2, 'post', `/api/orders/${order.id}/carton-scan`, newBody));
         assert.equal(added.allocation.allocationId, current.allocation.allocationId);
-        assert.equal(added.allocation.lines[0].quantity, 6);
-        assert.equal(added.appliedSelection[0].quantity, 3);
-        assert.equal(added.carton.lines[0].remainingQuantity, 4);
+        assert.equal(added.allocation.lines[0].quantity, 2);
+        assert.equal(added.appliedSelection[0].quantity, 1);
+        assert.equal(added.carton.lines[0].remainingQuantity, 8);
         assert.deepEqual(ok(await api(2, 'post', `/api/orders/${order.id}/carton-scan`, newBody)), added);
-        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, { ...body, mode: 'whole' })).body.code, 'CARTON_COMMAND_CONFLICT');
+        assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-scan`, { ...body, cartonId: 'OTHER' })).body.code, 'CARTON_COMMAND_CONFLICT');
     });
     await t.test('two operators on different orders competing for one box produce one pick and one version conflict', async () => {
         await create(box('RACE'));
@@ -711,7 +794,7 @@ async function suite(t, postgres) {
         await f.db.query('INSERT INTO order_items(order_id,product_code,barcode,quantity) VALUES($1,$2,$3,1)', [order.id, item.product_code, item.barcode]);
         const input = { scanValue: 'MULTI', type: 'pick' };
         assert.equal((await api(2, 'post', `/api/orders/${order.id}/carton-preview`, input)).body.code, 'CARTON_ORDER_LINE_REQUIRED');
-        await scan(order.id, { ...input, selections: [{ lineId: carton.lines[0].lineId, orderItemId: item.id }] });
+        await scan(order.id, cartonUnit(carton.cartonId, 'pick', item.barcode, item.id));
         if (f.supportsSigned) {
             await create(box('NEGATIVE', 1));
             const reversed = await f.seedOrder({ quantity: 1, sign: -1 });
@@ -730,8 +813,10 @@ async function suite(t, postgres) {
         assert.equal(released.carton.lines[0].remainingQuantity, 2); assert.equal(released.items[0].picked_quantity, 0);
         assert.equal(released.order.status, 'picking'); assert.equal(released.carton.allocations[0].status, 'released');
         assert.deepEqual(ok(await api(1, 'post', path, body)), released);
-        const repicked = await scan(order.id, { scanValue: 'RELEASE', type: 'pick' });
-        const packed = await scan(order.id, { scanValue: 'RELEASE', type: 'pack' }, 3);
+        await scan(order.id, cartonUnit('RELEASE'));
+        const repicked = await scan(order.id, cartonUnit('RELEASE'));
+        await scan(order.id, cartonUnit('RELEASE', 'pack'), 3);
+        const packed = await scan(order.id, cartonUnit('RELEASE', 'pack'), 3);
         assert.equal((await api(1, 'post', `/api/cartons/allocations/${repicked.allocation.allocationId}/release`, {
             ...body, commandId: randomUUID(), expectedState: packed.stateToken, expectedCartonRevision: packed.carton.stateRevision })).body.code, 'CARTON_RELEASE_BLOCKED');
     });
@@ -752,10 +837,15 @@ async function suite(t, postgres) {
     });
     await t.test('real legacy HTTP cannot consume reserved box units, replace SN or void; ordinary two units remain usable', async () => {
         const { order } = await f.seedOrder(), carton = await create(box('LEGACY-MIX', 8));
-        const unitInput = { orderId: order.id, scanValue: '4710000000010', type: 'pick', amount: 2 };
-        ok(await api(2, 'post', '/api/orders/update_item', unitInput));
+        const unitInput = { orderId: order.id, scanValue: '4710000000010', type: 'pick', amount: 1 };
+        const prompt = await api(2, 'post', '/api/orders/update_item', unitInput);
+        assert.equal(prompt.status, 409);
+        assert.equal(prompt.body.reason, 'CARTON_SOURCE_REQUIRED');
+        assert.equal((await api(2, 'post', '/api/orders/update_item', { ...unitInput, amount: 2, scanSource: 'loose' })).status, 400);
+        for (let index = 0; index < 2; index++) ok(await api(2, 'post', '/api/orders/update_item', { ...unitInput, scanSource: 'loose' }));
+        assert.equal(ok(await api(2, 'get', '/api/cartons/LEGACY-MIX')).lines[0].remainingQuantity, 8);
         await scan(order.id, { scanValue: carton.cartonId, type: 'pick' });
-        const unitPack = { ...unitInput, type: 'pack' };
+        const unitPack = { ...unitInput, type: 'pack', amount: 2 };
         ok(await api(3, 'post', `/api/orders/${order.id}/claim`, {}));
         ok(await api(3, 'post', '/api/orders/update_item', unitPack));
         assert.equal((await api(3, 'post', '/api/orders/update_item', { ...unitPack, amount: 1 })).status, 409);
@@ -775,7 +865,13 @@ async function suite(t, postgres) {
         const { order } = await f.seedOrder(), carton = await create(box('LOOSE-UNDO', 8));
         const unit = async (type, amount, user) => {
             if (type === 'pack' && amount > 0 && (await f.db.query('SELECT status FROM orders WHERE id=$1',[order.id])).rows[0].status === 'picked') ok(await api(user,'post',`/api/orders/${order.id}/claim`,{}));
-            return api(user, 'post', '/api/orders/update_item', { orderId: order.id, scanValue: '4710000000010', type, amount });
+            const input = { orderId: order.id, scanValue: '4710000000010', type, amount };
+            if (type === 'pick' && amount > 0) {
+                const loose = { ...input, amount: 1, scanSource: 'loose' };
+                for (let index = 1; index < amount; index++) ok(await api(user, 'post', '/api/orders/update_item', loose));
+                return api(user, 'post', '/api/orders/update_item', loose);
+            }
+            return api(user, 'post', '/api/orders/update_item', input);
         };
         ok(await unit('pick', 2, 2));
         const picked = await scan(order.id, { scanValue: carton.cartonId, type: 'pick' });
