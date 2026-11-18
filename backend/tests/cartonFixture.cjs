@@ -87,6 +87,8 @@ async function createCartonFixture({ postgres = false } = {}) {
         if (!user) return res.status(401).json({ message: 'Fixture login required' });
         res.json({ user: staffUser(user) });
     });
+    app.use('/api/sn-labels', (req,res,next) => req.user ? next() : res.sendStatus(401),
+        require('../src/routes/snLabelRoutes').createSnLabelRouter({ pool }));
     app.use('/api/box-specs',createBoxSpecRouter({pool}));
     app.use('/api/carton-items', createCartonItemRouter({ pool }));
     app.use('/api/cartons', createCartonRouter({ pool }));
@@ -111,7 +113,7 @@ async function createCartonFixture({ postgres = false } = {}) {
         try {
             app.use('/api', require('../src/routes/orderRoutes'));
             app.use('/api', require('../src/routes/warehouseWorkRoutes'));
-            app.use((error, req, res, next) => res.status(error.status ?? 500).json({ code: error.code, message: error.message }));
+            app.use((error, req, res, next) => res.status(error.status ?? 500).json({ code: error.code, message: error.message, reason: error.scanReason }));
             legacyAttached = true;
         } finally { if (prior) require.cache[databasePath] = prior; else delete require.cache[databasePath]; }
     }

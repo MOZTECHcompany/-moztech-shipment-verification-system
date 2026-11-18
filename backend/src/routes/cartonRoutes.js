@@ -19,13 +19,15 @@ function createCartonRouter({ pool }) {
     router.get('/', handler(req => service.list(req.query, req.user)));
     router.post('/', handler(req => service.create(req.body, req.user), 201));
     router.post('/import', handler(req => service.importManifest(req.body, req.user)));
-    router.get('/lookup', handler(req => service.lookup(req.query.scanValue, req.user)));
+    router.post('/seal-batch', handler(req => service.sealBatch(req.body, req.user)));
+    router.get('/lookup', handler(req => service.lookup(req.query.scanValue, req.user, req.query.matchSerialSubset === 'true')));
     router.get('/serials', handler(req => service.searchSerials(req.query, req.user)));
     router.post('/allocations/:allocationId/release', handler(req => service.release(req.params.allocationId, req.body, req.user, req.app.get('io'))));
     router.get('/:cartonId', handler(req => service.get(req.params.cartonId, req.user)));
     router.patch('/:cartonId', handler(req => service.edit(req.params.cartonId, req.body, req.user)));
     router.post('/:cartonId/seal', handler(req => service.seal(req.params.cartonId, req.body, req.user)));
     router.post('/:cartonId/reopen', handler(req => service.reopen(req.params.cartonId, req.body, req.user)));
+    router.post('/:cartonId/void', handler(req => service.voidDraft(req.params.cartonId, req.body, req.user)));
     return router;
 }
 function createOrderCartonRouter({ pool }) {

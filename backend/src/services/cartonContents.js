@@ -1,6 +1,10 @@
 const { createHash } = require('node:crypto');
 const fail = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function assertCartonNotVoided(carton) {
+    if (carton.status === 'void') throw fail('CARTON_VOID', `箱號 ${carton.cartonId} 已作廢，請核對實物與來源批次`);
+    return carton;
+}
 function text(value, name, { optional = false, max = 255 } = {}) {
     if (optional && (value === undefined || value === null || value === '')) return null;
     if (typeof value !== 'string' || !value.trim() || value.trim().length > max || /[\u0000-\u001f\u007f]/.test(value)) {
@@ -65,6 +69,40 @@ function matchesItem(line, item) {
     if (item.internal_scan_code) return item.internal_scan_code === line.internalScanCode;
     return true;
 }
+function uniqueBarcodeItem(carton, line, items) {
+    const barcode = line.ean;
+    if (!/^(?:\d{8}|\d{12,14})$/.test(barcode || '') || items.some(item => item.product_code === line.itemCode)
+        || carton.lines.some(other => other.ean === barcode && other.itemCode !== line.itemCode)) return null;
+
+    const matching = items.filter(item => item.barcode === barcode || item.international_barcode === barcode);
+    return matching.length === 1 ? matching[0] : null;
+}
+function preassignedBarcodeItem(carton, line, items, instances, selectedSN) {
+    const item = uniqueBarcodeItem(carton, line, items);
+    if (!item) return null;
+    const barcode = line.ean;
+    const confirmedBarcode = item.international_barcode === barcode
+        || ((item.code_type ?? 'legacy') === 'legacy' && !item.international_barcode && item.barcode === barcode);
+    if (!confirmedBarcode || item.internal_scan_code || item.carton_serial_binding || Number(item.quantity_sign ?? 1) !== 1) return null;
+
+    const assigned = instances.filter(unit => unit.order_item_id === item.id);
+    const selected = new Set(selectedSN);
+    const matches = instances.filter(unit => selected.has(unit.serial_number));
+    if (assigned.length !== Number(item.quantity) || matches.length !== selected.size
+        || new Set(matches.map(unit => unit.serial_number)).size !== selected.size
+        || matches.some(unit => unit.order_item_id !== item.id || unit.status !== 'pending')) return null;
+    return item;
+}
+function legacyQuantityBarcodeItem(carton, line, items, instances) {
+    // Old picking exports can store the same international barcode as both scan key and product code.
+    if (line.actualSN.length || line.internalScanCode) return null;
+    const item = uniqueBarcodeItem(carton, line, items);
+    if (!item || (item.code_type ?? 'legacy') !== 'legacy' || item.product_code !== line.ean || item.barcode !== line.ean
+        || (item.international_barcode && item.international_barcode !== line.ean) || item.internal_scan_code || item.source_sku
+        || item.carton_serial_binding || item.serial_identity_mode === 'exact' || Number(item.quantity_sign ?? 1) !== 1
+        || instances.some(unit => unit.order_item_id === item.id)) return null;
+    return item;
+}
 function choosePickLines(carton, body, items, instances) {
     const mode = body.mode ?? 'whole';
     const serialPolicy = body.serialPolicy ?? 'preassigned';
@@ -92,8 +130,24 @@ function choosePickLines(carton, body, items, instances) {
         const quantity = request.quantity === undefined ? (actualSN.length || line.remainingQuantity) : positive(request.quantity, '拆箱數量');
         if (quantity > line.remainingQuantity || quantity <= 0) throw fail('CARTON_QUANTITY_EXCEEDED', '所選數量超過箱內剩餘');
         if (line.actualSN.length && quantity !== actualSN.length) throw fail('CARTON_EXACT_SN_REQUIRED', 'SN 拆箱必須選出確切 SN，不能只輸入數量');
-        const candidates = items.filter(item => matchesItem(line, item));
-        if (!candidates.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '箱內品項或掃描碼不屬於此訂單');
+        const matchingItems = items.filter(item => matchesItem(line, item));
+        if (!matchingItems.length && actualSN.length && (mode === 'whole' || request.actualSN !== undefined)) {
+            const preassigned = preassignedBarcodeItem(carton, line, items, instances, actualSN);
+            if (preassigned) matchingItems.push(preassigned);
+        }
+        if (!matchingItems.length) {
+            const legacyQuantity = legacyQuantityBarcodeItem(carton, line, items, instances);
+            if (legacyQuantity) matchingItems.push(legacyQuantity);
+        }
+        if (!matchingItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '箱內品項或掃描碼不屬於此訂單。請核對箱內品號、國條與理貨單 SN');
+        const targetItems = request.orderItemId === undefined
+            ? matchingItems : matchingItems.filter(item => item.id === Number(request.orderItemId));
+        if (!targetItems.length) throw fail('CARTON_ITEM_NOT_IN_ORDER', '指定品項列不屬於箱內品項');
+        const candidates = targetItems.filter(item => !item.expected_carton_id || item.expected_carton_id === carton.cartonId);
+        if (!candidates.length) {
+            const expected = [...new Set(targetItems.map(item => item.expected_carton_id))];
+            throw fail('CARTON_EXPECTED_MISMATCH', `理貨明細指定箱號 ${expected.join('、')}，請掃描對應實體箱`);
+        }
         const groups = new Map();
         if (actualSN.length && request.orderItemId === undefined && candidates.length > 1) {
             // Source lines with the same product are resolved only by each
@@ -107,9 +161,7 @@ function choosePickLines(carton, body, items, instances) {
             }
         } else {
             if (candidates.length > 1 && request.orderItemId === undefined) throw fail('CARTON_ORDER_LINE_REQUIRED', '此品項在訂單有多列，請明確選擇對應品項列');
-            const item = request.orderItemId === undefined ? candidates[0] : candidates.find(item => item.id === Number(request.orderItemId));
-            if (!item) throw fail('CARTON_ITEM_NOT_IN_ORDER', '指定品項列不屬於箱內品項');
-            groups.set(item.id, actualSN);
+            groups.set(candidates[0].id, actualSN);
         }
         for (const [itemId, groupSN] of groups) {
             const item = candidates.find(row => row.id === itemId), pair = `${line.lineId}:${itemId}`;
@@ -164,4 +216,4 @@ function choosePickLines(carton, body, items, instances) {
     }
     return selected;
 }
-module.exports = { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines };
+module.exports = { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines, assertCartonNotVoided };

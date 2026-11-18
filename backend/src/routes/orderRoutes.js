@@ -1,9 +1,10 @@
+const { PICKING_FREIGHT_CODE, projectPickingItems } = require('../services/pickingFreight');
 // backend/src/routes/orderRoutes.js
 // 訂單操作相關端點（需先通過 authenticateToken）
 
 const express = require('express');
 const multer = require('multer');
-const { IMPORT_LIMITS, parseOrderImport } = require('../services/orderImportParser');
+const { IMPORT_LIMITS, parsePickingImport } = require('../services/orderImportParser');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/database');
 const logger = require('../utils/logger');
@@ -12,7 +13,8 @@ const { logOperation } = require('../services/operationLogService');
 const { normalizeSerialScanInput, pickExactSerial } = require('../utils/serialNumber');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
-const { assertNoCartonAllocations, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
+const { readSerialQrSelection, applySerialQrSelection } = require('../services/serialQrScan');
+const { assertExpectedCartonScan, requireLooseSource, assertNoCartonAllocations, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues } = require('../services/cartonGuards');
 
 const router = express.Router();
 const {warehouseOnly} = require('../utils/managementScope');
@@ -323,6 +325,8 @@ router.get('/orders/:orderId', async (req, res, next) => {
         );
 
         // Keep the detail view and scan response on the same completion rules.
+        const projected = await projectPickingItems(client,orderId,itemsResult.rows,instancesResult.rows);
+        itemsResult.rows = projected.items;
         const { allPicked, allPacked } = getOrderCompletion(itemsResult.rows, instancesResult.rows);
         let statusChanged = false;
         let updateAttempted = false;
@@ -480,7 +484,7 @@ router.post('/orders/:orderId/deletion-requests', authorizeRoles('admin','dispat
 router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimiter, uploadImport, async (req, res) => {
     let parsed;
     try {
-        parsed = parseOrderImport(req.file?.buffer);
+        parsed = await parsePickingImport(req.file?.buffer, pool);
     } catch (error) {
         return res.status(error.status || 400).json({ code: 'IMPORT_NOT_APPLIED', message: error.message,
             ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
@@ -517,8 +521,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         const positiveSerialValues = [];
         for (const item of items) {
             checkDeadline();
-            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, quantity_sign, serial_identity_mode) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-                [orderId, item.productCode, item.productName, Math.abs(item.quantity), item.barcode, Math.sign(item.quantity), item.serialMode === 'exact' ? 'exact' : 'legacy']);
+            const inserted = await client.query('INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, quantity_sign, serial_identity_mode, expected_carton_id, international_barcode, internal_scan_code, code_type, source_platform, source_store, source_order_number, source_line_id, source_sku) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id',
+                [orderId, item.productCode, item.productName, Math.abs(item.quantity), item.barcode, Math.sign(item.quantity), item.serialMode === 'exact' ? 'exact' : 'legacy', item.expectedCartonId || null, item.internationalBarcode || null, item.internalScanCode || null, item.codeType || 'legacy', item.sourcePlatform || null, item.sourceStore || null, item.sourceOrderNumber || null, item.sourceLineId || null, item.sourceSku || null]);
             for (const serial of item.serials) {
                 instanceItemIds.push(inserted.rows[0].id);
                 serialValues.push(serial);
@@ -531,7 +535,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) SELECT * FROM unnest($1::int[], $2::text[])', [instanceItemIds, serialValues]);
         }
         // Import attribution is still based on this log, so it is required and may not be swallowed.
-        const details = { voucherNumber, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length };
+        const details = { voucherNumber, pickingFreightReviewed:true, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length };
         const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details, actor_snapshot) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
             [req.user.id, orderId, 'import', JSON.stringify(details), JSON.stringify(require('../utils/warehouseWork').actorSnapshot(req.user))]);
         events.emit('new_operation_log', {
@@ -572,7 +576,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
 
 // POST /api/orders/update_item
 router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next) => {
-    const { orderId, scanValue, type, amount = 1, orderItemId } = req.body;
+    const { orderId, scanValue, type, amount = 1, orderItemId, scanSource } = req.body;
     const { id: userId } = req.user;
     const io = req.app.get('io');
     const scanRequestStartedAt = Date.now();
@@ -619,8 +623,15 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
     let releaseError;
     let commitAttempted = false;
     let rejectedScanAudit;
-    let command;
-    try { command = parseCommand(req.body, userId); } catch (error) { return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
+    if (scanSource !== undefined && (scanSource !== 'loose' || type !== 'pick' || Number(amount) !== 1)) {
+        return res.status(400).json({ code:'SCAN_NOT_APPLIED', message:'散件一次限揀一件' });
+    }
+    let command, serialQr, before;
+    try {
+        serialQr = readSerialQrSelection(req.body, userId);
+        if (serialQr && type === 'pack') return res.status(409).json({code:'SCAN_NOT_APPLIED',message:'裝箱需逐件核對 SN'});
+        command = parseCommand(req.body, userId);
+    } catch (error) { return res.status(400).json({ code: 'SCAN_NOT_APPLIED', message: error.message }); }
     let changedItemId, changedInstanceId, operationContext, cartonUnitContext;
     const events = deferredEvents(io);
     try {
@@ -647,7 +658,7 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
         if (orderResult.rows.length === 0) throw new Error(`找不到 ID 為 ${orderId} 的訂單`);
         const order = orderResult.rows[0];
         if (command) {
-            const before = await readLines(client,orderId);
+            before = await readLines(client,orderId);
             if (stateToken(order,before.items,before.instances) !== req.body.expectedState) {
                 throw Object.assign(new Error('訂單已更新，請重新載入核對後再掃描'), {status:409,scanReason:'STATE_CHANGED'});
             }
@@ -685,10 +696,10 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
         let matchedBy = 'exact';
 
         // 先走精準匹配（支援舊貨掃到 SN: 前綴）
-        const instanceResult = await trackedQuery(
+        const instanceResult = serialQr ? {rows: []} : await trackedQuery(
             client,
             'match_instance_exact_for_update',
-            `SELECT i.id, i.status, i.order_item_id, i.serial_number, oi.quantity_sign
+            `SELECT i.id, i.status, i.order_item_id, i.serial_number, oi.expected_carton_id, oi.quantity_sign
              FROM order_item_instances i
              JOIN order_items oi ON i.order_item_id = oi.id
              WHERE oi.order_id = $1 AND (i.serial_number = $2 OR i.serial_number = $3 OR UPPER(i.serial_number) = $4)
@@ -703,7 +714,7 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
         if (exactMatch.instance) {
             instanceRow = exactMatch.instance;
             matchedBy = exactMatch.match;
-        } else {
+        } else if (!serialQr) {
             // 純數字新條碼：允許用 digitsOnly 去比對資料庫內 SN（移除非數字後）
             // 同時也支援：舊貨掃到 SN: 前綴但資料庫存的是去前綴後的值
             const digitsMinLen = parseInt(process.env.SN_DIGITS_MIN_LEN || '8', 10);
@@ -725,7 +736,7 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
                                 const digitsResult = await trackedQuery(
                                         client,
                                         'match_instance_digits_for_update',
-            `SELECT i.id, i.status, i.order_item_id, i.serial_number, oi.quantity_sign
+            `SELECT i.id, i.status, i.order_item_id, i.serial_number, oi.expected_carton_id, oi.quantity_sign
                      FROM order_item_instances i
                      JOIN order_items oi ON i.order_item_id = oi.id
                      WHERE oi.order_id = $1
@@ -745,7 +756,13 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
             }
         }
 
-        if (instanceRow) {
+        let confirmedSerials;
+        if (serialQr) {
+            confirmedSerials = await applySerialQrSelection(client, before, serialQr, type);
+            await logOperation({ userId, orderId, operationType:type, actor:req.user, workType:type,
+                details:{serialNumbers:confirmedSerials,amount:confirmedSerials.length,matchedBy:'serial-qr',operation_context:operationContext}, io:events, db:client });
+        } else if (instanceRow) {
+            assertExpectedCartonScan(instanceRow.expected_carton_id);
             const instance = instanceRow;
             changedInstanceId = instance.id;
             await guardUnitScan(client, orderId, { instanceId: instance.id, serialNumber: instance.serial_number, quantitySign: instance.quantity_sign ?? 1, type, amount: amountNum });
@@ -782,6 +799,7 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
             // - 若帶 orderItemId：精準更新指定那一行品項（避免同條碼多行時按鈕誤更新）
             // - 否則：掃碼情境下，自動挑選「仍可更新」的一行
 
+            const exemptItemIds = scanRaw === PICKING_FREIGHT_CODE ? (before ?? await readLines(client, orderId)).exemptItemIds : [];
             let itemResult;
             if (orderItemId) {
                 itemResult = await trackedQuery(
@@ -791,20 +809,20 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
                     SELECT
                         oi.id,
                         oi.quantity,
-                        oi.quantity_sign,
+                        oi.quantity_sign, oi.expected_carton_id,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
                         COALESCE(oi.packed_quantity, 0) as packed_quantity
                     FROM order_items oi
                     WHERE oi.order_id = $1
                       AND oi.id = $2
-                      AND oi.barcode = $3
+                      AND oi.barcode = $3 AND NOT (oi.id=ANY($4::int[]))
                       AND NOT EXISTS (
                           SELECT 1 FROM order_item_instances i WHERE i.order_item_id = oi.id
                       )
                     LIMIT 1
                     FOR UPDATE
                     `,
-                    [orderId, orderItemId, scanRaw]
+                    [orderId, orderItemId, scanRaw, exemptItemIds]
                 );
             } else {
                 if (order.document_type === 'adjustment') {
@@ -824,12 +842,12 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
                     SELECT
                         oi.id,
                         oi.quantity,
-                        oi.quantity_sign,
+                        oi.quantity_sign, oi.expected_carton_id,
                         COALESCE(oi.picked_quantity, 0) as picked_quantity,
                         COALESCE(oi.packed_quantity, 0) as packed_quantity
                     FROM order_items oi
                     WHERE oi.order_id = $1
-                      AND oi.barcode = $2
+                      AND oi.barcode = $2 AND NOT (oi.id=ANY($5::int[]))
                       AND NOT EXISTS (
                           SELECT 1 FROM order_item_instances i WHERE i.order_item_id = oi.id
                       )
@@ -847,14 +865,17 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
                     LIMIT 1
                     FOR UPDATE
                     `,
-                    [orderId, scanRaw, amountNum, type]
+                    [orderId, scanRaw, amountNum, type, exemptItemIds]
                 );
             }
             if (itemResult.rows.length === 0) {
+                if (exemptItemIds.length && (!orderItemId || exemptItemIds.includes(Number(orderItemId)))) throw Object.assign(new Error("運費已自動放行，請掃描實際出貨商品"),{status:400});
                 rejectedScanAudit = { scanValue: scanRaw, type, reason: '條碼不屬於此訂單、需要掃描 SN 或已無剩餘數量' };
                 throw Object.assign(new Error(`條碼 ${scanRaw} 不可用：可能不屬於此訂單、需要掃 SN，或該條碼所有品項都已無可更新的剩餘數量`), { status: 400 });
             }
             const item = itemResult.rows[0];
+            assertExpectedCartonScan(item.expected_carton_id);
+            if (type === 'pick') await requireLooseSource(client, item.id, amountNum, scanSource);
             cartonUnitContext = await guardUnitScan(client, orderId, { orderItemId: item.id, type, amount: amountNum });
             changedItemId = item.id;
             if (type === 'pick') { 
@@ -891,6 +912,8 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
         const updatedItemsResult = await trackedQuery(client, 'refresh_items', 'SELECT *, quantity * quantity_sign AS signed_quantity FROM order_items WHERE order_id = $1 ORDER BY id', [orderId]);
         const updatedInstancesResult = await trackedQuery(client, 'refresh_instances',
             'SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1', [orderId]);
+        const projected = await projectPickingItems(client,orderId,updatedItemsResult.rows,updatedInstancesResult.rows);
+        updatedItemsResult.rows = projected.items;
         const { allPicked, allPacked } = getOrderCompletion(updatedItemsResult.rows, updatedInstancesResult.rows);
 
         let statusChanged = false;
@@ -929,7 +952,11 @@ router.post('/orders/update_item', requireWarehouseWorker, async (req, res, next
         // Prepare the response before COMMIT so a failed read cannot report a committed scan as failed.
         const updatedOrderResult = await trackedQuery(client, 'refresh_order', 'SELECT * FROM orders WHERE id = $1', [orderId]);
         markStage('refreshReadMs');
-        const response = command ? {
+        const response = confirmedSerials ? {
+            order:updatedOrderResult.rows[0], items:updatedItemsResult.rows, instances:updatedInstancesResult.rows,
+            stateToken:stateToken(updatedOrderResult.rows[0],updatedItemsResult.rows,updatedInstancesResult.rows),
+            confirmedSerials, commandId:command.id, baseState:req.body.expectedState
+        } : command ? {
             format:'delta-v1',commandId:command.id,baseState:req.body.expectedState,
             stateToken:stateToken(updatedOrderResult.rows[0],updatedItemsResult.rows,updatedInstancesResult.rows),
             order:updatedOrderResult.rows[0],

@@ -1,3 +1,5 @@
+const { assertCartonNotVoided } = require('./cartonContents');
+
 const blocked = () => Object.assign(new Error('此內容已有箱號分配，請先解除未裝箱分配；已裝箱需另外處理退貨／箱號，不可直接改單品數量或 SN'),
     { status: 409, code: 'CARTON_ALLOCATION_GUARD' });
 async function activeAllocations(db, orderId) {
@@ -48,6 +50,23 @@ async function assertLegacyOrderSerialEditing(db, orderId, proposal) {
         assertLegacySerialValues(proposed);
     }
 }
+function assertExpectedCartonScan(expectedCartonId) {
+    if (expectedCartonId) throw Object.assign(new Error(`理貨明細指定箱號 ${expectedCartonId}，請掃描對應實體箱或拆箱揀貨`),
+        { status: 409, code: 'CARTON_EXPECTED_REQUIRED' });
+}
+async function requireLooseSource(db, orderItemId, amount, scanSource) {
+    if (amount <= 0 || scanSource === 'loose') return;
+    const registered = await db.query(`SELECT 1 FROM order_items oi JOIN wms_carton_lines l
+        ON (l.item_code=oi.product_code OR
+            (oi.code_type='legacy' AND oi.product_code=oi.barcode AND l.international_barcode=oi.barcode))
+        JOIN wms_cartons c ON c.carton_id=l.carton_id
+        WHERE oi.id=$1 AND COALESCE((to_jsonb(oi)->>'quantity_sign')::int,1)=1
+            AND c.status='sealed' AND l.actual_sns='[]'::jsonb LIMIT 1`, [orderItemId]);
+    if (registered.rows.length) {
+        throw Object.assign(new Error('此品項有登記箱號，請掃來源箱號或確認為無箱號散件'),
+            { status: 409, scanReason: 'CARTON_SOURCE_REQUIRED' });
+    }
+}
 async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumber, quantitySign, type, amount }) {
     let unit;
     if (instanceId) {
@@ -58,9 +77,12 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
         unit = serialNumber ? { serial_number: serialNumber } : (await db.query('SELECT order_item_id,serial_number FROM order_item_instances WHERE id=$1', [instanceId])).rows[0];
         if (unit) {
             await lockCartonSerials(db, [unit.serial_number]);
-            const sealed = await db.query(`SELECT c.carton_id FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id
-                JOIN wms_cartons c ON c.carton_id=l.carton_id WHERE s.serial_number=$1 AND c.status='sealed'`, [unit.serial_number]);
-            if (sealed.rows.length) throw Object.assign(new Error('此 SN 已登記在封箱內容，請掃描箱號或拆箱選擇此 SN'), { status: 409, code: 'CARTON_ALLOCATION_GUARD' });
+            const carton = (await db.query(`SELECT c.carton_id AS "cartonId",c.status FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id
+                JOIN wms_cartons c ON c.carton_id=l.carton_id WHERE s.serial_number=$1 AND c.status IN ('sealed','void')`, [unit.serial_number])).rows[0];
+            if (carton) {
+                assertCartonNotVoided(carton);
+                throw Object.assign(new Error('此 SN 已登記在封箱內容，請掃描箱號或拆箱選擇此 SN'), { status: 409, code: 'CARTON_ALLOCATION_GUARD' });
+            }
         }
     }
     const allocations = await activeAllocations(db, orderId);
@@ -77,7 +99,7 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     const item = (await db.query('SELECT picked_quantity,packed_quantity FROM order_items WHERE id=$1', [orderItemId])).rows[0];
     if (!item) throw blocked();
     const boxedPicked = lines.reduce((n, line) => n + line.quantity, 0);
-    const boxedPacked = lines.filter(line => line.allocationStatus === 'packed').reduce((n, line) => n + line.quantity, 0);
+    const boxedPacked = lines.reduce((n, line) => n + (line.allocationStatus === 'packed' ? line.quantity : (line.packedQuantity ?? 0)), 0);
     // Undo only loose units. A picked carton reserves its units until carton
     // pack/release, while a packed carton must retain both picked and packed.
     if (amount < 0) {
@@ -91,5 +113,5 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     }
     return context;
 }
-module.exports = { assertNoCartonAllocations, guardUnitScan, lockCartonSerials, guardSerialImport,
-    assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing };
+module.exports = { activeAllocations, assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, lockCartonSerials, guardSerialImport,
+    assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing, requireLooseSource };

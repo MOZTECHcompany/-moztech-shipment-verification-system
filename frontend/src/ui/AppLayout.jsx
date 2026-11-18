@@ -2,7 +2,7 @@ import {managementRoleLabel} from '@/utils/managementScope';
 import OrderReviewAlerts from '@/components/OrderReviewAlerts';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Box, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
+import { Box, Tags, ClipboardList, LayoutDashboard, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, WifiOff } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useWorkMode } from '../contexts/WorkModeContext';
 import { workStageLabel, workTypesForUser } from '../utils/workCapabilities';
@@ -54,6 +54,7 @@ export function AppLayout({ user, onLogout, children }) {
   const links = [
     { to: '/tasks', label: '工作台', icon: ClipboardList },
     { to: '/cartons', label: '箱號管理', icon: Box },
+    { to: '/sn-labels', label: 'SN 與標籤（試用）', icon: Tags },
     { to: '/team', label: '公告板', icon: MessageSquare },
     ...(['admin', 'superadmin', 'dispatcher'].includes(user?.role) ? [{ to: '/admin', label: '出貨管理', icon: LayoutDashboard }] : []),
   ];

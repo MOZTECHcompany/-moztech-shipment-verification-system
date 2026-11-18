@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { transform } from 'esbuild';
 import * as editorHelpers from '../src/utils/cartonEditor.js';
 import * as scanHelpers from '../src/utils/cartonScan.js';
-import { parseCartonExcel } from '../src/utils/cartonExcel.js';
+import { parseCartonExcel, resolveCartonExcelItems } from '../src/utils/cartonExcel.js';
 import XLSX from 'xlsx';
 
 const source=await readFile(new URL('../src/components/CartonsPage.jsx',import.meta.url),'utf8');
@@ -26,7 +26,7 @@ function page({role='admin',scope='orders',storage=new Map(),component='CartonsP
     };
     const deferred=(bucket,fields)=>new Promise((resolve,reject)=>bucket.push({...fields,resolve:data=>resolve({data}),reject}));
     const api={getSessionIdentity:()=>session,get:(url,options)=>deferred(reads,{url,options}),post:(url,body,options)=>deferred(posts,{url,body,options}),patch:(url,body,options)=>deferred(posts,{url,body,options,method:'PATCH'})};
-    const imports={react,'@/api/api':api,'@/utils/cartonScan':scanHelpers,'@/utils/cartonEditor':editorHelpers,'@/ui':{Button:'Button'},'@/utils/cartonExcel':{parseCartonExcel},xlsx:XLSX,'./cartonImportTemplate.xlsx?url':templateHref,'./CartonDialog':{CartonDialog:'CartonDialog'},'./CartonItemEditor':{CartonItemEditor:'CartonItemEditor',cartonFieldClass:'field'},sonner:{toast:{success:()=>{},info:()=>{},error:()=>{}}}};
+    const imports={react,'@/api/api':api,'@/utils/cartonScan':scanHelpers,'@/utils/cartonEditor':editorHelpers,'@/ui':{Button:'Button'},'@/utils/cartonExcel':{parseCartonExcel,resolveCartonExcelItems},xlsx:XLSX,'./cartonImportTemplate.xlsx?url':templateHref,'./CartonDialog':{CartonDialog:'CartonDialog'},'./CartonItemEditor':{CartonItemEditor:'CartonItemEditor',cartonFieldClass:'field'},sonner:{toast:{success:()=>{},info:()=>{},error:()=>{}}}};
     const generic=new Proxy({}, {get:(_,key)=>key==='__esModule'?false:String(key)}),module={exports:{}};
     vm.runInNewContext(code,{module,exports:module.exports,require:name=>imports[name]||generic,React:react,crypto:webcrypto,console,
         setTimeout:fn=>{const id=++timerId;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id),
@@ -82,8 +82,9 @@ test('Excel template and existing JSON import use the same carton manifest API',
         assert.equal(view.posts.length, 1);
         assert.equal(view.posts[0].url, '/api/cartons/import');
         assert.deepEqual(JSON.parse(JSON.stringify(view.posts[0].body)), { ...manifest, expectedActorId: 7 });
-        view.posts[0].resolve({});
+        view.posts[0].resolve({items:manifest.cartons.map(c=>({cartonId:c.cartonId,carton:{...c,status:'draft',contentRevision:1}}))});
         await view.settle();
+        assert.match(view.text(view.render()), /箱待確認/);
         view.reads.at(-1).resolve({ cartons: [] });
         await view.settle();
     }

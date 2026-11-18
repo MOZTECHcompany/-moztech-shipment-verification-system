@@ -261,6 +261,8 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
 
         const itemRows = await fetchOrderItemsByBarcodeForUpdate(client, orderId, barcode);
         const existingItems = itemRows.rows || [];
+        const specified = existingItems.find(item => item.expected_carton_id);
+        if (specified) throw Object.assign(new Error('理貨明細指定箱號 ' + specified.expected_carton_id + '，請核對原理貨單後處理'), {status:409,code:'CARTON_EXPECTED_REQUIRED'});
         const existingTotalQty = sumBy(existingItems, 'quantity');
         const targetTotalQty = existingTotalQty + quantityChange;
 

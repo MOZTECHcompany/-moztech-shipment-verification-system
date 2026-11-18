@@ -28,7 +28,7 @@ function globalErrorHandler(err, req, res, next) {
     });
 
     // Only the scan route sets this after a confirmed rollback or before any transaction.
-    const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED', ...(err.scanReason === 'STATE_CHANGED' ? { reason: err.scanReason } : {}) } : {};
+    const scanResult = err.scanNotApplied ? { code: 'SCAN_NOT_APPLIED', ...(['STATE_CHANGED', 'CARTON_SOURCE_REQUIRED'].includes(err.scanReason) ? { reason: err.scanReason } : {}) } : {};
     if (err.code === 'WORK_RESULT_UNKNOWN') {
         return res.status(503).json({ code: err.code, message: '作業結果待確認，請重新整理核對，請勿重複送出' });
     }

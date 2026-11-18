@@ -44,7 +44,13 @@ for(const [code,model] of [['wms-note',''],['XWMS-NOTE',''],['REAL-SKU','WMS-NOT
 test('standalone barcode marker is not an import instruction',()=>{
     const input=rows();input[3]=['國際條碼','品項名稱','數量','品項型號'];rejects(input,/第 6 列.*非零整數/);
 });
-test('notes-only document cannot create a shipment',()=>rejects(rows([note]),/沒有可匯入的品項/));
+test('notes-only documents report missing goods with or without a print timestamp',()=>{
+    const expected = /只有出貨備註.*沒有可匯入的品項/;
+    rejects(rows([note]),expected);
+    const printed = rows([[...note.slice(0,2),''],['總計'],['2026/11/11 (三) 17:53:58']]);
+    assert.throws(()=>parseOrderImport(file(printed)), error =>
+        error.code==='IMPORT_NOT_APPLIED' && error.status===400 && expected.test(error.message));
+});
 test('notes cannot supply document identity, including legacy fixed-row fallback',()=>{
     const missing=rows([goods,['WMS-NOTE','訂單編號：FAKE / 客戶名稱：FAKE',0]]);missing[1]=[];missing[2]=[];
     rejects(missing,/找不到訂單號碼/);
