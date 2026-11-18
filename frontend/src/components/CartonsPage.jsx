@@ -5,12 +5,13 @@ import { toast } from 'sonner';
 import api from '@/api/api';
 import { Button } from '@/ui';
 import { parseSerialInput, cartonSessionKey } from '@/utils/cartonScan';
-import { parseCartonExcel } from '@/utils/cartonExcel';
+import { parseCartonExcel, resolveCartonExcelItems } from '@/utils/cartonExcel';
 import { appendCartonSerial, blankCartonLine, canManageCartons, cartonLabelSize, editorLinePayload, pendingBoxCreationKey, pendingCartonEditorKey } from '@/utils/cartonEditor';
 import { CartonDialog } from './CartonDialog';
 import { CartonItemEditor, cartonFieldClass as field } from './CartonItemEditor';
 import importTemplateHref from './cartonImportTemplate.xlsx?url';
 
+const cartonStatus = { draft: '待確認', sealed: '已確認', void: '已作廢' };
 const newId = kind => `${kind === 'spec' ? 'BSP' : 'CTN'}-${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 8)}`;
 const errText = error => error.response?.data?.message || error.message || '操作失敗';
 const unknown = error => !error.response || error.response.status >= 500;
@@ -74,7 +75,10 @@ function SerialLookup({ user, onOpen }) {
 }
 
 export function CartonsPage({ user }) {
+    const [importedBatch, setImportedBatch] = useState(null), [checkedCartons, setCheckedCartons] = useState(new Set());
     const canManage = canManageCartons(user);
+    const canConfirmBatch = canManage && (user.role === 'superadmin' || user.management_scope !== 'orders');
+    const [voidReason, setVoidReason] = useState(null);
     const [tab, setTab] = useState('physical'), [query, setQuery] = useState(''), [list, setList] = useState(null), [detail, setDetail] = useState(null);
     const [busy, setBusy] = useState(false), [error, setError] = useState(''), [help, setHelp] = useState(false);
     const [editor, setEditor] = useState(null), [lines, setLines] = useState([blankCartonLine()]), [review, setReview] = useState(false), [labels, setLabels] = useState(null);
@@ -115,7 +119,7 @@ export function CartonsPage({ user }) {
     useEffect(() => {
         if (viewSession === sessionKey) return;
         detailRequest.current++; prefixRequest.current++; batchRequest.current++; batchLabelRequest.current++;
-        setDetail(null); updateEditor(null); setLabels(null); setBatches(null); setBatchPrinting(false); setReopenReason(null); setError(''); setHelp(false); creationRef.current = null; setViewSession(sessionKey);
+        setDetail(null); updateEditor(null); setLabels(null); setBatches(null); setBatchPrinting(false); setReopenReason(null); setVoidReason(null); setError(''); setHelp(false); creationRef.current = null; setViewSession(sessionKey);
     }, [sessionKey, viewSession]);
     useEffect(() => {
         if (!canManage) return;
@@ -230,8 +234,7 @@ export function CartonsPage({ user }) {
     });
     const reviewContent = () => { try { editorLinePayload(linesRef.current, editor.kind); setError(''); setReview(true); } catch (error) { setError(error.message); } };
     const importFile = event => {
-        const file = event.target.files?.[0];
-        event.target.value = '';
+        const file = event.target.files?.[0]; event.target.value = '';
         if (!file) return;
         void mutate(async ensureCurrent => {
             if (file.size > 2 * 1024 * 1024) throw new Error('箱號檔案不可超過 2 MB');
@@ -242,19 +245,70 @@ export function CartonsPage({ user }) {
                 try {
                     workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: true, cellNF: true });
                 } catch {
-                    throw new Error('無法讀取 Excel 檔案，請使用下載的箱號範本另存為 .xlsx 後再試');
+                    throw new Error('無法讀取 Excel 檔案，請使用下載的 .xlsx 範本。');
                 }
-                body = parseCartonExcel(workbook, XLSX);
+                body = await resolveCartonExcelItems(parseCartonExcel(workbook, XLSX), async skus => {
+                    ensureCurrent();
+                    const { data } = await api.post('/api/sn-labels/products/resolve', { skus });
+                    ensureCurrent();
+                    return data;
+                });
             } else {
-                body = JSON.parse(await file.text());
-                if (body.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons)) throw new Error('請選擇有效的箱號 JSON 檔案');
+                try {
+                    body = JSON.parse(await file.text());
+                } catch {
+                    throw new Error('請選擇 Excel 範本或有效的箱號 JSON 檔。');
+                }
+                if (body?.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons)) {
+                    throw new Error('請選擇 Excel 範本或有效的箱號 JSON 檔。');
+                }
             }
             ensureCurrent();
-            await api.post('/api/cartons/import', { ...body, expectedActorId: user.id });
+            const { data } = await api.post('/api/cartons/import', { ...body, expectedActorId: user.id });
             ensureCurrent();
-            toast.success(`已匯入 ${body.cartons.length} 箱`);
+            if (!Array.isArray(data?.items) || data.items.length !== body.cartons.length || data.items.some(item =>
+                !item?.carton || item.carton.cartonId !== item.cartonId || !Number.isSafeInteger(item.carton.contentRevision) || !Array.isArray(item.carton.lines))) {
+                throw new Error('匯入結果不完整，請重新查詢箱號。');
+            }
+            setCheckedCartons(new Set());
+            setImportedBatch({ session: cartonSessionKey(api, user), items: data.items.map(({ carton }) => ({
+                cartonId: carton.cartonId, status: carton.status, contentRevision: carton.contentRevision,
+                quantity: carton.lines.reduce((sum, line) => sum + line.quantity, 0),
+                serialCount: carton.lines.reduce((sum, line) => sum + line.actualSN.length, 0),
+            })) });
         });
     };
+    const visibleBatch = canManage && importedBatch?.session === cartonSessionKey(api, user) ? importedBatch : null;
+    const drafts = visibleBatch?.items.filter(carton => carton.status === 'draft') || [];
+    const selectedCartons = drafts.filter(carton => checkedCartons.has(carton.cartonId));
+    const confirmBatch = () => {
+        if (!selectedCartons.length) return;
+        void mutate(async ensureCurrent => {
+            const cartons = selectedCartons.map(({ cartonId, contentRevision }) => ({ cartonId, expectedContentRevision: contentRevision }));
+            ensureCurrent();
+            const { data } = await api.post('/api/cartons/seal-batch', { cartons, expectedActorId: user.id }, { timeout: 30000 });
+            ensureCurrent();
+            const results = new Map(Array.isArray(data?.items) ? data.items.map(item => [item?.cartonId, item]) : []);
+            if (results.size !== cartons.length || cartons.some(item => results.get(item.cartonId)?.status !== 'sealed'
+                || results.get(item.cartonId)?.contentRevision !== item.expectedContentRevision)) {
+                throw new Error('尚未收到完整確認結果，可再次確認同一批箱號。');
+            }
+            setImportedBatch(batch => batch === visibleBatch ? { ...batch, items: batch.items.map(item =>
+                results.has(item.cartonId) ? { ...item, status: 'sealed' } : item) } : batch);
+            setCheckedCartons(new Set());
+            toast.success(`所選 ${cartons.length} 箱均已確認`);
+        });
+    };
+    const voidDraft = () => mutate(async ensureCurrent => {
+        const carton = detail.record;
+        ensureCurrent();
+        const {data} = await api.post('/api/cartons/' + encodeURIComponent(carton.cartonId) + '/void', {
+            reason: voidReason.trim(), expectedContentRevision: carton.contentRevision, expectedActorId:user.id
+        });
+        ensureCurrent();
+        setDetail({kind:'physical',record:unwrap(data,'physical',carton.cartonId)});
+        setVoidReason(null);
+    });
     const sealDetail = () => mutate(async ensureCurrent => { const { kind, record } = detail; ensureCurrent(); const { data } = await api.post(`${endpoint(kind)}/${encodeURIComponent(idOf(record, kind))}/${kind === 'spec' ? 'activate' : 'seal'}`, { expectedContentRevision: record.contentRevision, expectedActorId: user.id }); ensureCurrent(); const saved = unwrap(data, kind, idOf(record, kind)); setDetail({ kind, record: saved }); if (kind === 'physical') showLabels([saved]); });
     const reopen = () => mutate(async ensureCurrent => { const { record } = detail; if (!reopenReason?.trim()) throw new Error('請填寫重新編輯原因。'); ensureCurrent(); const { data } = await api.post(`/api/cartons/${encodeURIComponent(record.cartonId)}/reopen`, { reason: reopenReason.trim(), expectedContentRevision: record.contentRevision, expectedStateRevision: record.stateRevision, expectedActorId: user.id }); ensureCurrent(); setReopenReason(null); edit(unwrap(data, 'physical', record.cartonId), 'physical'); });
     const createFromSpec = () => mutate(async ensureCurrent => {
@@ -291,8 +345,32 @@ export function CartonsPage({ user }) {
         {error && !editor && !labels && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
         {tab === 'serials' ? <SerialLookup key={sessionKey} user={user} onOpen={open} /> : <section className="space-y-4"><div className="flex min-h-[4.75rem] items-end"><label className="w-full max-w-sm text-sm">{tab === 'spec' ? '搜尋箱規或品號' : '搜尋箱號或品號'}<input aria-label={tab === 'spec' ? '搜尋箱規或品號' : '搜尋箱號或品號'} placeholder={tab === 'spec' ? '輸入箱規編號或品號' : '輸入箱號或品號'} value={query} onChange={event => { if (listQuery(event.target.value) !== searchQuery) listRequest.current++; setQuery(event.target.value); }} className={`${field} mt-1`} /></label></div><div className={listPaneClass} aria-busy={loading} aria-label={tab === 'spec' ? '箱規清單' : '實體箱清單'}>
             <div className="min-h-10 px-4 py-2 text-sm text-slate-500" role={loading ? 'status' : undefined}>{loading ? records.length ? '更新中…' : '載入中…' : '\u00a0'}</div>
-            <table className="w-full min-w-[36rem] table-fixed text-left text-sm"><thead className="bg-slate-50"><tr><th className="w-2/5 p-3">{tab === 'spec' ? '箱規' : '實體箱號'}</th><th className="w-1/5 p-3">狀態</th><th className="w-1/6 p-3">品項</th><th className="p-3">{tab === 'spec' ? '每箱件數' : '剩餘／總件數'}</th></tr></thead><tbody>{displayedRecords.map(item => <tr key={idOf(item, tab)} className="border-t"><td className="p-3"><button type="button" className="text-blue-700 underline break-all" onClick={() => open(idOf(item, tab), tab)}>{idOf(item, tab)}</button></td><td className="p-3 whitespace-nowrap">{item.status === 'active' ? '已啟用' : item.status === 'sealed' ? '已確認' : '草稿'}</td><td className="p-3">{item.lines?.length ?? item.lineCount ?? '—'}</td><td className="p-3 whitespace-nowrap"><QuantityCell record={item} template={tab === 'spec'} /></td></tr>)}</tbody></table>{listError && <p role="alert" className="p-4 text-sm text-red-700">{listError}</p>}{!loading && !listError && !records.length && <p className="p-6 text-sm text-slate-500">{searchQuery ? `尚無符合的${tab === 'spec' ? '箱規' : '實體箱號'}` : tab === 'spec' ? '尚未建立箱規，可先儲存常用商品與每箱數量。' : '尚未建立實體箱；已有箱規時，可依箱規建立新箱。'}</p>}
+            <table className="w-full min-w-[36rem] table-fixed text-left text-sm"><thead className="bg-slate-50"><tr><th className="w-2/5 p-3">{tab === 'spec' ? '箱規' : '實體箱號'}</th><th className="w-1/5 p-3">狀態</th><th className="w-1/6 p-3">品項</th><th className="p-3">{tab === 'spec' ? '每箱件數' : '剩餘／總件數'}</th></tr></thead><tbody>{displayedRecords.map(item => <tr key={idOf(item, tab)} className="border-t"><td className="p-3"><button type="button" className="text-blue-700 underline break-all" onClick={() => open(idOf(item, tab), tab)}>{idOf(item, tab)}</button></td><td className="p-3 whitespace-nowrap">{item.status === 'active' ? '已啟用' : cartonStatus[item.status] || '草稿'}</td><td className="p-3">{item.lines?.length ?? item.lineCount ?? '—'}</td><td className="p-3 whitespace-nowrap"><QuantityCell record={item} template={tab === 'spec'} /></td></tr>)}</tbody></table>{listError && <p role="alert" className="p-4 text-sm text-red-700">{listError}</p>}{!loading && !listError && !records.length && <p className="p-6 text-sm text-slate-500">{searchQuery ? `尚無符合的${tab === 'spec' ? '箱規' : '實體箱號'}` : tab === 'spec' ? '尚未建立箱規，可先儲存常用商品與每箱數量。' : '尚未建立實體箱；已有箱規時，可依箱規建立新箱。'}</p>}
         </div></section>}
+        <CartonDialog open={!!visibleBatch} title="匯入箱號結果" onClose={() => { if (!busy) setImportedBatch(null); }}
+            footer={<><Button variant="secondary" disabled={busy} onClick={() => setImportedBatch(null)}>關閉</Button>
+                {!!drafts.length && <Button disabled={!canConfirmBatch || busy || !selectedCartons.length} onClick={confirmBatch}>確認所選 {selectedCartons.length} 箱</Button>}</>}>
+            {visibleBatch && <>
+                <p className="font-medium" role="status">本次匯入檔案共 {visibleBatch.items.length} 箱，{drafts.length} 箱待確認。{!canConfirmBatch && '整批確認請交給倉儲管理員。'}</p>
+                {!!drafts.length && <p className="mt-1 text-sm text-slate-600">請先核對箱內實物，再勾選要確認的箱號。未勾選的箱子仍會保留待確認。</p>}
+                {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
+                {!!drafts.length && <Button variant="secondary" className="my-3" disabled={busy} onClick={() =>
+                    setCheckedCartons(new Set(selectedCartons.length === drafts.length ? [] : drafts.map(item => item.cartonId)))}>
+                    {selectedCartons.length === drafts.length ? '取消全選' : '全選待確認箱'}
+                </Button>}
+                <ul className="max-h-72 divide-y overflow-y-auto border-y">
+                    {visibleBatch.items.map(item => <li key={item.cartonId} className="flex items-center justify-between gap-3 px-2 py-2 text-sm">
+                        {item.status === 'draft' ? <label className="flex min-w-0 items-center gap-2">
+                            <input type="checkbox" disabled={busy} checked={checkedCartons.has(item.cartonId)} onChange={event => {
+                                const checked = event.target.checked;
+                                setCheckedCartons(old => { const next = new Set(old); if (checked) next.add(item.cartonId); else next.delete(item.cartonId); return next; });
+                            }} /><span className="break-all">{item.cartonId}</span>
+                        </label> : <span className="min-w-0 break-all">{item.cartonId}</span>}
+                        <span className="shrink-0 text-right text-xs text-slate-600">{item.quantity} 件 · {item.serialCount ? `${item.serialCount} 個 SN` : '無 SN'} · {cartonStatus[item.status] || '不可確認'}</span>
+                    </li>)}
+                </ul>
+            </>}
+        </CartonDialog>
         <CartonDialog open={help} title="箱號怎麼使用" onClose={() => setHelp(false)}>
             <div className="space-y-4 text-sm text-slate-700"><p><strong>箱規</strong>：可重複使用的商品與每箱數量範本。有實際貨品時，再依箱規建立新箱。</p><p><strong>實體箱／SN</strong>：每箱一個固定 QR，分別保留餘量與實際 SN。補印時開啟原箱號，按「重印此箱貼紙」。</p><p><strong>再做一批相同商品</strong>：開啟原箱規，確認下一個箱號與箱數，再建立新箱。實際 SN 要逐箱登錄，不會複製其他箱的 SN。</p><p><strong>SN查詢</strong>：輸入 SN 找到所在箱，開啟箱號看內容及異動紀錄。</p></div>
         </CartonDialog>
@@ -304,12 +382,15 @@ export function CartonsPage({ user }) {
             {editor?.kind === 'spec' && editor.editing && <label className="mb-4 block text-sm">修改原因<input aria-label="修改原因" value={editor.reason || ''} disabled={busy} onChange={event => updateEditor({ ...editorRef.current, reason: event.target.value })} className={`${field} mt-1`} /></label>}
             {review ? <section aria-label="確認箱內內容" className="space-y-3">{lines.map(line => <div key={line.editorLineId} className="rounded-xl border p-4"><p className="font-semibold">{line.productName || line.itemCode}</p><p className="mt-1 break-all text-xs text-slate-500">品號 {line.itemCode}</p><p className="mt-2 text-sm">每箱 {line.quantity} 件{line.hasSerials ? ` · 實際 SN ${parseSerialInput(line.serialInput).length} 個` : ' · 無 SN'}</p>{line.ean && <p className="mt-1 break-all text-xs">國際條碼 {line.ean}</p>}{line.internalScanCode && <p className="mt-1 break-all text-xs">內部掃描碼 {line.internalScanCode}</p>}{line.hasSerials && <details className="mt-2 text-sm"><summary>核對 SN</summary><ul className="mt-2 max-h-36 overflow-y-auto font-mono text-xs">{parseSerialInput(line.serialInput).map((sn, i) => <li key={i} className="break-all py-1">{sn}</li>)}</ul></details>}</div>)}<p className="text-sm font-semibold">合計每箱 {lines.reduce((sum, line) => sum + Number(line.quantity), 0)} 件</p></section> : <div className="space-y-4">{lines.map((line, index) => <CartonItemEditor key={line.editorLineId} user={user} line={line} index={index} template={editor?.kind === 'spec'} disabled={busy || !!editor?.unknown} focus={index === 0} onChange={patch => updateLines(old => old.map((item, i) => i === index ? { ...item, ...patch } : item))} onSelect={item => updateLines(old => old.map((line, i) => i === index ? { ...line, itemCode: item.itemCode, productName: item.productName || '', importedBarcode: item.importedBarcode || null, ean: '', internalScanCode: '' } : line))} onScan={raw => updateLines(appendCartonSerial(linesRef.current, index, raw))} onRemove={lines.length > 1 ? () => updateLines(old => old.filter((_, i) => i !== index)) : undefined} />)}<Button type="button" variant="secondary" disabled={busy || !!editor?.unknown} onClick={() => updateLines(old => [...old, blankCartonLine()])}><Plus size={16} />新增品項</Button></div>}
         </CartonDialog>
-        <CartonDialog open={scopeReady && !!detail && !editor && !labels && reopenReason === null} title={record ? idOf(record, detail.kind) : '箱號明細'} onClose={() => { if (!busy) { detailRequest.current++; setDetail(null); } }} footer={<>{canManage && record?.status === 'draft' && <><Button variant="secondary" disabled={busy} onClick={() => edit(record, detail.kind)}>編輯</Button><Button disabled={busy} onClick={sealDetail}>{detail.kind === 'spec' ? '啟用箱規' : '確認箱內內容'}</Button></>}{canManage && detail?.kind === 'spec' && record?.status === 'active' && <Button variant="secondary" disabled={busy || !!creationRef.current} onClick={() => edit(record, 'spec')}>編輯箱規</Button>}{canManage && detail?.kind === 'physical' && record?.status === 'sealed' && !record?.allocations?.length && <Button variant="secondary" disabled={busy} onClick={() => setReopenReason('')}>重新編輯</Button>}{detail?.kind === 'physical' && <Button variant="secondary" disabled={busy || record?.status !== 'sealed'} onClick={() => showLabels([record])}><Printer size={16} />重印此箱貼紙</Button>}</>}>
+        <CartonDialog open={scopeReady && !!detail && !editor && !labels && reopenReason === null && voidReason === null} title={record ? idOf(record, detail.kind) : '箱號明細'} onClose={() => { if (!busy) { detailRequest.current++; setDetail(null); } }} footer={<>{canConfirmBatch && detail?.kind === 'physical' && record?.status === 'draft' && <Button variant="secondary" disabled={busy} onClick={() => setVoidReason('')}>作廢草稿箱</Button>}{canManage && record?.status === 'draft' && <><Button variant="secondary" disabled={busy} onClick={() => edit(record, detail.kind)}>編輯</Button><Button disabled={busy} onClick={sealDetail}>{detail.kind === 'spec' ? '啟用箱規' : '確認箱內內容'}</Button></>}{canManage && detail?.kind === 'spec' && record?.status === 'active' && <Button variant="secondary" disabled={busy || !!creationRef.current} onClick={() => edit(record, 'spec')}>編輯箱規</Button>}{canManage && detail?.kind === 'physical' && record?.status === 'sealed' && !record?.allocations?.length && <Button variant="secondary" disabled={busy} onClick={() => setReopenReason('')}>重新編輯</Button>}{detail?.kind === 'physical' && <Button variant="secondary" disabled={busy || record?.status !== 'sealed'} onClick={() => showLabels([record])}><Printer size={16} />重印此箱貼紙</Button>}</>}>
             {error && <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>}
             {(record?.lines || []).map((line, index) => <div key={line.lineId || index} className="mb-3 rounded-lg border p-3"><strong>{line.productName || line.itemCode}</strong><p className="mt-1 text-sm">品號 {line.itemCode} · {detail?.kind === 'spec' ? `每箱 ${line.quantity} 件` : `剩餘 ${line.remainingQuantity}／${line.quantity} 件`}</p>{line.ean && <p className="text-xs break-all">國際條碼 {line.ean}</p>}{line.internalScanCode && <p className="text-xs break-all">內部碼 {line.internalScanCode}</p>}{!!line.actualSN?.length && <details className="mt-2 text-sm"><summary>箱內 SN（共 {line.actualSN.length} 個，可用 {line.remainingSN?.length || 0} 個）</summary><ul className="mt-2 space-y-1">{line.actualSN.map(sn => <li key={sn} className="flex items-start justify-between gap-3"><span className="min-w-0 break-all font-mono text-xs">{sn}</span><span className="shrink-0 text-xs text-slate-500">{line.remainingSN?.includes(sn) ? '可用' : '已分配'}</span></li>)}</ul></details>}</div>)}
             {canManage && detail?.kind === 'spec' && record?.status === 'active' && <section className="my-4 rounded-xl border border-blue-200 bg-blue-50 p-4"><h3 className="font-semibold">依此箱規建立新箱</h3><p className="mt-1 text-xs text-slate-600">新增獨立箱號；補印既有貼紙請開啟原實體箱。</p><div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3"><label className="text-sm">箱號前綴<input aria-label="箱號前綴" maxLength={25} value={prefix} disabled={busy || !!creationRef.current} onChange={event => { prefixRequest.current++; startTouched.current = false; setStartNumber(''); setPrefix(event.target.value); }} className={`${field} mt-1`} /></label><label className="text-sm">起始號碼<input aria-label="起始號碼" type="number" min="1" max="9999999" value={startNumber} disabled={busy || !!creationRef.current} onChange={event => { startTouched.current = true; setStartNumber(event.target.value); }} className={`${field} mt-1`} /></label><label className="text-sm">建立箱數<input aria-label="建立箱數" type="number" min="1" max="100" value={boxCount} disabled={busy || !!creationRef.current} onChange={event => setBoxCount(event.target.value)} className={`${field} mt-1`} /></label></div>{Number(startNumber) > 0 && Number(boxCount) > 0 && <p aria-live="polite" className="mt-3 text-sm font-semibold">{prefix}{startNumber}～{prefix}{Number(startNumber) + Number(boxCount) - 1} · 每箱 {creationRef.current?.quantityPerBox || record.lines.reduce((sum,line)=>sum+line.quantity,0)} 件 · 共 {(creationRef.current?.quantityPerBox || record.lines.reduce((sum,line)=>sum+line.quantity,0)) * Number(boxCount)} 件</p>}<Button className="mt-3" disabled={busy || !startNumber || (numberLoading && !startTouched.current)} onClick={createFromSpec}>{creationRef.current ? '重新確認建箱結果' : '建立實體箱並列印'}</Button></section>}
             {detail?.kind === 'spec' && <section className="my-4 rounded-xl border p-4" aria-label="已建立的批次"><h3 className="font-semibold">已建立的批次</h3><p className="mt-1 text-xs text-slate-600">補印原批箱號，餘量與 SN 維持原紀錄。</p>{batches?.session === sessionKey && batches.specId === record.specId && <><div className="mt-3 space-y-3">{batches.items.map(batch => <div key={`${batch.creatorId}:${batch.creationId}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 p-3"><div className="min-w-0 text-sm"><p className="break-all font-semibold">{batch.cartonIds[0]}～{batch.cartonIds.at(-1)} · {batch.count} 箱</p><p className="mt-1 text-xs text-slate-500">{new Date(batch.createdAt).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}</p></div><Button variant="secondary" disabled={busy || batchPrinting} onClick={() => reprintBatch(batch)}><Printer size={16} />重印整批貼紙</Button></div>)}</div>{batches.loading && <p role="status" className="mt-3 text-sm text-slate-500">載入批次中…</p>}{batchPrinting && <p role="status" className="mt-3 text-sm text-slate-500">核對原批箱號中…</p>}{batches.error && <p role="alert" className="mt-3 text-sm text-red-700">{batches.error}</p>}{!batches.loading && !batches.error && !batches.items.length && <p className="mt-3 text-sm text-slate-500">此箱規尚無已建立的批次。</p>}{batches.nextCursor && !batches.loading && <Button className="mt-3" variant="secondary" onClick={() => loadBatches(batches.nextCursor)}>載入較早批次</Button>}</>}</section>}
             {!!record?.history?.length && <details className="text-sm"><summary>異動紀錄</summary>{record.history.map((history, index) => <p key={history.id || index} className="mt-2">{({ created:'建立', sealed:'確認箱內內容', contents_revised:'修改內容', contents_reopened:'重新編輯', activated:'啟用', picked:'揀貨', packed:'裝箱', released:'解除分配' })[history.event_type] || history.event_type || history.action} · {new Date(history.createdAt || history.created_at).toLocaleString('zh-TW', { timeZone:'Asia/Taipei' })}</p>)}</details>}
+        </CartonDialog>
+        <CartonDialog open={scopeReady && voidReason !== null} title="作廢草稿箱" onClose={() => !busy && setVoidReason(null)} footer={<Button disabled={busy || !voidReason?.trim()} onClick={voidDraft}>確認作廢</Button>}>
+            <label>作廢原因<input className={field} value={voidReason ?? ''} maxLength={1000} onChange={e=>setVoidReason(e.target.value)} /></label>{error && <p role="alert">{error}</p>}
         </CartonDialog>
         <CartonDialog open={scopeReady && reopenReason !== null} title="重新編輯箱內內容" onClose={() => { if (!busy) setReopenReason(null); }} footer={<><Button variant="secondary" disabled={busy} onClick={() => setReopenReason(null)}>取消</Button><Button disabled={busy || !reopenReason?.trim()} onClick={reopen}>重新編輯</Button></>}><label className="text-sm">重新編輯原因<input aria-label="重新編輯原因" data-carton-autofocus value={reopenReason || ''} onChange={event => setReopenReason(event.target.value)} maxLength={2000} className={`${field} mt-1`} /></label>{error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}</CartonDialog>
         <CartonDialog open={scopeReady && !!labels} title="箱號貼紙" onClose={() => setLabels(null)} footer={<Button disabled={busy} onClick={print}><Printer size={16} />{labels?.length > 1 ? `列印 ${labels.length} 張` : '列印'}</Button>}>

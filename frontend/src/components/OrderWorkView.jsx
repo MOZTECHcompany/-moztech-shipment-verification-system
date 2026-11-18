@@ -20,7 +20,8 @@ import { socket } from '@/api/socket';
 import soundNotification from '@/utils/soundNotification';
 import { createScanSubmission } from '@/utils/scanSubmission';
 import { makeScanCommand, applyScanResponse, sendScanCommand } from '@/utils/scanDelta';
-import { isCartonScan } from '@/utils/cartonScan';
+import { CartonDialog } from './CartonDialog';
+import { cartonSerialScanTarget, isCartonScan } from '@/utils/cartonScan';
 import { CartonWorkControls } from './CartonWorkControls';
 import SerialList from './SerialList';
 import { buildWorkItems, filterWorkItems } from '@/utils/orderWorkProgress';
@@ -370,6 +371,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const [itemSearch, setItemSearch] = useState('');
     const [lastAcceptedScan, setLastAcceptedScan] = useState(null);
     const [pendingScan, setPendingScan] = useState('');
+    const [looseScan, setLooseScan] = useState(null);
     const [signedScanChoice, setSignedScanChoice] = useState(null);
     const [loadError, setLoadError] = useState('');
     const mountedRef = useRef(true);
@@ -390,6 +392,7 @@ function AuthenticatedOrderWorkView({ user }) {
         if (currentOrderData.order?.id && document.activeElement === document.body) barcodeInputRef.current?.focus();
     }, [currentOrderData.order?.id]);
 
+    const freightReviewRef = useRef(null);
     const fetchOrderDetails = useCallback(async (id) => {
         if (!id) return;
         const sequence = ++orderRequestSequenceRef.current;
@@ -400,7 +403,16 @@ function AuthenticatedOrderWorkView({ user }) {
         try {
             setLoading(true);
             setLoadError('');
-            const response = await apiClient.get(`/api/orders/${id}/work-snapshot`, { timeout: 15000 });
+            const path = '/api/orders/' + id;
+            let response = await apiClient.get(path + '/work-snapshot', { timeout: 15000 });
+            if (isCurrent() && response.data.freightReconciliationNeeded && freightReviewRef.current !== response.data.stateToken) {
+                freightReviewRef.current = response.data.stateToken;
+                try {
+                    await apiClient.get(path, { timeout: 15000 });
+                    if (!isCurrent()) return;
+                    response = await apiClient.get(path + '/work-snapshot', { timeout: 15000 });
+                } catch (error) { freightReviewRef.current = null; throw error; }
+            }
             if (isCurrent() && !scanSubmissionRef.current.isBusy()) {
                 if (!lockedStageRef.current) {
                     const initial=stageForOrder(response.data.order?.status);
@@ -1358,13 +1370,13 @@ function AuthenticatedOrderWorkView({ user }) {
         }
     };
 
-    const updateItemState = (scanValue, type, amount = 1, orderItemId) => {
+    const updateItemState = (scanValue, type, amount = 1, orderItemId, scanSource) => {
         if (!currentOrderData.order || type !== stage || !canScanNow || workControlRef.current) return false;
         const submission = scanSubmissionRef.current.submit(scanValue, async () => {
             try {
                 const command = makeScanCommand(currentOrderData, {
                     orderId: currentOrderData.order.id, scanValue, type, amount,
-                    ...(orderItemId ? { orderItemId } : {})
+                    ...(orderItemId ? { orderItemId } : {}), ...(scanSource ? { scanSource } : {})
                 });
                 const response = await sendScanCommand(apiClient, command);
                 const updatedSnapshot = applyScanResponse(currentOrderData, response.data);
@@ -1423,6 +1435,10 @@ function AuthenticatedOrderWorkView({ user }) {
             } catch (err) {
                 if (!mountedRef.current) return;
                 orderDataVersionRef.current++;
+                if (amount === 1 && err.response?.data?.reason === 'CARTON_SOURCE_REQUIRED') {
+                    setLooseScan({value:scanValue,orderItemId,orderId:currentOrderData.order.id,stateToken:currentOrderData.stateToken});
+                    return;
+                }
                 const statusCode = err.response?.status;
 
                 const serverMsg = err.response?.data?.message;
@@ -1495,7 +1511,7 @@ function AuthenticatedOrderWorkView({ user }) {
     const handleScan = (rawValue = barcodeInput) => {
         const scanValue = String(rawValue ?? '').trim();
         if (!scanValue) return false;
-        if (scanNeedsReview || signedScanChoice || handoffOpen || workControlRef.current || !canScanNow) return false;
+        if (scanNeedsReview || looseScan || signedScanChoice || handoffOpen || workControlRef.current || !canScanNow) return false;
         // Consume each scanner Enter exactly once, including rejected/busy submissions.
         // A camera result must not erase unrelated keyboard input.
         setBarcodeInput(current => current.trim() === scanValue ? '' : current);
@@ -1561,8 +1577,14 @@ function AuthenticatedOrderWorkView({ user }) {
                 setShowCameraScanner(false);
                 return true;
             }
-            const accepted = updateItemState(scanValue, operationType, 1, choices?.length === 1 ? choices[0].id : undefined);
-            return accepted;
+            const orderItemId = choices?.length === 1 ? choices[0].id : undefined;
+            const loose = () => updateItemState(scanValue, operationType, 1, orderItemId);
+            if (cartonScannerRef.current && cartonSerialScanTarget(scanValue, currentOrderData)) {
+                return cartonScannerRef.current.scan(scanValue, operationType, { mode:'serial',
+                    knownSerial:currentOrderData.instances.some(unit => unit.serial_number === scanValue),
+                    ...(orderItemId ? { orderItemId } : {}) }, loose);
+            }
+            return loose();
         } else {
             const errorMsg = `操作錯誤：目前狀態 (${status}) 不允許此操作`;
             setScanError(errorMsg);
@@ -1597,6 +1619,11 @@ function AuthenticatedOrderWorkView({ user }) {
     const workIsPaused = stagePaused(currentOrderData.order,stage);
     const canScanNow = stageCanScan(currentOrderData.order,stage,user,canOperate) && !workControlBusy && !handoffOpen;
 
+    const chooseLoose = () => {
+        setLooseScan(null);
+        if (looseScan.stateToken !== currentOrderData.stateToken) return setScanError('理貨單已更新，請重新掃描');
+        updateItemState(looseScan.value, 'pick', 1, looseScan.orderItemId, 'loose');
+    };
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing && !e.isComposing) { e.preventDefault(); handleScan(e.currentTarget?.value ?? barcodeInput); } };
     const handleClick = () => { barcodeInputRef.current?.focus(); handleScan(); };
     const handleQuantityUpdate = (...args) => {
@@ -1943,11 +1970,23 @@ function AuthenticatedOrderWorkView({ user }) {
                             </div>
                         </div>
 
-                        <CartonWorkControls key={`${orderId}:${user?.id}:${user?.role}`} ref={cartonScannerRef} orderData={currentOrderData} user={user}
+                        <CartonWorkControls key={`${orderId}:${user?.id}:${user?.role}`} ref={cartonScannerRef} onFocusScanner={() => barcodeInputRef.current?.focus()} orderData={currentOrderData} user={user}
                             stage={canScanNow ? stage : null}
                             blocked={loading || isUpdating || scanNeedsReview || operationBlockedByOrderChange || packBlockedByExceptions || !canOperate || !canScanNow}
                             submissionRef={scanSubmissionRef} onResponse={handleCartonResponse} onError={handleCartonError}
                             onBusy={(busy, value) => { setIsUpdating(busy); if (busy) { orderDataVersionRef.current++; setPendingScan(value); } }} />
+                        <CartonDialog open={!!looseScan && looseScan.orderId === currentOrderData.order?.id && orderStatus === 'picking'}
+                            title="選擇揀貨來源" onClose={() => {
+                                setLooseScan(null); requestAnimationFrame(() => barcodeInputRef.current?.focus());
+                            }}
+                            footer={<>
+                                <Button variant="secondary" disabled={isUpdating} onClick={() => {
+                                    setLooseScan(null); cartonScannerRef.current?.openScanner();
+                                }}>掃箱號</Button>
+                                <Button disabled={isUpdating} onClick={chooseLoose}>確認無箱號散件</Button>
+                            </>}>
+                            <p className="break-all text-sm">此品項有登記箱號 · {looseScan?.value}</p>
+                        </CartonDialog>
 
                         {/* 例外處理（可追蹤狀態：open/ack/resolved） */}
                         <Card className="border-0 shadow-sm">

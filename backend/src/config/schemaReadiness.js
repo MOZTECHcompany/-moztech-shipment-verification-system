@@ -1,6 +1,9 @@
 const { loadMigrationManifest } = require('./migrationManifest');
 const expectedMigrations = loadMigrationManifest();
 const requiredColumns = {
+    sn_label_batches: ['id','entity_id','quantity','retired_at'],
+    sn_label_events: ['id','batch_id','action','data'],
+    wms_sn_products: ['id','sku','internal_scan_code'],
     wms_ecount_order_references: ['order_id','company_code','voucher_number','revision','manifest_fingerprint','confirmed_fingerprint','confirmation_kind','confirmation_evidence','confirmed_actor_snapshot','updated_actor_snapshot'],
     wms_ecount_reference_history: ['id','order_id','revision','event_type','actor_id','actor_snapshot','before_state','after_state','evidence'],
     wms_ecount_reference_commands: ['user_id','command_id','order_id','request_hash','reference_revision'],
@@ -21,7 +24,7 @@ const requiredColumns = {
     warehouse_daily_modes: ['user_id', 'work_date', 'choice_stage', 'assigned_stage', 'assigned_by', 'assigned_by_snapshot', 'assigned_at', 'updated_at'],
     users: ['can_pick', 'can_pack', 'management_scope', 'id', 'username', 'password', 'name', 'role', 'created_at'],
     orders: ['id', 'voucher_number', 'customer_name', 'warehouse', 'void_reason', 'picker_id', 'packer_id', 'status', 'created_at', 'updated_at', 'is_urgent', 'completed_at', 'document_type', 'pick_paused_at', 'pack_paused_at', 'shipping_notes'],
-    order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'quantity_sign', 'carton_serial_binding', 'serial_identity_mode'],
+    order_items: ['id', 'order_id', 'product_code', 'product_name', 'barcode', 'quantity', 'picked_quantity', 'packed_quantity', 'updated_at', 'quantity_sign', 'carton_serial_binding', 'serial_identity_mode','expected_carton_id','international_barcode','internal_scan_code','code_type','source_order_number'],
     order_item_instances: ['id', 'order_item_id', 'serial_number', 'status', 'created_at', 'updated_at'],
     operation_logs: ['id', 'user_id', 'order_id', 'item_id', 'action_type', 'operation_type', 'actor_snapshot', 'work_type', 'details', 'created_at'],
     task_comments: ['id', 'order_id', 'user_id', 'content', 'parent_id', 'priority', 'created_at', 'updated_at'],

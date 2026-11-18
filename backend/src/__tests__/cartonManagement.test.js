@@ -52,7 +52,7 @@ function fixture({ user = actor, allocations = [], actualSN = [], failOnInsert =
         }
         if (q.startsWith('UPDATE wms_cartons SET status=')) {
             const carton = state.cartons.get(args[0]); carton.status = q.includes("status='draft'") ? 'draft' : 'sealed';
-            carton.sealed_at = carton.status === 'sealed' ? '2026-10-15T00:00:00Z' : null; carton.state_revision++; return result([]);
+            carton.sealed_at = carton.status === 'sealed' ? '2026-10-15T00:00:00Z' : null; carton.state_revision++; return result(q.includes('RETURNING *') ? [carton] : []);
         }
         if (q.startsWith('INSERT INTO wms_carton_history')) {
             const carton = state.cartons.get(args[0]);

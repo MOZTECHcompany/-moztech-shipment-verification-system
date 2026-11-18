@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --chown=node:node src ./src
+COPY --chown=node:node assets ./assets
 COPY --chown=node:node migrations ./migrations
 COPY --chown=node:node scripts/bootstrap-admin.js ./scripts/bootstrap-admin.js
 COPY --chown=node:node scripts/ecpay-poll.js ./scripts/ecpay-poll.js

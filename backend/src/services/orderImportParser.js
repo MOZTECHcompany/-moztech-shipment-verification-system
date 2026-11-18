@@ -6,6 +6,11 @@ function exactSerials(value, quantity) {
     catch(error) { throw invalid(error.message); }
 }
 
+const importSheetContext = new WeakMap();
+const { normalizeSourceIdentity, sourceIdentityValues } = require('./orderSourceIdentity');
+const { isPickingFreight, PICKING_FREIGHT_CODE } = require('./pickingFreight');
+const { readOrderImportWorkbook } = require('./orderImportWorkbook');
+
 const IMPORT_LIMITS = Object.freeze({
     fileBytes: 10 * 1024 * 1024,
     sheetRows: 5000,
@@ -96,6 +101,219 @@ function isPrintTimestampRow(row) {
     const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
     return date.getUTCFullYear() === Number(year) && date.getUTCMonth() + 1 === Number(month) &&
         date.getUTCDate() === Number(day) && Number(hour) < 24 && Number(minute) < 60 && Number(second) < 60;
+}
+
+function positivePickingQuantity(value) {
+    const normalized = /^\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(value) ? value.replace(/,/g, '') : value;
+    const quantity = Number(normalized);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) throw invalid('數量必須為正整數');
+    return quantity;
+}
+
+function summaryRequiresExplicitSerials(raw, barcode, quantity) {
+    const input = String(raw ?? '').trim();
+    if (!input) return false;
+    if (/SN\s*[:：]/i.test(input)) return true;
+    // Preserve the established summary SN grammar; ordinary notes are not SN.
+    try { return parseSerials(input, barcode, Number(quantity), false).length > 0; }
+    catch (error) {
+        if (error.code === 'IMPORT_NOT_APPLIED') return true;
+        throw error;
+    }
+}
+
+const normalizedHeader = value => String(value ?? '').trim().replace(/\s/g, '').replace(/／/g, '/').toLowerCase();
+const SOURCE_HEADERS = {
+    voucherNumber: ['理貨單號', '理貨單單號', '理貨單編號', 'voucher_number'],
+    sourceOrderNumber: ['商城訂單編號', '商城訂單號', '平台訂單編號', 'source_order_number'],
+    sourcePlatform: ['平台', '來源平台', 'source_platform'],
+    sourceStore: ['店鋪', '店舖', '商店', 'source_store'],
+    sourceLineId: ['來源明細號', '來源明細編號', '商城明細編號', 'source_line_id'],
+    productCode: ['品項編碼', 'sku', 'product_code'],
+    productName: ['品項名稱', '品項名', 'product_name'],
+    barcode: ['國際條碼', '條碼', 'barcode'],
+    internalScanCode: ['內部掃描碼', '內碼', 'internal_scan_code'],
+    sourceSku: ['來源sku', '來源貨號', 'source_sku'],
+    quantity: ['數量', 'quantity'],
+    serials: ['序號/批號', 'sn', 'sn列表', 'serials'],
+    actualSN: ['實際sn','actualsn','actual_sn'],
+    summary: ['摘要', 'summary'],
+    customerName: ['客戶名稱', '客戶/供應商名稱', 'customer_name']
+};
+const matchesSourceHeader = (value, field) => SOURCE_HEADERS[field].includes(normalizedHeader(value));
+
+function sourceHeaderIndex(data) {
+    return data.findIndex(row =>
+        row.some(value => matchesSourceHeader(value, 'sourceOrderNumber') || matchesSourceHeader(value, 'voucherNumber')) &&
+        row.some(value => matchesSourceHeader(value, 'productCode') || matchesSourceHeader(value, 'barcode') || matchesSourceHeader(value, 'quantity')));
+}
+
+function exportDate(value) {
+    const match = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(value);
+    if (!match) return null;
+    const [year, month, day] = match.slice(1).map(Number);
+    if (year < 1000) return null;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+}
+
+function ecountTerminalFooterIndex(data, headerIndex) {
+    const onlyFirstCell = row => row.slice(1).every(value => String(value ?? '').trim() === '');
+    // Recognize only the observed ECOUNT envelope: company/date range in A1,
+    // source columns in row 2, and a terminal single-cell export timestamp.
+    if (headerIndex !== 1 || !onlyFirstCell(data[0])) return -1;
+    const preamble = /^公司名稱 *[:：] *\S[^\r\n]*? *\/ *(\d{4}\/\d{2}\/\d{2}) *~ *(\d{4}\/\d{2}\/\d{2})$/.exec(String(data[0][0] ?? '').trim());
+    if (!preamble) return -1;
+    const start = exportDate(preamble[1]), end = exportDate(preamble[2]);
+    if (!start || !end || start > end) return -1;
+    let index = data.length - 1;
+    while (index > headerIndex && data[index].every(value => String(value ?? '').trim() === '')) index--;
+    if (index <= headerIndex || !onlyFirstCell(data[index])) return -1;
+    const footer = /^(\d{4}\/\d{2}\/\d{2}) \(([日一二三四五六])\) ([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.exec(String(data[index][0] ?? '').trim());
+    if (!footer) return -1;
+    const date = exportDate(footer[1]);
+    return date && '日一二三四五六'[date.getUTCDay()] === footer[2] ? index : -1;
+}
+
+function isEcountPickingExport(data, headerIndex = sourceHeaderIndex(data)) {
+    return ecountTerminalFooterIndex(data, headerIndex) >= 0 &&
+        data[headerIndex].some(value => normalizedHeader(value) === '序號/批號');
+}
+
+function ecountSerialTokens(value) {
+    return value.replace(/SN\s*[:：]\s*/gi, '').split(/[\/\s,，、ㆍ·・•]+/).filter(Boolean);
+}
+
+function parseSourceOrderRows(data, headerIndex, ecount) {
+    const header = data[headerIndex];
+    const columns = {};
+    for (const field of Object.keys(SOURCE_HEADERS)) {
+        const matches = header.flatMap((value, index) => matchesSourceHeader(value, field) ? [index] : []);
+        if (matches.length > 1) throw invalid(`明細表頭重複：${SOURCE_HEADERS[field][0]}`);
+        columns[field] = matches[0] ?? -1;
+    }
+    for (const field of ['voucherNumber', 'sourceOrderNumber', 'productCode', 'productName', 'quantity']) {
+        if (columns[field] < 0) throw invalid(`理貨明細缺少欄位：${SOURCE_HEADERS[field][0]}`);
+    }
+    if(columns.barcode<0&&columns.internalScanCode<0&&!ecount)throw invalid('理貨明細缺少欄位：國際條碼／內部掃描碼');
+    let voucherNumber = null, customerName = null;
+    const identities = [], seenLines = new Set(), omittedNonStock = [];
+    let freightExemptQuantity = 0;
+    // Reuse the established quantity/SN validation through an explicit internal
+    // mapping. Never let the legacy fuzzy headers interpret import grouping 序號.
+    const normalizedRows = [['憑證號碼：SOURCE-DOCUMENT'], ['國際條碼', '品項型號', '品項名稱', '數量', 'SN列表','實際SN']];
+    const terminalFooterIndex = ecountTerminalFooterIndex(data, headerIndex);
+    for (let index = headerIndex + 1; index < data.length; index++) {
+        if (index === terminalFooterIndex) continue;
+        const row = data[index];
+        if (row.every(value => String(value ?? '').trim() === '')) continue;
+        if (header.every((value, column) => normalizedHeader(value) === normalizedHeader(row[column]))) continue;
+        const cell = field => columns[field] < 0 ? '' : String(row[columns[field]] ?? '').trim();
+        const sourceRow = index + 1;
+        try {
+            const voucher = cell('voucherNumber');
+            if (!voucher || voucher.length > 255 || /[\u0000-\u001f\u007f]/.test(voucher)) throw invalid('理貨單號必填，最多 255 字');
+            if (voucherNumber !== null && voucherNumber !== voucher) throw invalid('同一檔案只能包含一張理貨單，請分開匯入');
+            voucherNumber = voucher;
+            if (!cell('sourceOrderNumber')) throw invalid('商城訂單編號必填');
+            const source = normalizeSourceIdentity(Object.fromEntries(Object.keys(SOURCE_HEADERS).filter(key => key.startsWith('source')).map(key => [key, cell(key)])));
+            if (!source.sourceOrderNumber) throw invalid('商城訂單編號必填');
+            const productCode = cell('productCode');
+            if (!productCode) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
+            const internationalBarcode = cell('barcode') || null;
+            let internalScanCode = cell('internalScanCode') || null;
+            // A linked marketplace fee is reconciled against the saved source
+            // line. Direct ECOUNT exports can identify a fee by item code/name.
+            if (ecount && !source.sourceLineId && isPickingFreight(productCode, cell('productName')) &&
+                (!internationalBarcode || internationalBarcode === PICKING_FREIGHT_CODE) &&
+                !internalScanCode && !cell('serials') && !cell('actualSN') && !cell('summary')) {
+                const quantity = positivePickingQuantity(cell('quantity'));
+                omittedNonStock.push({ productCode, productName: cell('productName'), quantity, sourceRow });
+                freightExemptQuantity += quantity;
+                continue;
+            }
+            if (!internationalBarcode && !internalScanCode && ecount) {
+                const codes = ecount.scanCodes.get(productCode) ?? [];
+                if (codes.length !== 1) throw invalid(`國際條碼必填；品項 ${productCode} ${codes.length ? '對應多個內部掃描碼，請確認唯一對照' : '尚無對應的內部掃描碼，請先建立品項對照'}`);
+                [internalScanCode] = codes;
+            }
+            if(!internationalBarcode&&!internalScanCode)throw invalid('國際條碼必填；無國條商品請明確提供內部掃描碼，不能用品項編碼代替');
+            if(internalScanCode&&!/^ITM-[A-Za-z0-9._-]{1,96}$/.test(internalScanCode))throw invalid('內部掃描碼須為 ITM- 開頭的完整文字識別');
+            const scanCode=internationalBarcode||internalScanCode;
+            const codeType=internationalBarcode?'international':'internal';
+            if(cell('sourceSku').length>255||/[\u0000-\u001f\u007f]/.test(cell('sourceSku')))throw invalid('來源SKU不可超過255字或含控制字元');
+            const context = importSheetContext.get(data) || {};
+            const scanColumn = internationalBarcode ? columns.barcode : cell('internalScanCode') ? columns.internalScanCode : -1;
+            if (scanColumn >= 0) {
+                const address = xlsx.utils.encode_cell({ r: index, c: scanColumn });
+                validateBarcode(scanCode, context.worksheet?.[address], { sheet: context.sheetName, row: sourceRow, cell: address });
+            }
+            if (!cell('productName') || !cell('quantity')) throw invalid('品項名稱與數量必填');
+            const sourceSerials = cell('serials');
+            const carton = ecount?.cartons.get(sourceSerials);
+            const tokens = ecount && !carton ? ecountSerialTokens(sourceSerials) : [];
+            if (tokens.some(token => ecount.cartons.has(token))) {
+                throw invalid('同列包含箱批號與其他識別，請在 ECOUNT 按箱分列');
+            }
+            const actual = exactSerials(cell('actualSN'), cell('quantity'));
+            const nativeSNs = tokens.filter(token => token.toUpperCase() !== cell('barcode').toUpperCase());
+            const nativeExact = nativeSNs.length && nativeSNs.every(token => /^[A-Za-z0-9]{12,13}$/.test(token) || /^TRY-[A-Z0-9]{12,14}$/.test(token))
+                ? exactSerials(nativeSNs, cell('quantity')) : [];
+            if (actual.length && nativeExact.length && JSON.stringify([...actual].sort()) !== JSON.stringify([...nativeExact].sort())) {
+                throw invalid('實際SN與序號/批號欄的 SN 不一致');
+            }
+            const exact = actual.length ? actual : nativeExact;
+            if (carton) {
+                if (carton.serialCollision) throw invalid('序號/批號同時對應箱號與單件 SN，請核對識別');
+                if (carton.status !== 'sealed') throw invalid(`箱批號 ${sourceSerials} 尚未封箱或已作廢`);
+                const matchingLines = carton.lines.filter(line => line.item_code === productCode &&
+                    (internationalBarcode ? line.international_barcode === internationalBarcode : line.internal_scan_code === internalScanCode));
+                if (!matchingLines.length) throw invalid(`箱批號 ${sourceSerials} 的品項或掃描碼與理貨單不符`);
+                if (exact.some(sn => !matchingLines.some(line => line.actual_sns.includes(sn)))) {
+                    throw invalid(`箱批號 ${sourceSerials} 不含理貨單指定的實際 SN`);
+                }
+            }
+            const explicit = carton || nativeExact.length ? [] : parseSerials(sourceSerials, cell('barcode'), Number(cell('quantity')), true);
+            const legacySummary = summaryRequiresExplicitSerials(cell('summary'), cell('barcode'), cell('quantity'));
+            const fromSummary = legacySummary ? parseSerials(cell('summary'), cell('barcode'), Number(cell('quantity')), false) : [];
+            if (explicit.length && fromSummary.length && JSON.stringify([...explicit].sort()) !== JSON.stringify([...fromSummary].sort())) {
+                throw invalid('摘要與序號/批號欄的 SN 不一致，請核對後再匯入');
+            }
+            const legacy=explicit.length?explicit:fromSummary;
+            if(exact.length&&legacy.length&&JSON.stringify([...exact].sort())!==JSON.stringify([...legacy].sort()))throw invalid('實際SN與舊SN欄不一致');
+            const serials=exact.length?exact:legacy;
+            if (source.sourceLineId) {
+                const key = JSON.stringify(sourceIdentityValues(source));
+                if (seenLines.has(key)) throw invalid('同一商城訂單的來源明細號重複，請核對後再匯入');
+                seenLines.add(key);
+            }
+            const customer = cell('customerName');
+            if (customer.length > 255) throw invalid('客戶名稱不可超過 255 字');
+            // Per-order customers may differ inside one warehouse document.
+            // Only expose a document-level customer if every supplied value agrees.
+            if (customer) customerName = customerName === null ? customer : customerName === customer ? customerName : '';
+            normalizedRows.push([scanCode, productCode, cell('productName'), cell('quantity'), exact.length?'':legacy.join(' '),exact.join(',')]);
+            identities.push({ ...source, sourceSku:cell('sourceSku')||null,internationalBarcode,internalScanCode,codeType,sourceRow, sourceSummary:cell('summary'), sourceSerials, serialSource:actual.length?'實際SN':carton?'箱批號':nativeExact.length||explicit.length?'序號/批號':fromSummary.length?'摘要':'無 SN', customerName: customer || null,
+                ...(carton ? { expectedCartonId: sourceSerials } : {}) });
+        } catch (error) {
+            if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${sourceRow} 列：${error.message}`;
+            throw error;
+        }
+    }
+    if (!identities.length) throw invalid('沒有可匯入的品項，未建立訂單');
+    let parsed;
+    try { parsed = parseOrderRows(normalizedRows); }
+    catch (error) {
+        const match = error.message.match(/^第 (\d+) 列：/);
+        if (match && identities[Number(match[1]) - 3]) error.message = error.message.replace(/^第 \d+ 列：/, `第 ${identities[Number(match[1]) - 3].sourceRow} 列：`);
+        throw error;
+    }
+    if (parsed.items.length !== identities.length) throw invalid('理貨明細包含無法辨識的商品列，未建立訂單');
+    if (parsed.items.length + omittedNonStock.length > IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
+    if (parsed.totalQuantity + freightExemptQuantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
+    const result = { ...parsed, importFormat: 'source-details', voucherNumber, customerName: customerName || null, items: parsed.items.map((item, index) => ({ ...item, ...identities[index] })) };
+    if (omittedNonStock.length) Object.assign(result, { omittedNonStock, freightExemptQuantity });
+    return result;
 }
 
 function parseOrderRows(data, { worksheet, sheetName } = {}) {
@@ -221,14 +439,14 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
         documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
 }
 
-function parseOrderImport(buffer) {
+function readOrderImportRows(buffer) {
     if (!Buffer.isBuffer(buffer) || !buffer.length) throw invalid('沒有可讀取的檔案內容');
     if (buffer.length > IMPORT_LIMITS.fileBytes) throw invalid('檔案不可超過 10 MiB', 413);
     let worksheet, sheetName;
     try {
         // raw preserves CSV text identifiers (including leading zeros and literal
         // exponent strings). XLS/XLSX retain typed cells for precision checks.
-        const workbook = xlsx.read(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
+        const workbook = readOrderImportWorkbook(buffer, { type: 'buffer', raw: true, sheets: 0, sheetRows: IMPORT_LIMITS.sheetRows + 1, cellStyles: false });
         sheetName = workbook.SheetNames[0];
         worksheet = workbook.Sheets[sheetName];
     } catch { throw invalid('無法讀取檔案，請確認是未加密的 .xlsx、.xls 或 .csv'); }
@@ -238,11 +456,32 @@ function parseOrderImport(buffer) {
         throw invalid(`工作表範圍超限，最多 ${IMPORT_LIMITS.sheetRows} 列、${IMPORT_LIMITS.sheetColumns} 欄；請縮小後匯入`, 413);
     }
     const data = xlsx.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '', range: 0 });
-    try { return parseOrderRows(data, { worksheet, sheetName }); }
+    importSheetContext.set(data, { worksheet, sheetName });
+    return { data, worksheet, sheetName };
+}
+
+function parseWorksheet({ data, worksheet, sheetName }, ecount) {
+    try {
+        const index = sourceHeaderIndex(data);
+        return index < 0 ? parseOrderRows(data, { worksheet, sheetName }) : parseSourceOrderRows(data, index, ecount);
+    }
     catch (error) {
         if (error.code === 'IMPORT_NOT_APPLIED') error.message = `工作表「${sheetName}」${error.issue?.cell ? ` ${error.issue.cell}` : ''}，${error.message}`;
         throw error;
     }
 }
 
-module.exports = { IMPORT_LIMITS, parseOrderImport, parseOrderRows };
+function parseOrderImport(buffer) {
+    return parseWorksheet(readOrderImportRows(buffer));
+}
+
+async function parsePickingImport(buffer, db) {
+    const sheet = readOrderImportRows(buffer);
+    const index = sourceHeaderIndex(sheet.data);
+    if (index < 0 || !isEcountPickingExport(sheet.data, index)) return parseWorksheet(sheet);
+    const header = sheet.data[index];
+    const columns = Object.fromEntries(Object.keys(SOURCE_HEADERS).map(key => [key, header.findIndex(value => matchesSourceHeader(value, key))]));
+    const { readEcountPickingIdentities } = require('./ecountPickingIdentities');
+    return parseWorksheet(sheet, await readEcountPickingIdentities(db, sheet.data.slice(index+1), columns));
+}
+module.exports = { IMPORT_LIMITS, parseOrderImport, parsePickingImport, parseOrderRows, ecountSerialTokens };

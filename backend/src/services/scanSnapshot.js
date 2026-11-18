@@ -1,3 +1,5 @@
+const { projectPickingItems } = require('./pickingFreight');
+const { canAutoComplete, getOrderCompletion } = require('../utils/orderCompletion');
 const { createHash } = require('node:crypto');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sorted = rows => [...rows].sort((a,b) => Number(a.id)-Number(b.id));
@@ -13,21 +15,22 @@ function withShippingNotes(snapshot) {
 function stateToken(order, items, instances) {
     return digest([
         [order.id,order.status,order.picker_id,order.packer_id,order.voucher_number,order.customer_name,order.is_urgent,order.void_reason,order.document_type || 'shipment', ...(order.pick_paused_at || order.pack_paused_at ? [order.pick_paused_at || null, order.pack_paused_at || null] : [])],
-        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.quantity_sign ?? 1,i.carton_serial_binding ?? false,i.serial_identity_mode ?? 'legacy']),
+        sorted(items).map(i=>[i.id,i.order_id,i.product_code,i.product_name,i.barcode,i.quantity,i.picked_quantity,i.packed_quantity,i.quantity_sign ?? 1,i.carton_serial_binding ?? false,i.serial_identity_mode ?? 'legacy', ...(i.expected_carton_id ? [i.expected_carton_id] : [])]),
         sorted(instances).map(i=>[i.id,i.order_item_id,i.serial_number,i.status])
     ]);
 }
 async function readLines(db, orderId) {
     const items = (await db.query('SELECT * FROM order_items WHERE order_id = $1 ORDER BY id', [orderId])).rows;
     const instances = (await db.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON i.order_item_id = oi.id WHERE oi.order_id = $1 ORDER BY i.id',[orderId])).rows;
-    return {items:items.map(item=>({...item,signed_quantity:Number(item.quantity)*Number(item.quantity_sign ?? 1)})),instances};
+    const projected = await projectPickingItems(db,orderId,items,instances);
+    return {exemptItemIds:projected.exemptItemIds,items:projected.items.map(item=>({...item,signed_quantity:Number(item.quantity)*Number(item.quantity_sign ?? 1)})),instances};
 }
 function parseCommand(body, userId) {
     if (body.responseMode === undefined) return null;
     if (body.responseMode !== 'delta-v1' || typeof body.commandId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.commandId) || typeof body.expectedState !== 'string' || !/^[0-9a-f]{64}$/.test(body.expectedState)) {
         throw Object.assign(new Error('掃碼識別無效，請重新載入訂單'),{status:400});
     }
-    return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState])};
+    return {id:body.commandId.toLowerCase(),userId,hash:digest([Number(body.orderId),String(body.scanValue).trim(),body.type,Number(body.amount??1),body.orderItemId==null?null:Number(body.orderItemId),body.expectedState, ...(body.selectedSerials ? [[...body.selectedSerials].sort()] : []), ...(body.scanSource ? [body.scanSource] : [])])};
 }
 function createWorkSnapshot(pool) {
     return async (req,res,next) => {
@@ -41,9 +44,18 @@ function createWorkSnapshot(pool) {
                 (SELECT ol.user_id FROM operation_logs ol WHERE ol.order_id=o.id AND ol.action_type='import' ORDER BY ol.created_at DESC,ol.id DESC LIMIT 1) AS imported_by_user_id
                 FROM orders o LEFT JOIN users p ON p.id=o.picker_id LEFT JOIN users pk ON pk.id=o.packer_id WHERE o.id=$1`,[req.params.orderId])).rows[0];
             if(!order){await db.query('ROLLBACK');open=false;return res.status(404).json({message:'找不到訂單'});}
-            const {items,instances}=await readLines(db,order.id);
+            const {items,instances,exemptItemIds}=await readLines(db,order.id);
+            let freightReconciliationNeeded = false;
+            if (exemptItemIds.length && !order.warehouse_hold && canAutoComplete(order.status)) {
+                const { allPicked, allPacked } = getOrderCompletion(items, instances);
+                if (allPacked || (allPicked && ['pending', 'picking'].includes(order.status))) {
+                    const openExceptions = await db.query("SELECT 1 FROM order_exceptions WHERE order_id=$1 AND status='open' LIMIT 1", [order.id]);
+                    freightReconciliationNeeded = !openExceptions.rows.length;
+                }
+            }
             await db.query('COMMIT');open=false;
-            res.set('Cache-Control','private, no-store').json({order,items,instances,stateToken:stateToken(order,items,instances)});
+            res.set('Cache-Control','private, no-store').json({order,items,instances,stateToken:stateToken(order,items,instances),
+                ...(freightReconciliationNeeded ? { freightReconciliationNeeded } : {})});
         }catch(error){next(error)}finally{if(open)try{await db.query('ROLLBACK')}catch(e){releaseError=e}db?.release(releaseError)}
     };
 }

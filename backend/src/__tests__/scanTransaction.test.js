@@ -49,6 +49,7 @@ function singleClientDatabase({ status = 'picking', failSnapshot = false, failCo
                 return rows(params[1] === state.item.barcode && count + amount <= limit ? [state.item] : []);
             }
             if (q.startsWith('UPDATE order_items SET picked_quantity')) { state.item.picked_quantity = params[0]; return rows([]); }
+            if (q.startsWith('SELECT 1 FROM order_items oi JOIN wms_carton_lines')) return rows([]);
             if (q.startsWith('UPDATE order_items SET packed_quantity')) { state.item.packed_quantity = params[0]; return rows([]); }
             if (q.startsWith('INSERT INTO operation_logs')) {
                 const log = { id: state.logs.length + 1, created_at: '2026-09-09T00:00:00Z', action_type: params[2] };
