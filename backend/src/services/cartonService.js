@@ -672,7 +672,7 @@ function createCartonService({ pool }) {
     async function plan(db, snapshot, carton, body, scannedSerial) {
         if (!['pick','pack'].includes(body.type)) throw fail('CARTON_INVALID_INPUT', '箱掃描類型無效', 400);
         assertCartonNotVoided(carton);
-        if (carton.status !== 'sealed') throw fail('CARTON_NOT_SEALED', '此箱尚未封箱核對，不能出貨');
+        if (carton.status !== 'sealed') throw fail('CARTON_NOT_SEALED', `來源箱 ${carton.cartonId} 尚未確認；請在箱號管理核對實物後按「確認箱內內容」，再回來掃描`);
         const allocation = carton.allocations.find(row => row.orderId === snapshot.order.id && row.status !== 'released');
         if (body.type === 'pick') {
             const unitScan = body.mode === 'unit';

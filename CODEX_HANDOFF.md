@@ -18,6 +18,8 @@
 
 ## 從哪裡確認進度
 
+- `docs/WMS_CARTON_ORDER_CHANGE_FIX_2026-11-19.md`：箱號 SN 與主管異動核可相容、保留原品號與來源、只限制受影響的箱分配，以及舊單件出貨／未確認箱餘量的對帳界線。
+
 - `docs/WMS_SHIPPING_NOTES_2026-11-11.md`：使用 `WMS-NOTE` 匯入零數量出貨備註，揀貨、裝箱與明細匯出保留原文。
 
 - `docs/WMS_OPERATION_LOG_SEARCH_2026-11-06.md`：操作日誌智慧搜尋、台灣日期、分頁、條件統計與本頁匯出。

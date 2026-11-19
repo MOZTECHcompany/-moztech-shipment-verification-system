@@ -1158,7 +1158,7 @@ async function suite(t, postgres) {
             client: f.pool, orderId: plain.order.id, actorUserId: 1,
             proposal: { note: 'Cannot add registered carton SN with old editor', items: [{ barcode: plain.item.barcode,
                 productName: 'Synthetic', quantityChange: 1, noSn: false, snList: sns }] }
-        }), { code: 'CARTON_SERIAL_EDIT_GUARD' });
+        }), { code: 'CARTON_ALLOCATION_GUARD' });
         assert.equal((await f.db.query('SELECT quantity FROM order_items WHERE id=$1', [plain.item.id])).rows[0].quantity, 1);
         const vendor = await f.seedOrder({ quantity: 1, actualSN: ['Vendor-a/A'], serialMode: 'exact' });
         const edit = await api(1, 'post', `/api/orders/${vendor.order.id}/defect`, { oldSn: 'Vendor-a/A', newSn: 'VENDOR-a/B', reason: 'Unsupported legacy editor' });
@@ -1185,7 +1185,7 @@ async function suite(t, postgres) {
         await assert.rejects(apply({ note: 'Do not normalize vendor identity', items: [{ barcode: item.barcode, productName: 'Vendor', quantityChange: -1, noSn: false, removedSnList: ['Vendor-c/C'] }] }), { code: 'EXACT_SN_LEGACY_EDIT_UNSUPPORTED' });
         await create(box('UNALLOCATED-EDITOR', 1, ['Vendor-c/C']));
         await apply(loose);
-        await assert.rejects(apply({ note: 'Do not remove registered serial', items: [{ barcode: item.barcode, productName: 'Vendor', quantityChange: -1, noSn: false }] }), { code: 'CARTON_SERIAL_EDIT_GUARD' });
+        await assert.rejects(apply({ note: 'Do not normalize registered vendor serial', items: [{ barcode: item.barcode, productName: 'Vendor', quantityChange: -1, noSn: false }] }), { code: 'EXACT_SN_LEGACY_EDIT_UNSUPPORTED' });
         assert.equal((await f.db.query('SELECT quantity FROM order_items WHERE id=$1', [looseId])).rows[0].quantity, 4);
         assert.equal((await f.db.query('SELECT serial_number FROM order_item_instances WHERE order_item_id=$1', [item.id])).rows[0].serial_number, 'Vendor-c/C');
     });

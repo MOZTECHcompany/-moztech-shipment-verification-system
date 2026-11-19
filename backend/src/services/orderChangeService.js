@@ -231,6 +231,20 @@ async function reduceSnLineQuantities(client, items, instances, removed, untrack
     if (left !== 0) throw Object.assign(new Error('可減少數量不足，請重新核對異動'),{status:409});
 }
 
+async function insertOrderChangeLine(client, orderId, change, source) {
+    const { barcode, productName, quantityChange, noSn } = change;
+    const result = await client.query(
+        `INSERT INTO order_items (order_id,product_code,product_name,quantity,barcode,
+            code_type,international_barcode,internal_scan_code,source_sku,source_platform,source_store,source_order_number,source_line_id,serial_identity_mode)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        [orderId,source.product_code || barcode,productName,quantityChange,barcode,
+            source.code_type || 'legacy',source.international_barcode || null,source.internal_scan_code || null,
+            source.source_sku || null,source.source_platform || null,source.source_store || null,source.source_order_number || null,source.source_line_id || null,
+            noSn ? 'legacy' : source.serial_identity_mode || 'legacy']
+    );
+    return result.rows[0]?.id;
+}
+
 async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId }) {
     const validated = validateOrderChangeProposal(proposal);
     if (!validated.ok) {
@@ -249,18 +263,18 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
     const order = orderResult.rows[0];
     if (order.status === 'voided') throw Object.assign(new Error('已作廢訂單不可異動'),{status:409});
     if (order.document_type && order.document_type!=='shipment') throw Object.assign(new Error('此理貨單含 ERP 負數數量，請在 ERP 修正後匯入新的理貨單，不可直接改動品項數量'),{status:409});
-    await require('./cartonGuards').assertNoCartonAllocations(client, orderId);
-    await require('./cartonGuards').assertLegacyOrderSerialEditing(client, orderId, proposal);
-    await require('./cartonGuards').assertNoRegisteredSerials(client, validated.value.items.flatMap(item => [...item.snList, ...item.removedSnList]));
+    await require('./cartonGuards').guardCartonOrderChange(client, orderId, validated.value);
     const originalStatus = normalizeOrderStatusForRollback(order.status);
 
     const changesApplied = [];
+    const originalLines = new Map();
 
     for (const change of validated.value.items) {
         const { barcode, productName, quantityChange, noSn, snList, removedSnList } = change;
 
         const itemRows = await fetchOrderItemsByBarcodeForUpdate(client, orderId, barcode);
         const existingItems = itemRows.rows || [];
+        if (!originalLines.has(barcode)) originalLines.set(barcode, existingItems);
         const specified = existingItems.find(item => item.expected_carton_id);
         if (specified) throw Object.assign(new Error('理貨明細指定箱號 ' + specified.expected_carton_id + '，請核對原理貨單後處理'), {status:409,code:'CARTON_EXPECTED_REQUIRED'});
         const existingTotalQty = sumBy(existingItems, 'quantity');
@@ -300,13 +314,11 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                     throw e;
                 }
 
-                const insert = await client.query(
-                    `INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode)
-                     VALUES ($1, $2, $3, $4, $5)
-                     RETURNING id`,
-                    [orderId, barcode, productName, quantityChange, barcode]
-                );
-                const newOrderItemId = insert.rows[0].id;
+                // A remove-and-add conversion retains the original picking
+                // document identity, including sample codes and source references.
+                const originals = originalLines.get(barcode);
+                const source = originals.length === 1 ? originals[0] : {};
+                const newOrderItemId = await insertOrderChangeLine(client, orderId, change, source);
 
                 for (const sn of snList) {
                     await client.query(
@@ -501,11 +513,8 @@ async function applyOrderChangeProposal({ client, orderId, proposal, actorUserId
                 throw e;
             }
 
-            await client.query(
-                `INSERT INTO order_items (order_id, product_code, product_name, quantity, barcode, picked_quantity, packed_quantity)
-                 VALUES ($1, $2, $3, $4, $5, 0, 0)`,
-                [orderId, barcode, productName, quantityChange, barcode]
-            );
+            const originals = originalLines.get(barcode);
+            await insertOrderChangeLine(client, orderId, change, originals.length === 1 ? originals[0] : {});
 
             changesApplied.push({
                 barcode,

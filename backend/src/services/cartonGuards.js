@@ -34,12 +34,12 @@ function assertLegacySerialValues(sns) {
     if (sns.some(sn => !/^[A-Z0-9]+$/.test(sn))) throw Object.assign(new Error('此實際 SN 不適用舊序號編輯；請保留原大小寫並透過實際 SN／箱號流程處理'),
         { status: 409, code: 'EXACT_SN_LEGACY_EDIT_UNSUPPORTED' });
 }
-async function assertLegacyOrderSerialEditing(db, orderId, proposal) {
+async function assertLegacyOrderSerialEditing(db, orderId, proposal, { allowRegistered = false } = {}) {
     const changes = proposal?.items ?? [];
     const affectedBarcodes = new Set(changes.map(item => String(item?.barcode ?? '').trim().slice(0, 200)));
     const units = (await db.query('SELECT i.serial_number,oi.barcode,oi.serial_identity_mode FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id WHERE oi.order_id=$1', [orderId])).rows
         .filter(unit => affectedBarcodes.has(unit.barcode));
-    await assertNoRegisteredSerials(db, units.map(unit => unit.serial_number));
+    if (!allowRegistered) await assertNoRegisteredSerials(db, units.map(unit => unit.serial_number));
     const exact = units.filter(unit => unit.serial_identity_mode === 'exact');
     if (exact.length) {
         assertLegacySerialValues(exact.map(unit => unit.serial_number));
@@ -49,6 +49,39 @@ async function assertLegacyOrderSerialEditing(db, orderId, proposal) {
             .map(value => String(value ?? '').trim().replace(/^SN\s*[:：]/i, '').trim()).filter(Boolean);
         assertLegacySerialValues(proposed);
     }
+}
+// Approval changes the order's required units, not a carton's physical contents.
+// Keep direct SN replacement guarded; permit pending references through this
+// checked path without consuming, moving, sealing or releasing any carton.
+async function guardCartonOrderChange(db, orderId, proposal) {
+    const changes = proposal.items;
+    const barcodes = [...new Set(changes.map(change => change.barcode))];
+    const allocations = await activeAllocations(db, orderId);
+    if (allocations.length) {
+        const ids = new Set((await db.query('SELECT id FROM order_items WHERE order_id=$1 AND barcode=ANY($2::text[])', [orderId, barcodes])).rows.map(item => item.id));
+        if (allocations.some(allocation => allocation.lines.some(line => ids.has(line.orderItemId)))) throw blocked();
+    }
+    const current = (await db.query(`SELECT i.serial_number FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id
+        WHERE oi.order_id=$1 AND oi.barcode=ANY($2::text[])`, [orderId, barcodes])).rows.map(unit => unit.serial_number);
+    const additions = changes.filter(change => !change.noSn && change.quantityChange > 0);
+    const added = additions.flatMap(change => change.snList);
+    await lockCartonSerials(db, [...current, ...changes.flatMap(change => [...change.snList, ...change.removedSnList])]);
+    await assertLegacyOrderSerialEditing(db, orderId, proposal, { allowRegistered: true });
+    if (!added.length) return;
+    const registered = (await db.query(`SELECT s.serial_number,s.available,c.status,l.carton_id,l.item_code,l.international_barcode,l.internal_scan_code
+        FROM wms_carton_serials s JOIN wms_carton_lines l ON l.id=s.line_id JOIN wms_cartons c ON c.carton_id=l.carton_id
+        WHERE s.serial_number=ANY($1::text[])`, [added])).rows;
+    for (const serial of registered) {
+        if (serial.status === 'void' || !serial.available) throw Object.assign(new Error(`SN ${serial.serial_number} 的來源箱已作廢或此 SN 已取出，請先核對箱號紀錄`), { status: 409, code: 'CARTON_SN_UNAVAILABLE' });
+        const codes = [serial.international_barcode, serial.internal_scan_code,
+            !serial.international_barcode && !serial.internal_scan_code ? serial.item_code : null].filter(Boolean);
+        if (additions.some(change => change.snList.includes(serial.serial_number) && !codes.includes(change.barcode))) {
+            throw Object.assign(new Error(`SN ${serial.serial_number} 的箱內商品與異動品項不符，請核對品號與條碼`), { status: 409, code: 'CARTON_SN_ITEM_MISMATCH' });
+        }
+        assertLegacySerialValues([serial.serial_number]);
+    }
+    // Shares the same locks and cross-order ownership rule as picking imports.
+    await guardSerialImport(db, orderId, added);
 }
 function assertExpectedCartonScan(expectedCartonId) {
     if (expectedCartonId) throw Object.assign(new Error(`理貨明細指定箱號 ${expectedCartonId}，請掃描對應實體箱或拆箱揀貨`),
@@ -114,4 +147,4 @@ async function guardUnitScan(db, orderId, { orderItemId, instanceId, serialNumbe
     return context;
 }
 module.exports = { activeAllocations, assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, lockCartonSerials, guardSerialImport,
-    assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing, requireLooseSource };
+    assertNoRegisteredSerials, assertLegacySerialValues, assertLegacyOrderSerialEditing, guardCartonOrderChange, requireLooseSource };

@@ -87,7 +87,7 @@ async function reviewChange({ pool, io, orderId, exceptionId, user, decision, no
         if (!order || row?.type !== 'order_change') throw fail(404, '找不到異動申請');
         const deletion = isDeletionRequest(row);
         if (row.status !== 'open') throw fail(409, '此異動申請已審核，請重新整理');
-        if (decision === 'approve') await require('./cartonGuards').assertNoCartonAllocations(db, orderId);
+        if (decision === 'approve' && deletion) await require('./cartonGuards').assertNoCartonAllocations(db, orderId);
         if (decision==='approve' && !deletion && order.document_type && order.document_type!=='shipment') throw fail(409, '此理貨單含 ERP 負數數量，請在 ERP 修正後匯入新的理貨單，不可直接改動品項數量');
         if (decision === 'approve' && (order.status === 'voided' || (deletion && order.status === 'completed'))) throw fail(409, '訂單狀態已變更，請駁回此申請後重新確認');
         let item;
