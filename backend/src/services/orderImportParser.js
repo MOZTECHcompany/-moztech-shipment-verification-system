@@ -141,6 +141,7 @@ const SOURCE_HEADERS = {
     customerName: ['客戶名稱', '客戶/供應商名稱', 'customer_name']
 };
 const matchesSourceHeader = (value, field) => SOURCE_HEADERS[field].includes(normalizedHeader(value));
+const isCartonHeader = value => ['箱號', '箱批號', 'cartonid', 'carton_id'].includes(normalizedHeader(value));
 
 function sourceHeaderIndex(data) {
     return data.findIndex(row =>
@@ -157,15 +158,22 @@ function exportDate(value) {
     return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
 }
 
-function ecountTerminalFooterIndex(data, headerIndex) {
-    const onlyFirstCell = row => row.slice(1).every(value => String(value ?? '').trim() === '');
-    // Recognize only the observed ECOUNT envelope: company/date range in A1,
-    // source columns in row 2, and a terminal single-cell export timestamp.
-    if (headerIndex !== 1 || !onlyFirstCell(data[0])) return -1;
+const onlyFirstCell = row => row.slice(1).every(value => String(value ?? '').trim() === '');
+
+function hasEcountPickingPreamble(data, headerIndex) {
+    if (headerIndex !== 1 || !onlyFirstCell(data[0])) return false;
     const preamble = /^公司名稱 *[:：] *\S[^\r\n]*? *\/ *(\d{4}\/\d{2}\/\d{2}) *~ *(\d{4}\/\d{2}\/\d{2})$/.exec(String(data[0][0] ?? '').trim());
-    if (!preamble) return -1;
+    if (!preamble) return false;
     const start = exportDate(preamble[1]), end = exportDate(preamble[2]);
-    if (!start || !end || start > end) return -1;
+    return Boolean(start && end && start <= end);
+}
+
+function hasEcountSerialColumn(data, headerIndex) {
+    return data[headerIndex].some(value => normalizedHeader(value) === '序號/批號');
+}
+
+function ecountTerminalFooterIndex(data, headerIndex) {
+    if (!hasEcountPickingPreamble(data, headerIndex)) return -1;
     let index = data.length - 1;
     while (index > headerIndex && data[index].every(value => String(value ?? '').trim() === '')) index--;
     if (index <= headerIndex || !onlyFirstCell(data[index])) return -1;
@@ -176,8 +184,7 @@ function ecountTerminalFooterIndex(data, headerIndex) {
 }
 
 function isEcountPickingExport(data, headerIndex = sourceHeaderIndex(data)) {
-    return ecountTerminalFooterIndex(data, headerIndex) >= 0 &&
-        data[headerIndex].some(value => normalizedHeader(value) === '序號/批號');
+    return ecountTerminalFooterIndex(data, headerIndex) >= 0 && hasEcountSerialColumn(data, headerIndex);
 }
 
 function ecountSerialTokens(value) {
@@ -203,6 +210,10 @@ function parseSourceOrderRows(data, headerIndex, ecount) {
     // mapping. Never let the legacy fuzzy headers interpret import grouping 序號.
     const normalizedRows = [['憑證號碼：SOURCE-DOCUMENT'], ['國際條碼', '品項型號', '品項名稱', '數量', 'SN列表','實際SN']];
     const terminalFooterIndex = ecountTerminalFooterIndex(data, headerIndex);
+    // An otherwise identified fee does not depend on the trailing print time.
+    // Physical carton and SKU lookups still require the full ECOUNT envelope.
+    const hasEcountFreightColumns = hasEcountPickingPreamble(data, headerIndex) && hasEcountSerialColumn(data, headerIndex);
+    const cartonEvidenceIndexes = header.flatMap((value, index) => isCartonHeader(value) ? [index] : []);
     for (let index = headerIndex + 1; index < data.length; index++) {
         if (index === terminalFooterIndex) continue;
         const row = data[index];
@@ -222,11 +233,11 @@ function parseSourceOrderRows(data, headerIndex, ecount) {
             if (!productCode) throw invalid('品項編碼（SKU）必填，不能用國際條碼代替');
             const internationalBarcode = cell('barcode') || null;
             let internalScanCode = cell('internalScanCode') || null;
-            // A linked marketplace fee is reconciled against the saved source
-            // line. Direct ECOUNT exports can identify a fee by item code/name.
-            if (ecount && !source.sourceLineId && isPickingFreight(productCode, cell('productName')) &&
+            if (hasEcountFreightColumns && !source.sourceLineId && isPickingFreight(productCode, cell('productName')) &&
                 (!internationalBarcode || internationalBarcode === PICKING_FREIGHT_CODE) &&
-                !internalScanCode && !cell('serials') && !cell('actualSN') && !cell('summary')) {
+                !internalScanCode && !cell('serials') && !cell('actualSN') &&
+                !cartonEvidenceIndexes.some(column => String(row[column] ?? '').trim()) &&
+                !summaryRequiresExplicitSerials(cell('summary'), productCode, cell('quantity'))) {
                 const quantity = positivePickingQuantity(cell('quantity'));
                 omittedNonStock.push({ productCode, productName: cell('productName'), quantity, sourceRow });
                 freightExemptQuantity += quantity;
@@ -346,6 +357,11 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const physicalBarcodeIndices = header.flatMap((value, index) => /國際條碼|條碼/.test(String(value)) && !/品項編碼/.test(String(value)) ? [index] : []);
     const serialIndices = header.flatMap((value, index) => /SN|序號/i.test(String(value)) && !/摘要/.test(String(value)) ? [index] : []);
     const summaryIndices = header.flatMap((value, index) => /摘要/.test(String(value)) ? [index] : []);
+    const freightCodeIndex = itemCodeIndices.length === 1 && normalizedHeader(header[itemCodeIndex]) === '品項編碼' ? itemCodeIndex : -1;
+    const freightScanIndices = header.flatMap((value, index) =>
+        physicalBarcodeIndices.includes(index) || matchesSourceHeader(value, 'internalScanCode') || matchesSourceHeader(value, 'barcode') ? [index] : []);
+    const freightEvidenceIndices = header.flatMap((value, index) =>
+        serialIndices.includes(index) || matchesSourceHeader(value, 'serials') || isActualSNHeader(value) || isCartonHeader(value) ? [index] : []);
     const nameIndex = header.findIndex(value => String(value).includes('品項名稱'));
     const quantityIndex = header.findIndex(value => String(value).includes('數量'));
     const modelIndex = header.findIndex(value => /品項型號|型號|Product Code/.test(String(value)));
@@ -356,13 +372,15 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const dedicatedSerialColumn = summaryIndex >= 0 && !String(header[summaryIndex]).includes('摘要');
     const items = [];
     const shippingNotes = [];
+    const omittedNonStock = [];
+    let freightExemptQuantity = 0;
     let shippingNotesCharacters = 0;
     const seenSerials = new Set();
     let totalQuantity = 0;
     const lastContentIndex = data.findLastIndex(row => row.some(value => String(value ?? '').trim()));
     for (let index = headerIndex + 1; index < data.length; index++) {
         const row = data[index];
-        if (index === lastContentIndex && (items.length > 0 || shippingNotes.length > 0) && isPrintTimestampRow(row)) continue;
+        if (index === lastContentIndex && (items.length || shippingNotes.length || omittedNonStock.length) && isPrintTimestampRow(row)) continue;
         const barcode = String(row[barcodeIndex] ?? '').trim();
         const rawName = String(row[nameIndex] ?? '').trim();
         const rawQuantity = String(row[quantityIndex] ?? '').trim();
@@ -393,13 +411,33 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
         if (/^(?:合計|總計|小計|備註|以下空白|TOTAL|SUBTOTAL)[:：]?$/i.test(barcode) && !rawName) continue;
         if (isBarcodeHeader(barcode) && rawName.includes('品項名稱') && rawQuantity.includes('數量')) continue;
         try {
-            if (!barcode || !rawName || !rawQuantity) throw invalid('品項編碼、名稱與數量皆必填');
-            const cellAddress = xlsx.utils.encode_cell({ r: index, c: barcodeIndex });
-            validateBarcode(barcode, worksheet?.[cellAddress] || (typeof row[barcodeIndex] === 'number' ? { t: 'n', v: row[barcodeIndex] } : undefined), { sheet: sheetName, row: index + 1, cell: cellAddress });
             const normalizedQuantity = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.0+)?$/.test(rawQuantity) ? rawQuantity.replace(/,/g, '') : rawQuantity;
             const quantity = Number(normalizedQuantity);
-            if (!Number.isSafeInteger(quantity) || quantity === 0) throw invalid('數量必須為非零整數，可填正數或負數');
             let productCode = modelIndex >= 0 ? String(row[modelIndex] ?? '').trim() : '';
+            const explicitProductCode = String(row[freightCodeIndex] ?? '').trim();
+            const freight = quantity > 0 && isPickingFreight(explicitProductCode, rawName) &&
+                (!productCode || productCode === explicitProductCode) &&
+                freightScanIndices.every(column => {
+                    const value = String(row[column] ?? '').trim();
+                    return !value || (matchesSourceHeader(header[column], 'barcode') && value === PICKING_FREIGHT_CODE);
+                }) &&
+                !freightEvidenceIndices.some(column => String(row[column] ?? '').trim()) &&
+                !summaryIndices.some(column => summaryRequiresExplicitSerials(row[column], explicitProductCode, quantity));
+            if ((!barcode && !freight) || !rawName || !rawQuantity) throw invalid('品項編碼、名稱與數量皆必填');
+            const identifierIndex = freight ? freightCodeIndex : barcodeIndex;
+            const cellAddress = xlsx.utils.encode_cell({ r: index, c: identifierIndex });
+            const identifierCell = row[identifierIndex];
+            validateBarcode(freight ? explicitProductCode : barcode,
+                worksheet?.[cellAddress] || (typeof identifierCell === 'number' ? { t: 'n', v: identifierCell } : undefined),
+                { sheet: sheetName, row: index + 1, cell: cellAddress });
+            if (!Number.isSafeInteger(quantity) || quantity === 0) throw invalid('數量必須為非零整數，可填正數或負數');
+            if (items.length + omittedNonStock.length >= IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
+            if (totalQuantity + freightExemptQuantity + Math.abs(quantity) > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
+            if (freight) {
+                omittedNonStock.push({ productCode: explicitProductCode, productName: rawName, quantity, sourceRow: index + 1 });
+                freightExemptQuantity += quantity;
+                continue;
+            }
             let productName = rawName;
             if (!productCode) {
                 const match = rawName.match(/\[(.*?)\]/);
@@ -418,9 +456,7 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
                 seenSerials.add(serial);
             }
             totalQuantity += Math.abs(quantity);
-            if (items.length >= IMPORT_LIMITS.items) throw invalid(`每單最多 ${IMPORT_LIMITS.items} 個品項`, 413);
             if (seenSerials.size > IMPORT_LIMITS.serials) throw invalid(`每單最多 ${IMPORT_LIMITS.serials} 筆 SN`, 413);
-            if (totalQuantity > IMPORT_LIMITS.totalQuantity) throw invalid(`每單總數量最多 ${IMPORT_LIMITS.totalQuantity}`, 413);
             items.push({ barcode, productCode, productName, quantity, serials, serialMode,sourceRow: index + 1 });
         } catch (error) {
             if (error.code === 'IMPORT_NOT_APPLIED') error.message = `第 ${index + 1} 列：${error.message}`;
@@ -436,7 +472,8 @@ function parseOrderRows(data, { worksheet, sheetName } = {}) {
     const signedTotalQuantity = positiveQuantity - negativeQuantity;
     const documentType = negativeQuantity ? positiveQuantity ? 'adjustment' : 'reversal' : 'shipment';
     return { voucherNumber, customerName, items, shippingNotes, totalQuantity, serialCount: seenSerials.size,
-        documentType, signedTotalQuantity, positiveQuantity, negativeQuantity };
+        documentType, signedTotalQuantity, positiveQuantity, negativeQuantity,
+        ...(omittedNonStock.length ? { omittedNonStock, freightExemptQuantity } : {}) };
 }
 
 function readOrderImportRows(buffer) {

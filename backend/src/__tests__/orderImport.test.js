@@ -16,6 +16,68 @@ function workbook(data, bookType = 'xlsx') {
     return xlsx.write(wb, { type: 'buffer', bookType });
 }
 
+const legacyFreightRows = (header, ...items) => [['理貨單'], ['憑證號碼：TEST-FREIGHT'], header, ...items];
+const legacyFreightHeader = ['品項編碼', '品項名稱(規格)', '數量', '摘要'];
+const physicalFixture = ['4710000000001', 'Fixture [SKU-1]', 2, 'SN:DEMO00000001 SN:DEMO00000002'];
+
+test.each(['', '宅配費用分攤'])('keeps a canonical freight line with %j outside warehouse quantities', note => {
+    const parsed = parseOrderImport(workbook(legacyFreightRows(legacyFreightHeader,
+        ['00001', '運費', 36, note], physicalFixture, ['WMS-NOTE', '請保留外箱', 0])));
+    expect(parsed).toMatchObject({
+        totalQuantity: 2, signedTotalQuantity: 2, positiveQuantity: 2, negativeQuantity: 0,
+        serialCount: 2, freightExemptQuantity: 36,
+        omittedNonStock: [{ productCode: '00001', productName: '運費', quantity: 36, sourceRow: 4 }],
+        shippingNotes: [{ sourceRow: 6, text: '請保留外箱' }]
+    });
+    expect(parsed.items).toHaveLength(1);
+});
+
+test.each(['', '00001'])('recognizes a fee with the barcode column first and %j in that column', trackingCode => {
+    const parsed = parseOrderImport(workbook(legacyFreightRows(
+        ['國際條碼', ...legacyFreightHeader],
+        [trackingCode, '00001', '運費', 36, '費用分攤'],
+        ['4710000000002', 'SKU-2', 'Physical item', 2, '']
+    )));
+    expect(parsed).toMatchObject({ totalQuantity: 2, freightExemptQuantity: 36 });
+    expect(parsed.items).toHaveLength(1);
+});
+
+test.each([
+    ['實際SN', 'DEMO00000003'], ['內部掃描碼', 'ITM-1'], ['國際條碼', '4710000000003'],
+    ['箱號', 'CTN-FIXTURE'], ['摘要二', 'SN:DEMO00000004']
+])('keeps a fee-lookalike with physical evidence in %s', (column, value) => {
+    const parsed = parseOrderImport(workbook(legacyFreightRows(
+        [...legacyFreightHeader, column], ['00001', '運費', 1, '', value], physicalFixture
+    )));
+    expect(parsed).toMatchObject({ totalQuantity: 3 });
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.omittedNonStock).toBeUndefined();
+});
+
+test.each([['00001', '運費券', 1], ['00002', '運費', 1], ['00001', '運費', -1]])(
+    'keeps unrelated or signed warehouse item %s, %s, %s', (code, name, quantity) => {
+        const parsed = parseOrderImport(workbook(legacyFreightRows(legacyFreightHeader, [code, name, quantity, ''], physicalFixture)));
+        expect(parsed.items[0]).toMatchObject({ productCode: code, productName: name, quantity });
+        expect(parsed.omittedNonStock).toBeUndefined();
+    }
+);
+
+test('reports that a workbook with only fees has no physical items', () => {
+    expect(() => parseOrderImport(workbook(legacyFreightRows(legacyFreightHeader, ['00001', '運費', 36, '']))))
+        .toThrow(/沒有可匯入的品項/);
+});
+
+test('keeps an identified ECOUNT detail freight line out of work when the print footer is missing', () => {
+    const parsed = parseOrderImport(workbook([
+        ['公司名稱 : 合成測試公司 / 2026/09/14  ~ 2026/09/14'],
+        ['理貨單號', '品項編碼', '品項名稱', '序號/批號', '商城訂單編號', '平台', '店鋪', '來源明細號', '國際條碼', '數量', '摘要'],
+        ['ERP-TEST', '00001', '運費', '', 'ORDER-1', 'Shopify', 'TEST', '', '00001', 36, '宅配費用'],
+        ['ERP-TEST', 'TEST-SKU', 'Physical item', 'DEMO00000001', 'ORDER-1', 'Shopify', 'TEST', 'p-1', '4710000000001', 1, '']
+    ]));
+    expect(parsed).toMatchObject({ totalQuantity: 1, serialCount: 1, freightExemptQuantity: 36 });
+    expect(parsed.items[0]).toMatchObject({ productCode: 'TEST-SKU', serials: ['DEMO00000001'], sourceRow: 4 });
+});
+
 test.each(['xlsx', 'biff8', 'csv'])('parses actual %s workbook using the existing labels and SKU syntax', bookType => {
     const parsed = parseOrderImport(workbook(makeRows(), bookType));
     expect(parsed).toMatchObject({ voucherNumber: 'TEST-20260909-1', customerName: 'Fixture Company', totalQuantity: 2, serialCount: 0 });
@@ -158,6 +220,20 @@ test('valid import writes required log using one client before commit and return
     expect(db.io.emit.mock.calls.map(([event]) => event)).toEqual(['new_operation_log', 'new_task']);
     expect(db.io.emit.mock.calls[1][1]).toMatchObject({ imported_by_user_id: 7 });
     expect(db.client.release).toHaveBeenCalledTimes(1);
+});
+
+test('the production import route persists real items only and records the exempt freight row in its audit', async () => {
+    const db = database();
+    const rows = legacyFreightRows(legacyFreightHeader, ['00001', '運費', 36, '運費分攤'], physicalFixture);
+    const result = await invoke(db, workbook(rows));
+    expect(result.status).toBe(201);
+    expect(result.body).toMatchObject({ totalQuantity: 2, itemCount: 1, serialCount: 2, freightExemptQuantity: 36 });
+    expect(db.state().items).toHaveLength(1);
+    expect(db.state().items[0][1]).toBe('SKU-1');
+    expect(JSON.parse(db.state().logs[0][3])).toMatchObject({
+        pickingFreightReviewed: true, freightExemptQuantity: 36,
+        omittedNonStock: [{ productCode: '00001', productName: '運費', quantity: 36, sourceRow: 4 }]
+    });
 });
 
 test('parse failure does not acquire a database connection', async () => {

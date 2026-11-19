@@ -490,7 +490,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             ...(error.reason === 'INVALID_BARCODE_FORMAT' ? { reason: error.reason, issue: error.issue } : {}) });
     }
 
-    const { voucherNumber, customerName, items, shippingNotes, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity } = parsed;
+    const { voucherNumber, customerName, items, shippingNotes, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity, omittedNonStock, freightExemptQuantity } = parsed;
     const events = deferredEvents(req.app.get('io'));
     let client;
     let transactionOpen = false;
@@ -535,7 +535,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             await client.query('INSERT INTO order_item_instances (order_item_id, serial_number) SELECT * FROM unnest($1::int[], $2::text[])', [instanceItemIds, serialValues]);
         }
         // Import attribution is still based on this log, so it is required and may not be swallowed.
-        const details = { voucherNumber, pickingFreightReviewed:true, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length };
+        const details = { voucherNumber, pickingFreightReviewed:true, itemCount: items.length, totalQuantity, serialCount, documentType, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length,
+            ...(freightExemptQuantity ? { omittedNonStock, freightExemptQuantity } : {}) };
         const log = await client.query('INSERT INTO operation_logs (user_id, order_id, action_type, details, actor_snapshot) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
             [req.user.id, orderId, 'import', JSON.stringify(details), JSON.stringify(require('../utils/warehouseWork').actorSnapshot(req.user))]);
         events.emit('new_operation_log', {
@@ -551,7 +552,8 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
         transactionOpen = false;
         events.publish();
         return res.status(201).json({ message: `訂單 ${voucherNumber} 匯入成功`, operation: documentType, documentType,
-            orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length });
+            orderId, voucherNumber, itemCount: items.length, totalQuantity, serialCount, signedTotalQuantity, positiveQuantity, negativeQuantity, shippingNoteCount: shippingNotes.length,
+            ...(freightExemptQuantity ? { freightExemptQuantity } : {}) });
     } catch (error) {
         let notApplied = !transactionOpen && !commitAttempted;
         if (transactionOpen) {
