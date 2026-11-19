@@ -272,16 +272,11 @@ class SnLabelsService {
         const [b] = await this.db.$queryRaw `SELECT * FROM sn_label_batches WHERE id=${id} AND entity_id=${entity}`;
         if (!b)
             throw new NotFoundException('找不到已啟用批次');
-        if (!Number.isInteger(from) ||
-            !Number.isInteger(to) ||
-            from < 1 ||
-            to < from ||
-            to > 999999 ||
-            to - from > 9999)
-            throw new BadRequestException('請選擇有效的流水號範圍，每次最多 10,000 個');
         if (kind === 'warehouse-cartons') {
-            if (to - from >= 100)
-                throw new BadRequestException('每次最多匯出 100 箱，請縮小箱序範圍');
+            const [counts] = await this.db.$queryRaw `SELECT count(*)::int AS cartons FROM sn_label_cartons WHERE batch_id=${id}`;
+            if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) ||
+                from < 1 || to < from || to > counts.cartons)
+                throw new BadRequestException(`請選擇有效的箱序範圍（此批次共 ${counts.cartons} 箱）`);
             const boxes = await this.db.$queryRaw `SELECT c.id,c.quantity,COALESCE((SELECT jsonb_agg(s.sn ORDER BY s.position) FROM sn_label_serials s WHERE s.carton_id=c.id),'[]'::jsonb) AS serials FROM sn_label_cartons c WHERE c.batch_id=${id} AND c.ordinal BETWEEN ${from} AND ${to} ORDER BY c.ordinal`;
             if (boxes.length !== to - from + 1)
                 throw new BadRequestException('箱序範圍包含不存在的箱號');
@@ -289,6 +284,13 @@ class SnLabelsService {
                 throw new ConflictException('箱內 SN 與數量不符，請先核對批次');
             return { data: b.data, items: [], boxes };
         }
+        if (!Number.isInteger(from) ||
+            !Number.isInteger(to) ||
+            from < 1 ||
+            to < from ||
+            to > 999999 ||
+            to - from > 9999)
+            throw new BadRequestException('請選擇有效的流水號範圍，每次最多 10,000 個');
         if (isNoSerial(b.data)) {
             if (kind !== 'cartons-no-sn')
                 throw new BadRequestException('NSI 無 SN 產品僅提供無 SN 規格箱標籤');

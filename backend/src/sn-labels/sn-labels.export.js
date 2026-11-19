@@ -16,8 +16,8 @@ const EXPORT_KINDS = [
 ];
 class SnLabelsExport {
     warehouseCartons(d, boxes, batchId) {
-        if (!d.sku || boxes.length < 1 || boxes.length > 100)
-            throw new BadRequestException('請核對商品品號及箱序範圍（每次最多 100 箱）');
+        if (!d.sku || boxes.length < 1)
+            throw new BadRequestException('請核對商品品號及箱序範圍');
         const internationalBarcode = d.barcode.startsWith('ITM-') ? '' : d.barcode;
         const rows = boxes.map((box) => [
             internationalBarcode, d.productName, d.model, box.quantity, box.id,

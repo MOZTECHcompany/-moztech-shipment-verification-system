@@ -79,7 +79,7 @@ function Workspace({
   const [from, setFrom] = useState(1),
     [to, setTo] = useState(100),
     [warehouseFrom, setWarehouseFrom] = useState(1),
-    [warehouseTo, setWarehouseTo] = useState(100),
+    [warehouseTo, setWarehouseTo] = useState(1),
     [reason, setReason] = useState("initial");
   const [columns, setColumns] = useState([
     "一般序號",
@@ -211,7 +211,7 @@ function Workspace({
     setDirty(false);
     setCartonPage(1);
     setWarehouseFrom(1);
-    setWarehouseTo(Math.min(v.cartons, 100));
+    setWarehouseTo(v.cartons);
     setFrom(isNoSerial(v.data) ? 1 : v.first!);
     setTo(
       isNoSerial(v.data)
@@ -796,18 +796,27 @@ function Workspace({
                           onChange={(v) => {
                             if (v === null) return;
                             setWarehouseFrom(v);
-                            setWarehouseTo((end) => Math.min(Math.max(end, v), v + 99));
+                            setWarehouseTo((end) => Math.min(Math.max(end, v), active.cartons));
                           }}
                         />
                         <span>～</span>
                         <InputNumber
                           aria-label="倉儲明細結束箱序"
                           min={warehouseFrom}
-                          max={Math.min(warehouseFrom + 99, active.cartons)}
+                          max={active.cartons}
                           precision={0}
                           value={warehouseTo}
                           onChange={(v) => v !== null && setWarehouseTo(v)}
                         />
+                        <Button
+                          disabled={busy}
+                          onClick={() => {
+                            setWarehouseFrom(1);
+                            setWarehouseTo(active.cartons);
+                          }}
+                        >
+                          選取全部箱號
+                        </Button>
                         <Button
                           disabled={!canOutput || busy}
                           onClick={() => output("warehouse-cartons")}
@@ -815,6 +824,9 @@ function Workspace({
                           箱號倉儲明細 XLSX
                         </Button>
                       </Space>
+                      <p className="sn-muted">
+                        預設匯出此批次全部 {active.cartons} 箱，也可指定箱序範圍。
+                      </p>
                       <Form
                         layout="vertical"
                         style={{
