@@ -481,13 +481,20 @@ export function validateMarketplaceExport(parsed, settings = {}) {
   for (const i of (parsed.issues || []).filter((i) => i.severity === 'confirmation')) {
     if (i.code !== 'BUNDLE_ALLOCATION_REQUIRED' || settings.bundleZeroConfirmed !== true) issues.push({ ...i, severity: 'error' });
   }
+  const shipping = settings.shippingSku;
+  const shippingCode = text(shipping?.erpSku);
+  const shippingSharesProductCode = shippingCode && parsed.items.some(item => text(settings.skuMappings?.[item.sku]?.erpSku) === shippingCode);
   for (const order of parsed.orders || []) {
     const context = { orderNumber: order.sourceOrderNumber };
     if (!verifiedShopifyRefundRemainder(order)&&(order.cancelled || !['unfulfilled'].includes(order.fulfillmentStatus) || !['paid', 'pending'].includes(order.paymentStatus) || (order.financial.refundedMinor ?? 0) > 0)) issues.push(issue('ORDER_NOT_ELIGIBLE', '取消、退款、已履行或狀態不明訂單不能由此測試轉檔出貨', context));
     if (order.paymentStatus !== 'paid' && !verifiedShopifyRefundRemainder(order) && settings.pendingTestAcknowledged !== true) issues.push(issue('PENDING_TEST_ACK_REQUIRED', '請確認這是未付款訂單的限定測試，不代表已收款或正式放行', context));
     if (order.financial.currency && order.financial.currency !== settings.currency) issues.push(issue('CURRENCY_MISMATCH', '來源幣別與匯出設定不符', context));
     if ((order.financial.feeMinor ?? 0) !== 0) issues.push(issue('FEE_MAPPING_REQUIRED', '本次尚未設定金流手續費專用品項，不能漏列或併入商品', context));
-    if ((order.financial.shippingMinor ?? 0) > 0 && (!settings.shippingSku?.confirmed || !settings.shippingSku?.nonStock || !text(settings.shippingSku?.erpSku))) issues.push(issue('SHIPPING_MAPPING_REQUIRED', '有運費時，須確認 ECOUNT 運費品項為非庫存／數量管理除外', context));
+    if ((order.financial.shippingMinor ?? 0) > 0) {
+      if (productIdentifierIssue(shipping?.erpSku)) issues.push(issue('SHIPPING_IDENTIFIER_INVALID', 'ECOUNT 運費品號格式無效，請依主檔以文字填入完整品號並保留前導零', context));
+      else if (shipping?.confirmed !== true || shipping?.nonStock !== true || !shippingCode) issues.push(issue('SHIPPING_MAPPING_REQUIRED', '有運費時，須確認 ECOUNT 運費品項為非庫存／數量管理除外', context));
+      else if (shippingSharesProductCode) issues.push(issue('SHIPPING_PRODUCT_CODE_CONFLICT', `ECOUNT 品號 ${shippingCode} 已用於本批出貨商品，請核對並選擇獨立的非庫存運費品號`, context));
+    }
     for (const item of parsed.items.filter((i) => i.sourceOrderNumber === order.sourceOrderNumber)) {
       const amount = item.kind === 'bundle_component' && settings.bundleZeroConfirmed ? 0 : item.lineSubtotalMinor;
       if (amount == null) issues.push(issue('UNRESOLVED_LINE_MONEY', '商品金額仍未確認', { ...context, sourceRow: item.sourceRow }));

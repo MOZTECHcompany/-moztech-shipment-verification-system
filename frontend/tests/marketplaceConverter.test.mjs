@@ -196,6 +196,30 @@ test('upload uses authoritative server preview and automatically applies the uni
     assert.doesNotMatch(view.text(view.render()), /已確認本次金額為 TWD|剩餘折扣按/);
 });
 
+test('confirmed freight code errors open an editable mapping and require a new preview', async () => {
+    const order = [...fixtureRows[1]];
+    order[headers.indexOf('訂單運費')] = '10';
+    order[headers.indexOf('總計金額')] = '20';
+    for (const [erpSku, error] of [['1E+5', /運費品號格式無效/], ['00123', /已用於本批出貨商品/]]) {
+        const profile = { ...storeProfile, settings: { ...storeProfile.settings, shippingSku: { erpSku, name: '運費', confirmed: true, nonStock: true } } };
+        const view = await converter({
+            profiles: [profile],
+            previewProfiles: body => [body.profileId ? { ...profile, settings: { ...profile.settings, shippingSku: body.settings.shippingSku } } : profile]
+        });
+        await view.select(file([headers, order]));
+        const advanced = view.find(view.render(), node => node.type === 'details' && view.text(node.props.children[0]).includes('進階設定與核對表'));
+        assert.equal(advanced.props.open, true);
+        assert.match(view.text(view.render()), error);
+        assert.equal(downloadSales(view).props.disabled, true);
+        await view.change('ECOUNT 運費品項編碼', '00001');
+        await view.change('運費品項為無形商品', true);
+        await view.button('套用設定').props.onClick();
+        assert.deepEqual(JSON.parse(JSON.stringify(previewCalls(view).at(-1).body.settings.shippingSku)), { erpSku: '00001', name: '運費', confirmed: true, nonStock: true });
+        assert.equal(downloadSales(view).props.disabled, false);
+        assert.equal(saveCalls(view).length, 0);
+    }
+});
+
 test('stopping marketplace verification retains the source and ignores a late response', async () => {
     let release, signalStarted;
     const started = new Promise(resolve => { signalStarted = resolve; });

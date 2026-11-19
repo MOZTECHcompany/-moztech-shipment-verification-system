@@ -526,7 +526,7 @@ router.post('/orders/import', authorizeRoles('admin', 'dispatcher'), importLimit
             batchId = (await client.query('INSERT INTO warehouse_import_batches (voucher_number, created_by) VALUES ($1, $2) RETURNING id', [voucherNumber, req.user.id])).rows[0].id;
         }
         const groups = batchId ? parsed.workOrders : [{ items, customerName, totalQuantity, serialCount }];
-        const marketplaceMatches = await matchMarketplaceWorkOrders(client, groups, req.body?.marketplaceIntakeId);
+        const marketplaceMatches = await matchMarketplaceWorkOrders(client, groups, req.body?.marketplaceIntakeId, parsed.omittedNonStock);
         const importedOrders = [];
         const instanceItemIds = [];
         const serialValues = [];

@@ -1,5 +1,5 @@
 const {createHash}=require('node:crypto');
-const {parseOrderRows}=require('./orderImportParser');
+const {parseOrderRows,summaryRequiresExplicitSerials,matchesSourceHeader}=require('./orderImportParser');
 const HEADERS=['ECOUNT實際銷貨單號','WMS批次號','客戶/供應商編碼','發貨倉庫','交易類型','平台','店鋪','商城訂單編號','來源明細號','品項編碼','數量','稅前價格','營業稅','含稅金額','國際條碼','序號/批號','摘要','內部掃描碼','來源SKU','實際SN'];
 const clean=v=>String(v??'').trim();
 const fail=message=>Object.assign(new Error(message),{status:400});
@@ -9,6 +9,7 @@ async function reconcileSales(rows,record,{logistics=false}={}){
  const h=rows.findIndex(r=>Array.isArray(r)&&r.some(c=>clean(c)==='來源明細號')&&r.some(c=>clean(c)==='ECOUNT實際銷貨單號'));
  if(h<0)throw fail('請使用 ECOUNT 已儲存銷貨明細的回傳格式，需有「ECOUNT實際銷貨單號」；銷貨上傳檔不能當作成功回執');
  const names=rows[h].map(clean),required=logistics?[HEADERS[0],...HEADERS.slice(5,11)]:HEADERS.slice(0,14);
+ const cartonColumns=names.flatMap((name,index)=>matchesSourceHeader(name,'cartonId')?[index]:[]);
  const moneyColumns=HEADERS.slice(11,14);
  const verifyMoney=!logistics||moneyColumns.some(k=>names.includes(k));
  if(verifyMoney)for(const k of moneyColumns)if(!required.includes(k))required.push(k);
@@ -54,7 +55,13 @@ async function reconcileSales(rows,record,{logistics=false}={}){
    if(get('內部掃描碼')&&get('內部掃描碼')!==item.internalScanCode)throw fail(`第 ${n+1} 列：內部掃描碼不符`);
    if(get('來源SKU')&&get('來源SKU')!==item.sourceSku)throw fail(`第 ${n+1} 列：來源SKU不符`);
    picking.push([record.batch_number,item.productCode,item.productName,get('商城訂單編號'),get('平台'),get('店鋪'),get('來源明細號'),international,item.quantity,get('序號/批號'),get('摘要'),item.internalScanCode||'',item.sourceSku||'',get('實際SN')]);
-  }else if(get('序號/批號'))throw fail('非庫存運費不可含 SN');
+  }else{
+   const productCode=get('品項編碼'),barcode=get('國際條碼');
+   if(get('序號/批號')||get('實際SN')||cartonColumns.some(index=>clean(row[index]))||summaryRequiresExplicitSerials(get('摘要'),productCode,Number(get('數量')))){
+    throw fail(`第 ${n+1} 列：非庫存運費不可含 SN 或箱批號`);
+   }
+   if(get('內部掃描碼')||(barcode&&barcode!==productCode))throw fail(`第 ${n+1} 列：非庫存運費不可含其他商品掃描碼`);
+  }
   vouchers.add(voucher);actual.push({identity:JSON.parse(key),voucher,productCode:get('品項編碼'),quantity:Number(get('數量')),netMinor:verifyMoney?net:null,taxMinor:verifyMoney?tax:null,grossMinor:verifyMoney?gross:null,...(logistics?{barcode:item?.barcode||''}:{}),serials:get('序號/批號'),summary:get('摘要'),...(get('實際SN')?{actualSN:get('實際SN')}:{} )});
  }
  if([...byKey.keys()].some(key=>!seen.has(key)))throw fail(logistics?'回傳未包含整批全部商品，未建立任務':'回傳未包含整批全部商品與運費明細，未建立／放行任務');

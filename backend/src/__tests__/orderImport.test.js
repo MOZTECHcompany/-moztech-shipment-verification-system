@@ -38,6 +38,42 @@ test('imports a legacy picking workbook with freight recorded outside physical s
     ]);
 });
 
+test('exempts a confirmed fee with a sales memo and keeps actual items', () => {
+    const rows = makeFreightPickingRows([
+        ['00001', '運費', 36, '宅配費用分攤'],
+        ['4710000000001', 'Physical item', 2, 'SN:DEMO00000001 SN:DEMO00000002']
+    ]);
+    const parsed = parseOrderImport(workbook(rows));
+
+    expect(parsed).toMatchObject({ totalQuantity: 2, serialCount: 2, freightExemptQuantity: 36 });
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0].serials).toEqual(['DEMO00000001', 'DEMO00000002']);
+});
+
+test.each(['', '00001'])('uses the explicit item code when %j is in the first barcode column', feeBarcode => {
+    const rows = makeFreightPickingRows([
+        [feeBarcode, '00001', '運費', 36, '費用分攤'],
+        ['4710000000001', 'SKU-1', 'Physical item', 2, '']
+    ]);
+    rows[4] = ['國際條碼', '品項編碼', '品項名稱(規格)', '數量', '摘要'];
+    const parsed = parseOrderImport(workbook(rows));
+
+    expect(parsed).toMatchObject({ totalQuantity: 2, freightExemptQuantity: 36 });
+    expect(parsed.items).toHaveLength(1);
+});
+
+test('keeps a legacy fee-shaped row with an explicit physical barcode or actual SN', () => {
+    const rows = makeFreightPickingRows([
+        ['00001', '運費', 1, '商品備註', '4710000000001', ''],
+        ['00001', '運費', 1, '', '', 'DEMO00000001']
+    ]);
+    rows[4].push('國際條碼', '實際SN');
+    const parsed = parseOrderImport(workbook(rows));
+
+    expect(parsed).toMatchObject({ totalQuantity: 2, serialCount: 1 });
+    expect(parsed.omittedNonStock).toBeUndefined();
+});
+
 test('rejects a freight-only legacy picking workbook with no physical items', () => {
     const rows = makeFreightPickingRows([['00001', '運費', 36, '']]);
 
@@ -123,6 +159,32 @@ test.each(['', '00001'])('direct ECOUNT detail import exempts fee with %j as its
     expect(parsed).toMatchObject({ totalQuantity: 4, serialCount: 1, freightExemptQuantity: 36 });
     expect(parsed.items.map(item => item.sourceRow)).toEqual([4, 5, 6]);
     expect(parsed.omittedNonStock).toEqual([{ productCode: '00001', productName: '運費', quantity: 36, sourceRow: 3 }]);
+});
+
+test('direct ECOUNT fee exclusion survives ordinary notes and a missing report footer', async () => {
+    const rows = ecountExportRows();
+    rows.pop();
+    rows.splice(2, 0, ['TEST-ERP-1', '00001', '運費', '', 'TEST-ORDER-A', 'Shopify', 'Test store A', '', '00001', '運費', 36, '', '', '', '宅配費用']);
+    const parsed = await parseMarketplaceLinkedImport(workbook(rows), { query: async () => ({ rows: [] }) });
+
+    expect(parsed).toMatchObject({ totalQuantity: 4, serialCount: 1, freightExemptQuantity: 36 });
+    expect(parsed.items.map(item => item.sourceRow)).toEqual([4, 5, 6]);
+});
+
+test('direct source-detail parsing preserves actual SN and independent non-ECOUNT lookalikes', () => {
+    const rows = ecountExportRows();
+    rows[1].push('實際SN');
+    rows.splice(2, 0, ['TEST-ERP-1', '00001', '運費', '', 'TEST-ORDER-A', 'Shopify', 'Test store A', '', '00001', '運費', 1, '', '', '', '', 'DEMO00000002']);
+    const parsed = parseOrderRows(rows);
+    expect(parsed.items[0]).toMatchObject({ productCode: '00001', serials: ['DEMO00000002'] });
+    expect(parsed.omittedNonStock).toBeUndefined();
+
+    rows[0] = ['不是 ECOUNT 報表'];
+    rows.pop();
+    rows[2][15] = '';
+    const unrelated = parseOrderRows(rows);
+    expect(unrelated.items[0].productCode).toBe('00001');
+    expect(unrelated.omittedNonStock).toBeUndefined();
 });
 
 test.each(['xlsx', 'biff8', 'csv'])('recognizes the confirmed ECOUNT envelope in %s without changing source row numbers', bookType => {
@@ -341,7 +403,10 @@ function database({ existing = false, failLog = false, failCommit = false, failR
         })
     };
     pool.connect.mockResolvedValue(client);
-    pool.query.mockImplementation(sql => { if(sql.startsWith('WITH source_keys AS'))return {rows:[]};throw new Error('second pool connection is forbidden'); });
+    pool.query.mockImplementation(sql => {
+        if (sql.startsWith('WITH source_keys AS') || sql.includes('FROM marketplace_intake_orders o') && sql.includes('JOIN unnest(')) return result([]);
+        throw new Error('second pool connection is forbidden');
+    });
     const io = { emit: jest.fn(() => { if (pending) earlyEvents++; }) };
     return { client, io, state: () => state, earlyEvents: () => earlyEvents };
 }
@@ -365,6 +430,20 @@ test('valid import writes required log using one client before commit and return
     expect(db.io.emit.mock.calls.map(([event]) => event)).toEqual(['operation_logs_changed', 'new_task']);
     expect(db.io.emit.mock.calls[1][1]).toMatchObject({ imported_by_user_id: 7 });
     expect(db.client.release).toHaveBeenCalledTimes(1);
+});
+
+test('order import persists actual merchandise and SN with the freight recorded only in the audit', async () => {
+    const db = database();
+    const rows = makeFreightPickingRows([
+        ['00001', '運費', 36, '宅配活動'],
+        ['4710000000001', 'Physical item', 1, 'SN:DEMO00000001']
+    ]);
+    const result = await invoke(db, workbook(rows));
+    expect(result).toMatchObject({ status: 201, body: { itemCount: 1, totalQuantity: 1, serialCount: 1, freightExemptQuantity: 36 } });
+    expect(db.state().items.map(item => item[1])).toEqual(['4710000000001']);
+    expect(db.state().instances).toEqual(['DEMO00000001']);
+    const details = JSON.parse(db.state().logs[0][3]);
+    expect(details.omittedNonStock).toEqual([{ productCode: '00001', productName: '運費', quantity: 36, sourceRow: 6 }]);
 });
 
 test('source detail persists one batch and distinct marketplace work orders atomically', async () => {

@@ -143,6 +143,47 @@ test('shipping requires verified non-stock ERP item and never contributes prepic
   const s = settings(); s.shippingSku.nonStock = false; assert.ok(codes(validateMarketplaceExport(parse(), s)).includes('SHIPPING_MAPPING_REQUIRED'));
   const p = buildPrepickRows(parse(), settings()); assert.equal(p.ok, true); assert.equal(p.rows.length, 3); assert.equal(p.summary.physicalQuantity, 4); assert.equal(p.rows.find((r) => r[1] === '0001-02')[5], 2); assert.doesNotMatch(JSON.stringify(p.rows), /FREIGHT-TEST/);
 });
+test('sales rejects a corrupted freight code even when the non-stock mapping was confirmed', () => {
+  for (const erpSku of ['1.00E+05', Number.MAX_SAFE_INTEGER + 1]) {
+    const s = settings();
+    s.shippingSku.erpSku = erpSku;
+    const sales = buildEcountRows(parse(), s);
+    assert.equal(sales.ok, false);
+    assert.deepEqual(sales.rows, []);
+    assert.ok(sales.issues.some(issue => issue.code === 'SHIPPING_IDENTIFIER_INVALID' && issue.orderNumber === 'TEST-A'));
+    assert.equal(buildEcountRows(parse(oneRows(), { allowedOrderNumbers: ['TEST-B'] }), s).ok, true);
+  }
+});
+test('sales blocks a confirmed freight code shared by a physical line anywhere in the batch', () => {
+  const s = settings();
+  s.shippingSku.erpSku = ` ${s.skuMappings['SAMPLE-C'].erpSku} `;
+  for (const salesExportMode of ['order-lines-v1', 'product-200-v1']) {
+    const sales = buildEcountRows(parse(), { ...s, salesExportMode });
+    assert.equal(sales.ok, false);
+    assert.deepEqual(sales.rows, []);
+    assert.ok(sales.issues.some(issue => issue.code === 'SHIPPING_PRODUCT_CODE_CONFLICT' && issue.orderNumber === 'TEST-A'));
+  }
+});
+test('valid freight preserves leading zeros, amount, tax, source trace and memo while prepick counts only goods', () => {
+  const s = settings();
+  s.shippingSku.erpSku = '00001';
+  s.summaryNote = '測試本批摘要';
+  const parsed = parse();
+  const sales = buildEcountRows(parsed, { ...s, salesExportMode: 'product-200-v1' });
+  assert.equal(sales.ok, true);
+  const [freight] = sales.rows.filter(row => row[11] === '00001');
+  assert.deepEqual(freight.slice(11, 15), ['00001', 'TEST-A', '1Shop', s.store]);
+  assert.match(freight[15], /^L[0-9a-f]{32}$/);
+  assert.equal(parsed.items.some(item => item.sourceLineId === freight[15]), false);
+  assert.deepEqual(freight.slice(19, 26), [1, 95, 100, '', 95, 5, s.summaryNote]);
+  const segment = sales.salesLayout.lines.find(line => line.productCode === '00001');
+  assert.equal(segment.physical, false);
+  assert.deepEqual(segment.allocations, [{ identity: [...freight.slice(13, 15), freight[12], freight[15]], quantity: 1, sourceGrossMinor: 10000 }]);
+  assert.equal(sales.summary.ecountTotalMinor, parsed.summary.totalMinor);
+  const prepick = buildPrepickRows(parsed, s);
+  assert.equal(prepick.summary.physicalQuantity, 4);
+  assert.equal(prepick.rows.some(row => row[2] === '00001'), false);
+});
 test('prepick groups by SKU+verified barcode, retains source orders, category and bundle names', () => {
   const p = buildPrepickRows(parse(), settings()); const common = p.rows.find((r) => r[1] === '0001-02'); assert.equal(common[0], '合成分類'); assert.equal(common[6], 2); assert.match(common[7], /TEST-A.*TEST-B/); assert.match(common[8], /合成組合商品/);
 });

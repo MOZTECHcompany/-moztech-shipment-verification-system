@@ -64,6 +64,7 @@ test('preserves ERP variant suffix, stock/nonstock separation, and saved legacy 
 });
 test('grouped sales preserve source shipping rows for save and ERP logistics omits nonstock without creating warehouse products',async()=>{
  const r=fixture([1,2]);
+ r.settings.summaryNote='雙十一活動運費';
  for(const o of r.orders){o.financial.shippingMinor=8000;o.financial.totalMinor+=8000;}
  const out=buildEcountRows({items:r.items,orders:r.orders,issues:[],summary:{}},r.settings),record={...r,...out};
  assert.equal(out.ok,true,JSON.stringify(out.issues));
@@ -71,11 +72,23 @@ test('grouped sales preserve source shipping rows for save and ERP logistics omi
   const physicalIds=new Set(r.items.filter(i=>i.sourceOrderNumber===o.sourceOrderNumber).map(i=>i.sourceLineId));
   const nonstock=out.rows.filter(row=>row[12]===o.sourceOrderNumber&&!physicalIds.has(row[15]));
   assert.equal(nonstock.length,1);assert.equal(nonstock[0][11],'SHIP');assert.equal(nonstock[0][19],1);
+  assert.equal(nonstock[0][25],r.settings.summaryNote);
  }
  const grouped=prepareEcountFinancials(record);
  assert.equal(grouped.rows.length,2);assert.equal(grouped.salesLayout.lines.filter(l=>!l.physical)[0].quantity,2);
- const complete=receipt(record),sales=await reconcileSales(complete,stored(record));
+ const complete=receipt(record),feeIndex=complete.findIndex(row=>row[9]==='SHIP');
+ complete[feeIndex][14]='SHIP';
+ complete[feeIndex][16]=grouped.rows.find(row=>row[11]==='SHIP')[25];
+ const sales=await reconcileSales(complete,stored(record));
  assert.equal(sales.receipt.lines.length,2);assert.equal(sales.parsed.workOrders.length,2);
+ assert.equal(sales.receipt.lines.find(line=>line.productCode==='SHIP').summary,r.settings.summaryNote);
+ assert.equal(sales.receipt.financials.grossMinor,r.orders.reduce((sum,order)=>sum+order.financial.totalMinor,0));
+ for(const [header,value] of [['國際條碼','4711299274572'],['內部掃描碼','ITM-OTHER'],['序號/批號','CARTON-OTHER'],['實際SN','TESTSN000001'],['摘要','SN:TESTSN000001'],['箱號','CARTON-OTHER']]){
+  const inconsistent=structuredClone(complete);
+  if (!inconsistent[0].includes(header)) inconsistent[0].push(header);
+  inconsistent[feeIndex][inconsistent[0].indexOf(header)]=value;
+  await assert.rejects(()=>reconcileSales(inconsistent,stored(record)),/非庫存運費不可含/);
+ }
  assert.ok(sales.parsed.workOrders.every(o=>o.items.length===1&&o.items[0].productCode==='NEW0012'));
  const warehouse=[complete[0],...complete.slice(1).filter(row=>row[9]!=='SHIP')];
  const logistics=await reconcileSales(warehouse,stored(record),{logistics:true});

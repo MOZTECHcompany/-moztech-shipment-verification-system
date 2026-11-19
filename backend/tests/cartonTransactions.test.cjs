@@ -274,6 +274,26 @@ async function suite(t, postgres) {
         assert.deepEqual(await freightCounts(historicalFreightId), { quantity: 36, picked_quantity: 0, packed_quantity: 0 });
 
         const xlsx = require('xlsx');
+        const feeMemoBook = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(feeMemoBook, xlsx.utils.aoa_to_sheet([
+            ['憑證號碼：TEST-FREIGHT-WITH-MEMO'],
+            ['國際條碼', '品項編碼', '品項名稱', '數量', '摘要'],
+            ['00001', '00001', '運費', 36, '宅配費用'],
+            ['4710000000041', 'WAREHOUSE-PHYSICAL', 'Physical item', 1, '']
+        ]), '理貨');
+        const feeMemoOrder = ok(await request(server).post('/api/orders/import').set('x-fixture-user', '1')
+            .attach('orderFile', xlsx.write(feeMemoBook, { type: 'buffer', bookType: 'xlsx' }), 'freight-memo.xlsx'), 201);
+        assert.equal(feeMemoOrder.freightExemptQuantity, 36);
+        ok(await api(2, 'post', `/api/orders/${feeMemoOrder.orderId}/claim`, { stage: 'pick' }));
+        const feeMemoPick = await snapshot(2, feeMemoOrder.orderId);
+        assert.deepEqual(feeMemoPick.items.map(row => [row.barcode, row.quantity]), [['4710000000041', 1]]);
+        const pickedFeeMemoOrder = ok(await unitScan(2, feeMemoOrder.orderId, feeMemoPick, { scanValue: '4710000000041', type: 'pick' }));
+        assert.equal(pickedFeeMemoOrder.order.status, 'picked');
+        ok(await api(3, 'post', `/api/orders/${feeMemoOrder.orderId}/claim`, { stage: 'pack' }));
+        const feeMemoPack = await snapshot(3, feeMemoOrder.orderId);
+        const packedFeeMemoOrder = ok(await unitScan(3, feeMemoOrder.orderId, feeMemoPack, { scanValue: '4710000000041', type: 'pack' }));
+        assert.equal(packedFeeMemoOrder.order.status, 'completed');
+
         const book = xlsx.utils.book_new();
         xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([
             ['憑證號碼：TEST-FREIGHT-EXPLICIT-BARCODE'],
