@@ -90,6 +90,40 @@ test('Excel template and existing JSON import use the same carton manifest API',
     }
 });
 
+test('one mixed 250-carton workbook can be paged and all pages confirmed with one request', async () => {
+    const view = page({ scope: 'warehouse' });
+    await load(view);
+    const rows = Array.from({ length: 250 }, (_, i) => [`TEST-${i+1}`, '00031', 2, i % 2 ? `A${i},B${i}` : '']);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['箱號','品號','數量','SN'], ...rows]), '箱號明細');
+    const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+    const file = { name: '250箱.xlsx', size: bytes.length, arrayBuffer: async () => bytes };
+    view.input('匯入箱號檔案').props.onChange({ target: { files: [file], value: file.name } });
+    await view.settle();
+    assert.equal(view.posts.length, 1);
+    const upload = view.posts[0];
+    assert.equal(upload.body.resultMode, 'summary');
+    assert.equal(upload.body.cartons.length, 250);
+    upload.resolve({ items: upload.body.cartons.map(c => ({ cartonId:c.cartonId, status:'draft',
+        contentRevision:1, quantity:2, serialCount:c.lines[0].actualSN.length })) });
+    await view.settle();
+    view.reads.at(-1).resolve({ cartons: [] }); await view.settle();
+    const dialog = () => view.dialog('匯入箱號結果');
+    assert.doesNotMatch(view.text(dialog()), /TEST-250/);
+    view.button('下一頁').props.onClick(); view.button('下一頁').props.onClick();
+    assert.match(view.text(dialog()), /TEST-250/);
+    view.button('全選待確認箱').props.onClick();
+    const confirm = view.find(dialog(), node => node.type === 'Button' && /確認所選\s+250\s+箱/.test(view.text(node)));
+    assert.ok(confirm && !confirm.props.disabled);
+    confirm.props.onClick(); await view.settle();
+    assert.equal(view.posts.length, 2);
+    assert.equal(view.posts[1].url, '/api/cartons/seal-batch');
+    assert.equal(view.posts[1].body.cartons.length, 250);
+    view.posts[1].resolve({ items: upload.body.cartons.map(c => ({ cartonId:c.cartonId, status:'sealed', contentRevision:1 })) });
+    await view.settle(); view.reads.at(-1).resolve({ cartons: [] }); await view.settle();
+    assert.match(view.text(dialog()), /250\s*箱，\s*0\s*箱待確認/);
+});
+
 test('an unreadable Excel upload shows a friendly error without importing cartons', async () => {
     const view = page({ scope: 'warehouse' });
     await load(view);

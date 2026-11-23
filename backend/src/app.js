@@ -133,6 +133,7 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
+app.post(['/api/cartons/import', '/api/cartons/seal-batch'], express.json({ limit: '24mb' }));
 app.use('/api/cartons', express.json({ limit: '2mb' }));
 app.post('/api/orders/:orderId/ecount-reference', express.json({ limit: '2mb' }));
 app.use(express.json());
