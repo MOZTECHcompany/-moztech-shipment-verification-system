@@ -39,7 +39,7 @@ const secondRows = [headers,
 // Execute the real file/confirmation/download callbacks against SheetJS and the
 // real parser. Replace only the lazy module boundary; no network/server is used.
 const storeProfile = { id: 1, platform: '1Shop', store: 'Saved Store', settings: { store: 'Saved Store', customerCode: '00020', customerName: 'Saved Customer', warehouseCode: '003', currency: 'TWD', taxMode: 'erp_inclusive', taxType: '11', taxConfirmed: true } };
-async function converter({ flag = 'dev', role = 'admin', erpSessionUser = {}, denied = false, resolved = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled, readyScope = null, readyPreview = null } = {}) {
+async function converter({ flag = 'dev', role = 'admin', erpSessionUser = {}, denied = false, resolved = null, registerProduct = null, serverMappings = null, profiles = [storeProfile], previewProfiles = null, previewError = null, authoritative = null, saveError = null, verification = {}, barcodeConflicts = [], barcodeConfirmationError = null, previewWait = null, recordsWait = null, reimports = [], saveResponse = null, params = '', reviewRequired = false, orderReviews = [], connections = [], profileSaveError = null, profileSaveWait = null, onProfileSaved = null, profileReadback = null, excludedFulfilled, readyScope = null, readyPreview = null } = {}) {
     const { code } = await transform(source.replaceAll("import('xlsx')", '__loadXlsx()'), { loader: 'jsx', format: 'cjs', define: { 'import.meta.env.VITE_DEPLOY_ENV': JSON.stringify(flag) } });
     const hooks = [], effects = [], downloads = [], requests = [], writes = [], listeners = new Map();
     const user = { ...erpSessionUser, id: 7, role };
@@ -67,6 +67,10 @@ async function converter({ flag = 'dev', role = 'admin', erpSessionUser = {}, de
         }
         if(url.endsWith('/download-link'))return {data:{url:'/api/marketplace-files/1/ecount'}};
         if (denied) throw Error('Forbidden');
+        if (url === '/api/marketplace-products/register') {
+            assert.ok(registerProduct, 'an explicit product registration mock is required');
+            return {data: await registerProduct(body)};
+        }
         if (url === '/api/marketplace-intakes/barcode-confirmations') {
             if (barcodeConfirmationError) throw Object.assign(Error(barcodeConfirmationError), {response:{data:{message:barcodeConfirmationError}}});
             confirmedBarcodes.add(body.confirmation.fingerprint);
@@ -925,6 +929,137 @@ test('a saved confirmed mapping absent from the reference stays visible and cann
         assert.deepEqual(jumps,['prevented','product-mapping',{block:'start'}]);
         assert.equal(view.requests.length,before,'opening the correction panel must not issue a request');
     } finally { dispose(); }
+});
+
+function newProductFixture(sku, { capability = true, onRegister, verification, evidence = {} } = {}) {
+    const rows = [headers, [...fixtureRows[1]]];
+    rows[1][2] = sku;
+    let product;
+    const resolved = () => ({
+        sync: {created_at:'2026-09-16T00:00:00Z',can_register:capability},
+        products: {[sku]: product ? {status:'matched',matches:[product]} : {status:'missing',matches:[]}},
+        mappingIssues: product ? [] : [{code:'ECOUNT_SOURCE_MISSING',sku,erpSku:sku,severity:'error',message:'來源貨號不在 ECOUNT 商品主檔',...evidence}],
+    });
+    const registerProduct = async body => {
+        if (onRegister) await onRegister(body);
+        product = {erp_sku:body.erpSku, barcode:body.barcode, product_name:body.productName, spec:'', active:true};
+        return {created:true,product};
+    };
+    return {rows, options:{resolved,registerProduct,verification}};
+}
+
+test('an unknown international barcode is suggested and explicitly registered before refreshing the same file', async () => {
+    const sku = '4711299274879';
+    const {rows,options} = newProductFixture(sku);
+    const view = await converter(options);
+    await view.select(file(rows));
+    assert.equal(downloadSales(view).props.disabled, true);
+    assert.equal(view.requests.some(request => request.url.endsWith('/register')), false);
+    await view.button('登錄 WMS 測試新品').props.onClick(); view.render();
+    const field = label => view.find(view.all(node => node.type === 'label' && view.text(node).startsWith(label))[0], node => node.type === 'input');
+    assert.equal(field('測試品項編碼').props.value, sku);
+    assert.equal(field('包裝國際條碼').props.value, sku);
+    await view.change('品項名稱','無色抗藍光晶霧貼 iPhone Duo 外螢幕');
+    const submit = view.button('確認登錄並重新核對');
+    assert.equal(submit.props.disabled, false);
+    await Promise.all([submit.props.onClick(),submit.props.onClick()]); view.render();
+    const writes = view.requests.filter(request => request.url.endsWith('/register'));
+    assert.equal(writes.length, 1);
+    assert.deepEqual({...writes[0].body}, {erpSku:sku,barcode:sku,productName:'無色抗藍光晶霧貼 iPhone Duo 外螢幕',confirmed:true});
+    assert.deepEqual(previewCalls(view).at(-1).body.rows, previewCalls(view)[0].body.rows);
+    assert.doesNotMatch(view.text(view.render()), /待對照商品/);
+    assert.equal(downloadSales(view).props.disabled, false);
+    assert.equal(view.requests.some(request => request.url === '/api/marketplace-intakes' || request.url.endsWith('/download-link')), false);
+    assert.equal(view.downloads.length, 0);
+});
+
+test('Shopify brings the verified eligible barcode to the form and resumes comparison after registering',async () => {
+    const sku='DUO-GLASS', barcode='4711299274879';
+    const shopRows=[ [...shopifyBarcodeRows[0],'Lineitem id'], [...shopifyBarcodeRows[1],'NEW-LINE'] ];
+    shopRows[1][2]=sku;
+    const verified={mode:'api',orders:[
+        {number:'#REVIEW-1',items:[{id:'NEW-LINE',sku,barcode},{id:'CANCELLED-LINE',sku,barcode:'4711299274886'}]},
+        {number:'#UNRELATED',items:[{id:'NEW-LINE',sku,barcode:'4711299274862'}]},
+    ]};
+    const {options}=newProductFixture(sku,{verification:verified,evidence:{sourceBarcode:barcode,suggestedErpSku:sku,productName:'商城核對商品'}});
+    const view=await converter({...options,profiles:[shopifyProfile],reviewRequired:true});
+    await view.select(file(shopRows));
+    assert.equal(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'),undefined);
+    await view.button('登錄 WMS 測試新品').props.onClick(); view.render();
+    assert.equal(view.all(node=>node.type==='input' && node.props.value===barcode).length,1);
+    await view.button('確認登錄並重新核對').props.onClick(); view.render();
+    assert.equal(view.requests.find(request=>request.url.endsWith('/register')).body.barcode,barcode);
+    assert.ok(view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite'));
+    assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes' || request.url.endsWith('/download-link')),false);
+});
+
+test('a saved order with a new SKU can register its eligible item before comparison in both all-saved and mixed files',async () => {
+    const sku='DUO-GLASS', barcode='4711299274886';
+    for (const mixed of [false,true]) {
+        const {options}=newProductFixture(sku,{evidence:{sourceBarcode:barcode,productName:'核對新品',suggestedErpSku:sku}});
+        const pending={...savedShopifyOrder,orderNumber:'#REVIEW-1'};
+        const rows=[shopifyBarcodeRows[0],[...shopifyBarcodeRows[1]],...(mixed ? [[...shopifyBarcodeRows[2]]] : [])];
+        rows[1][2]=sku;
+        const existingCatalog=options.resolved;
+        const resolved=body=>{
+            const catalog=existingCatalog(body);
+            catalog.products['4711299274732']={status:'matched',matches:[{erp_sku:'4711299274732',product_name:'現有品項',barcode:'4711299274732',active:true}]};
+            return catalog;
+        };
+        const view=await converter({...options,resolved,profiles:[shopifyProfile],reimports:[pending]});
+        await view.select(file(rows));
+        const compare=() => view.find(view.render(),node=>node.type==='MarketplaceDraftOverwrite');
+        assert.equal(compare(),undefined);
+        const button=view.button('比對並產生整份銷貨檔');
+        assert.equal(button.props.disabled,true); await button.props.onClick(); view.render(); assert.equal(compare(),undefined);
+        const panel=view.all(node=>node.type==='details' && node.props.id==='product-mapping')[0];
+        assert.match(view.text(panel),/核對新品/);assert.doesNotMatch(view.text(panel),/現有品項/);
+        await view.button('登錄 WMS 測試新品').props.onClick(); view.render();
+        assert.equal(view.button('確認登錄並重新核對').props.disabled,false);
+        assert.equal(view.all(node=>node.type==='input' && node.props.value===barcode).length,1);
+        await view.button('確認登錄並重新核對').props.onClick(); view.render();
+        assert.ok(compare());assert.deepEqual(previewCalls(view).at(-1).body.rows,previewCalls(view)[0].body.rows);
+        assert.equal(view.requests.some(request=>request.url==='/api/marketplace-intakes' || request.url.endsWith('/download-link')),false);
+    }
+});
+
+test('the new product action keeps a 1Shop campaign SKU intact and suggests only its declared barcode as the product code', async () => {
+    const barcode = '4711299274862', sku = barcode + '-新品-1';
+    const {rows,options} = newProductFixture(sku,{evidence:{sourceBarcode:barcode,suggestedErpSku:barcode}});
+    const view = await converter(options);
+    await view.select(file(rows)); await view.button('登錄 WMS 測試新品').props.onClick(); view.render();
+    const submit = view.button('確認登錄並重新核對');
+    assert.equal(submit.props.disabled,false); await submit.props.onClick(); view.render();
+    const saved = view.requests.find(request => request.url.endsWith('/register')).body;
+    assert.equal(saved.erpSku,barcode); assert.equal(saved.barcode,barcode);
+    assert.equal(previewCalls(view).at(-1).body.rows[1][2],sku);
+    assert.equal(previewCalls(view).at(-1).body.settings.skuMappings[sku].confirmed,false);
+});
+
+test('unknown merchant SKU requires a checked GTIN and preserves typed fields on a registration conflict', async () => {
+    const sku = 'DUO-GLASS', barcode = '4711299274886';
+    const {rows,options} = newProductFixture(sku,{onRegister:() => {throw Object.assign(Error('Conflict'),{response:{status:409,data:{message:'此條碼已屬於其他品項'}}});}});
+    const view = await converter(options);
+    await view.select(file(rows)); await view.button('登錄 WMS 測試新品').props.onClick(); view.render();
+    assert.equal(view.button('確認登錄並重新核對').props.disabled,true);
+    await view.change('包裝國際條碼','4711299274887');
+    assert.match(view.text(view.render()),/檢查碼有誤/);
+    await view.button('確認登錄並重新核對').props.onClick();
+    assert.equal(view.requests.some(request => request.url.endsWith('/register')),false);
+    await view.change('包裝國際條碼',barcode);
+    await view.button('確認登錄並重新核對').props.onClick(); view.render();
+    assert.match(view.text(view.render()),/此條碼已屬於其他品項/);
+    assert.equal(view.all(node => node.type === 'input' && node.props.value === barcode).length,1);
+    assert.equal(previewCalls(view).length,1);
+    assert.equal(downloadSales(view).props.disabled,true);
+});
+
+test('a missing-product registration is unavailable to a dispatcher without the server capability',async () => {
+    const {rows,options}=newProductFixture('4711299274862',{capability:false});
+    const view=await converter({...options,role:'dispatcher'}); await view.select(file(rows));
+    assert.match(view.text(view.render()),/請管理員在此登錄測試商品/);
+    assert.equal(view.button('登錄 WMS 測試新品'),undefined);
+    assert.equal(downloadSales(view).props.disabled,true);
 });
 
 test('a missing source can be corrected to an existing exact active ERP target after rechecking', async () => {

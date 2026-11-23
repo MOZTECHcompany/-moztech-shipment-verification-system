@@ -1,4 +1,5 @@
 const {createHash,randomBytes}=require('node:crypto');
+const {registrationEnabled,validGtin}=require('./marketplaceProductSupplement');
 const {lookupProducts,oneShopProductMatch,previewCatalogMappingIssues}=require('./marketplaceProductCatalog');
 const {createShopifyOrderVerifier}=require('./shopifyOrderVerification');
 const {resolveShopifyStore}=require('./shopifyStoreRouting');
@@ -68,7 +69,7 @@ function selectProfile(profiles,platform,input={}){
  return shop&&bound.length===1?bound[0]:choices.length===1&&all.length===1?choices[0]:null;
 }
 
-function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVerifier(),verifyShopline=createShoplineOrderVerifier(),verifyOneShop=createOneShopOrderVerifier(),resolveProducts=lookupProducts,classifyReimports=classifyMarketplaceReimports}={}){
+function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVerifier(),verifyShopline=createShoplineOrderVerifier(),verifyOneShop=createOneShopOrderVerifier(),resolveProducts=lookupProducts,classifyReimports=classifyMarketplaceReimports,allowRegistration=registrationEnabled}={}){
  // Short-lived preview reuse avoids sending Shopify another request for each
  // settings blur. Saving always performs a new read before committing.
  const cache=createVerificationCache();
@@ -213,7 +214,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const manualTargets=skus.map(sku=>clean(settingsInput.skuMappings?.[sku]?.erpSku)).filter(Boolean);
   const lookupSkus=[...new Set([...skus,...manualTargets,...[...oneShopFormats.values()].filter(Boolean).map(format=>format.sourceBarcode)])];
   const catalog=!skus.length&&reimports.length?{products:{},sync:null}:await resolveProducts(lookupSkus);
-  const productMatches=new Map(skus.map(sku=>[sku,oneShopFormats.get(sku)?oneShopProductMatch(sku,oneShopFormats.get(sku),catalog.products||{}):catalog.products?.[sku]]));
+  const productMatches=new Map(skus.map(sku=>[sku,oneShopFormats.get(sku)?oneShopProductMatch(sku,oneShopFormats.get(sku),catalog.products||{},allowRegistration()):catalog.products?.[sku]]));
   // This barcode comes from the explicitly declared SKU format, not a
   // separate API barcode field. Live order verification still uses full SKUs.
   for(const [sku,format] of oneShopFormats)if(format){
@@ -227,6 +228,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const extraBarcodes=[...new Set([...apiBarcodes.values(),...historicalTargetBarcodes].filter(value=>!skus.includes(value)))];
   const barcodeCatalog=extraBarcodes.length?await resolveProducts(extraBarcodes):{products:{}};
   const sourceCandidates=[],historicalGroups=[];
+  const eligibleBarcodes=new Map();
   const verificationOrders=new Map((verification?.orders||[]).map(order=>[order.number,order]));
   for(const sku of skus){
    if(oneShopFormats.get(sku))continue;
@@ -257,6 +259,8 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
      value.barcode&&value.barcode===apiBarcode)&&
     new Set(relatedOrders.map(value=>value.sourceLineId)).size===relatedOrders.length);
    if(source.platform==='Shopify'&&!completeVariants)incompleteSources.add(sku);
+   if(verification?.mode==='api'&&!identityBlocked&&completeVariants&&validGtin(apiBarcode)&&relatedOrders.length&&
+    relatedOrders.every(line=>line.sourceVerified&&line.barcode===apiBarcode)) eligibleBarcodes.set(sku,apiBarcode);
    const historicalLines=source.platform==='Shopify'&&verification?.mode==='api'&&verification.version==='shopify-current-v2'&&!identityBlocked&&!catalogBlocked&&p?.barcode&&targets.length===1
     ?relatedOrders.filter(line=>!line.variantId&&!line.barcode).map(line=>{
      const order=verificationOrders.get(line.orderNumber);
@@ -440,7 +444,7 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   for(const item of eligible.items){
    const match=productMatches.get(item.sku),provided=settingsInput.skuMappings[item.sku]||{};
    const format=oneShopFormats.get(item.sku);
-   if(format&&(((provided.confirmed===true||provided.erpConfirmed===true)&&provided.erpSku&&provided.erpSku!==match.matches[0].erp_sku)||
+   if(format&&(((provided.confirmed===true||provided.erpConfirmed===true)&&provided.erpSku&&provided.erpSku!==match.matches[0]?.erp_sku)||
     ((provided.barcodeConfirmed===true||provided.confirmed===true&&provided.barcodeConfirmed!==false)&&provided.barcode&&provided.barcode!==format.sourceBarcode)))
     throw fail(`商品 ${item.sku} 的已確認對照與目前 ECOUNT 主檔不同，請重新核對`,'BARCODE_AMBIGUOUS');
    if(selectedTargets.has(item.sku)||match?.status==='matched'){
@@ -460,6 +464,15 @@ function createMarketplacePreparation({pool,verifyShopify=createShopifyOrderVeri
   const settings=safeSettings(settingsInput);
   const prepared=prepareUnifiedMarketplace(salesRaw,settings);
   catalog.mappingIssues=previewCatalogMappingIssues(settings,skus,catalog,[barcodeCatalog,physicalCatalog,internalCatalog]);
+  for (const issue of catalog.mappingIssues) {
+   if (issue.code!=='ECOUNT_SOURCE_MISSING' || !allowRegistration()) continue;
+   const sourceItem=eligible.items.find(item=>item.sku===issue.sku);
+   if (sourceItem?.productName) issue.productName=sourceItem.productName;
+   const format=oneShopFormats.get(issue.sku);
+   const barcode=format?.sourceBarcode || eligibleBarcodes.get(issue.sku);
+   if (barcode) issue.sourceBarcode=barcode;
+   issue.suggestedErpSku=format?.sourceBarcode || issue.sku;
+  }
   if(catalog.mappingIssues.length){
    prepared.output={...prepared.output,ok:false,rows:[],issues:[...prepared.output.issues,...catalog.mappingIssues]};
    prepared.prepick={...prepared.prepick,ok:false,rows:[],issues:[...prepared.prepick.issues,...catalog.mappingIssues]};

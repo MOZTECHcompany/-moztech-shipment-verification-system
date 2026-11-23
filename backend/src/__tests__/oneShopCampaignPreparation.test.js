@@ -6,11 +6,11 @@ const product={erp_sku:`NEW${barcode}`,barcode,product_name:'ERP 萬用勾',spec
 const profile={id:1,platform:'1Shop',store:'已設定的 1Shop 店鋪',settings:{store:'已設定的 1Shop 店鋪',apiConnectionId:'test-connection',customerCode:'00088',customerName:'平台收入',warehouseCode:'003',currency:'TWD',taxMode:'erp_inclusive',taxType:'11',taxConfirmed:true}};
 const table=records=>{const headers=[...new Set(records.flatMap(Object.keys))];return [headers,...records.map(r=>headers.map(h=>r[h]??''))];};
 const line=(number,sku,quantity,price)=>({'訂單編號':number,'建立日期':'2026-10-07','訂單狀態':'已確認','名稱':'一般品','產品SKU':sku,'產品':'商城萬用勾','產品數量':quantity,'數量(單品/組合/任選)':quantity,'單價':price,'小計':quantity*price,'訂單金額(不含金/物流手續費)':quantity*price,'訂單金流手續費':0,'訂單運費':0,'總計金額':quantity*price,'金流':'信用卡','金流狀態':'已付款','物流狀態':'等待出貨'});
-function harness(products=[product]){
+function harness(products=[product],options={}){
  const pool={query:jest.fn(async sql=>({rows:sql.includes('marketplace_store_profiles')?[profile]:[]})),connect:jest.fn()};
  const verifyOneShop=jest.fn(async rows=>({rows,verification:{platform:'1Shop',shop:'https://company.1shop.tw',orders:rows.slice(1).map(row=>{const value=Object.fromEntries(rows[0].map((name,i)=>[name,row[i]]));return {number:value['訂單編號'],items:[{sku:value['產品SKU'],quantity:value['產品數量'],netMinor:value['小計']*100}]};}),fingerprint:'current-exact-api-proof'}}));
  const lookup=jest.fn(async skus=>({products:resolveProducts(skus,products),sync:{source_note:'Read-only local test reference'}}));
- return {pool,verifyOneShop,lookup,prepare:createMarketplacePreparation({pool,verifyOneShop,resolveProducts:lookup})};
+ return {pool,verifyOneShop,lookup,prepare:createMarketplacePreparation({pool,verifyOneShop,resolveProducts:lookup,...options})};
 }
 test('campaigns resolve one exact barcode, aggregate quantity/money into 200-unit rows and retain source identities',async()=>{
  const h=harness(),rows=table([line('TST-CAMPAIGN-1',first,210,100),line('TST-CAMPAIGN-2',second,240,200)]);
@@ -70,4 +70,18 @@ test('saved campaign mappings recheck current reference and ignore tampered extr
 test('a compound-looking SKU on another platform is never normalized',async()=>{
  const settings={skuMappings:{[first]:{erpSku:'OTHER',barcode:'',confirmed:true}}};
  await expect(verifyCatalogMappings(null,settings,[first],async()=>({products:[product,{erp_sku:'OTHER',barcode:'',product_name:'手動商品',active:true}]}),undefined,{platform:'Shopify'})).resolves.toBeUndefined();
+});
+
+test('enabled catalog registration can review a wholly new validated 1Shop campaign without weakening save',async()=>{
+ const h=harness([], {allowRegistration:()=>true});
+ const rows=table([line('TST-CAMPAIGN-NEW',first,1,100)]);
+ const pending=await h.prepare({rows});
+ expect(pending.output.ok).toBe(false);
+ expect(pending.catalog.mappingIssues).toContainEqual(expect.objectContaining({code:'ECOUNT_SOURCE_MISSING',sku:first,sourceBarcode:barcode,suggestedErpSku:barcode}));
+ await expect(verifyCatalogMappings(null,pending.settings,[first],async()=>({products:[]}),undefined,{platform:'1Shop'})).rejects.toThrow('不在 ECOUNT');
+ for (const existing of [[{...product,active:false}], [product,{...product,erp_sku:barcode}], [{...product,erp_sku:first,barcode:''}]]) {
+  await expect(harness(existing, {allowRegistration:()=>true}).prepare({rows})).rejects.toThrow();
+ }
+ const badRows=table([line('TST-CAMPAIGN-BAD','4006381333932-X-1',1,100)]);
+ await expect(h.prepare({rows:badRows})).rejects.toThrow('不在 ECOUNT');
 });

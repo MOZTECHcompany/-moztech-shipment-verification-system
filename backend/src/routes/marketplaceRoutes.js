@@ -16,8 +16,10 @@ const {allowsHistoricalBarcodeReview,confirmBarcodeReview,verifySavedBarcodeRevi
 const {assertUploadScope}=require('../services/marketplaceUploadScopes');
 const {currentScopePredicate}=require('../services/marketplaceScopeStatus');
 const publicRecord=row=>({id:row.id,batchNumber:row.batch_number,platform:row.source_platform,store:row.source_store,createdAt:row.created_at,archivedAt:row.archived_at,...row.snapshot});
-function publicPreview(result){
+const {syncForUser}=require('../services/marketplaceProductCatalog');
+function publicPreview(result, req){
  const {sourceEvidence,sourceClassification,barcodeReviewCandidates,...preview}=result;
+ if (preview.catalog?.sync) preview.catalog={...preview.catalog,sync:syncForUser(preview.catalog.sync,req)};
  return preview;
 }
 
@@ -41,7 +43,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
  router.post('/preview',async(req,res,next)=>{try{
   const result=await prepareMarketplace(req.body||{});
   const readyScope=await buildMarketplaceReadyScope(result);
-  res.set('Cache-Control','private, no-store').json({...publicPreview(result),...(readyScope?{readyScope}:{})});
+  res.set('Cache-Control','private, no-store').json({...publicPreview(result,req),...(readyScope?{readyScope}:{})});
  }catch(e){if(e.status)return res.status(e.status).set('Cache-Control','private, no-store').json({code:e.code,message:e.message,issues:e.issues,orderNumber:e.orderNumber,...(e.code==='MARKETPLACE_STORE_SELECTION_REQUIRED'?{storeSelection:publicStoreSelection(e.storeSelection)}:{})});next(e);}});
  router.post('/ready-preview',async(req,res,next)=>{
   try{
@@ -76,7 +78,7 @@ function createMarketplaceRouter({pool,prepareMarketplace=createMarketplacePrepa
      status:409,code:'MARKETPLACE_READY_SCOPE_NOT_READY',issues:selected.output?.issues,
     });
    }
-   res.set('Cache-Control','private, no-store').json({rows,preview:publicPreview(selected),readyScope});
+   res.set('Cache-Control','private, no-store').json({rows,preview:publicPreview(selected,req),readyScope});
   }catch(error){
    if(error.status)return res.status(error.status).set('Cache-Control','private, no-store').json({
     code:error.code,message:error.message,issues:error.issues,orderNumber:error.orderNumber,
