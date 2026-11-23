@@ -1,23 +1,20 @@
 const express = require('express');
 const { Storage } = require('@google-cloud/storage');
 const { authorizeRoles } = require('../middleware/auth');
+const {registrationEnabled, validGtin, validateBase, createSupplementCatalog} = require('./marketplaceProductSupplement');
 const fail = message => Object.assign(new Error(message), { status: 400 });
 
-// Read-only ECOUNT reference file. No WMS product records are created or updated.
+// The exported ECOUNT base is immutable. DEV can add audited supplemental references.
 function createReferenceReader({ env = process.env, storage } = {}) {
+ const supplement = createSupplementCatalog({env, storage});
  let cached, expires = 0;
  return async () => {
   if (!env.ECOUNT_REFERENCE_OBJECT) return null;
+  if (registrationEnabled(env)) return supplement.read();
   if (cached && Date.now() < expires) return cached;
   const client = storage || new Storage();
   const [bytes] = await client.bucket(env.GCS_BUCKET).file(env.ECOUNT_REFERENCE_OBJECT).download();
-  const value = JSON.parse(bytes.toString('utf8'));
-  if (!Array.isArray(value.products) || !value.products.length || !value.capturedAt || !value.source) throw Error('ECOUNT reference file invalid');
-  const seen = new Set();
-  for (const p of value.products) {
-   if (typeof p.erp_sku !== 'string' || !p.erp_sku || seen.has(p.erp_sku) || typeof p.barcode !== 'string' || typeof p.product_name !== 'string' || typeof p.active !== 'boolean') throw Error('ECOUNT reference product invalid');
-   seen.add(p.erp_sku);
-  }
+  const value = validateBase(JSON.parse(bytes.toString('utf8')));
   cached = value; expires = Date.now() + 60000; return cached;
  };
 }
@@ -25,7 +22,7 @@ const readReference = createReferenceReader();
 function resolveProducts(skus, products) {
  return Object.fromEntries(skus.map(sku => {
   const matches = products.filter(p => p.erp_sku === sku || (p.barcode && p.barcode === sku));
-  return [sku, { status: matches.length === 0 ? 'missing' : matches.length > 1 ? 'ambiguous' : matches[0].active ? 'matched' : 'inactive', matches }];
+  return [sku, { status: matches.length === 0 ? 'missing' : matches.length > 1 || matches.some(p => p.referenceConflict) ? 'ambiguous' : matches[0].active ? 'matched' : 'inactive', matches }];
  }));
 }
 function exactReviewTargets(sourceSku, sourceBarcode, products) {
@@ -38,12 +35,13 @@ function exactReviewTargets(sourceSku, sourceBarcode, products) {
 }
 // The 1Shop campaign format has a declared barcode prefix. Keep the full
 // source SKU as the identity; only this validated prefix participates in lookup.
-function oneShopProductMatch(sourceSku, format, resolved) {
+function oneShopProductMatch(sourceSku, format, resolved, allowMissingPreview = false) {
  const original = resolved[sourceSku];
  if (!format) return original;
  const barcode = format.sourceBarcode, match = resolved[barcode];
  if (original?.status === 'inactive' || match?.status === 'inactive') throw fail(`商品 ${sourceSku} 對應的 ECOUNT 品項已中止使用`);
  if (original?.status === 'ambiguous' || match?.status === 'ambiguous') throw fail(`國際條碼 ${barcode} 對應多個 ECOUNT 品項，請先核對主檔`);
+ if (allowMissingPreview && original?.status === 'missing' && match?.status === 'missing' && validGtin(barcode)) return match;
  if (match?.status !== 'matched') throw fail(`國際條碼 ${barcode} 不在 ECOUNT 商品對照中，請更新或核對主檔`);
  const product = match.matches[0];
  if (original?.status === 'matched' && original.matches[0].erp_sku !== product.erp_sku)
@@ -54,7 +52,10 @@ function oneShopProductMatch(sourceSku, format, resolved) {
 }
 async function lookupProducts(skus, reader = readReference) {
  const reference = await reader();
- return { sync: reference ? { product_count: reference.products.length, created_at: reference.capturedAt, source_note: reference.source } : null, products: resolveProducts(skus, reference?.products || []) };
+ const sync = reference ? {product_count:reference.products.length, created_at:reference.capturedAt, source_note:reference.source} : null;
+ if (sync && Number.isInteger(reference.baseProductCount)) sync.base_product_count=reference.baseProductCount;
+ if (sync && reference.supplementUpdatedAt) sync.supplement_updated_at=reference.supplementUpdatedAt;
+ return {sync, products:resolveProducts(skus, reference?.products || [])};
 }
 // Check the same exact ERP target used at save time while the user can still
 // correct it. An unconfigured reference retains the legacy manual workflow.
@@ -83,14 +84,33 @@ function previewCatalogMappingIssues(settings, skus, catalog, extraCatalogs = []
   return code ? [{ code, sku, erpSku, severity: 'error', message }] : [];
  });
 }
-function createProductRouter({ reader = readReference } = {}) {
+function canRegister(req, env = process.env) {
+ return registrationEnabled(env) && require('./marketplaceBarcodeReviews')
+  .allowsHistoricalBarcodeReview(req.user, Boolean(req.erpSession));
+}
+function syncForUser(sync, req, env = process.env) {
+ return sync && registrationEnabled(env) ? {...sync, can_register:canRegister(req, env)} : sync;
+}
+function createProductRouter({ reader = readReference, env = process.env, supplement = createSupplementCatalog({env}) } = {}) {
  const router = express.Router(); router.use(authorizeRoles('admin', 'dispatcher'));
  router.post('/resolve', async (req, res, next) => {
   try {
    const skus = req.body?.skus;
    if (!Array.isArray(skus) || skus.length > 1000 || skus.some(s => typeof s !== 'string' || !s || s.length > 100 || s !== s.trim())) throw fail('請提供最多 1,000 個完整商品編碼');
-   res.set('Cache-Control', 'private, no-store').json(await lookupProducts([...new Set(skus)], reader));
+   const data = await lookupProducts([...new Set(skus)], reader);
+   res.set('Cache-Control', 'private, no-store').json({...data, sync:syncForUser(data.sync, req, env)});
   } catch (e) { if (e.status) return res.status(e.status).json({ message: e.message }); next(e); }
+ });
+ router.post('/register', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (!canRegister(req, env)) return res.status(403).json({code:'CATALOG_REGISTRATION_FORBIDDEN', message:'此操作限已開放測試商品建檔的管理員'});
+  try {
+   const result = await supplement.register(req.body, req.user.id);
+   res.status(result.created ? 201 : 200).json(result);
+  } catch (e) {
+   if (e.status) return res.status(e.status).json({code:e.code, message:e.message});
+   next(e);
+  }
  });
  return router;
 }
@@ -127,4 +147,4 @@ async function verifyCatalogMappings(_pool, settings, skus = Object.keys(setting
    throw fail(`商品 ${sku} 的已保存國際條碼對照已變更，請重新核對`);
  }
 }
-module.exports = { createReferenceReader, resolveProducts, exactReviewTargets, oneShopProductMatch, lookupProducts, previewCatalogMappingIssues, createProductRouter, verifyCatalogMappings };
+module.exports = { syncForUser, createReferenceReader, resolveProducts, exactReviewTargets, oneShopProductMatch, lookupProducts, previewCatalogMappingIssues, createProductRouter, verifyCatalogMappings };
