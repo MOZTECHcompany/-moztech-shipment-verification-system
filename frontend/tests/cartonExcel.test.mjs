@@ -134,8 +134,13 @@ test('numeric identifier precision and representation fail closed; long text sta
     }
 });
 
-test('bounds cartons, lines, SN totals and worksheet range', () => {
-    assert.throws(() => parse(simple(...Array.from({length:101},(_,i)=>[`BOX${i}`,'SKU',1,'']))), /第 102 列.*100 箱/);
+test('imports past the hundredth carton and bounds lines, SN totals and worksheet range', () => {
+    const rows = Array.from({ length: 250 }, (_, i) => [`BOX${i}`, '00031', 2, i % 2 ? `A${i},B${i}` : '']);
+    const result = parse(simple(...rows));
+    assert.equal(result.cartons.length, 250);
+    assert.equal(result.cartons[100].lines[0].itemCode, '00031');
+    assert.deepEqual(result.cartons[249].lines[0].actualSN, ['A249', 'B249']);
+    assert.throws(() => parse(simple(...rows, ['LAST', '00031', 1, 'B249'])), /第 252 列.*重複/);
     assert.throws(() => parse(simple(...Array.from({length:101},()=>['BOX','SKU',1,'']))), /第 102 列.*100 筆品項/);
     assert.throws(() => parse(simple(['BOX','SKU',1000,snList('S',1000)],['BOX','SKU',1,'LAST'])), /第 3 列.*1000 筆 SN/);
     const cartons = Array.from({length:10},(_,i)=>[`BOX${i}`,'SKU',1000,snList(`S${i}`,1000)]);

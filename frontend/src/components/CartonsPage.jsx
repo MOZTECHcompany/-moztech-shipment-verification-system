@@ -72,7 +72,7 @@ export function CartonsPage({ user }) {
         const file = event.target.files?.[0]; event.target.value = '';
         if (!file) return;
         void mutate(async ensureCurrent => {
-            if (file.size > 2 * 1024 * 1024) throw new Error('箱號檔案不可超過 2 MB');
+            if (file.size > 16 * 1024 * 1024) throw new Error('箱號檔案不可超過 16 MB');
             let body;
             if (/\.xlsx$/i.test(file.name)) {
                 const XLSX = await import('xlsx');
@@ -99,18 +99,24 @@ export function CartonsPage({ user }) {
                 }
             }
             ensureCurrent();
-            const { data } = await api.post('/api/cartons/import', { ...body, expectedActorId: user.id });
+            const compact = body.cartons.length > 100 ? { resultMode: 'summary' } : {};
+            const { data } = await api.post('/api/cartons/import', { ...body, ...compact, expectedActorId: user.id }, { timeout: 90000 });
             ensureCurrent();
-            if (!Array.isArray(data?.items) || data.items.length !== body.cartons.length || data.items.some(item =>
-                !item?.carton || item.carton.cartonId !== item.cartonId || !Number.isSafeInteger(item.carton.contentRevision) || !Array.isArray(item.carton.lines))) {
-                throw new Error('匯入結果不完整，請重新查詢箱號。');
-            }
+            const expectedIds = new Set(body.cartons.map(carton => carton.cartonId.trim()));
+            if (!Array.isArray(data?.items) || data.items.length !== body.cartons.length) throw new Error('匯入結果不完整，請重新查詢箱號。');
+            const items = data.items.map(item => {
+                const carton = item?.carton || item;
+                if (!carton || carton.cartonId !== item.cartonId || !expectedIds.delete(carton.cartonId)
+                    || !Number.isSafeInteger(carton.contentRevision) || !['draft', 'sealed', 'void'].includes(carton.status)) {
+                    throw new Error('匯入結果不完整，請重新查詢箱號。');
+                }
+                const quantity = carton.lines?.reduce((sum, line) => sum + line.quantity, 0) ?? carton.quantity;
+                const serialCount = carton.lines?.reduce((sum, line) => sum + line.actualSN.length, 0) ?? carton.serialCount;
+                if (!Number.isSafeInteger(quantity) || !Number.isSafeInteger(serialCount)) throw new Error('匯入結果缺少件數，請重新查詢箱號。');
+                return { cartonId: carton.cartonId, status: carton.status, contentRevision: carton.contentRevision, quantity, serialCount };
+            });
             setCheckedCartons(new Set());
-            setImportedBatch({ session: cartonSessionKey(api, user), items: data.items.map(({ carton }) => ({
-                cartonId: carton.cartonId, status: carton.status, contentRevision: carton.contentRevision,
-                quantity: carton.lines.reduce((sum, line) => sum + line.quantity, 0),
-                serialCount: carton.lines.reduce((sum, line) => sum + line.actualSN.length, 0),
-            })) });
+            setImportedBatch({ session: cartonSessionKey(api, user), items, page: 0 });
         });
     };
     const visibleBatch = canManage && importedBatch?.session === cartonSessionKey(api, user) ? importedBatch : null;
@@ -121,7 +127,7 @@ export function CartonsPage({ user }) {
         void mutate(async ensureCurrent => {
             const cartons = selectedCartons.map(({ cartonId, contentRevision }) => ({ cartonId, expectedContentRevision: contentRevision }));
             ensureCurrent();
-            const { data } = await api.post('/api/cartons/seal-batch', { cartons, expectedActorId: user.id }, { timeout: 30000 });
+            const { data } = await api.post('/api/cartons/seal-batch', { cartons, expectedActorId: user.id }, { timeout: 90000 });
             ensureCurrent();
             const results = new Map(Array.isArray(data?.items) ? data.items.map(item => [item?.cartonId, item]) : []);
             if (results.size !== cartons.length || cartons.some(item => results.get(item.cartonId)?.status !== 'sealed'
@@ -184,7 +190,7 @@ export function CartonsPage({ user }) {
                     {selectedCartons.length === drafts.length ? '取消全選' : '全選待確認箱'}
                 </Button>}
                 <ul className="max-h-72 divide-y overflow-y-auto border-y">
-                    {visibleBatch.items.map(item => <li key={item.cartonId} className="flex items-center justify-between gap-3 px-2 py-2 text-sm">
+                    {visibleBatch.items.slice(visibleBatch.page * 100, (visibleBatch.page + 1) * 100).map(item => <li key={item.cartonId} className="flex items-center justify-between gap-3 px-2 py-2 text-sm">
                         {item.status === 'draft' ? <label className="flex min-w-0 items-center gap-2">
                             <input type="checkbox" disabled={busy} checked={checkedCartons.has(item.cartonId)} onChange={event => {
                                 const checked = event.target.checked;
@@ -194,6 +200,11 @@ export function CartonsPage({ user }) {
                         <span className="shrink-0 text-right text-xs text-slate-600">{item.quantity} 件 · {item.serialCount ? `${item.serialCount} 個 SN` : '無 SN'} · {cartonStatus[item.status] || '不可確認'}</span>
                     </li>)}
                 </ul>
+                {visibleBatch.items.length > 100 && <nav aria-label="匯入箱號分頁" className="mt-3 flex items-center justify-center gap-3">
+                    <Button variant="secondary" disabled={busy || visibleBatch.page === 0} onClick={() => setImportedBatch(batch => ({ ...batch, page: batch.page - 1 }))}>上一頁</Button>
+                    <span>第 {visibleBatch.page + 1}／{Math.ceil(visibleBatch.items.length / 100)} 頁</span>
+                    <Button variant="secondary" disabled={busy || (visibleBatch.page + 1) * 100 >= visibleBatch.items.length} onClick={() => setImportedBatch(batch => ({ ...batch, page: batch.page + 1 }))}>下一頁</Button>
+                </nav>}
             </>}
         </CartonDialog>
         <CartonDialog open={!!editor} title={editor?.editing ? '編輯箱內內容' : '新增箱號'} onClose={() => !busy && setEditor(null)} footer={<><Button variant="secondary" disabled={busy} onClick={() => setEditor(null)}>取消</Button><Button disabled={busy} onClick={save}>儲存</Button></>}>

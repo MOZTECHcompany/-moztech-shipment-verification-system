@@ -1,5 +1,6 @@
+const { MAX_ROWS, MAX_SERIALS, importBatch, confirmBatch } = require('./cartonBatch');
 const { randomUUID } = require('node:crypto');
-const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, choosePickLines, assertCartonNotVoided } = require('./cartonContents');
+const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, choosePickLines, assertCartonNotVoided } = require('./cartonContents');
 const { stateToken, readLines } = require('./scanSnapshot');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
@@ -211,32 +212,21 @@ function createCartonService({ pool }) {
         });
     }
     async function importManifest(body, actor) {
-        if (body?.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons) || !body.cartons.length || body.cartons.length > 100) {
-            throw fail('CARTON_INVALID_MANIFEST', '箱號匯入需 corely-cartons-v1，且一次 1–100 箱', 400);
+        if (body?.format !== 'corely-cartons-v1' || !Array.isArray(body.cartons) || !body.cartons.length || body.cartons.length > MAX_ROWS) {
+            throw fail('CARTON_INVALID_MANIFEST', `每份 corely-cartons-v1 需有箱號，且最多 ${MAX_ROWS} 筆品項明細`, 400);
         }
         const inputs = body.cartons.map(carton => normalizeCarton({ ...carton,
-            sourceSystem: carton.sourceSystem ?? body.sourceSystem, sourceReference: carton.sourceReference ?? body.sourceReference }));
-        if (new Set(inputs.map(input => input.cartonId)).size !== inputs.length || inputs.flatMap(input => input.lines).reduce((n, line) => n + line.actualSN.length, 0) > 10000) {
-            throw fail('CARTON_INVALID_MANIFEST', '同批箱號不可重複且最多 10000 筆 SN', 400);
+            sourceSystem: carton?.sourceSystem ?? body.sourceSystem, sourceReference: carton?.sourceReference ?? body.sourceReference }));
+        const lines = inputs.flatMap(input => input.lines);
+        if (new Set(inputs.map(input => input.cartonId)).size !== inputs.length) throw fail('CARTON_INVALID_MANIFEST', '同批箱號不可重複', 400);
+        if (lines.length > MAX_ROWS || lines.reduce((total, line) => total + line.actualSN.length, 0) > MAX_SERIALS) {
+            throw fail('CARTON_INVALID_MANIFEST', `每份檔案最多 ${MAX_ROWS} 筆品項明細、${MAX_SERIALS} 個 SN`, 400);
         }
         return transaction(async db => {
             const user = await staff(db, actor, true);
             expectedActor(body, user);
-            const results = [];
-            // Fixed order prevents two intersecting batch imports deadlocking.
-            for (const input of [...inputs].sort((a, b) => a.cartonId.localeCompare(b.cartonId))) {
-                await db.query("SELECT pg_advisory_xact_lock(hashtext('wms-carton-import'),hashtext($1))", [input.cartonId]);
-                const exists = (await db.query('SELECT carton_id FROM wms_cartons WHERE carton_id=$1', [input.cartonId])).rows[0];
-                if (exists) {
-                    const carton = await readCarton(db, input.cartonId, true);
-                    if (digest(identity(carton)) !== digest(identity(input))) throw fail('CARTON_CONTENT_CONFLICT', `箱號 ${input.cartonId} 已有不同內容，整批未匯入`);
-                    results.push({ cartonId: input.cartonId, replayed: true, carton });
-                } else {
-                    await insertCarton(db, input, user);
-                    results.push({ cartonId: input.cartonId, replayed: false, carton: await readCarton(db, input.cartonId) });
-                }
-            }
-            return { format: 'corely-cartons-v1', items: results };
+            return importBatch(db, inputs, user, { asCarton, asAllocation, historyMeta: {},
+                summary: body.resultMode === 'summary' });
         });
     }
     async function list(query, actor) {
@@ -321,46 +311,18 @@ function createCartonService({ pool }) {
         });
     }
     async function sealBatch(body, actor) {
-        if (!Array.isArray(body?.cartons) || !body.cartons.length || body.cartons.length > 100) {
-            throw fail('CARTON_INVALID_INPUT', '每次請選擇 1 至 100 箱確認', 400);
+        if (!Array.isArray(body?.cartons) || !body.cartons.length || body.cartons.length > MAX_ROWS) {
+            throw fail('CARTON_INVALID_INPUT', `每次請選擇 1 至 ${MAX_ROWS} 箱確認`, 400);
         }
         const requests = body.cartons.map(entry => ({ cartonId: text(entry?.cartonId, '箱號', { max: 128 }),
             expectedContentRevision: revision(entry?.expectedContentRevision) }));
         if (new Set(requests.map(entry => entry.cartonId)).size !== requests.length) {
             throw fail('CARTON_INVALID_INPUT', '同批不可重複選擇同一箱號', 400);
         }
-        const identify = (error, cartonId) => {
-            if (Number.isInteger(error.status)) error.message = `整批未確認。箱號 ${cartonId}：${error.message}`;
-            throw error;
-        };
         return transaction(async db => {
             const user = await staff(db, actor, true);
             expectedActor(body, user, true);
-            const cartons = [];
-            // Match manifest import's carton lock order, then lock the combined
-            // SN set before any confirmation so other writers see one boundary.
-            for (const entry of [...requests].sort((a,b) => a.cartonId.localeCompare(b.cartonId))) {
-                try {
-                    const carton = await readCarton(db, entry.cartonId, true);
-                    if (carton.contentRevision !== entry.expectedContentRevision) throw fail('CARTON_CONTENT_CHANGED', '箱內容已更新，請重新核對後再確認');
-                    cartons.push(carton);
-                } catch (error) { identify(error, entry.cartonId); }
-            }
-            const sns = cartons.filter(carton => carton.status === 'draft').flatMap(carton => carton.lines.flatMap(line => line.actualSN));
-            if (sns.length > 10000) throw fail('CARTON_INVALID_INPUT', '每次確認最多 10000 個 SN，請分批確認', 400);
-            await lockCartonSerials(db, sns);
-            const results = new Map();
-            for (const carton of cartons) {
-                try {
-                    // Same immutable content revision is safe to replay after
-                    // an uncertain response or concurrent single confirmation.
-                    const confirmed = await sealed(db, carton, user, { serialLocksHeld: true });
-                    results.set(carton.cartonId, { cartonId: carton.cartonId, status: confirmed.status,
-                        contentRevision: confirmed.contentRevision, stateRevision: confirmed.stateRevision,
-                        sealedAt: confirmed.sealedAt, alreadyConfirmed: carton.status === 'sealed' });
-                } catch (error) { identify(error, carton.cartonId); }
-            }
-            return { items: requests.map(entry => results.get(entry.cartonId)) };
+            return confirmBatch(db, requests, user, { asCarton, asAllocation, historyMeta: {} });
         }).catch(error => {
             if (error.code === 'SCAN_RESULT_UNKNOWN') error.message = '尚未收到確認結果。請重新核對，或再次確認同一批箱號；已確認的箱子不會重複處理。';
             throw error;

@@ -37,7 +37,7 @@ and excludes whitespace, comma and carton prefixes. A line's nonempty SN list
 must have exactly `quantity` unique values. One registered SN belongs to one
 carton, including after a release. Reboxing and returned shipped serials need
 a separate custody workflow. Limits: 100 lines and 1000 SNs per carton;
-100 cartons and 10000 SNs per manifest.
+20,000 item lines and 10,000 SNs per manifest. All cartons in a file are imported in one transaction. Large uploads can request `resultMode: "summary"` for per-carton totals and revisions.
 
 `POST /api/cartons` accepts:
 

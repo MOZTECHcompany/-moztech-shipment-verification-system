@@ -2,7 +2,7 @@ const SHEET = '箱號明細';
 const SUPPORTED_SHEETS = [SHEET, '箱號明細.範本', '倉儲明細', '倉儲明細.範本'];
 const REQUIRED = ['箱號', '品號', '數量', 'SN'];
 const FIELDS = [...REQUIRED, '品名', '國際條碼', '內部掃描碼', '來源系統', '來源識別'];
-const LIMITS = { cartons: 100, lines: 100, cartonSN: 1000, totalSN: 10000, rows: 20001, columns: 256 };
+const LIMITS = { lines: 100, cartonSN: 1000, totalSN: 10000, rows: 20001, columns: 256 };
 const sheetIssue = (sheet, row, message) => new Error(`「${sheet}」第 ${row} 列：${message}`);
 
 function cellValue(cell, label, row, XLSX, issue, { max = 255, identifier = true, multiline = false } = {}) {
@@ -93,7 +93,6 @@ export function parseCartonExcel(workbook, XLSX) {
         if (snText && (!actualSN.length || actualSN.length !== quantity)) throw issue(row, 'SN 筆數須等於數量；無 SN 請留空');
         let entry = cartons.get(cartonId);
         if (!entry) {
-            if (cartons.size === LIMITS.cartons) throw issue(row, `一次最多匯入 ${LIMITS.cartons} 箱`);
             entry = { cartonId, lines: [], snCount: 0, sourceSystem, sourceReference };
             cartons.set(cartonId, entry);
         }

@@ -1068,6 +1068,45 @@ async function suite(t, postgres) {
         assert.deepEqual(trace.allocations[0].lines.map(line=>[line.sourcePlatform,line.sourceStore,line.sourceOrderNumber,line.sourceLineId,line.sourceSKU,line.internalScanCode,line.ean]),
             [['1Shop','Synthetic Store','SYN-EC-ORDER','L06',fullSku,'ITM-SKU-NO-EAN',null],['1Shop','Synthetic Store','SYN-EC-ORDER','L04',fullSku,'ITM-SKU-NO-EAN',null]]);
     });
+    await t.test('250 mixed cartons import and confirm atomically, including the last carton and exact retries', async () => {
+        const cartons = Array.from({ length: 250 }, (_, i) =>
+            box(`BULK-${String(i + 1).padStart(3, '0')}`, 2, i % 2 ? [`Bulk${i}-a`, `Bulk${i}-A`] : []));
+        const manifest = { format: 'corely-cartons-v1', resultMode: 'summary', cartons };
+        const upload = body => api(1, 'post', '/api/cartons/import', body);
+        const confirm = body => api(1, 'post', '/api/cartons/seal-batch', body);
+        const imported = ok(await upload(manifest)).items;
+        assert.equal(imported.length, 250);
+        assert.equal(imported[100].quantity, 2);
+        assert.equal(imported[100].serialCount, 0);
+        assert.equal(imported[249].serialCount, 2);
+        assert.ok(imported.every(item => item.status === 'draft' && !item.replayed));
+        const command = { cartons: imported.map(item => ({ cartonId: item.cartonId, expectedContentRevision: item.contentRevision })) };
+        const stale = structuredClone(command);
+        stale.cartons[249].expectedContentRevision++;
+        assert.equal((await confirm(stale)).body.code, 'CARTON_CONTENT_CHANGED');
+        const states = async () => (await f.db.query(`SELECT status, COUNT(*)::int AS n FROM wms_cartons
+            WHERE carton_id LIKE 'BULK-%' GROUP BY status`)).rows;
+        assert.deepEqual(await states(), [{ status: 'draft', n: 250 }]);
+        const sealed = ok(await confirm(command)).items;
+        assert.equal(sealed.length, 250);
+        assert.ok(sealed.every(item => item.status === 'sealed' && !item.alreadyConfirmed));
+        assert.ok(ok(await confirm(command)).items.every(item => item.alreadyConfirmed));
+        assert.ok(ok(await upload(manifest)).items.every(item => item.replayed && item.status === 'sealed'));
+        const last = ok(await api(1, 'get', '/api/cartons/BULK-250'));
+        assert.equal(last.lines[0].remainingQuantity, 2);
+        assert.deepEqual(last.lines[0].remainingSN, ['Bulk249-a', 'Bulk249-A']);
+        assert.deepEqual(last.history.map(event => event.event_type), ['sealed', 'created']);
+        const fresh = cartons.map((_, i) => box(`NEW-BULK-${i}`, 1));
+        // An existing box differs only in the final row. No new header may survive.
+        const bad = await upload({ ...manifest, cartons: [...fresh, box('BULK-250', 3)] });
+        assert.equal(bad.body.code, 'CARTON_CONTENT_CONFLICT');
+        // The last entry also cannot reuse a serial already bound to another box.
+        fresh[249] = box('NEW-BULK-249', 1, ['Bulk249-A']);
+        assert.equal((await upload({ ...manifest, cartons: fresh })).body.code, 'CARTON_ID_OR_SN_CONFLICT');
+        assert.equal((await f.db.query("SELECT COUNT(*)::int AS n FROM wms_cartons WHERE carton_id LIKE 'NEW-BULK-%'")).rows[0].n, 0);
+        assert.deepEqual(await states(), [{ status: 'sealed', n: 250 }]);
+    });
+
 }
 test('a barcode-only SKU mismatch cannot bind untracked, wrong, ambiguous, or signed units', () => {
     const barcode = '4711299271052';
