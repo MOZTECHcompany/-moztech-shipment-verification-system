@@ -21,6 +21,24 @@ test('ECOUNT reference and exact manual evidence on disposable real PostgreSQL',
         ['wms_ecount_order_references', 'order_id'], ['wms_ecount_reference_history', 'order_id'], ['wms_ecount_reference_commands', 'order_id']
     ].map(async ([table, field]) => [table, (await f.db.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${field}=$1`, [order])).rows[0].n])));
     const shipments = await f.complete25WithReleased();
+    await t.test('a defective dealer-coded SN is exported from the replacement carton exactly once', async () => {
+        const oldSn = 'Defective-01', newSn = 'Replacement-02';
+        const original = await f.carton('REF-DEFECT-ORIG', 1, { actualSN: [oldSn] });
+        const replacement = await f.carton('REF-DEFECT-NEW', 1, { actualSN: [newSn] });
+        const { order } = await f.seed(1, { itemCode: 'DEALER-ALIAS', actualSN: [oldSn] });
+        await f.scan(order.id, original.cartonId, 'pick', { mode: 'serial', scanValue: oldSn });
+        const change = { oldSn, newSn, reason: 'Synthetic defect' };
+        ok(await api(1, 'post', `/api/orders/${order.id}/defect`, change));
+        assert.equal(ok(await api(1, 'post', `/api/orders/${order.id}/defect`, change)).replayed, true);
+        await f.scan(order.id, replacement.cartonId, 'pack', { mode: 'serial', scanValue: newSn });
+        const manifest = await ref(order.id);
+        assert.deepEqual(manifest.blockers, []);
+        assert.deepEqual(manifest.looseRows, []);
+        assert.deepEqual(manifest.cartonSummary, [{ cartonId: replacement.cartonId, quantity: 1 }]);
+        assert.deepEqual(manifest.rows.map(row => [row.itemCode, row.cartonId, row.actualSN]),
+            [['DEALER-ALIAS', replacement.cartonId, [newSn]]]);
+        assert.equal(manifest.totals[0].boxedQuantity, 1);
+    });
     let lastView, originalCommand;
 
     await t.test('packed-only 25-unit manifest excludes released custody and GET is read-only for every staff role', async () => {
@@ -221,7 +239,7 @@ test('ECOUNT reference and exact manual evidence on disposable real PostgreSQL',
     });
     await t.test('real shared source-batch receipts map only exact source lines to each work order and never auto-confirm metadata', async () => {
         await f.db.exec(`ALTER TABLE orders ADD COLUMN import_batch_id INTEGER, ADD COLUMN source_platform TEXT, ADD COLUMN source_store TEXT, ADD COLUMN source_order_number TEXT;
-            ALTER TABLE order_items ADD COLUMN source_line_id TEXT;
+            ALTER TABLE order_items ADD COLUMN IF NOT EXISTS source_line_id TEXT;
             CREATE TABLE warehouse_import_batches(id INTEGER PRIMARY KEY,voucher_number TEXT);
             CREATE TABLE marketplace_intake_orders(id INTEGER PRIMARY KEY,intake_id TEXT);
             CREATE TABLE marketplace_work_order_links(order_id INTEGER,intake_order_id INTEGER);
@@ -247,11 +265,13 @@ test('ECOUNT reference and exact manual evidence on disposable real PostgreSQL',
     });
     await t.test('same quantities with a different physical-carton identity invalidate stale confirmation while another order remainder never does', async () => {
         const box = await f.carton('REFERENCE-TAIL-STABILITY', 10), first = await f.seed(5);
-        await f.scan(first.order.id, box.cartonId, 'pick', { mode:'split', selections:[{lineId:box.lines[0].lineId,quantity:5}] });
-        await f.scan(first.order.id, box.cartonId, 'pack');
+        await f.scanUnits(first.order.id, box, 'pick', 5);
+        await f.scanUnits(first.order.id, box, 'pack', 5);
         const initial = await ref(first.order.id);
         const checked = ok(await post(first.order.id, input(initial, 1, { confirmation:check(external(initial)) })));
-        const second = await f.seed(5); await f.scan(second.order.id, box.cartonId, 'pick'); await f.scan(second.order.id, box.cartonId, 'pack');
+        const second = await f.seed(5);
+        await f.scanUnits(second.order.id, box, 'pick', 5);
+        await f.scanUnits(second.order.id, box, 'pack', 5);
         const afterOtherOrder = await ref(first.order.id);
         assert.equal(afterOtherOrder.fingerprint, checked.fingerprint); assert.equal(afterOtherOrder.status, 'manual_checked');
         const replacement = await f.carton('REFERENCE-CORRECTED-BOX', 5);

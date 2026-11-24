@@ -47,6 +47,12 @@ async function createEcountReferenceFixture({ postgres = true } = {}) {
             expectedCartonRevision: preview.expectedCartonRevision
         }));
     };
+    async function scanUnits(order, box, stage, count) {
+        assert.equal(box.lines.length, 1);
+        for (let unit = 0; unit < count; unit++) {
+            await scan(order, box.cartonId, stage, { mode: 'unit', cartonId: box.cartonId, scanValue: box.lines[0].ean });
+        }
+    }
     const release = async (order, allocation, actor = 1) => {
         const state = ok(await api(actor, 'get', `/api/orders/${order}/work-snapshot`));
         const box = ok(await api(actor, 'get', '/api/cartons/' + allocation.cartonId));
@@ -60,14 +66,16 @@ async function createEcountReferenceFixture({ postgres = true } = {}) {
         const boxes = [];
         for (let n = 1; n <= 3; n++) boxes.push(await carton('N' + n, 10));
         const first = await seed(5, { voucherNumber: 'REFERENCE-N1-FIRST5' });
-        await scan(first.order.id, 'N1', 'pick', { mode: 'split', selections: [{ lineId: boxes[0].lines[0].lineId, quantity: 5 }] });
-        await scan(first.order.id, 'N1', 'pack');
+        await scanUnits(first.order.id, boxes[0], 'pick', 5);
+        await scanUnits(first.order.id, boxes[0], 'pack', 5);
         const target = await seed(25, { voucherNumber: 'REFERENCE-N1-N3-25' });
         await carton('N-RELEASED', 5);
         const wrong = await scan(target.order.id, 'N-RELEASED', 'pick');
         await release(target.order.id, wrong.allocation);
-        for (const id of ['N1', 'N2', 'N3']) await scan(target.order.id, id, 'pick');
-        for (const id of ['N1', 'N2', 'N3']) await scan(target.order.id, id, 'pack');
+        for (const stage of ['pick', 'pack']) {
+            await scanUnits(target.order.id, boxes[0], stage, 5);
+            for (const id of ['N2', 'N3']) await scan(target.order.id, id, stage);
+        }
         assert.equal((await f.db.query('SELECT status FROM orders WHERE id=$1', [target.order.id])).rows[0].status, 'completed');
         return { ...target, first, boxes };
     }
@@ -91,7 +99,7 @@ async function createEcountReferenceFixture({ postgres = true } = {}) {
         await claim(target.order.id,'pack');await scan(target.order.id,box.cartonId,'pack');for(let n=0;n<3;n++)await unit('pack','LOOSE-QTY-CODE');await unit('pack',looseSN);
         return {...target,box,sns,looseSN};
     }
-    return { ...f, api, ok, attachReferences, businessSnapshot, claim, carton, scan, release, seed,
+    return { ...f, api, ok, attachReferences, businessSnapshot, claim, carton, scan, scanUnits, release, seed,
         complete25WithReleased, completeOrdinary, completeMixed };
 }
 module.exports = { createEcountReferenceFixture };
