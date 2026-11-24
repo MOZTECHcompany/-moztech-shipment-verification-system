@@ -1,4 +1,5 @@
 const { createHash } = require('node:crypto');
+const { preassignedBarcodeItem } = require('./cartonContents');
 const compare = (a, b) => String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
 const ordered = values => [...values].sort(compare);
 const validCount = value => Number.isSafeInteger(value) && value >= 0;
@@ -8,8 +9,23 @@ const digest = value => createHash('sha256').update(JSON.stringify(canonical(val
 const sources = item => ({ sourcePlatform: item.source_platform ?? null, sourceStore: item.source_store ?? null,
     sourceOrderNumber: item.source_order_number ?? null, sourceLineId: item.source_line_id ?? null, sourceSKU: item.source_sku ?? null });
 
-function buildEcountManifest({ order, items, instances, allocations, exceptions = [] }) {
+function packedAliasMatches(lines, line, item, items, instances) {
+    if (!lines || line.sourceProductCode !== item.product_code || !Array.isArray(line.actualSN) || !line.actualSN.length) return false;
+    const source = lines.find(row => row.lineId === line.lineId);
+    if (!source || source.itemCode !== line.itemCode || source.ean !== line.ean
+        || (source.internalScanCode ?? null) !== (line.internalScanCode ?? null)) return false;
+    const registered = new Set(source.actualSN);
+    return line.actualSN.every(sn => registered.has(sn))
+        && preassignedBarcodeItem({ lines }, source, items, instances, line.actualSN, 'packed')?.id === item.id;
+}
+
+function buildEcountManifest({ order, items, instances, allocations, exceptions = [], cartonLines = [] }) {
     const blockers = [], codes = new Set(), rows = [], looseRows = [], totalsByCode = new Map(), boxedByItem = new Map(), usedSN = new Set(), allPackedSN = new Set();
+    const sourceCartons = new Map(), verifiedAliases = [];
+    for (const line of cartonLines) {
+        if (!sourceCartons.has(line.carton_id)) sourceCartons.set(line.carton_id, []);
+        sourceCartons.get(line.carton_id).push(line);
+    }
     const block = (code, message) => { if (!codes.has(code)) { codes.add(code); blockers.push({ code, message }); } };
     if (order.status !== 'completed') block('ORDER_NOT_COMPLETED', order.status === 'voided' ? '訂單已作廢，不能確認銷貨對照' : '請先完成揀貨與裝箱核對');
     if (order.document_type && order.document_type !== 'shipment' || items.some(item => Number(item.quantity_sign ?? 1) !== 1)) block('SIGNED_ORDER', '含負數沖正或正負異動的單據，僅能保存參考單號');
@@ -32,11 +48,14 @@ function buildEcountManifest({ order, items, instances, allocations, exceptions 
         const seenLines = new Set();
         for (const line of [...allocation.lines].sort((a, b) => Number(a.lineId) - Number(b.lineId) || Number(a.orderItemId) - Number(b.orderItemId))) {
             const item = byId.get(Number(line.orderItemId)), sns = line.actualSN || [], lineKey = `${line.lineId}:${line.orderItemId}`;
-            if (!item || line.itemCode !== item.product_code || !Number.isSafeInteger(line.quantity) || line.quantity < 1
+            const alias = item && line.itemCode !== item.product_code;
+            if (!item || (alias && !packedAliasMatches(sourceCartons.get(allocation.carton_id), line, item, items, instances))
+                || !Number.isSafeInteger(line.quantity) || line.quantity < 1
                 || line.quantitySign !== 1 || !Array.isArray(sns) || sns.length && sns.length !== line.quantity || seenLines.has(lineKey)) {
                 block('INVALID_ALLOCATION', '箱分配品項、數量或 SN 與訂單不一致'); continue;
             }
             seenLines.add(lineKey);
+            if (alias) verifiedAliases.push([allocation.id, line.lineId, item.id, item.product_code, line.itemCode]);
             for (const sn of sns) {
                 if (typeof sn !== 'string' || !sn || usedSN.has(sn)
                     || packedSerialOwners.get(JSON.stringify([item.id, sn])) !== 1) block('INVALID_SERIALS', '箱內實際 SN 未完整裝箱或重複');
@@ -45,7 +64,7 @@ function buildEcountManifest({ order, items, instances, allocations, exceptions 
             const boxed = boxedByItem.get(item.id) || { quantity: 0, serials: [] };
             boxed.quantity += line.quantity; boxed.serials.push(...sns); boxedByItem.set(item.id, boxed);
             rows.push({ allocationId: allocation.id, cartonId: allocation.carton_id, contentRevision: allocation.content_revision,
-                cartonLineId: line.lineId, orderItemId: item.id, itemCode: line.itemCode, productName: item.product_name || null,
+                cartonLineId: line.lineId, orderItemId: item.id, itemCode: item.product_code, productName: item.product_name || null,
                 quantity: line.quantity, actualSN: ordered(sns), ean: line.ean ?? null, internalScanCode: line.internalScanCode ?? null,
                 ...Object.fromEntries(['sourcePlatform','sourceStore','sourceOrderNumber','sourceLineId','sourceSKU'].map(key => [key, line[key] ?? null])),
                 packedAt: allocation.packed_at });
@@ -84,7 +103,8 @@ function buildEcountManifest({ order, items, instances, allocations, exceptions 
         [...allocations].sort((a, b) => compare(a.id, b.id)).map(allocation => ({ id: allocation.id, cartonId: allocation.carton_id,
             contentRevision: allocation.content_revision, status: allocation.status, pickedAt: allocation.picked_at, packedAt: allocation.packed_at,
             releasedAt: allocation.released_at, lines: [...(allocation.lines || [])].sort((a, b) => Number(a.lineId) - Number(b.lineId) || Number(a.orderItemId) - Number(b.orderItemId)) })),
-        [...exceptions].sort((a, b) => a.id - b.id).map(row => [row.id, row.type, row.status, row.updated_at])]);
+        [...exceptions].sort((a, b) => a.id - b.id).map(row => [row.id, row.type, row.status, row.updated_at]),
+        ...(verifiedAliases.length ? [verifiedAliases] : [])]);
     return { orderId: order.id, wmsVoucherNumber: order.voucher_number, shipmentReference: 'WMS-' + order.id, fingerprint,
         ready: !blockers.length, blockers, rows, looseRows, totals,
         cartonSummary: [...summary].sort(([a], [b]) => compare(a, b)).map(([cartonId, quantity]) => ({ cartonId, quantity })) };

@@ -99,7 +99,13 @@ function createEcountReferenceService({ pool }) {
         const instances = (await db.query('SELECT i.* FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id WHERE oi.order_id=$1 ORDER BY i.id', [orderId])).rows;
         const allocations = (await db.query('SELECT * FROM wms_carton_allocations WHERE order_id=$1 ORDER BY id', [orderId])).rows;
         const exceptions = (await db.query('SELECT id,type,status,updated_at FROM order_exceptions WHERE order_id=$1 ORDER BY id', [orderId])).rows;
-        return { order, manifest: buildEcountManifest({ order, items, instances, allocations, exceptions }) };
+        const itemCodes = new Map(items.map(item => [item.id, item.product_code]));
+        const aliasCartons = allocations.filter(allocation => allocation.status === 'packed' && Array.isArray(allocation.lines)
+            && allocation.lines.some(line => line.actualSN?.length && itemCodes.get(line.orderItemId) !== line.itemCode)).map(row => row.carton_id);
+        const cartonLines = aliasCartons.length ? (await db.query(`SELECT carton_id, id AS "lineId", item_code AS "itemCode",
+            international_barcode AS ean, internal_scan_code AS "internalScanCode", actual_sns AS "actualSN"
+            FROM wms_carton_lines WHERE carton_id=ANY($1::text[]) ORDER BY carton_id,position`, [[...new Set(aliasCartons)]])).rows : [];
+        return { order, manifest: buildEcountManifest({ order, items, instances, allocations, exceptions, cartonLines }) };
     }
     async function output(db, loaded, user) {
         const row = (await db.query(`SELECT ${referenceColumns} FROM wms_ecount_order_references WHERE order_id=$1`, [loaded.order.id])).rows[0];

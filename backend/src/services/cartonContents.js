@@ -77,7 +77,7 @@ function uniqueBarcodeItem(carton, line, items) {
     const matching = items.filter(item => item.barcode === barcode || item.international_barcode === barcode);
     return matching.length === 1 ? matching[0] : null;
 }
-function preassignedBarcodeItem(carton, line, items, instances, selectedSN) {
+function preassignedBarcodeItem(carton, line, items, instances, selectedSN, unitStatus = 'pending') {
     const item = uniqueBarcodeItem(carton, line, items);
     if (!item) return null;
     const barcode = line.ean;
@@ -90,7 +90,7 @@ function preassignedBarcodeItem(carton, line, items, instances, selectedSN) {
     const matches = instances.filter(unit => selected.has(unit.serial_number));
     if (assigned.length !== Number(item.quantity) || matches.length !== selected.size
         || new Set(matches.map(unit => unit.serial_number)).size !== selected.size
-        || matches.some(unit => unit.order_item_id !== item.id || unit.status !== 'pending')) return null;
+        || matches.some(unit => unit.order_item_id !== item.id || unit.status !== unitStatus)) return null;
     return item;
 }
 function legacyQuantityBarcodeItem(carton, line, items, instances) {
@@ -227,4 +227,4 @@ function appendSelection(previous, selection) {
     }
     return [...merged.values()];
 }
-module.exports = { appendSelection, fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines, assertCartonNotVoided };
+module.exports = { appendSelection, fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, preassignedBarcodeItem, choosePickLines, assertCartonNotVoided };

@@ -56,6 +56,38 @@ function fixture() {
 }
 const checked = lines => ({ kind: 'manual-line-check', lines, acknowledgeExistingSales: true, acknowledgeMetadataSaved: true });
 
+test('a dealer-coded SN row keeps its verified packed carton and its original document code', () => {
+    const data = shipment(), item = data.items[0], sn = 'CaseSensitive-001', ean = '4710000000010';
+    Object.assign(item, { product_code: 'DEALER-ROW', barcode: ean, quantity: 1, picked_quantity: 0, packed_quantity: 0 });
+    data.instances = [{ id: 21, order_item_id: item.id, serial_number: sn, status: 'packed' }];
+    data.allocations = [data.allocations[0]];
+    const allocation = data.allocations[0], line = allocation.lines[0];
+    Object.assign(line, { itemCode: 'WAREHOUSE-SKU', sourceProductCode: item.product_code, ean, actualSN: [sn], quantity: 1 });
+    data.cartonLines = [{ carton_id: allocation.carton_id, lineId: line.lineId, itemCode: line.itemCode, ean, actualSN: [sn] }];
+    const good = buildEcountManifest(data);
+    expect(good.ready).toBe(true);
+    expect(good.rows).toMatchObject([{ cartonId: allocation.carton_id, itemCode: item.product_code, actualSN: [sn] }]);
+    expect(good.looseRows).toEqual([]);
+    expect(good.totals).toMatchObject([{ itemCode: item.product_code, boxedQuantity: 1 }]);
+    for (const change of [
+        state => { state.cartonLines = []; },
+        state => { state.cartonLines[0].actualSN = [sn.toUpperCase()]; },
+        state => { state.cartonLines[0].lineId++; },
+        state => { state.cartonLines[0].carton_id = 'OTHER'; },
+        state => { state.allocations[0].lines[0].sourceProductCode = 'OTHER'; },
+        state => { state.items[0].barcode = '4710000000027'; },
+        state => { state.items.push({ ...item, id: 12 }); },
+        state => { state.cartonLines.push({ ...state.cartonLines[0], lineId: 2, itemCode: 'OTHER' }); },
+        state => { state.instances[0].status = 'picked'; }
+    ]) {
+        const invalid = copy(data); change(invalid);
+        const manifest = buildEcountManifest(invalid);
+        expect(manifest.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'INVALID_ALLOCATION' })]));
+        expect(manifest.rows).toEqual([]);
+        expect(manifest.fingerprint).not.toBe(good.fingerprint);
+    }
+});
+
 test('25 actual packed units are N1=5 + N2=10 + N3=10; released history never contributes quantity', () => {
     const data = shipment(); data.allocations.push({ ...copy(data.allocations[0]), id: 'released-old', status: 'released' });
     const manifest = buildEcountManifest(data);
