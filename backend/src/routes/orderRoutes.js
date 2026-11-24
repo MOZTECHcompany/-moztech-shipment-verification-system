@@ -1,3 +1,4 @@
+const { exchangeCartonDefect } = require('../services/cartonDefectExchange');
 // backend/src/routes/orderRoutes.js
 // 訂單操作相關端點（需先通過 authenticateToken）
 
@@ -16,7 +17,7 @@ const { normalizeSerialScanInput, pickExactSerial } = require('../utils/serialNu
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { PICKING_FREIGHT_CODE, projectPickingItems } = require('../services/pickingFreight');
 const { deferredEvents } = require('../utils/transactionEvents');
-const { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, guardSerialImport, assertNoRegisteredSerials, assertLegacySerialValues, requireLooseSource } = require('../services/cartonGuards');
+const { assertNoCartonAllocations, assertExpectedCartonScan, guardUnitScan, guardSerialImport, requireLooseSource } = require('../services/cartonGuards');
 const { readSerialQrSelection, applySerialQrSelection } = require('../services/serialQrScan');
 
 const router = express.Router();
@@ -1106,49 +1107,63 @@ router.post('/orders/:orderId/defect', warehouseOnly, authorizeRoles('admin', 'd
     const { oldSn: oldInput, newSn: newInput, reason } = req.body;
     const userId = req.user.id;
     if ([oldInput, newInput, reason].some(value => typeof value !== 'string' || !value.trim()) || oldInput.length > 255 || newInput.length > 255 || reason.length > 2000) return res.status(400).json({ message: '請提供有效的舊SN、新SN及更換原因' });
-    const oldSn = oldInput.trim(), newSn = normalizeSerialScanInput(newInput).normalized;
-    if (oldSn === newSn) return res.status(400).json({ message: '新SN不可與舊SN相同' });
+    const oldSn = oldInput.trim();
+    if (oldSn === newInput.trim()) return res.status(400).json({ message: '新SN不可與舊SN相同' });
     const events = deferredEvents(req.app.get('io'));
     const fail = (status, message) => Object.assign(new Error(message), { status });
     let client, transactionOpen = false, commitAttempted = false, releaseError;
     try {
         client = await pool.connect();
         await client.query('BEGIN'); transactionOpen = true;
-        const order = (await client.query('SELECT id, status, import_batch_id FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
+        const order = (await client.query('SELECT * FROM orders WHERE id=$1 FOR UPDATE', [orderId])).rows[0];
         if (!order) throw fail(404, '找不到指定訂單');
         if (order.import_batch_id) await client.query('SELECT id FROM warehouse_import_batches WHERE id=$1 FOR UPDATE', [order.import_batch_id]);
         if (order.status === 'voided') throw fail(409, '已作廢訂單不可更換SN');
-        await assertNoCartonAllocations(client, orderId);
-        await assertNoRegisteredSerials(client, [oldSn, newSn, newInput.trim()]);
         if (await hasOpenOrderChange(client,orderId)) throw fail(409,'此訂單異動待審核，暫停 SN 更換');
         if (req.user.role === 'dispatcher') {
             const own = await client.query("SELECT 1 FROM operation_logs WHERE order_id=$1 AND action_type='import' AND user_id=$2 AND id=(SELECT id FROM operation_logs WHERE order_id=$1 AND action_type='import' ORDER BY created_at DESC,id DESC LIMIT 1)", [orderId, userId]);
             if (!own.rowCount) throw fail(403, '僅允許操作自己拋單的訂單');
         }
-        const instance = (await client.query('SELECT i.id,i.order_item_id,oi.product_name,oi.barcode,oi.serial_identity_mode FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE i.serial_number=$1 AND oi.order_id=$2 FOR UPDATE OF i', [oldSn, orderId])).rows[0];
-        if (!instance) throw fail(404, '找不到該訂單中對應的舊SN');
-        if (instance.serial_identity_mode === 'exact') assertLegacySerialValues([oldSn, newInput.trim().replace(/^SN\s*[:：]/i, '').trim()]);
+        const units = await client.query(`SELECT oi.*,i.id AS instance_id,i.order_item_id,i.status AS unit_status
+            FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id
+            WHERE i.serial_number=$1 AND oi.order_id=$2 FOR UPDATE OF i`, [oldSn, orderId]);
+        if (!units.rows.length) {
+            const prior = (await client.query(`SELECT e.snapshot->'cartonExchange' AS custody FROM order_exceptions e
+                WHERE e.order_id=$1 AND e.type='sn_replace' AND e.status='resolved' AND e.created_by=$2
+                AND e.snapshot->>'oldSn'=$3 AND e.snapshot->>'submittedNewSn'=$4 AND e.reason_text=$5
+                AND EXISTS (SELECT 1 FROM order_item_instances i JOIN order_items oi ON oi.id=i.order_item_id
+                    WHERE oi.order_id=e.order_id AND i.serial_number=e.snapshot->>'newSn'
+                    AND i.order_item_id::text=e.snapshot->'product'->>'orderItemId')
+                ORDER BY e.id DESC LIMIT 1`, [orderId, userId, oldSn, newInput.trim(), reason])).rows[0];
+            if (!prior) throw fail(404, '找不到該訂單中對應的舊SN');
+            await client.query('ROLLBACK'); transactionOpen=false;
+            return res.json({ message:'此筆更換已完成', replayed:true, cartonExchange:prior.custody });
+        }
+        if (units.rows.length !== 1) throw fail(409, '原 SN 對應多筆訂單品項，請先核對。');
+        const instance = units.rows[0];
+        const { newSn, custody } = await exchangeCartonDefect(client, { order, item:instance, user:req.user,
+            oldSn, newInput, reason, historyMeta: {} });
         const duplicate = await client.query('SELECT 1 FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id WHERE oi.order_id=$1 AND i.serial_number=$2', [orderId, newSn]);
         if (duplicate.rowCount) throw fail(409, '新SN已存在於此訂單');
         if (order.import_batch_id) {
             const batchDuplicate = await client.query('SELECT 1 FROM order_item_instances i JOIN order_items oi ON i.order_item_id=oi.id JOIN orders o ON o.id=oi.order_id WHERE o.import_batch_id=$1 AND i.serial_number=$2', [order.import_batch_id, newSn]);
             if (batchDuplicate.rowCount) throw fail(409, '新SN已存在於此ERP批次的其他工作單');
         }
-        await client.query('UPDATE order_item_instances SET serial_number=$1, updated_at=NOW() WHERE id=$2', [newSn, instance.id]);
+        await client.query('UPDATE order_item_instances SET serial_number=$1, updated_at=NOW() WHERE id=$2', [newSn, instance.instance_id]);
         await client.query('INSERT INTO product_defects (order_id,user_id,original_sn,new_sn,product_barcode,product_name,reason) VALUES ($1,$2,$3,$4,$5,$6,$7)', [orderId,userId,oldSn,newSn,instance.barcode,instance.product_name,reason]);
         const exception=(await client.query(`INSERT INTO order_exceptions (order_id,type,status,reason_code,reason_text,created_by,ack_by,ack_at,resolved_by,resolved_at,snapshot)
-            VALUES ($1,'sn_replace','resolved','DEFECT_EXCHANGE',$2,$3,$3,NOW(),$3,NOW(),$4::jsonb) RETURNING id`, [orderId,reason,userId,JSON.stringify({oldSn,newSn,product:{barcode:instance.barcode,name:instance.product_name,orderItemId:instance.order_item_id}})])).rows[0];
-        await logOperation({ userId,orderId,operationType:'defect_exchange',details:{oldSn,newSn,reason,product:instance.product_name},io:events,db:client });
+            VALUES ($1,'sn_replace','resolved','DEFECT_EXCHANGE',$2,$3,$3,NOW(),$3,NOW(),$4::jsonb) RETURNING id`, [orderId,reason,userId,JSON.stringify({oldSn,newSn,submittedNewSn:newInput.trim(),cartonExchange:custody,product:{barcode:instance.barcode,name:instance.product_name,orderItemId:instance.order_item_id}})])).rows[0];
+        await logOperation({ userId,orderId,operationType:'defect_exchange',details:{oldSn,newSn,reason,product:instance.product_name,...(custody ? {cartonExchange:custody} : {})},io:events,db:client });
         await notifyOrderChange({db:client,events,orderId,actorId:userId,exceptionId:exception.id,phase:'sn_replaced',reason});
         events.emit('order_exception_changed', { orderId:Number(orderId), action:'resolved', type:'sn_replace' });
         commitAttempted=true; await client.query('COMMIT'); transactionOpen=false;
         events.publish();
-        res.json({ message:'SN更換成功並已記錄新品不良' });
+        res.json({ message:'SN更換成功並已記錄新品不良', cartonExchange:custody });
     } catch (error) {
         if (transactionOpen) { try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError=rollbackError; } }
         if (commitAttempted || releaseError) { releaseError ||= error; return res.status(503).json({code:'DEFECT_RESULT_UNKNOWN',message:'SN更換結果尚未確認，請重新整理核對，避免重複更換。'}); }
         logger.error('SN更換失敗', {code:error.code,requestId:req.requestId});
-        res.status(error.status || 500).json({message:error.status ? error.message : 'SN更換失敗，資料未變更'});
+        res.status(error.status || 500).json({code:error.status ? error.code : undefined,message:error.status ? error.message : 'SN更換失敗，資料未變更'});
     } finally { client?.release(releaseError); }
 });
 

@@ -53,12 +53,15 @@ const DefectReportModal = ({ isOpen, onClose, orderId, voucherNumber, onSuccess 
         submittingRef.current = true;
         try {
             setSubmitting(true);
-            await apiClient.post(`/api/orders/${orderId}/defect`, {
+            const { data } = await apiClient.post(`/api/orders/${orderId}/defect`, {
                 oldSn,
                 newSn,
                 reason
             });
-            toast.success('新品不良記錄已儲存，SN已更新');
+            const custody = data?.cartonExchange;
+            toast.success(data?.replayed ? '此筆換貨已完成' : '新品不良已登記，SN 已更新', custody ? {
+                description: `更換品來源箱 ${custody.replacementCarton}，請掃描新 SN ${custody.unitStatus === 'picked' ? '裝箱' : '揀貨'}。`
+            } : undefined);
             if (onSuccess) onSuccess();
             onClose();
         } catch (error) {

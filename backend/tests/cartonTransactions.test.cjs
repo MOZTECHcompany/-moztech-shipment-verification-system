@@ -1107,6 +1107,117 @@ async function suite(t, postgres) {
         assert.deepEqual(await states(), [{ status: 'sealed', n: 250 }]);
     });
 
+    await t.test('a picked defective unit moves its shipment reference across cartons; concurrent retries cannot consume twice', async () => {
+        f.attachLegacyRoutes();
+        const oldSn = 'Defect-a1', newSn = 'Replacement-a1', other = 'Sibling-a1';
+        const from = await create(box('QA-DEFECT-SOURCE', 1, [oldSn]));
+        const to = await create(box('QA-DEFECT-REPLACEMENT', 2, [other, newSn]));
+        const previous = await f.seedOrder({ quantity:1, actualSN:[other] });
+        await scan(previous.order.id, {type:'pick',mode:'serial',scanValue:other});
+        const {order} = await f.seedOrder({quantity:1, itemCode:'dealer-row-alias', actualSN:[oldSn]});
+        await scan(order.id, {type:'pick',mode:'serial',scanValue:oldSn});
+        ok(await api(3,'post',`/api/orders/${order.id}/claim`,{}));
+        const exchange = (payload, actor=1) => api(actor,'post',`/api/orders/${order.id}/defect`,payload);
+        const body={oldSn,newSn,reason:'Synthetic motor defect'};
+        const bad = await create(box('QA-DIFFERENT-SKU',1,['Wrong-sku'],{itemCode:'OTHER'}));
+        assert.equal((await exchange({...body,newSn:bad.lines[0].actualSN[0]})).body.code,'DEFECT_PRODUCT_MISMATCH');
+        assert.equal((await exchange({...body,newSn:other})).body.code,'DEFECT_NEW_SN_UNAVAILABLE');
+        assert.equal((await exchange({...body,newSn:'replacement-a1'})).status,409);
+        assert.equal((await exchange(body,null)).status,401);
+        const after = (await Promise.all([exchange(body),exchange(body)])).map(response=>ok(response));
+        assert.equal(after.filter(result=>result.replayed).length,1);
+        assert.deepEqual(after[0].cartonExchange,after[1].cartonExchange);
+        assert.equal(after[0].cartonExchange.originalCarton,from.cartonId);
+        assert.equal(after[0].cartonExchange.replacementCarton,to.cartonId);
+        const read = async id => ok(await api(1,'get','/api/cartons/'+id));
+        const oldBox=await read(from.cartonId), newBox=await read(to.cartonId);
+        assert.equal(oldBox.lines[0].remainingQuantity,0);
+        assert.equal(newBox.lines[0].remainingQuantity,0);
+        assert.deepEqual(oldBox.lines[0].remainingSN,[]);
+        assert.deepEqual(newBox.lines[0].remainingSN,[]);
+        for (const carton of [oldBox,newBox]) assert.equal(carton.history.filter(e=>e.event_type==='defect_exchange').length,1);
+        const oldAllocation=oldBox.allocations.find(a=>a.orderId===order.id);
+        assert.equal(oldAllocation.status,'released');assert.deepEqual(oldAllocation.lines[0].actualSN,[oldSn]);
+        const replacement=newBox.allocations.find(a=>a.orderId===order.id);
+        assert.equal(replacement.status,'picked');assert.equal(replacement.lines[0].wholeCarton,false);
+        assert.deepEqual(replacement.lines[0].actualSN,[newSn]);
+        assert.deepEqual(newBox.allocations.find(a=>a.orderId===previous.order.id).lines[0].actualSN,[other]);
+        const packPreview = input=>api(3,'post',`/api/orders/${order.id}/carton-preview`,{type:'pack',...input});
+        assert.equal((await packPreview({mode:'serial',scanValue:oldSn})).status,409);
+        assert.equal((await packPreview({scanValue:to.cartonId})).body.code,'CARTON_PACK_SERIAL_REQUIRED');
+        await scan(order.id,{type:'pack',mode:'serial',scanValue:newSn},3);
+        assert.equal((await packPreview({mode:'serial',scanValue:newSn})).status,409);
+        const shipments=ok(await api(1,'get',`/api/orders/${order.id}/carton-shipments`));
+        assert.deepEqual(shipments.allocations.filter(a=>a.status==='packed').map(a=>[a.cartonId,a.lines[0].actualSN]),[[to.cartonId,[newSn]]]);
+        assert.equal((await f.db.query('SELECT COUNT(*)::int AS n FROM product_defects WHERE order_id=$1',[order.id])).rows[0].n,1);
+        assert.equal((await read(to.cartonId)).lines[0].remainingQuantity,0);
+    });
+    await t.test('a pending same-carton swap quarantines the old SN; a picked same-carton swap and release restore only the good SN', async () => {
+        f.attachLegacyRoutes();
+        const sns=['Same-src-a','Same-new-a','Same-next-a','Same-after-a'];
+        const carton=await create(box('QA-DEFECT-SAME',4,sns));
+        const {order}=await f.seedOrder({quantity:1,actualSN:[sns[0]]});
+        const exchange=(oldSn,newSn)=>api(1,'post',`/api/orders/${order.id}/defect`,{oldSn,newSn,reason:'Synthetic same box'});
+        const read=async()=>ok(await api(1,'get','/api/cartons/'+carton.cartonId));
+        assert.equal(ok(await exchange(sns[0],sns[1])).cartonExchange.unitStatus,'pending');
+        assert.deepEqual((await read()).lines[0].remainingSN,sns.slice(1));
+        const picking=await scan(order.id,{type:'pick',mode:'serial',scanValue:sns[1]});
+        ok(await exchange(sns[1],sns[2]));
+        let current=await read();
+        assert.equal(current.lines[0].remainingQuantity,1);
+        assert.deepEqual(current.allocations[0].lines[0].actualSN,[sns[2]]);
+        const snap=ok(await api(1,'get',`/api/orders/${order.id}/carton-shipments`));
+        const release=await api(1,'post',`/api/cartons/allocations/${picking.allocation.allocationId}/release`,{
+            commandId:randomUUID(),expectedState:snap.stateToken,expectedCartonRevision:current.stateRevision,expectedActorId:1,reason:'Synthetic release'});
+        ok(release);current=await read();
+        assert.deepEqual(current.lines[0].remainingSN,[sns[2],sns[3]]);
+        assert.equal(current.lines[0].remainingQuantity,2);
+    });
+
+    await t.test('a swap preserves packed siblings and rolls back carton stock when the defect record fails', async () => {
+        f.attachLegacyRoutes();
+        const oldSn='Fail-safe-old',other='Fail-safe-sibling',newSn='Fail-safe-new';
+        await create(box('QA-DAMAGE-ORIGIN',2,[oldSn,other]));
+        await create(box('QA-DAMAGE-DEST',1,[newSn]));
+        const {order}=await f.seedOrder({quantity:2,actualSN:[oldSn,other]});
+        for (const sn of [other,oldSn]) await scan(order.id,{type:'pick',mode:'serial',scanValue:sn});
+        await scan(order.id,{type:'pack',mode:'serial',scanValue:other},3);
+        const exchange = (old) => api(1,'post',`/api/orders/${order.id}/defect`,{oldSn:old,newSn,reason:'Synthetic audit test'});
+        assert.equal((await exchange(other)).body.code,'DEFECT_ALREADY_PACKED');
+        await f.db.exec(`CREATE FUNCTION block_fixture_defect() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Synthetic failure'; END $$;
+            CREATE TRIGGER block_fixture_defect BEFORE INSERT ON product_defects FOR EACH ROW EXECUTE FUNCTION block_fixture_defect()`);
+        try { assert.equal((await exchange(oldSn)).status,500); }
+        finally { await f.db.exec('DROP TRIGGER block_fixture_defect ON product_defects; DROP FUNCTION block_fixture_defect()'); }
+        const detail=async id=>ok(await api(1,'get','/api/cartons/'+id));
+        assert.deepEqual((await detail('QA-DAMAGE-DEST')).lines[0].remainingSN,[newSn]);
+        const before=await detail('QA-DAMAGE-ORIGIN');assert.deepEqual(before.allocations[0].lines[0].actualSN,[other,oldSn]);
+        assert.equal(before.history.some(e=>e.event_type==='defect_exchange'),false);
+        ok(await exchange(oldSn));
+        const old=await detail('QA-DAMAGE-ORIGIN');assert.equal(old.allocations[0].status,'packed');
+        assert.equal(old.allocations[0].packedBy,3);assert.deepEqual(old.allocations[0].lines[0].actualSN,[other]);
+        const packed=await scan(order.id,{type:'pack',mode:'serial',scanValue:newSn},3);
+        assert.equal(packed.order.status,'completed');
+    });
+    await t.test('two orders cannot reserve the same replacement SN', async () => {
+        f.attachLegacyRoutes();
+        const newSn='Race-exchange-new';
+        await create(box('QA-DAMAGE-RACE-DEST',1,[newSn]));
+        const requests=[];
+        for(const number of [1,2]){
+            const oldSn='Race-exchange-'+number;
+            await create(box('QA-DAMAGE-RACE-'+number,1,[oldSn]));
+            const {order}=await f.seedOrder({quantity:1,actualSN:[oldSn]});
+            await scan(order.id,{type:'pick',mode:'serial',scanValue:oldSn});
+            requests.push(()=>api(1,'post',`/api/orders/${order.id}/defect`,{oldSn,newSn,reason:'Concurrent synthetic exchange'}));
+        }
+        const replies=await Promise.all(requests.map(send=>send()));
+        assert.deepEqual(replies.map(r=>r.status).sort(),[200,409]);
+        const chosen=await f.db.query('SELECT COUNT(*)::int AS n FROM product_defects WHERE new_sn=$1',[newSn]);
+        assert.equal(chosen.rows[0].n,1);
+        const dest=ok(await api(1,'get','/api/cartons/QA-DAMAGE-RACE-DEST'));assert.equal(dest.lines[0].remainingQuantity,0);
+        assert.equal(dest.allocations.length,1);
+    });
+
 }
 test('a barcode-only SKU mismatch cannot bind untracked, wrong, ambiguous, or signed units', () => {
     const barcode = '4711299271052';

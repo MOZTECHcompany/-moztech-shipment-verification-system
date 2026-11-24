@@ -216,4 +216,15 @@ function choosePickLines(carton, body, items, instances) {
     }
     return selected;
 }
-module.exports = { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines, assertCartonNotVoided };
+function appendSelection(previous, selection) {
+    const key = line => `${line.lineId}:${line.orderItemId}`;
+    const merged = new Map(previous.map(line => [key(line), line]));
+    for (const line of selection) {
+        const existing = merged.get(key(line));
+        merged.set(key(line), existing ? { ...existing, wholeCarton: false,
+            quantity: existing.quantity + line.quantity, actualSN: [...existing.actualSN, ...line.actualSN],
+            newSN: [...(existing.newSN || []), ...(line.newSN || [])] } : line);
+    }
+    return [...merged.values()];
+}
+module.exports = { appendSelection, fail, digest, text, positive, serials, normalizeLines, normalizeCarton, identity, matchesItem, choosePickLines, assertCartonNotVoided };

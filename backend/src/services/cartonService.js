@@ -1,6 +1,6 @@
 const { MAX_ROWS, MAX_SERIALS, importBatch, confirmBatch } = require('./cartonBatch');
 const { randomUUID } = require('node:crypto');
-const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, choosePickLines, assertCartonNotVoided } = require('./cartonContents');
+const { fail, digest, text, positive, serials, normalizeLines, normalizeCarton, appendSelection, choosePickLines, assertCartonNotVoided } = require('./cartonContents');
 const { stateToken, readLines } = require('./scanSnapshot');
 const { getOrderCompletion, canAutoComplete } = require('../utils/orderCompletion');
 const { deferredEvents } = require('../utils/transactionEvents');
@@ -350,17 +350,6 @@ function createCartonService({ pool }) {
         if (exceptions.some(row => row.type === 'order_change') || (type === 'pack' && exceptions.length)) {
             throw fail('CARTON_ORDER_EXCEPTION', '訂單有待核可異動或例外，請先處理');
         }
-    }
-    function appendSelection(previous, selection) {
-        const key = line => `${line.lineId}:${line.orderItemId}`;
-        const merged = new Map(previous.map(line => [key(line), line]));
-        for (const line of selection) {
-            const existing = merged.get(key(line));
-            merged.set(key(line), existing ? { ...existing, wholeCarton: false,
-                quantity: existing.quantity + line.quantity, actualSN: [...existing.actualSN, ...line.actualSN],
-                newSN: [...(existing.newSN || []), ...(line.newSN || [])] } : line);
-        }
-        return [...merged.values()];
     }
     function planPack(snapshot, carton, allocation, body, scannedSerial) {
         if (body.selections !== undefined || !['whole', 'serial', 'unit'].includes(body.mode ?? 'whole')) {
