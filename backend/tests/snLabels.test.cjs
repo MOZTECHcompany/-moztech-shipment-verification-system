@@ -4,6 +4,28 @@ const { randomUUID } = require('node:crypto');
 const request = require('supertest');
 const xlsx = require('xlsx');
 const { createCartonFixture } = require('./cartonFixture.cjs');
+const { SnLabelsExport } = require('../src/sn-labels/sn-labels.export');
+const PDFDocument = require('pdfkit');
+
+test('carton PDF text stays 11 pt and each existing QR occupies 25 mm including its quiet zone', async t => {
+    const rectangles = t.mock.method(PDFDocument.prototype, 'rect');
+    const font = t.mock.method(PDFDocument.prototype, 'fontSize');
+    for (const width of [60, 120]) {
+        for (const withSN of [true, false]) {
+            rectangles.mock.resetCalls();
+            font.mock.resetCalls();
+            const serials = withSN ? ['TRY-HL1W62900001', 'TRY-HL1W62900002'] : [];
+            const box = { id: 'CTN-TRY-991231-HL001-022', quantity: 2, serials };
+            await new SnLabelsExport().pdf(withSN ? 'cartons' : 'cartons-no-sn',
+                { cartonWidth: width, model: 'HL001', style: '', color: '青嵐白' }, [], [box]);
+            const edge = 25 * 72 / 25.4;
+            assert.equal(rectangles.mock.calls.filter(({ arguments: [, , w, h] }) =>
+                Math.abs(w - edge) < 0.001 && Math.abs(h - edge) < 0.001).length, withSN ? 2 : 1);
+            assert.ok(font.mock.calls.some(call => call.arguments[0] === 11));
+            assert.ok(font.mock.calls.every(call => [11, 12].includes(call.arguments[0])));
+        }
+    }
+});
 
 async function exercise(t, postgres) {
     const f = await createCartonFixture({ postgres });
